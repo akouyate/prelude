@@ -121,6 +121,14 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
     })
   }),
   liveInterviewEventBaseSchema.extend({
+    type: z.literal("question_repeated"),
+    payload: z.object({
+      questionId: z.string().min(1),
+      prompt: z.string().trim().min(8).max(800),
+      reason: z.literal("candidate_requested_repeat")
+    })
+  }),
+  liveInterviewEventBaseSchema.extend({
     type: z.literal("candidate_turn_started"),
     payload: z.object({
       questionId: z.string().min(1).optional()
@@ -130,7 +138,16 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
     type: z.literal("candidate_turn_finalized"),
     payload: z.object({
       questionId: z.string().min(1),
+      completionReason: z.enum(["answered", "skipped", "incomplete"]),
       transcriptTurn: liveInterviewTranscriptTurnSchema
+    })
+  }),
+  liveInterviewEventBaseSchema.extend({
+    type: z.literal("soft_reprompted"),
+    payload: z.object({
+      questionId: z.string().min(1),
+      prompt: z.string().trim().min(8).max(800),
+      repromptsUsed: z.number().int().min(1).max(1)
     })
   }),
   liveInterviewEventBaseSchema.extend({
@@ -161,6 +178,13 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
         "candidate_ended",
         "timeboxed"
       ])
+    })
+  }),
+  liveInterviewEventBaseSchema.extend({
+    type: z.literal("session_closing"),
+    payload: z.object({
+      completedQuestions: z.number().int().min(0),
+      closing: z.string().trim().min(1).max(800)
     })
   }),
   liveInterviewEventBaseSchema.extend({

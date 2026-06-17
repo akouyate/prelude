@@ -277,10 +277,13 @@ func knownEventType(eventType domain.EventType) bool {
 		domain.EventCandidateJoined,
 		domain.EventAgentJoined,
 		domain.EventQuestionAsked,
+		domain.EventQuestionRepeated,
 		domain.EventCandidateTurnStarted,
 		domain.EventCandidateTurnFinalized,
+		domain.EventSoftReprompted,
 		domain.EventFollowupAsked,
 		domain.EventQuestionCompleted,
+		domain.EventSessionClosing,
 		domain.EventSessionCompleted,
 		domain.EventSessionFailed:
 		return true

@@ -266,6 +266,45 @@ func TestServiceRejectsUnknownEventType(t *testing.T) {
 	}
 }
 
+func TestServiceAcceptsInterviewerStateMachineControlEvents(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	events := []application.IngestEventInput{
+		eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted),
+		eventInput(session.Session.ID, 2, "evt_question", domain.EventQuestionAsked),
+		eventInput(session.Session.ID, 3, "evt_repeat", domain.EventQuestionRepeated),
+		eventInput(session.Session.ID, 4, "evt_turn", domain.EventCandidateTurnStarted),
+		eventInput(session.Session.ID, 5, "evt_finalized", domain.EventCandidateTurnFinalized),
+		eventInput(session.Session.ID, 6, "evt_reprompt", domain.EventSoftReprompted),
+		eventInput(session.Session.ID, 7, "evt_completed", domain.EventQuestionCompleted),
+		eventInput(session.Session.ID, 8, "evt_closing", domain.EventSessionClosing),
+		eventInput(session.Session.ID, 9, "evt_done", domain.EventSessionCompleted),
+	}
+
+	for _, event := range events {
+		if _, err := service.IngestEvent(context.Background(), event); err != nil {
+			t.Fatalf("IngestEvent(%s) returned error: %v", event.Type, err)
+		}
+	}
+
+	completed, err := service.GetSession(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if completed.Status != domain.SessionStatusCompleted {
+		t.Fatalf("expected completed status, got %s", completed.Status)
+	}
+}
+
 func TestServiceRejectsMissingEventActor(t *testing.T) {
 	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
 	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)

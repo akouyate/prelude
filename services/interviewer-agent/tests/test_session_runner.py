@@ -37,6 +37,7 @@ async def test_runner_emits_ordered_interview_events() -> None:
     assert realtime_api.events[0].type == EventType.SESSION_STARTED
     assert all(event.actor == EventActor.AGENT for event in realtime_api.events)
     assert realtime_api.events[-1].type == EventType.SESSION_COMPLETED
+    assert realtime_api.events[-2].type == EventType.SESSION_CLOSING
     assert [event.sequence for event in realtime_api.events] == list(
         range(1, len(realtime_api.events) + 1)
     )
@@ -80,3 +81,4 @@ async def test_runner_joins_livekit_room_before_intro_when_join_is_provided() ->
         "room_name": "prelude-session-test",
     }
     assert realtime_api.events[1].type == EventType.SESSION_STARTED
+    assert realtime_api.events[-2].type == EventType.SESSION_CLOSING

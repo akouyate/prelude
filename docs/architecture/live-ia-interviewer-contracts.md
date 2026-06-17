@@ -118,6 +118,16 @@ Payload:
 - `questionIndex`
 - `prompt`
 
+### `question_repeated`
+
+Emitted when the candidate asks the IA to repeat the current question.
+
+Payload:
+
+- `questionId`
+- `prompt`
+- `reason`: `candidate_requested_repeat`
+
 ### `candidate_turn_started`
 
 Emitted when candidate speech starts.
@@ -133,7 +143,19 @@ Emitted when a candidate answer transcript is final.
 Payload:
 
 - `questionId`
+- `completionReason`: `answered`, `skipped`, or `incomplete`
 - `transcriptTurn`
+
+### `soft_reprompted`
+
+Emitted when the candidate answer is incomplete, unclear, or silent and the IA
+uses its single recovery prompt for that question.
+
+Payload:
+
+- `questionId`
+- `prompt`
+- `repromptsUsed`
 
 ### `followup_asked`
 
@@ -161,6 +183,16 @@ Emitted when the interview is complete.
 Payload:
 
 - `completedReason`
+
+### `session_closing`
+
+Emitted when all planned questions are done and the IA is about to close the
+interview.
+
+Payload:
+
+- `completedQuestions`
+- `closing`
 
 ### `session_failed`
 

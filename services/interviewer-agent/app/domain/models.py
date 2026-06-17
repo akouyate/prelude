@@ -35,6 +35,9 @@ class InterviewPlan(BaseModel):
 class CandidateTurn(BaseModel):
     question_id: str
     transcript: str
+    is_complete: bool = True
+    repeat_requested: bool = False
+    skip_requested: bool = False
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     ended_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -52,8 +55,10 @@ class EventType(StrEnum):
     QUESTION_REPEATED = "question_repeated"
     CANDIDATE_TURN_STARTED = "candidate_turn_started"
     CANDIDATE_TURN_FINALIZED = "candidate_turn_finalized"
+    SOFT_REPROMPTED = "soft_reprompted"
     FOLLOWUP_ASKED = "followup_asked"
     QUESTION_COMPLETED = "question_completed"
+    SESSION_CLOSING = "session_closing"
     SESSION_COMPLETED = "session_completed"
     SESSION_FAILED = "session_failed"
     FREE_CHAT_REQUESTED = "free_chat_requested"
