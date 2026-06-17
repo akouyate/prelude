@@ -25,6 +25,12 @@ export const liveInterviewSpeakerSchema = z.enum([
   "system"
 ]);
 
+export const liveInterviewEventActorSchema = z.enum([
+  "agent",
+  "candidate",
+  "system"
+]);
+
 export const liveInterviewQuestionCategorySchema = z.enum([
   "motivation",
   "experience",
@@ -78,6 +84,7 @@ export const liveInterviewTranscriptTurnSchema = z.object({
 const liveInterviewEventBaseSchema = z.object({
   eventId: z.string().min(1),
   sessionId: z.string().min(1),
+  actor: liveInterviewEventActorSchema,
   sequence: z.number().int().min(0),
   idempotencyKey: z.string().min(8),
   occurredAt: z.string().datetime()
@@ -186,6 +193,43 @@ export const liveInterviewAgentConfigSchema = z.object({
   provider: liveInterviewProviderSchema
 });
 
+export const liveInterviewWorkerAgentConfigSchema = z.object({
+  session: z.object({
+    id: z.string().min(1),
+    interview_plan_id: z.string().min(1),
+    candidate_id: z.string().min(1),
+    status: liveInterviewSessionStatusSchema,
+    livekit_room_name: z.string().min(1),
+    allowed_modalities: z.array(liveInterviewModeSchema).min(1),
+    created_at: z.string().datetime(),
+    updated_at: z.string().datetime()
+  }),
+  livekit_join: z.object({
+    room_name: z.string().min(1),
+    url: z.string().url().or(z.string().startsWith("wss://")),
+    token: z.string().min(1),
+    participant: z.string().min(1),
+    expires_at: z.string().datetime()
+  }),
+  interview_plan: z.object({
+    id: z.string().min(1),
+    role_title: z.string().trim().min(2).max(160),
+    language: z.string().min(2).default("fr"),
+    questions: z.array(
+      z.object({
+        id: z.string().min(1),
+        prompt: z.string().trim().min(8).max(800),
+        category: z.string().min(1),
+        follow_up_prompt: z.string().trim().min(8).max(800).optional()
+      })
+    ).min(1).max(8),
+    allow_video: z.boolean().default(true),
+    allow_audio_only: z.boolean().default(true),
+    max_followups_per_question: z.number().int().min(0).max(2).default(1)
+  }),
+  provider: liveInterviewProviderSchema
+});
+
 export type LiveInterviewProvider = z.infer<
   typeof liveInterviewProviderSchema
 >;
@@ -198,6 +242,9 @@ export type LiveInterviewSession = z.infer<typeof liveInterviewSessionSchema>;
 export type LiveInterviewTranscriptTurn = z.infer<
   typeof liveInterviewTranscriptTurnSchema
 >;
+export type LiveInterviewEventActor = z.infer<
+  typeof liveInterviewEventActorSchema
+>;
 export type LiveInterviewEvent = z.infer<typeof liveInterviewEventSchema>;
 export type CreateLiveInterviewSessionInput = z.infer<
   typeof createLiveInterviewSessionInputSchema
@@ -207,4 +254,7 @@ export type CreateLiveInterviewSessionResponse = z.infer<
 >;
 export type LiveInterviewAgentConfig = z.infer<
   typeof liveInterviewAgentConfigSchema
+>;
+export type LiveInterviewWorkerAgentConfig = z.infer<
+  typeof liveInterviewWorkerAgentConfigSchema
 >;

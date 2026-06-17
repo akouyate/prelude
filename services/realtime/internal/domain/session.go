@@ -41,6 +41,14 @@ const (
 	EventSessionFailed          EventType = "session_failed"
 )
 
+type EventActor string
+
+const (
+	EventActorAgent     EventActor = "agent"
+	EventActorCandidate EventActor = "candidate"
+	EventActorSystem    EventActor = "system"
+)
+
 type Session struct {
 	ID                string        `json:"id"`
 	InterviewPlanID   string        `json:"interview_plan_id"`
@@ -57,6 +65,7 @@ type Event struct {
 	ID             string          `json:"event_id"`
 	SessionID      string          `json:"session_id"`
 	Type           EventType       `json:"type"`
+	Actor          EventActor      `json:"actor"`
 	Sequence       int             `json:"sequence"`
 	IdempotencyKey string          `json:"idempotency_key"`
 	OccurredAt     time.Time       `json:"occurred_at"`
@@ -91,7 +100,7 @@ func CanApplyEvent(status SessionStatus, eventType EventType) bool {
 	case EventAgentJoined:
 		return status == SessionStatusAgentJoining || status == SessionStatusWaitingCandidate
 	case EventSessionStarted:
-		return status == SessionStatusAgentJoining || status == SessionStatusWaitingCandidate || status == SessionStatusCreated
+		return status == SessionStatusInProgress || status == SessionStatusAgentJoining || status == SessionStatusWaitingCandidate || status == SessionStatusCreated
 	case EventSessionFailed:
 		return true
 	case EventSessionCompleted,

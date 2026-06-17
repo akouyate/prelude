@@ -26,7 +26,7 @@ func (fakeLiveKit) CreateJoin(_ context.Context, input application.LiveKitJoinIn
 	return application.LiveKitJoin{
 		RoomName:    input.RoomName,
 		URL:         "wss://livekit.example.test",
-		Token:       "mock_lk_" + input.SessionID,
+		Token:       "mock_lk_" + input.SessionID + "_" + input.Participant,
 		Participant: input.Participant,
 		ExpiresAt:   time.Date(2026, 6, 17, 10, 15, 0, 0, time.UTC),
 	}, nil
@@ -64,9 +64,44 @@ func eventInput(sessionID string, sequence int, eventID string, eventType domain
 		SessionID:      sessionID,
 		EventID:        eventID,
 		Type:           eventType,
+		Actor:          domain.EventActorAgent,
 		Sequence:       sequence,
 		IdempotencyKey: eventID + ":idempotency",
 		Payload:        json.RawMessage(`{"source":"agent"}`),
+	}
+}
+
+func TestServiceGetAgentConfigReturnsAgentJoinAndDemoPlan(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	created, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	config, err := service.GetAgentConfig(context.Background(), created.Session.ID)
+	if err != nil {
+		t.Fatalf("GetAgentConfig returned error: %v", err)
+	}
+
+	if config.Session.ID != created.Session.ID {
+		t.Fatalf("expected session %s, got %s", created.Session.ID, config.Session.ID)
+	}
+	if config.LiveKitJoin.Participant != "agent-"+created.Session.ID {
+		t.Fatalf("expected agent participant, got %s", config.LiveKitJoin.Participant)
+	}
+	if config.LiveKitJoin.Token == created.Join.Token {
+		t.Fatal("expected agent and candidate tokens to differ")
+	}
+	if config.InterviewPlan.ID != created.Session.InterviewPlanID {
+		t.Fatalf("expected plan id %s, got %s", created.Session.InterviewPlanID, config.InterviewPlan.ID)
+	}
+	if len(config.InterviewPlan.Questions) == 0 {
+		t.Fatal("expected questions in agent config")
 	}
 }
 
@@ -100,6 +135,7 @@ func TestServiceIngestEventIsIdempotent(t *testing.T) {
 		SessionID:      session.Session.ID,
 		EventID:        "evt_123",
 		Type:           domain.EventSessionStarted,
+		Actor:          domain.EventActorAgent,
 		Sequence:       1,
 		IdempotencyKey: "evt_123:idempotency",
 		Payload:        json.RawMessage(`{"source":"agent"}`),
@@ -143,6 +179,7 @@ func TestServiceIngestEventRejectsConflictingDuplicateID(t *testing.T) {
 		SessionID:      session.Session.ID,
 		EventID:        "evt_123",
 		Type:           domain.EventSessionStarted,
+		Actor:          domain.EventActorAgent,
 		Sequence:       1,
 		IdempotencyKey: "evt_123:idempotency",
 		Payload:        json.RawMessage(`{"source":"candidate"}`),
@@ -229,6 +266,26 @@ func TestServiceRejectsUnknownEventType(t *testing.T) {
 	}
 }
 
+func TestServiceRejectsMissingEventActor(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	input := eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted)
+	input.Actor = ""
+	_, err = service.IngestEvent(context.Background(), input)
+	if !errors.Is(err, application.ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput, got %v", err)
+	}
+}
+
 func TestServiceReturnsEventsInSequenceOrder(t *testing.T) {
 	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
 	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
@@ -246,6 +303,7 @@ func TestServiceReturnsEventsInSequenceOrder(t *testing.T) {
 			SessionID:      session.Session.ID,
 			EventID:        "evt_started",
 			Type:           domain.EventSessionStarted,
+			Actor:          domain.EventActorAgent,
 			Sequence:       1,
 			IdempotencyKey: "evt_started:idempotency",
 			OccurredAt:     time.Date(2026, 6, 17, 10, 0, 1, 0, time.UTC),
@@ -255,6 +313,7 @@ func TestServiceReturnsEventsInSequenceOrder(t *testing.T) {
 			SessionID:      session.Session.ID,
 			EventID:        "evt_turn",
 			Type:           domain.EventCandidateTurnStarted,
+			Actor:          domain.EventActorCandidate,
 			Sequence:       2,
 			IdempotencyKey: "evt_turn:idempotency",
 			OccurredAt:     time.Date(2026, 6, 17, 10, 0, 3, 0, time.UTC),
@@ -264,6 +323,7 @@ func TestServiceReturnsEventsInSequenceOrder(t *testing.T) {
 			SessionID:      session.Session.ID,
 			EventID:        "evt_question",
 			Type:           domain.EventQuestionAsked,
+			Actor:          domain.EventActorAgent,
 			Sequence:       3,
 			IdempotencyKey: "evt_question:idempotency",
 			OccurredAt:     time.Date(2026, 6, 17, 10, 0, 2, 0, time.UTC),

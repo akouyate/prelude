@@ -2,7 +2,7 @@
 
 ## Objective
 
-Ship GitHub issue #13: build the POC LiveKit candidate room on top of the live IA interviewer foundation.
+Ship GitHub cleanup plus issue #15: build the Python LiveKit Agent POC on top of the live IA interviewer foundation.
 
 ## Source
 
@@ -25,7 +25,7 @@ Ship GitHub issue #13: build the POC LiveKit candidate room on top of the live I
 - [x] Review
 - [x] Simplification
 - [x] Final validation
-- [x] Delivery
+- [ ] Delivery
 
 ## Team
 
@@ -52,3 +52,7 @@ Ship GitHub issue #13: build the POC LiveKit candidate room on top of the live I
 - Tests should focus on business rules and integration contracts rather than exhaustive framework coverage.
 - Validation passed for Go, Python, TypeScript contracts, monorepo typecheck/lint/test/build, and a Go API + Python worker smoke test.
 - #13 adds a candidate live room with microphone/camera permission flow, a Next.js API proxy to the Go Realtime API, LiveKit SDK dynamic join support, mock LiveKit fallback, mobile e2e coverage, and a Playwright screenshot at `/tmp/prelude-livekit-candidate-room.png`.
+- #12 and #13 were closed on GitHub after verifying they were delivered on `main` by PR #24.
+- #14 remains open because agent token/config and event actor attribution were missing; those are now part of the #15 branch scope.
+- #15 scope: add a Go agent-config endpoint, mint a distinct agent LiveKit join, require event `actor`, and let the Python runner join a LiveKit room through a mockable adapter before emitting interview events.
+- Validation passed for Go tests/vet/race, Python pytest/compileall, contracts tests, monorepo typecheck/lint/test/build, and a local Go API + Python `--join-livekit` smoke test with 21 persisted events and completed session status.

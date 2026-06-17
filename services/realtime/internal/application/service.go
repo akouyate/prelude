@@ -89,6 +89,30 @@ type CreateSessionOutput struct {
 	Join    LiveKitJoin    `json:"livekit_join"`
 }
 
+type InterviewPlan struct {
+	ID                      string              `json:"id"`
+	RoleTitle               string              `json:"role_title"`
+	Language                string              `json:"language"`
+	Questions               []InterviewQuestion `json:"questions"`
+	AllowVideo              bool                `json:"allow_video"`
+	AllowAudioOnly          bool                `json:"allow_audio_only"`
+	MaxFollowupsPerQuestion int                 `json:"max_followups_per_question"`
+}
+
+type InterviewQuestion struct {
+	ID             string `json:"id"`
+	Prompt         string `json:"prompt"`
+	Category       string `json:"category"`
+	FollowUpPrompt string `json:"follow_up_prompt,omitempty"`
+}
+
+type AgentConfigOutput struct {
+	Session       domain.Session `json:"session"`
+	LiveKitJoin   LiveKitJoin    `json:"livekit_join"`
+	InterviewPlan InterviewPlan  `json:"interview_plan"`
+	Provider      string         `json:"provider"`
+}
+
 func (s *Service) CreateSession(ctx context.Context, input CreateSessionInput) (CreateSessionOutput, error) {
 	if strings.TrimSpace(input.InterviewPlanID) == "" {
 		return CreateSessionOutput{}, fmt.Errorf("%w: interview_plan_id is required", ErrInvalidInput)
@@ -145,10 +169,34 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (domain.Sess
 	return session, nil
 }
 
+func (s *Service) GetAgentConfig(ctx context.Context, sessionID string) (AgentConfigOutput, error) {
+	session, err := s.GetSession(ctx, sessionID)
+	if err != nil {
+		return AgentConfigOutput{}, err
+	}
+
+	join, err := s.livekit.CreateJoin(ctx, LiveKitJoinInput{
+		SessionID:   session.ID,
+		RoomName:    session.LiveKitRoomName,
+		Participant: "agent-" + session.ID,
+	})
+	if err != nil {
+		return AgentConfigOutput{}, err
+	}
+
+	return AgentConfigOutput{
+		Session:       session,
+		LiveKitJoin:   join,
+		InterviewPlan: demoInterviewPlan(session.InterviewPlanID),
+		Provider:      "mock",
+	}, nil
+}
+
 type IngestEventInput struct {
 	SessionID      string
 	EventID        string
 	Type           domain.EventType
+	Actor          domain.EventActor
 	Sequence       int
 	IdempotencyKey string
 	OccurredAt     time.Time
@@ -179,6 +227,12 @@ func (s *Service) IngestEvent(ctx context.Context, input IngestEventInput) (Inge
 	if !knownEventType(input.Type) {
 		return IngestEventOutput{}, fmt.Errorf("%w: unsupported event type %q", ErrInvalidEvent, input.Type)
 	}
+	if strings.TrimSpace(string(input.Actor)) == "" {
+		return IngestEventOutput{}, fmt.Errorf("%w: actor is required", ErrInvalidInput)
+	}
+	if !knownEventActor(input.Actor) {
+		return IngestEventOutput{}, fmt.Errorf("%w: unsupported actor %q", ErrInvalidInput, input.Actor)
+	}
 	if len(input.Payload) == 0 {
 		input.Payload = json.RawMessage(`{}`)
 	}
@@ -193,6 +247,7 @@ func (s *Service) IngestEvent(ctx context.Context, input IngestEventInput) (Inge
 		ID:             input.EventID,
 		SessionID:      input.SessionID,
 		Type:           input.Type,
+		Actor:          input.Actor,
 		Sequence:       input.Sequence,
 		IdempotencyKey: input.IdempotencyKey,
 		OccurredAt:     input.OccurredAt.UTC(),
@@ -205,6 +260,15 @@ func (s *Service) IngestEvent(ctx context.Context, input IngestEventInput) (Inge
 	}
 
 	return IngestEventOutput{Event: result.Event, Duplicate: result.Duplicate}, nil
+}
+
+func knownEventActor(actor domain.EventActor) bool {
+	switch actor {
+	case domain.EventActorAgent, domain.EventActorCandidate, domain.EventActorSystem:
+		return true
+	default:
+		return false
+	}
 }
 
 func knownEventType(eventType domain.EventType) bool {
@@ -222,6 +286,40 @@ func knownEventType(eventType domain.EventType) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func demoInterviewPlan(planID string) InterviewPlan {
+	if strings.TrimSpace(planID) == "" {
+		planID = "plan-demo-product-manager"
+	}
+
+	return InterviewPlan{
+		ID:                      planID,
+		RoleTitle:               "Product Manager B2B SaaS",
+		Language:                "fr",
+		AllowVideo:              true,
+		AllowAudioOnly:          true,
+		MaxFollowupsPerQuestion: 1,
+		Questions: []InterviewQuestion{
+			{
+				ID:             "q1",
+				Prompt:         "Bonjour, pouvez-vous vous presenter brievement et expliquer ce qui vous interesse dans ce poste ?",
+				Category:       "motivation",
+				FollowUpPrompt: "Qu'est-ce qui vous attire le plus dans ce contexte produit ?",
+			},
+			{
+				ID:             "q2",
+				Prompt:         "Parlez-moi d'une experience ou vous avez du prioriser une roadmap avec des contraintes fortes.",
+				Category:       "experience",
+				FollowUpPrompt: "Quel compromis avez-vous fait et comment l'avez-vous explique aux parties prenantes ?",
+			},
+			{
+				ID:       "q3",
+				Prompt:   "Quelles sont vos disponibilites et vos contraintes eventuelles pour la suite du process ?",
+				Category: "logistics",
+			},
+		},
 	}
 }
 

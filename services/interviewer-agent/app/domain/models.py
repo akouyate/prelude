@@ -39,7 +39,14 @@ class CandidateTurn(BaseModel):
     ended_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class EventActor(StrEnum):
+    AGENT = "agent"
+    CANDIDATE = "candidate"
+    SYSTEM = "system"
+
+
 class EventType(StrEnum):
+    AGENT_JOINED = "agent_joined"
     SESSION_STARTED = "session_started"
     QUESTION_ASKED = "question_asked"
     QUESTION_REPEATED = "question_repeated"
@@ -55,11 +62,38 @@ class EventType(StrEnum):
 class InterviewEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: f"evt_{uuid4().hex}")
     type: EventType
+    actor: EventActor = EventActor.AGENT
     session_id: str
     sequence: int
     idempotency_key: str = Field(default_factory=lambda: str(uuid4()))
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentSession(BaseModel):
+    id: str
+    interview_plan_id: str
+    candidate_id: str
+    status: str
+    livekit_room_name: str
+    allowed_modalities: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class AgentLiveKitJoin(BaseModel):
+    room_name: str
+    url: str
+    token: str
+    participant: str
+    expires_at: datetime
+
+
+class AgentConfig(BaseModel):
+    session: AgentSession
+    livekit_join: AgentLiveKitJoin
+    interview_plan: InterviewPlan
+    provider: str = "mock"
 
 
 def create_demo_plan() -> InterviewPlan:

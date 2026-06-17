@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from app.domain.models import CandidateTurn, InterviewEvent, InterviewPlan, InterviewQuestion
+from app.domain.models import (
+    AgentConfig,
+    AgentLiveKitJoin,
+    CandidateTurn,
+    InterviewEvent,
+    InterviewPlan,
+    InterviewQuestion,
+)
 
 
 class ProviderAdapter(Protocol):
@@ -35,3 +42,15 @@ class RealtimeApiClient(Protocol):
     async def emit_event(self, event: InterviewEvent) -> None:
         """Publish an event to the Go realtime API or a local sink."""
 
+
+class AgentConfigClient(Protocol):
+    async def get_agent_config(self, session_id: str) -> AgentConfig:
+        """Load the worker config minted by the Go realtime API."""
+
+
+class LiveKitRoomAdapter(Protocol):
+    async def join(self, join: AgentLiveKitJoin) -> None:
+        """Join the LiveKit room as the IA interviewer participant."""
+
+    async def disconnect(self) -> None:
+        """Leave the LiveKit room and release media resources."""

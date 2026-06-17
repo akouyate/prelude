@@ -10,7 +10,7 @@ credentials.
 
 - `app/domain`: interview plan models, event contracts, interviewer state machine.
 - `app/application`: orchestration use cases and ports.
-- `app/adapters`: mock OpenAI Realtime provider and Go Realtime API client.
+- `app/adapters`: mock OpenAI Realtime provider, Go Realtime API client, and LiveKit room adapter.
 - `app/cli.py`: local simulation that emits events to stdout or the Go API.
 
 ## Why Python for the POC
@@ -53,6 +53,27 @@ POST /v1/interview-sessions/{session_id}/events
 The Go API should treat events as append-only, idempotent records keyed by
 `idempotency_key`.
 
+## Join a mocked LiveKit room from Go config
+
+Start the Go Realtime API, create a session, then run:
+
+```bash
+python -m app.cli \
+  --session-id {session_id} \
+  --realtime-api-url http://localhost:8080 \
+  --join-livekit
+```
+
+The worker calls:
+
+```text
+GET /v1/interview-sessions/{session_id}/agent-config
+```
+
+For `mock_lk_*` tokens the LiveKit adapter records a local join and does not
+require a running LiveKit server. With a real token, it imports the LiveKit SDK
+at join time and connects to the provided room URL.
+
 ## Test
 
 ```bash
@@ -62,7 +83,6 @@ pytest
 ## Next wiring steps
 
 1. Replace `MockOpenAIRealtimeAdapter` with a real OpenAI Realtime adapter.
-2. Add a LiveKit room participant adapter.
+2. Replace mocked LiveKit tokens with real LiveKit room/token minting.
 3. Add provider latency and cost metrics around every provider call.
 4. Persist provider metadata in the event payloads without leaking secrets.
-

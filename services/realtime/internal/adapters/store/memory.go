@@ -114,6 +114,7 @@ func sameEvent(left domain.Event, right domain.Event) bool {
 	return left.ID == right.ID &&
 		left.SessionID == right.SessionID &&
 		left.Type == right.Type &&
+		left.Actor == right.Actor &&
 		left.Sequence == right.Sequence &&
 		left.IdempotencyKey == right.IdempotencyKey &&
 		left.OccurredAt.Equal(right.OccurredAt) &&

@@ -57,6 +57,7 @@ func TestServerCreateGetAndIngestEvent(t *testing.T) {
 		"event_id": "evt_123",
 		"session_id": "`+createBody.Session.ID+`",
 		"type": "session_started",
+		"actor": "agent",
 		"sequence": 1,
 		"idempotency_key": "evt_123:idempotency",
 		"payload": {"source": "agent"}
@@ -80,6 +81,51 @@ func TestServerCreateGetAndIngestEvent(t *testing.T) {
 	}
 }
 
+func TestServerReturnsAgentConfig(t *testing.T) {
+	server := newTestServer()
+
+	createResponse := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/interview-sessions", bytes.NewBufferString(`{
+		"interview_plan_id": "plan_123",
+		"candidate_id": "candidate_123"
+	}`))
+	createRequest.Header.Set("content-type", "application/json")
+	server.ServeHTTP(createResponse, createRequest)
+
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createResponse.Code, createResponse.Body.String())
+	}
+
+	var createBody struct {
+		Session struct {
+			ID string `json:"id"`
+		} `json:"session"`
+		LiveKitJoin struct {
+			Token string `json:"token"`
+		} `json:"livekit_join"`
+	}
+	if err := json.Unmarshal(createResponse.Body.Bytes(), &createBody); err != nil {
+		t.Fatalf("failed to decode create response: %v", err)
+	}
+
+	configResponse := httptest.NewRecorder()
+	configRequest := httptest.NewRequest(http.MethodGet, "/v1/interview-sessions/"+createBody.Session.ID+"/agent-config", nil)
+	server.ServeHTTP(configResponse, configRequest)
+
+	if configResponse.Code != http.StatusOK {
+		t.Fatalf("expected config status 200, got %d: %s", configResponse.Code, configResponse.Body.String())
+	}
+	if !bytes.Contains(configResponse.Body.Bytes(), []byte(`"participant":"agent-`+createBody.Session.ID+`"`)) {
+		t.Fatalf("expected agent participant in config, got %s", configResponse.Body.String())
+	}
+	if bytes.Contains(configResponse.Body.Bytes(), []byte(createBody.LiveKitJoin.Token)) {
+		t.Fatal("agent config should not reuse the candidate token")
+	}
+	if !bytes.Contains(configResponse.Body.Bytes(), []byte(`"interview_plan"`)) {
+		t.Fatalf("expected interview plan in config, got %s", configResponse.Body.String())
+	}
+}
+
 func TestServerRejectsMismatchedBodySessionID(t *testing.T) {
 	server := newTestServer()
 
@@ -88,6 +134,7 @@ func TestServerRejectsMismatchedBodySessionID(t *testing.T) {
 		"event_id": "evt_123",
 		"session_id": "session_body",
 		"type": "session_started",
+		"actor": "agent",
 		"sequence": 1,
 		"idempotency_key": "evt_123:idempotency",
 		"payload": {"source": "agent"}
