@@ -1,0 +1,4 @@
+{
+  "extends": "@prelude/config/typescript/react-library",
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

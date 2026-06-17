@@ -1,0 +1,4 @@
+{
+  "extends": "@prelude/config/typescript/base",
+  "include": ["src/**/*.ts"]
+}

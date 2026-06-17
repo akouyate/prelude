@@ -1,0 +1,82 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  createdAt DateTime @default(now())
+  jobs      Job[]
+}
+
+model Job {
+  id             String          @id @default(cuid())
+  organizationId String
+  title          String
+  location       String?
+  description    String
+  createdAt      DateTime        @default(now())
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  preInterviews  PreInterview[]
+  candidates     Candidate[]
+}
+
+model PreInterview {
+  id          String          @id @default(cuid())
+  jobId       String
+  status      String          @default("draft")
+  publicToken String          @unique
+  createdAt   DateTime        @default(now())
+  job         Job             @relation(fields: [jobId], references: [id])
+  questions   Question[]
+  submissions Submission[]
+}
+
+model Question {
+  id                 String       @id @default(cuid())
+  preInterviewId     String
+  prompt             String
+  expectedSignal     String
+  maxDurationSeconds Int          @default(90)
+  position           Int
+  preInterview       PreInterview @relation(fields: [preInterviewId], references: [id])
+  answers            Answer[]
+}
+
+model Candidate {
+  id          String       @id @default(cuid())
+  jobId       String
+  fullName    String
+  email       String
+  status      String       @default("to_review")
+  createdAt   DateTime     @default(now())
+  job         Job          @relation(fields: [jobId], references: [id])
+  submissions Submission[]
+}
+
+model Submission {
+  id             String       @id @default(cuid())
+  candidateId    String
+  preInterviewId String
+  submittedAt    DateTime     @default(now())
+  candidate      Candidate    @relation(fields: [candidateId], references: [id])
+  preInterview   PreInterview @relation(fields: [preInterviewId], references: [id])
+  answers        Answer[]
+}
+
+model Answer {
+  id           String     @id @default(cuid())
+  submissionId String
+  questionId   String
+  mode         String
+  transcript   String?
+  text         String?
+  mediaUrl     String?
+  submission   Submission @relation(fields: [submissionId], references: [id])
+  question     Question   @relation(fields: [questionId], references: [id])
+}

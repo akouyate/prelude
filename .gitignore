@@ -1,0 +1,23 @@
+# dependencies
+node_modules
+.pnp
+.pnp.*
+
+# build outputs
+.next
+out
+dist
+coverage
+playwright-report
+test-results
+.turbo
+*.tsbuildinfo
+
+# env
+.env
+.env.*
+!.env.example
+
+# local
+.DS_Store
+*.log

@@ -1,0 +1,27 @@
+{
+  "name": "@prelude/db",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/client.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "db:generate": "prisma generate --schema prisma/schema.prisma",
+    "db:migrate": "prisma migrate dev --schema prisma/schema.prisma"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.19.3"
+  },
+  "devDependencies": {
+    "@prelude/config": "workspace:*",
+    "@types/node": "^20.19.5",
+    "prisma": "^6.19.3",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
