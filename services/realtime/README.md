@@ -10,9 +10,10 @@ and token creation without changing HTTP contracts.
 
 - Health endpoint.
 - Create interview session.
-- Return a mocked LiveKit join response.
+- Return mocked LiveKit join responses for candidate and agent participants.
 - Ingest realtime events idempotently in memory.
 - Fetch a session with its ingested events.
+- Serve the Python worker config for a mocked InterviewPlan.
 
 Out of scope for this POC:
 
@@ -73,11 +74,16 @@ curl http://localhost:8080/v1/interview-sessions/{session_id}
 ```
 
 ```bash
+curl http://localhost:8080/v1/interview-sessions/{session_id}/agent-config
+```
+
+```bash
 curl -X POST http://localhost:8080/v1/interview-sessions/{session_id}/events \
   -H 'content-type: application/json' \
   -d '{
     "event_id": "evt_123",
     "type": "session_started",
+    "actor": "agent",
     "sequence": 1,
     "idempotency_key": "session_123:session_started:1",
     "payload": {"provider": "mock"}

@@ -2,8 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.application.ports import ProviderAdapter, RealtimeApiClient
-from app.domain.models import EventType, InterviewEvent, InterviewPlan, InterviewQuestion
+from app.application.ports import LiveKitRoomAdapter, ProviderAdapter, RealtimeApiClient
+from app.domain.models import (
+    AgentLiveKitJoin,
+    EventType,
+    InterviewEvent,
+    InterviewPlan,
+    InterviewQuestion,
+)
 from app.domain.state_machine import InterviewerStateMachine
 
 
@@ -21,19 +27,46 @@ class InterviewSessionRunner:
         provider: ProviderAdapter,
         realtime_api: RealtimeApiClient,
         session_id: str,
+        livekit_room: LiveKitRoomAdapter | None = None,
+        livekit_join: AgentLiveKitJoin | None = None,
+        provider_name: str = "mock",
     ) -> None:
         self._plan = plan
         self._provider = provider
         self._realtime_api = realtime_api
         self._session_id = session_id
+        self._livekit_room = livekit_room
+        self._livekit_join = livekit_join
+        self._provider_name = provider_name
         self._state_machine = InterviewerStateMachine()
         self._sequence = 0
         self._events_emitted = 0
 
     async def run(self) -> SessionResult:
+        joined_room = False
         try:
+            if self._livekit_room and self._livekit_join:
+                await self._livekit_room.join(self._livekit_join)
+                joined_room = True
+                await self._emit(
+                    EventType.AGENT_JOINED,
+                    {
+                        "agent_participant_id": self._livekit_join.participant,
+                        "provider": self._provider_name,
+                        "room_name": self._livekit_join.room_name,
+                    },
+                )
+
             intro = await self._provider.start_session(self._plan)
-            await self._emit(EventType.SESSION_STARTED, {"plan_id": self._plan.id, "intro": intro})
+            await self._emit(
+                EventType.SESSION_STARTED,
+                {
+                    "plan_id": self._plan.id,
+                    "intro": intro,
+                    "provider": self._provider_name,
+                    "agent_participant_id": self._livekit_join.participant if self._livekit_join else "local-agent",
+                },
+            )
 
             for question_index, question in enumerate(self._plan.questions):
                 await self._run_question(question, question_index)
@@ -54,6 +87,9 @@ class InterviewSessionRunner:
         except Exception as exc:
             await self._emit_failure(exc)
             raise
+        finally:
+            if joined_room and self._livekit_room:
+                await self._livekit_room.disconnect()
 
     async def _run_question(self, question: InterviewQuestion, question_index: int) -> None:
         utterance = await self._provider.ask_question(question)

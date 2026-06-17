@@ -61,6 +61,7 @@ Every event sent from Python to Go uses the same envelope:
   "event_id": "evt_01",
   "session_id": "session_01",
   "type": "question_asked",
+  "actor": "agent",
   "sequence": 12,
   "idempotency_key": "session_01:question_asked:q_01:1",
   "occurred_at": "2026-06-17T10:30:00.000Z",
@@ -71,6 +72,7 @@ Every event sent from Python to Go uses the same envelope:
 Rules:
 
 - `eventId` is unique.
+- `actor` is required and identifies the emitter as `agent`, `candidate`, or `system`.
 - `sequence` is monotonic per session from the producer perspective.
 - `idempotencyKey` must be stable for retries.
 - `occurredAt` is provider/runtime time in ISO 8601.
@@ -198,6 +200,17 @@ Output:
 
 - `session`
 
+### `GET /v1/interview-sessions/:sessionId/agent-config`
+
+Called by the Python worker before joining the LiveKit room.
+
+Output:
+
+- `session`
+- `livekit_join`: room URL, room name, short-lived agent token, participant id
+- `interview_plan`: mocked POC plan until generated plans are persisted
+- `provider`: `mock` for the local POC, then `openai_realtime`
+
 ### `POST /v1/interview-sessions/:sessionId/events`
 
 Called by the Python worker to append normalized events.
@@ -205,6 +218,7 @@ Called by the Python worker to append normalized events.
 Input:
 
 - `LiveInterviewEvent`
+- `actor` is required and must identify the emitter.
 
 Output:
 

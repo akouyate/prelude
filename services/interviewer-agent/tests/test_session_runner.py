@@ -1,10 +1,23 @@
 import pytest
 import json
+from dataclasses import dataclass, field
 
 from app.adapters.mock_openai_realtime import MockOpenAIRealtimeAdapter
 from app.adapters.realtime_api import InMemoryRealtimeApiClient
 from app.application.session_runner import InterviewSessionRunner
-from app.domain.models import EventType, create_demo_plan
+from app.domain.models import AgentLiveKitJoin, EventActor, EventType, create_demo_plan
+
+
+@dataclass
+class RecordingLiveKitRoom:
+    joins: list[AgentLiveKitJoin] = field(default_factory=list)
+    disconnects: int = 0
+
+    async def join(self, join: AgentLiveKitJoin) -> None:
+        self.joins.append(join)
+
+    async def disconnect(self) -> None:
+        self.disconnects += 1
 
 
 @pytest.mark.asyncio
@@ -22,6 +35,7 @@ async def test_runner_emits_ordered_interview_events() -> None:
     assert result.questions_completed == 3
     assert result.events_emitted == len(realtime_api.events)
     assert realtime_api.events[0].type == EventType.SESSION_STARTED
+    assert all(event.actor == EventActor.AGENT for event in realtime_api.events)
     assert realtime_api.events[-1].type == EventType.SESSION_COMPLETED
     assert [event.sequence for event in realtime_api.events] == list(
         range(1, len(realtime_api.events) + 1)
@@ -33,3 +47,36 @@ async def test_runner_emits_ordered_interview_events() -> None:
     assert realtime_api.events[1].payload["question_index"] == 0
     assert realtime_api.events[-1].payload["completed_reason"] == "all_questions_completed"
     assert any(event.type == EventType.FOLLOWUP_ASKED for event in realtime_api.events)
+
+
+@pytest.mark.asyncio
+async def test_runner_joins_livekit_room_before_intro_when_join_is_provided() -> None:
+    realtime_api = InMemoryRealtimeApiClient()
+    livekit_room = RecordingLiveKitRoom()
+    join = AgentLiveKitJoin(
+        room_name="prelude-session-test",
+        url="wss://livekit.example.test",
+        token="mock_lk_session-test_agent-session-test",
+        participant="agent-session-test",
+        expires_at="2026-06-17T10:15:00Z",
+    )
+    runner = InterviewSessionRunner(
+        plan=create_demo_plan(),
+        provider=MockOpenAIRealtimeAdapter(),
+        realtime_api=realtime_api,
+        session_id="session-test",
+        livekit_room=livekit_room,
+        livekit_join=join,
+    )
+
+    await runner.run()
+
+    assert livekit_room.joins == [join]
+    assert livekit_room.disconnects == 1
+    assert realtime_api.events[0].type == EventType.AGENT_JOINED
+    assert realtime_api.events[0].payload == {
+        "agent_participant_id": "agent-session-test",
+        "provider": "mock",
+        "room_name": "prelude-session-test",
+    }
+    assert realtime_api.events[1].type == EventType.SESSION_STARTED

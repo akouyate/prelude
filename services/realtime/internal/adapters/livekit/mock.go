@@ -23,7 +23,7 @@ func (g *MockGateway) CreateJoin(_ context.Context, input application.LiveKitJoi
 	return application.LiveKitJoin{
 		RoomName:    input.RoomName,
 		URL:         g.URL,
-		Token:       "mock_lk_" + input.SessionID,
+		Token:       "mock_lk_" + input.SessionID + "_" + input.Participant,
 		Participant: input.Participant,
 		ExpiresAt:   time.Now().UTC().Add(15 * time.Minute),
 	}, nil

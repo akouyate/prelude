@@ -7,6 +7,7 @@ from app.domain.models import EventType
 
 class InterviewerState(StrEnum):
     CREATED = "created"
+    JOINED = "joined"
     INTRODUCING = "introducing"
     ASKING = "asking"
     LISTENING = "listening"
@@ -25,6 +26,11 @@ class InterviewerStateMachine:
 
     _TRANSITIONS: dict[InterviewerState, dict[EventType, InterviewerState]] = {
         InterviewerState.CREATED: {
+            EventType.AGENT_JOINED: InterviewerState.JOINED,
+            EventType.SESSION_STARTED: InterviewerState.INTRODUCING,
+            EventType.SESSION_FAILED: InterviewerState.FAILED,
+        },
+        InterviewerState.JOINED: {
             EventType.SESSION_STARTED: InterviewerState.INTRODUCING,
             EventType.SESSION_FAILED: InterviewerState.FAILED,
         },

@@ -32,6 +32,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", s.handleHealth)
 	s.mux.HandleFunc("POST /v1/interview-sessions", s.handleCreateSession)
 	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}", s.handleGetSession)
+	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}/agent-config", s.handleGetAgentConfig)
 	s.mux.HandleFunc("POST /v1/interview-sessions/{session_id}/events", s.handleIngestEvent)
 }
 
@@ -78,14 +79,25 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]domain.Session{"session": session})
 }
 
+func (s *Server) handleGetAgentConfig(w http.ResponseWriter, r *http.Request) {
+	config, err := s.service.GetAgentConfig(r.Context(), r.PathValue("session_id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, config)
+}
+
 type ingestEventRequest struct {
-	EventID        string           `json:"event_id"`
-	SessionID      string           `json:"session_id"`
-	Type           domain.EventType `json:"type"`
-	Sequence       int              `json:"sequence"`
-	IdempotencyKey string           `json:"idempotency_key"`
-	OccurredAt     string           `json:"occurred_at"`
-	Payload        json.RawMessage  `json:"payload"`
+	EventID        string            `json:"event_id"`
+	SessionID      string            `json:"session_id"`
+	Type           domain.EventType  `json:"type"`
+	Actor          domain.EventActor `json:"actor"`
+	Sequence       int               `json:"sequence"`
+	IdempotencyKey string            `json:"idempotency_key"`
+	OccurredAt     string            `json:"occurred_at"`
+	Payload        json.RawMessage   `json:"payload"`
 }
 
 func (s *Server) handleIngestEvent(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +123,7 @@ func (s *Server) handleIngestEvent(w http.ResponseWriter, r *http.Request) {
 		SessionID:      sessionID,
 		EventID:        request.EventID,
 		Type:           request.Type,
+		Actor:          request.Actor,
 		Sequence:       request.Sequence,
 		IdempotencyKey: request.IdempotencyKey,
 		OccurredAt:     occurredAt,

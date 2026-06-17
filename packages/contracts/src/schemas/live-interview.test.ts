@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   liveInterviewEventSchema,
   liveInterviewPlanSchema,
-  liveInterviewSessionSchema
+  liveInterviewSessionSchema,
+  liveInterviewWorkerAgentConfigSchema
 } from "./live-interview";
 
 describe("liveInterviewPlanSchema", () => {
@@ -53,6 +54,7 @@ describe("liveInterviewEventSchema", () => {
       eventId: "evt_01",
       sessionId: "session_01",
       type: "question_asked",
+      actor: "agent",
       sequence: 3,
       idempotencyKey: "session_01:question_asked:q_01:1",
       occurredAt: "2026-06-17T10:30:00.000Z",
@@ -71,6 +73,7 @@ describe("liveInterviewEventSchema", () => {
       eventId: "evt_01",
       sessionId: "session_01",
       type: "session_failed",
+      actor: "agent",
       sequence: 7,
       idempotencyKey: "session_01:failed:provider_timeout",
       occurredAt: "2026-06-17T10:30:00.000Z",
@@ -82,6 +85,48 @@ describe("liveInterviewEventSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("liveInterviewWorkerAgentConfigSchema", () => {
+  it("accepts the Go realtime API worker config response", () => {
+    const result = liveInterviewWorkerAgentConfigSchema.safeParse({
+      session: {
+        id: "session_01",
+        interview_plan_id: "plan_01",
+        candidate_id: "candidate_01",
+        status: "waiting_candidate",
+        livekit_room_name: "prelude-session-01",
+        allowed_modalities: ["audio", "video"],
+        created_at: "2026-06-17T10:00:00.000Z",
+        updated_at: "2026-06-17T10:00:00.000Z"
+      },
+      livekit_join: {
+        room_name: "prelude-session-01",
+        url: "wss://mock-livekit.prelude.local",
+        token: "mock_lk_session_01_agent-session_01",
+        participant: "agent-session_01",
+        expires_at: "2026-06-17T10:15:00.000Z"
+      },
+      interview_plan: {
+        id: "plan_01",
+        role_title: "Product Manager",
+        language: "fr",
+        questions: [
+          {
+            id: "q1",
+            prompt: "Pouvez-vous vous presenter brievement ?",
+            category: "motivation"
+          }
+        ],
+        allow_video: true,
+        allow_audio_only: true,
+        max_followups_per_question: 1
+      },
+      provider: "mock"
+    });
+
+    expect(result.success).toBe(true);
   });
 });
 
