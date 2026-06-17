@@ -9,9 +9,10 @@ export type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const variants: Record<ButtonVariant, string> = {
-  primary: "bg-meadow-600 text-white hover:bg-meadow-700",
-  secondary: "border border-ink-200 bg-white text-ink-900 hover:bg-ink-50",
-  ghost: "text-ink-700 hover:bg-ink-100"
+  primary: "bg-ink-900 text-white hover:bg-ink-800",
+  secondary:
+    "border border-ink-300 bg-white text-ink-900 hover:border-ink-900 hover:bg-ink-50",
+  ghost: "text-ink-800 hover:bg-ink-100"
 };
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
@@ -21,7 +22,7 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         type={type}
         className={cn(
-          "inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-meadow-500 disabled:pointer-events-none disabled:opacity-50",
+          "inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-300 disabled:pointer-events-none disabled:opacity-50",
           variants[variant],
           className
         )}

@@ -14,7 +14,15 @@ export default defineConfig({
   projects: [
     {
       name: "mobile-chromium",
-      use: { ...devices["Pixel 7"] }
+      use: {
+        ...devices["Pixel 7"],
+        launchOptions: {
+          args: [
+            "--use-fake-device-for-media-stream",
+            "--use-fake-ui-for-media-stream"
+          ]
+        }
+      }
     }
   ]
 });
