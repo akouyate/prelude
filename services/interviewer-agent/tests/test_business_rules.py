@@ -154,7 +154,22 @@ async def test_runner_emits_events_in_question_lifecycle_order() -> None:
 
     await runner.run()
 
-    assert [event.type for event in realtime_api.events] == [
+    business_events = [
+        event.type
+        for event in realtime_api.events
+        if event.type
+        in {
+            EventType.SESSION_STARTED,
+            EventType.QUESTION_ASKED,
+            EventType.CANDIDATE_TURN_STARTED,
+            EventType.CANDIDATE_TURN_FINALIZED,
+            EventType.FOLLOWUP_ASKED,
+            EventType.QUESTION_COMPLETED,
+            EventType.SESSION_CLOSING,
+            EventType.SESSION_COMPLETED,
+        }
+    ]
+    assert business_events == [
         EventType.SESSION_STARTED,
         EventType.QUESTION_ASKED,
         EventType.CANDIDATE_TURN_STARTED,
@@ -166,6 +181,8 @@ async def test_runner_emits_events_in_question_lifecycle_order() -> None:
         EventType.SESSION_CLOSING,
         EventType.SESSION_COMPLETED,
     ]
+    assert EventType.AGENT_SPEECH_STARTED in [event.type for event in realtime_api.events]
+    assert EventType.CANDIDATE_TURN_DETECTED in [event.type for event in realtime_api.events]
 
 
 @pytest.mark.asyncio

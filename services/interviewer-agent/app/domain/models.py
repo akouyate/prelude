@@ -38,6 +38,7 @@ class CandidateTurn(BaseModel):
     is_complete: bool = True
     repeat_requested: bool = False
     skip_requested: bool = False
+    wait_requested: bool = False
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     ended_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -51,10 +52,22 @@ class EventActor(StrEnum):
 class EventType(StrEnum):
     AGENT_JOINED = "agent_joined"
     SESSION_STARTED = "session_started"
+    AGENT_SPEECH_STARTED = "agent_speech_started"
+    AGENT_SPEECH_COMPLETED = "agent_speech_completed"
+    AGENT_SPEECH_INTERRUPTED = "agent_speech_interrupted"
     QUESTION_ASKED = "question_asked"
     QUESTION_REPEATED = "question_repeated"
+    CANDIDATE_SPEECH_STARTED = "candidate_speech_started"
+    CANDIDATE_SPEECH_STOPPED = "candidate_speech_stopped"
+    CANDIDATE_TURN_DETECTED = "candidate_turn_detected"
     CANDIDATE_TURN_STARTED = "candidate_turn_started"
     CANDIDATE_TURN_FINALIZED = "candidate_turn_finalized"
+    BARGE_IN_DETECTED = "barge_in_detected"
+    BARGE_IN_ACCEPTED = "barge_in_accepted"
+    BARGE_IN_REJECTED = "barge_in_rejected"
+    BACKCHANNEL_DETECTED = "backchannel_detected"
+    SILENCE_TIMEOUT_STARTED = "silence_timeout_started"
+    WAIT_REQUESTED = "wait_requested"
     SOFT_REPROMPTED = "soft_reprompted"
     FOLLOWUP_ASKED = "followup_asked"
     QUESTION_COMPLETED = "question_completed"

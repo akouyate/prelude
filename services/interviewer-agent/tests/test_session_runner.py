@@ -35,7 +35,8 @@ async def test_runner_emits_ordered_interview_events() -> None:
     assert result.questions_completed == 3
     assert result.events_emitted == len(realtime_api.events)
     assert realtime_api.events[0].type == EventType.SESSION_STARTED
-    assert all(event.actor == EventActor.AGENT for event in realtime_api.events)
+    assert any(event.actor == EventActor.CANDIDATE for event in realtime_api.events)
+    assert any(event.actor == EventActor.SYSTEM for event in realtime_api.events)
     assert realtime_api.events[-1].type == EventType.SESSION_COMPLETED
     assert realtime_api.events[-2].type == EventType.SESSION_CLOSING
     assert [event.sequence for event in realtime_api.events] == list(
@@ -45,9 +46,16 @@ async def test_runner_emits_ordered_interview_events() -> None:
     assert first_payload["event_id"].startswith("evt_")
     assert first_payload["idempotency_key"]
     assert first_payload["sequence"] == 1
-    assert realtime_api.events[1].payload["question_index"] == 0
+    first_question = next(
+        event for event in realtime_api.events if event.type == EventType.QUESTION_ASKED
+    )
+    assert first_question.payload["question_index"] == 0
     assert realtime_api.events[-1].payload["completed_reason"] == "all_questions_completed"
     assert any(event.type == EventType.FOLLOWUP_ASKED for event in realtime_api.events)
+    assert any(event.type == EventType.AGENT_SPEECH_STARTED for event in realtime_api.events)
+    assert any(event.type == EventType.AGENT_SPEECH_COMPLETED for event in realtime_api.events)
+    assert any(event.type == EventType.CANDIDATE_SPEECH_STARTED for event in realtime_api.events)
+    assert any(event.type == EventType.CANDIDATE_TURN_DETECTED for event in realtime_api.events)
 
 
 @pytest.mark.asyncio
@@ -82,3 +90,28 @@ async def test_runner_joins_livekit_room_before_intro_when_join_is_provided() ->
     }
     assert realtime_api.events[1].type == EventType.SESSION_STARTED
     assert realtime_api.events[-2].type == EventType.SESSION_CLOSING
+
+
+@pytest.mark.asyncio
+async def test_runner_can_smoke_mocked_candidate_barge_in() -> None:
+    realtime_api = InMemoryRealtimeApiClient()
+    runner = InterviewSessionRunner(
+        plan=create_demo_plan(),
+        provider=MockOpenAIRealtimeAdapter(),
+        realtime_api=realtime_api,
+        session_id="session-test",
+        simulate_first_question_barge_in=True,
+    )
+
+    await runner.run()
+
+    assert any(event.type == EventType.BARGE_IN_DETECTED for event in realtime_api.events)
+    accepted = next(
+        event for event in realtime_api.events if event.type == EventType.BARGE_IN_ACCEPTED
+    )
+    interrupted = next(
+        event for event in realtime_api.events if event.type == EventType.AGENT_SPEECH_INTERRUPTED
+    )
+    assert accepted.actor == EventActor.SYSTEM
+    assert interrupted.payload["cancel_agent_audio"] is True
+    assert interrupted.payload["cancel_latency_ms"] == 120

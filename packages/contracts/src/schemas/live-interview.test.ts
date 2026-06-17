@@ -134,6 +134,163 @@ describe("liveInterviewEventSchema", () => {
     expect(reprompted.success).toBe(true);
     expect(closing.success).toBe(true);
   });
+
+  it("accepts turn-taking guardrail events", () => {
+    const eventBase = {
+      sessionId: "session_01",
+      actor: "system",
+      idempotencyKey: "session_01:turn-taking",
+      occurredAt: "2026-06-17T10:30:00.000Z"
+    };
+    const events = [
+      {
+        ...eventBase,
+        eventId: "evt_agent_speech_started",
+        type: "agent_speech_started",
+        actor: "agent",
+        sequence: 1,
+        payload: {
+          questionId: "q_01",
+          utteranceId: "q_01:question:0",
+          utteranceKind: "question"
+        }
+      },
+      {
+        ...eventBase,
+        eventId: "evt_agent_speech_completed",
+        type: "agent_speech_completed",
+        actor: "agent",
+        sequence: 2,
+        payload: {
+          questionId: "q_01",
+          utteranceId: "q_01:question:0",
+          utteranceKind: "question",
+          audioDurationMs: 2400
+        }
+      },
+      {
+        ...eventBase,
+        eventId: "evt_candidate_speech_started",
+        type: "candidate_speech_started",
+        actor: "candidate",
+        sequence: 3,
+        payload: { questionId: "q_01", confidence: 0.94 }
+      },
+      {
+        ...eventBase,
+        eventId: "evt_candidate_turn_detected",
+        type: "candidate_turn_detected",
+        sequence: 4,
+        payload: {
+          questionId: "q_01",
+          semanticComplete: true,
+          stableSilenceMs: 320
+        }
+      },
+      {
+        ...eventBase,
+        eventId: "evt_barge_in_detected",
+        type: "barge_in_detected",
+        actor: "candidate",
+        sequence: 5,
+        payload: {
+          utteranceId: "q_01:question:0",
+          overlapMs: 340,
+          candidateSpeechMs: 340
+        }
+      },
+      {
+        ...eventBase,
+        eventId: "evt_barge_in_accepted",
+        type: "barge_in_accepted",
+        sequence: 6,
+        payload: {
+          utteranceId: "q_01:question:0",
+          cancelLatencyMs: 120,
+          truncatedAtMs: 340
+        }
+      },
+      {
+        ...eventBase,
+        eventId: "evt_agent_speech_interrupted",
+        type: "agent_speech_interrupted",
+        sequence: 7,
+        payload: {
+          utteranceId: "q_01:question:0",
+          cancelLatencyMs: 120,
+          cancelAgentAudio: true
+        }
+      },
+      {
+        ...eventBase,
+        eventId: "evt_barge_in_rejected",
+        type: "barge_in_rejected",
+        sequence: 8,
+        payload: {
+          reason: "backchannel",
+          observedSpeechMs: 180
+        }
+      },
+      {
+        ...eventBase,
+        eventId: "evt_backchannel_detected",
+        type: "backchannel_detected",
+        sequence: 9,
+        payload: {
+          reason: "backchannel",
+          observedSpeechMs: 180
+        }
+      },
+      {
+        ...eventBase,
+        eventId: "evt_silence_timeout",
+        type: "silence_timeout_started",
+        sequence: 10,
+        payload: {
+          questionId: "q_01",
+          thresholdMs: 10000,
+          silentForMs: 12000,
+          tier: "soft_prompt"
+        }
+      },
+      {
+        ...eventBase,
+        eventId: "evt_wait_requested",
+        type: "wait_requested",
+        actor: "candidate",
+        sequence: 11,
+        payload: {
+          questionId: "q_01",
+          reason: "candidate_requested_time"
+        }
+      },
+      {
+        ...eventBase,
+        eventId: "evt_candidate_speech_stopped",
+        type: "candidate_speech_stopped",
+        actor: "candidate",
+        sequence: 12,
+        payload: { questionId: "q_01", speechDurationMs: 2100 }
+      }
+    ];
+
+    expect(events.every((event) => liveInterviewEventSchema.safeParse(event).success)).toBe(true);
+  });
+
+  it("rejects sequence zero to match the Go event contract", () => {
+    const result = liveInterviewEventSchema.safeParse({
+      eventId: "evt_zero",
+      sessionId: "session_01",
+      type: "candidate_speech_started",
+      actor: "candidate",
+      sequence: 0,
+      idempotencyKey: "session_01:zero",
+      occurredAt: "2026-06-17T10:30:00.000Z",
+      payload: { questionId: "q_01" }
+    });
+
+    expect(result.success).toBe(false);
+  });
 });
 
 describe("liveInterviewWorkerAgentConfigSchema", () => {

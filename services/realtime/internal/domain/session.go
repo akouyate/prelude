@@ -32,10 +32,22 @@ const (
 	EventSessionStarted         EventType = "session_started"
 	EventCandidateJoined        EventType = "candidate_joined"
 	EventAgentJoined            EventType = "agent_joined"
+	EventAgentSpeechStarted     EventType = "agent_speech_started"
+	EventAgentSpeechCompleted   EventType = "agent_speech_completed"
+	EventAgentSpeechInterrupted EventType = "agent_speech_interrupted"
 	EventQuestionAsked          EventType = "question_asked"
 	EventQuestionRepeated       EventType = "question_repeated"
+	EventCandidateSpeechStarted EventType = "candidate_speech_started"
+	EventCandidateSpeechStopped EventType = "candidate_speech_stopped"
+	EventCandidateTurnDetected  EventType = "candidate_turn_detected"
 	EventCandidateTurnStarted   EventType = "candidate_turn_started"
 	EventCandidateTurnFinalized EventType = "candidate_turn_finalized"
+	EventBargeInDetected        EventType = "barge_in_detected"
+	EventBargeInAccepted        EventType = "barge_in_accepted"
+	EventBargeInRejected        EventType = "barge_in_rejected"
+	EventBackchannelDetected    EventType = "backchannel_detected"
+	EventSilenceTimeoutStarted  EventType = "silence_timeout_started"
+	EventWaitRequested          EventType = "wait_requested"
 	EventSoftReprompted         EventType = "soft_reprompted"
 	EventFollowupAsked          EventType = "followup_asked"
 	EventQuestionCompleted      EventType = "question_completed"
@@ -107,10 +119,22 @@ func CanApplyEvent(status SessionStatus, eventType EventType) bool {
 	case EventSessionFailed:
 		return true
 	case EventSessionCompleted,
+		EventAgentSpeechStarted,
+		EventAgentSpeechCompleted,
+		EventAgentSpeechInterrupted,
 		EventQuestionAsked,
 		EventQuestionRepeated,
+		EventCandidateSpeechStarted,
+		EventCandidateSpeechStopped,
+		EventCandidateTurnDetected,
 		EventCandidateTurnStarted,
 		EventCandidateTurnFinalized,
+		EventBargeInDetected,
+		EventBargeInAccepted,
+		EventBargeInRejected,
+		EventBackchannelDetected,
+		EventSilenceTimeoutStarted,
+		EventWaitRequested,
 		EventSoftReprompted,
 		EventFollowupAsked,
 		EventSessionClosing,
