@@ -86,6 +86,54 @@ describe("liveInterviewEventSchema", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("accepts state-machine control events", () => {
+    const repeated = liveInterviewEventSchema.safeParse({
+      eventId: "evt_repeat",
+      sessionId: "session_01",
+      type: "question_repeated",
+      actor: "agent",
+      sequence: 4,
+      idempotencyKey: "session_01:repeat:q_01",
+      occurredAt: "2026-06-17T10:30:00.000Z",
+      payload: {
+        questionId: "q_01",
+        prompt: "Pouvez-vous presenter votre parcours en quelques phrases ?",
+        reason: "candidate_requested_repeat"
+      }
+    });
+    const reprompted = liveInterviewEventSchema.safeParse({
+      eventId: "evt_reprompt",
+      sessionId: "session_01",
+      type: "soft_reprompted",
+      actor: "agent",
+      sequence: 6,
+      idempotencyKey: "session_01:reprompt:q_01",
+      occurredAt: "2026-06-17T10:30:10.000Z",
+      payload: {
+        questionId: "q_01",
+        prompt: "Pouvez-vous preciser en une ou deux phrases ?",
+        repromptsUsed: 1
+      }
+    });
+    const closing = liveInterviewEventSchema.safeParse({
+      eventId: "evt_closing",
+      sessionId: "session_01",
+      type: "session_closing",
+      actor: "agent",
+      sequence: 12,
+      idempotencyKey: "session_01:closing",
+      occurredAt: "2026-06-17T10:34:00.000Z",
+      payload: {
+        completedQuestions: 3,
+        closing: "Merci, l'entretien est termine."
+      }
+    });
+
+    expect(repeated.success).toBe(true);
+    expect(reprompted.success).toBe(true);
+    expect(closing.success).toBe(true);
+  });
 });
 
 describe("liveInterviewWorkerAgentConfigSchema", () => {

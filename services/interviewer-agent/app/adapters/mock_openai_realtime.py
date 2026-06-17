@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.domain.models import CandidateTurn, InterviewPlan, InterviewQuestion
+from app.domain.state_machine import INTERVIEWER_STATE_MACHINE_INSTRUCTIONS
 
 
 class MockOpenAIRealtimeAdapter:
@@ -8,6 +9,7 @@ class MockOpenAIRealtimeAdapter:
 
     def __init__(self) -> None:
         self._answers_by_question: dict[str, int] = {}
+        self.system_instructions = INTERVIEWER_STATE_MACHINE_INSTRUCTIONS
 
     async def start_session(self, plan: InterviewPlan) -> str:
         return (
@@ -50,4 +52,3 @@ class MockOpenAIRealtimeAdapter:
 
     async def close_session(self) -> str:
         return "Merci, l'entretien est termine. Le recruteur recevra un resume structure."
-

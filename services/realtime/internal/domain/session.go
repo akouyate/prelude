@@ -33,10 +33,13 @@ const (
 	EventCandidateJoined        EventType = "candidate_joined"
 	EventAgentJoined            EventType = "agent_joined"
 	EventQuestionAsked          EventType = "question_asked"
+	EventQuestionRepeated       EventType = "question_repeated"
 	EventCandidateTurnStarted   EventType = "candidate_turn_started"
 	EventCandidateTurnFinalized EventType = "candidate_turn_finalized"
+	EventSoftReprompted         EventType = "soft_reprompted"
 	EventFollowupAsked          EventType = "followup_asked"
 	EventQuestionCompleted      EventType = "question_completed"
+	EventSessionClosing         EventType = "session_closing"
 	EventSessionCompleted       EventType = "session_completed"
 	EventSessionFailed          EventType = "session_failed"
 )
@@ -105,9 +108,12 @@ func CanApplyEvent(status SessionStatus, eventType EventType) bool {
 		return true
 	case EventSessionCompleted,
 		EventQuestionAsked,
+		EventQuestionRepeated,
 		EventCandidateTurnStarted,
 		EventCandidateTurnFinalized,
+		EventSoftReprompted,
 		EventFollowupAsked,
+		EventSessionClosing,
 		EventQuestionCompleted:
 		return status == SessionStatusInProgress
 	default:

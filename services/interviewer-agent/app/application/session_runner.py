@@ -73,6 +73,13 @@ class InterviewSessionRunner:
 
             closing = await self._provider.close_session()
             await self._emit(
+                EventType.SESSION_CLOSING,
+                {
+                    "completed_questions": len(self._plan.questions),
+                    "closing": closing,
+                },
+            )
+            await self._emit(
                 EventType.SESSION_COMPLETED,
                 {
                     "completed_reason": "all_questions_completed",
@@ -104,25 +111,61 @@ class InterviewSessionRunner:
         )
 
         followups_used = 0
+        soft_reprompts_used = 0
         while True:
             await self._emit(EventType.CANDIDATE_TURN_STARTED, {"question_id": question.id})
             turn = await self._provider.listen_for_answer(question)
+
+            if turn.repeat_requested:
+                repeated = await self._provider.ask_question(question)
+                await self._emit(
+                    EventType.QUESTION_REPEATED,
+                    {
+                        "question_id": question.id,
+                        "prompt": repeated,
+                        "reason": "candidate_requested_repeat",
+                    },
+                )
+                continue
+
+            completion_reason = self._completion_reason(turn)
             await self._emit(
                 EventType.CANDIDATE_TURN_FINALIZED,
                 {
                     "question_id": question.id,
+                    "completion_reason": completion_reason,
                     "transcript_turn": {
                         "turn_id": f"{self._session_id}:{question.id}:{self._sequence + 1}",
                         "session_id": self._session_id,
                         "question_id": question.id,
                         "speaker": "candidate",
-                        "text": turn.transcript,
+                        "text": turn.transcript or "[no audible response]",
                         "is_final": True,
                         "started_at": turn.started_at.isoformat(),
                         "ended_at": turn.ended_at.isoformat(),
                     },
                 },
             )
+
+            if turn.skip_requested:
+                await self._complete_question(question.id, "skipped")
+                return
+
+            if not turn.is_complete:
+                if soft_reprompts_used < 1:
+                    soft_reprompts_used += 1
+                    await self._emit(
+                        EventType.SOFT_REPROMPTED,
+                        {
+                            "question_id": question.id,
+                            "prompt": "Je n'ai pas assez d'elements. Pouvez-vous preciser en une ou deux phrases ?",
+                            "reprompts_used": soft_reprompts_used,
+                        },
+                    )
+                    continue
+
+                await self._complete_question(question.id, "candidate_silent")
+                return
 
             can_follow_up = followups_used < self._plan.max_followups_per_question
             should_follow_up = can_follow_up and await self._provider.should_follow_up(
@@ -132,13 +175,7 @@ class InterviewSessionRunner:
                 self._plan.max_followups_per_question,
             )
             if not should_follow_up:
-                await self._emit(
-                    EventType.QUESTION_COMPLETED,
-                    {
-                        "question_id": question.id,
-                        "completion_reason": "answered",
-                    },
-                )
+                await self._complete_question(question.id, "answered")
                 return
 
             followups_used += 1
@@ -153,8 +190,24 @@ class InterviewSessionRunner:
                 },
             )
 
+    async def _complete_question(self, question_id: str, completion_reason: str) -> None:
+        await self._emit(
+            EventType.QUESTION_COMPLETED,
+            {
+                "question_id": question_id,
+                "completion_reason": completion_reason,
+            },
+        )
+
+    def _completion_reason(self, turn: object) -> str:
+        if getattr(turn, "skip_requested", False):
+            return "skipped"
+        if not getattr(turn, "is_complete", True):
+            return "incomplete"
+        return "answered"
+
     async def _emit(self, event_type: EventType, payload: dict[str, object]) -> None:
-        self._state_machine.apply(event_type)
+        self._state_machine.apply(event_type, payload)
         self._sequence += 1
         event = InterviewEvent(
             type=event_type,

@@ -1,6 +1,7 @@
 import pytest
 
 from app.adapters.realtime_api import InMemoryRealtimeApiClient
+from app.adapters.mock_openai_realtime import MockOpenAIRealtimeAdapter
 from app.application.session_runner import InterviewSessionRunner
 from app.domain.models import (
     CandidateTurn,
@@ -42,6 +43,25 @@ class PushyProvider:
         return "Closing"
 
 
+class ScriptedProvider(PushyProvider):
+    def __init__(self, turns: list[CandidateTurn]) -> None:
+        self._turns = turns
+
+    async def listen_for_answer(self, question: InterviewQuestion) -> CandidateTurn:
+        if not self._turns:
+            return CandidateTurn(question_id=question.id, transcript="Final answer")
+        return self._turns.pop(0)
+
+    async def should_follow_up(
+        self,
+        question: InterviewQuestion,
+        turn: CandidateTurn,
+        followups_used: int,
+        max_followups: int,
+    ) -> bool:
+        return False
+
+
 def one_question_plan() -> InterviewPlan:
     return InterviewPlan(
         id="plan-test",
@@ -61,28 +81,43 @@ def one_question_plan() -> InterviewPlan:
 def test_one_question_at_a_time_is_enforced() -> None:
     machine = InterviewerStateMachine()
     machine.apply(EventType.SESSION_STARTED)
-    machine.apply(EventType.QUESTION_ASKED)
+    machine.apply(EventType.QUESTION_ASKED, {"question_id": "q1"})
 
     with pytest.raises(InvalidTransitionError):
-        machine.apply(EventType.QUESTION_ASKED)
+        machine.apply(EventType.QUESTION_ASKED, {"question_id": "q2"})
 
 
 def test_repeat_question_keeps_current_question_open() -> None:
     machine = InterviewerStateMachine()
     machine.apply(EventType.SESSION_STARTED)
-    machine.apply(EventType.QUESTION_ASKED)
+    machine.apply(EventType.QUESTION_ASKED, {"question_id": "q1"})
+    machine.apply(EventType.CANDIDATE_TURN_STARTED, {"question_id": "q1"})
 
-    assert machine.apply(EventType.QUESTION_REPEATED) == InterviewerState.ASKING
-    assert machine.apply(EventType.CANDIDATE_TURN_STARTED) == InterviewerState.LISTENING
+    assert (
+        machine.apply(EventType.QUESTION_REPEATED, {"question_id": "q1"})
+        == InterviewerState.ASK_QUESTION
+    )
+    assert (
+        machine.apply(EventType.CANDIDATE_TURN_STARTED, {"question_id": "q1"})
+        == InterviewerState.LISTEN
+    )
 
 
 def test_free_chat_is_rejected() -> None:
     machine = InterviewerStateMachine()
     machine.apply(EventType.SESSION_STARTED)
-    machine.apply(EventType.QUESTION_ASKED)
+    machine.apply(EventType.QUESTION_ASKED, {"question_id": "q1"})
 
     with pytest.raises(InvalidTransitionError):
         machine.apply(EventType.FREE_CHAT_REQUESTED)
+
+
+def test_mock_provider_instructions_reference_state_machine_rules() -> None:
+    provider = MockOpenAIRealtimeAdapter()
+
+    assert "structured first-screening interviewer" in provider.system_instructions
+    assert "Do not ask extra questions" in provider.system_instructions
+    assert "configured follow-up" in provider.system_instructions.lower()
 
 
 @pytest.mark.asyncio
@@ -128,5 +163,88 @@ async def test_runner_emits_events_in_question_lifecycle_order() -> None:
         EventType.CANDIDATE_TURN_STARTED,
         EventType.CANDIDATE_TURN_FINALIZED,
         EventType.QUESTION_COMPLETED,
+        EventType.SESSION_CLOSING,
         EventType.SESSION_COMPLETED,
     ]
+
+
+@pytest.mark.asyncio
+async def test_runner_repeats_question_when_candidate_requests_repeat() -> None:
+    realtime_api = InMemoryRealtimeApiClient(print_events=False)
+    runner = InterviewSessionRunner(
+        plan=one_question_plan(),
+        provider=ScriptedProvider(
+            [
+                CandidateTurn(
+                    question_id="q1",
+                    transcript="Pouvez-vous repeter ?",
+                    repeat_requested=True,
+                ),
+                CandidateTurn(question_id="q1", transcript="Here is my answer"),
+            ]
+        ),
+        realtime_api=realtime_api,
+        session_id="session-repeat",
+    )
+
+    await runner.run()
+
+    assert [event.type for event in realtime_api.events].count(EventType.QUESTION_REPEATED) == 1
+    assert [event.type for event in realtime_api.events].count(EventType.QUESTION_COMPLETED) == 1
+
+
+@pytest.mark.asyncio
+async def test_runner_soft_reprompts_once_for_incomplete_answer() -> None:
+    realtime_api = InMemoryRealtimeApiClient(print_events=False)
+    runner = InterviewSessionRunner(
+        plan=one_question_plan(),
+        provider=ScriptedProvider(
+            [
+                CandidateTurn(
+                    question_id="q1",
+                    transcript="I guess",
+                    is_complete=False,
+                ),
+                CandidateTurn(question_id="q1", transcript="Here is a complete answer"),
+            ]
+        ),
+        realtime_api=realtime_api,
+        session_id="session-soft-reprompt",
+    )
+
+    await runner.run()
+
+    assert [event.type for event in realtime_api.events].count(EventType.SOFT_REPROMPTED) == 1
+    finalized = [
+        event
+        for event in realtime_api.events
+        if event.type == EventType.CANDIDATE_TURN_FINALIZED
+    ]
+    assert finalized[0].payload["completion_reason"] == "incomplete"
+    assert finalized[-1].payload["completion_reason"] == "answered"
+
+
+@pytest.mark.asyncio
+async def test_runner_completes_question_as_skipped_when_candidate_skips() -> None:
+    realtime_api = InMemoryRealtimeApiClient(print_events=False)
+    runner = InterviewSessionRunner(
+        plan=one_question_plan(),
+        provider=ScriptedProvider(
+            [
+                CandidateTurn(
+                    question_id="q1",
+                    transcript="I prefer to skip this one",
+                    skip_requested=True,
+                )
+            ]
+        ),
+        realtime_api=realtime_api,
+        session_id="session-skip",
+    )
+
+    await runner.run()
+
+    completed = [
+        event for event in realtime_api.events if event.type == EventType.QUESTION_COMPLETED
+    ]
+    assert completed[0].payload["completion_reason"] == "skipped"

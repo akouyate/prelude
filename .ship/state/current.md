@@ -2,7 +2,7 @@
 
 ## Objective
 
-Ship GitHub cleanup plus issue #15: build the Python LiveKit Agent POC on top of the live IA interviewer foundation.
+Ship issue #16: refine and implement the controlled live IA interviewer state machine.
 
 ## Source
 
@@ -11,6 +11,7 @@ Ship GitHub cleanup plus issue #15: build the Python LiveKit Agent POC on top of
 - Go Realtime API ticket: https://github.com/akouyate/prelude/issues/14
 - Python LiveKit Agent POC ticket: https://github.com/akouyate/prelude/issues/15
 - Candidate LiveKit room ticket: https://github.com/akouyate/prelude/issues/13
+- Interviewer state machine ticket: https://github.com/akouyate/prelude/issues/16
 
 ## Phases
 
@@ -56,3 +57,7 @@ Ship GitHub cleanup plus issue #15: build the Python LiveKit Agent POC on top of
 - #14 remains open because agent token/config and event actor attribution were missing; those are now part of the #15 branch scope.
 - #15 scope: add a Go agent-config endpoint, mint a distinct agent LiveKit join, require event `actor`, and let the Python runner join a LiveKit room through a mockable adapter before emitting interview events.
 - Validation passed for Go tests/vet/race, Python pytest/compileall, contracts tests, monorepo typecheck/lint/test/build, and a local Go API + Python `--join-livekit` smoke test with 21 persisted events and completed session status.
+- #16 research pass added `docs/research/live-ia-interviewer-state-machine.md`, covering structured interview validity, task dialogue state tracking, clarification, grounding, turn-taking, candidate procedural justice, and AI recruitment fairness.
+- #16 refined scope on GitHub: explicit states, repeat/soft-reprompt/skip intents, one follow-up max, one soft reprompt max, no free chat, provider emits signals but state machine owns policy.
+- #16 implementation adds contextual Python state tracking plus Go/TypeScript contract support for `question_repeated`, `soft_reprompted`, and `session_closing`.
+- Validation passed for Python compileall/pytest, Go test/vet/race, contracts test, monorepo typecheck/lint/test/build, and Go API + Python `--join-livekit` smoke with 22 persisted events.
