@@ -11,6 +11,7 @@ BENCHMARK_ITERATIONS ?= 3
 BENCHMARK_RUN_ID ?=
 BENCHMARK_PERSIST_REALTIME ?=
 REALTIME_API_URL ?=
+LIVE_SMOKE_REALTIME_API_URL ?= http://127.0.0.1:8080
 SESSION_ID ?=
 LIVE_WORKER_SKIP_OPENAI ?=
 LIVE_WORKER_MAX_DURATION_SECONDS ?=
@@ -19,7 +20,7 @@ LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell db-migrate db-generate db-studio agent-benchmark live-openai-worker dev
+.PHONY: help env-up env-down env-reset db-logs db-shell db-migrate db-generate db-studio agent-benchmark live-openai-worker live-smoke-report dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "Prelude local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -110,6 +111,17 @@ live-openai-worker: ## Run the Python OpenAI live interviewer worker for SESSION
 		--session-id "$(SESSION_ID)" \
 		--realtime-api-url "$$realtime_api_url" \
 		$$worker_args
+
+live-smoke-report: ## Print a replayability report for a live interview SESSION_ID.
+	@test -n "$(SESSION_ID)" || (printf "SESSION_ID is required. Example: make live-smoke-report SESSION_ID=is_xxx REALTIME_API_URL=http://127.0.0.1:8080\n"; exit 1)
+	@$(LOAD_ENV); \
+	realtime_api_url="$${REALTIME_API_URL:-$(LIVE_SMOKE_REALTIME_API_URL)}"; \
+	if [ -n "$(REALTIME_API_URL)" ]; then \
+		realtime_api_url="$(REALTIME_API_URL)"; \
+	fi; \
+	node scripts/live-smoke-report.mjs \
+		--session-id "$(SESSION_ID)" \
+		--realtime-api-url "$$realtime_api_url"
 
 dev: env-up ## Start local infrastructure, then run the app dev stack.
 	@$(LOAD_ENV); pnpm dev
