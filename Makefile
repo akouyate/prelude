@@ -10,10 +10,13 @@ BENCHMARK_SCENARIO ?= normal
 BENCHMARK_ITERATIONS ?= 3
 BENCHMARK_RUN_ID ?=
 BENCHMARK_PERSIST_REALTIME ?=
+REALTIME_API_URL ?=
+SESSION_ID ?=
+LIVE_WORKER_SKIP_OPENAI ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell db-migrate db-generate db-studio agent-benchmark dev
+.PHONY: help env-up env-down env-reset db-logs db-shell db-migrate db-generate db-studio agent-benchmark live-openai-worker dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "Prelude local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -75,6 +78,26 @@ agent-benchmark: ## Run the Python live IA provider benchmark harness.
 		--iterations "$(BENCHMARK_ITERATIONS)" \
 		$(if $(BENCHMARK_RUN_ID),--benchmark-run-id "$(BENCHMARK_RUN_ID)") \
 		$$realtime_args
+
+live-openai-worker: ## Run the Python OpenAI live interviewer worker for SESSION_ID.
+	@test -n "$(SESSION_ID)" || (printf "SESSION_ID is required. Example: make live-openai-worker SESSION_ID=is_xxx\n"; exit 1)
+	@$(LOAD_ENV); \
+	realtime_api_url="$${REALTIME_API_URL:-}"; \
+	if [ -n "$(REALTIME_API_URL)" ]; then \
+		realtime_api_url="$(REALTIME_API_URL)"; \
+	fi; \
+	test -n "$$realtime_api_url" || (printf "REALTIME_API_URL is required in .env, shell, or make args.\n"; exit 1); \
+	worker_args=""; \
+	if [ -n "$${REALTIME_API_KEY:-}" ]; then \
+		worker_args="$$worker_args --api-key $$REALTIME_API_KEY"; \
+	fi; \
+	if [ "$(LIVE_WORKER_SKIP_OPENAI)" = "1" ]; then \
+		worker_args="$$worker_args --skip-openai-handshake"; \
+	fi; \
+	cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.live_worker \
+		--session-id "$(SESSION_ID)" \
+		--realtime-api-url "$$realtime_api_url" \
+		$$worker_args
 
 dev: env-up ## Start local infrastructure, then run the app dev stack.
 	@$(LOAD_ENV); pnpm dev

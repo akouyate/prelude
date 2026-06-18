@@ -191,6 +191,40 @@ For `mock_lk_*` tokens the LiveKit adapter records a local join and does not
 require a running LiveKit server. With a real token, it imports the LiveKit SDK
 at join time and connects to the provided room URL.
 
+## Run the OpenAI live worker from Make
+
+After creating a Go realtime session, run the OpenAI-only worker from the
+repository root:
+
+```bash
+make live-openai-worker SESSION_ID={session_id}
+```
+
+The target loads `.env`, requires `REALTIME_API_URL`, fetches:
+
+```text
+GET /v1/interview-sessions/{session_id}/agent-config
+```
+
+Then the worker joins the LiveKit room as `agent-{session_id}`, opens an OpenAI
+Realtime handshake, and persists normalized Prelude events back to the Go API.
+
+For a local room/join smoke without calling OpenAI:
+
+```bash
+make live-openai-worker \
+  SESSION_ID={session_id} \
+  LIVE_WORKER_SKIP_OPENAI=1
+```
+
+When testing against a non-default Go port, override the URL:
+
+```bash
+make live-openai-worker \
+  SESSION_ID={session_id} \
+  REALTIME_API_URL=http://127.0.0.1:18080
+```
+
 ## Test
 
 ```bash
