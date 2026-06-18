@@ -218,7 +218,8 @@ For a bounded real-provider smoke:
 make live-openai-worker \
   SESSION_ID={session_id} \
   LIVE_WORKER_MAX_DURATION_SECONDS=15 \
-  LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS=120
+  LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS=120 \
+  LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS=10
 ```
 
 Manual desktop/mobile smoke:
@@ -230,6 +231,9 @@ Manual desktop/mobile smoke:
 5. Start `make live-openai-worker SESSION_ID={session_id}`.
 6. Confirm the candidate hears interviewer audio and `/transcript` contains the
    interviewer turn, then candidate turns after speech is transcribed.
+7. Stay silent after the first question and confirm the worker emits
+   `silence_timeout_started`, then the interviewer asks whether there is a
+   technical issue or whether the candidate needs a moment.
 
 For a local room/join smoke without calling OpenAI:
 

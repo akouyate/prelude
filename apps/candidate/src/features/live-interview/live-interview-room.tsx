@@ -41,6 +41,7 @@ type LiveInterviewSession = {
 
 type ConnectedRoom = {
   disconnect: () => void;
+  startAudio: () => Promise<void>;
 };
 
 const statusCopy: Record<RoomStatus, string> = {
@@ -60,6 +61,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
   const [session, setSession] = React.useState<LiveInterviewSession | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [isVideoEnabled, setIsVideoEnabled] = React.useState(true);
+  const [isAudioPlaybackBlocked, setIsAudioPlaybackBlocked] = React.useState(false);
   const [localStream, setLocalStream] = React.useState<MediaStream | null>(null);
   const roomRef = React.useRef<ConnectedRoom | null>(null);
   const localStreamRef = React.useRef<MediaStream | null>(null);
@@ -81,6 +83,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
 
   const startInterview = React.useCallback(async () => {
     setError(null);
+    setIsAudioPlaybackBlocked(false);
     setStatus("preparing");
 
     try {
@@ -101,7 +104,9 @@ export function LiveInterviewRoom({ token }: { token: string }) {
         onReconnecting: () => setStatus("reconnecting"),
         onConnected: () => setStatus("interviewer_joining"),
         onReady: () => setStatus("connected"),
-        onDisconnected: () => setStatus("completed")
+        onDisconnected: () => setStatus("completed"),
+        onAudioPlaybackBlocked: () => setIsAudioPlaybackBlocked(true),
+        onAudioPlaybackReady: () => setIsAudioPlaybackBlocked(false)
       });
     } catch (cause) {
       setStatus("failed");
@@ -114,8 +119,18 @@ export function LiveInterviewRoom({ token }: { token: string }) {
     roomRef.current = null;
     stopLocalStream(localStream);
     setLocalStream(null);
+    setIsAudioPlaybackBlocked(false);
     setStatus("completed");
   }, [localStream]);
+
+  const enableAudio = React.useCallback(async () => {
+    try {
+      await roomRef.current?.startAudio();
+      setIsAudioPlaybackBlocked(false);
+    } catch {
+      setIsAudioPlaybackBlocked(true);
+    }
+  }, []);
 
   const isBusy =
     status === "preparing" ||
@@ -190,6 +205,19 @@ export function LiveInterviewRoom({ token }: { token: string }) {
             <div className="mt-4 flex gap-2 rounded-md bg-coral-100 p-3 text-sm text-ink-900">
               <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-coral-500" />
               <p>{error}</p>
+            </div>
+          ) : null}
+
+          {isAudioPlaybackBlocked ? (
+            <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-ink-900">
+              <p className="font-medium">Audio paused by your browser</p>
+              <p className="mt-1 text-ink-600">
+                Tap once to hear the interviewer on this device.
+              </p>
+              <Button className="mt-3 w-full" onClick={enableAudio} variant="secondary">
+                <Mic aria-hidden="true" className="h-4 w-4" />
+                Enable audio
+              </Button>
             </div>
           ) : null}
 
@@ -280,6 +308,8 @@ async function connectRoom({
   stream,
   onConnected,
   onDisconnected,
+  onAudioPlaybackBlocked,
+  onAudioPlaybackReady,
   onReady,
   onReconnecting
 }: {
@@ -287,6 +317,8 @@ async function connectRoom({
   stream: MediaStream;
   onConnected: () => void;
   onDisconnected: () => void;
+  onAudioPlaybackBlocked: () => void;
+  onAudioPlaybackReady: () => void;
   onReady: () => void;
   onReconnecting: () => void;
 }): Promise<ConnectedRoom> {
@@ -294,7 +326,8 @@ async function connectRoom({
     onConnected();
     onReady();
     return {
-      disconnect: onDisconnected
+      disconnect: onDisconnected,
+      startAudio: async () => undefined
     };
   }
 
@@ -304,6 +337,13 @@ async function connectRoom({
   room.on(RoomEvent.Reconnecting, onReconnecting);
   room.on(RoomEvent.Reconnected, onConnected);
   room.on(RoomEvent.Disconnected, onDisconnected);
+  room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+    if (room.canPlaybackAudio) {
+      onAudioPlaybackReady();
+    } else {
+      onAudioPlaybackBlocked();
+    }
+  });
   room.on(RoomEvent.TrackSubscribed, (track) => {
     if (track.kind !== Track.Kind.Audio) {
       return;
@@ -312,9 +352,13 @@ async function connectRoom({
     const element = track.attach();
     element.autoplay = true;
     element.controls = false;
+    element.style.display = "none";
     remoteAudioElements.push(element);
     document.body.appendChild(element);
-    void element.play().catch(() => undefined);
+    void element
+      .play()
+      .then(onAudioPlaybackReady)
+      .catch(onAudioPlaybackBlocked);
   });
   room.on(RoomEvent.TrackUnsubscribed, (track) => {
     track.detach().forEach((element) => {
@@ -329,10 +373,18 @@ async function connectRoom({
   try {
     await room.connect(session.livekit.url, session.livekit.token);
     await Promise.all(
-      stream.getTracks().map((track) => room.localParticipant.publishTrack(track))
+      stream.getTracks().map((track) =>
+        room.localParticipant.publishTrack(track, {
+          source:
+            track.kind === "audio" ? Track.Source.Microphone : Track.Source.Camera
+        })
+      )
     );
     onConnected();
     await markCandidateJoined(session, stream);
+    if (!room.canPlaybackAudio) {
+      onAudioPlaybackBlocked();
+    }
     onReady();
   } catch (cause) {
     remoteAudioElements.forEach((element) => element.remove());
@@ -341,6 +393,11 @@ async function connectRoom({
   }
 
   return {
+    startAudio: async () => {
+      await room.startAudio();
+      await Promise.all(remoteAudioElements.map((element) => element.play()));
+      onAudioPlaybackReady();
+    },
     disconnect: () => {
       remoteAudioElements.forEach((element) => element.remove());
       room.disconnect();

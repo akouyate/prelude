@@ -15,6 +15,7 @@ SESSION_ID ?=
 LIVE_WORKER_SKIP_OPENAI ?=
 LIVE_WORKER_MAX_DURATION_SECONDS ?=
 LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS ?=
+LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS ?=
 
 .DEFAULT_GOAL := help
 
@@ -101,6 +102,9 @@ live-openai-worker: ## Run the Python OpenAI live interviewer worker for SESSION
 	fi; \
 	if [ -n "$(LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS)" ]; then \
 		export LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS="$(LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS)"; \
+	fi; \
+	if [ -n "$(LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS)" ]; then \
+		export LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS="$(LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS)"; \
 	fi; \
 	cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.live_worker \
 		--session-id "$(SESSION_ID)" \
