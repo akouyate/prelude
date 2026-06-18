@@ -108,6 +108,47 @@ Payload:
 - `agentParticipantId`
 - `provider`
 
+### `agent_speech_started`
+
+Emitted when the agent is allowed to start an utterance.
+
+Expected actor: `agent`
+
+Payload:
+
+- `questionId` optional
+- `utteranceId`
+- `utteranceKind`: `intro`, `question`, `repeat`, `soft_reprompt`,
+  `followup`, or `closing`
+
+### `agent_speech_completed`
+
+Emitted when the agent utterance has completed without interruption.
+
+Expected actor: `agent`
+
+Payload:
+
+- `questionId` optional
+- `utteranceId`
+- `utteranceKind`
+- `audioDurationMs` optional
+
+### `agent_speech_interrupted`
+
+Emitted when the active agent utterance is canceled or truncated after an
+accepted candidate barge-in.
+
+Expected actor: `system`
+
+Payload:
+
+- `utteranceId`
+- `questionId` optional
+- `cancelLatencyMs`
+- `truncatedAtMs` optional
+- `cancelAgentAudio`: `true`
+
 ### `question_asked`
 
 Emitted after the IA starts or finishes asking a planned question.
@@ -128,9 +169,50 @@ Payload:
 - `prompt`
 - `reason`: `candidate_requested_repeat`
 
-### `candidate_turn_started`
+### `candidate_speech_started`
 
 Emitted when candidate speech starts.
+
+Expected actor: `candidate`
+
+Payload:
+
+- `questionId` optional
+- `turnId` optional
+- `trackId` optional
+- `confidence` optional
+
+### `candidate_speech_stopped`
+
+Emitted when candidate speech stops.
+
+Expected actor: `candidate`
+
+Payload:
+
+- `questionId` optional
+- `turnId` optional
+- `speechDurationMs` optional
+
+### `candidate_turn_detected`
+
+Emitted when the runtime believes the candidate turn is ready to finalize. This
+is a turn-taking signal; `candidate_turn_finalized` remains the durable
+transcript event.
+
+Expected actor: `system`
+
+Payload:
+
+- `questionId`
+- `semanticComplete` optional
+- `stableSilenceMs` optional
+- `confidence` optional
+
+### `candidate_turn_started`
+
+Emitted when the structured candidate answer attempt starts for the current
+question. Low-level speech onset is carried by `candidate_speech_started`.
 
 Payload:
 
@@ -145,6 +227,88 @@ Payload:
 - `questionId`
 - `completionReason`: `answered`, `skipped`, or `incomplete`
 - `transcriptTurn`
+
+### `barge_in_detected`
+
+Emitted when candidate speech overlaps an active agent utterance.
+
+Expected actor: `candidate`
+
+Payload:
+
+- `utteranceId`
+- `questionId` optional
+- `overlapMs` optional
+- `candidateSpeechMs` optional
+- `confidence` optional
+
+### `barge_in_accepted`
+
+Emitted when policy classifies an overlap as a true interruption.
+
+Expected actor: `system`
+
+Payload:
+
+- `utteranceId`
+- `questionId` optional
+- `cancelLatencyMs`
+- `truncatedAtMs` optional
+
+### `barge_in_rejected`
+
+Emitted when policy rejects an overlap as a false interruption.
+
+Expected actor: `system`
+
+Payload:
+
+- `utteranceId` optional
+- `questionId` optional
+- `reason`: `backchannel`, `noise`, `too_short`, or `low_confidence`
+- `observedSpeechMs` optional
+
+### `backchannel_detected`
+
+Emitted when a false barge-in is classified as a backchannel such as "mm-hmm"
+or "yes".
+
+Expected actor: `system`
+
+Payload:
+
+- `utteranceId` optional
+- `questionId` optional
+- `reason`: `backchannel`
+- `observedSpeechMs` optional
+
+### `silence_timeout_started`
+
+Emitted when a silence threshold is reached and policy starts the next silence
+tier. Despite the name, this is a durable "threshold reached" event, not an
+internal timer-start event.
+
+Expected actor: `system`
+
+Payload:
+
+- `questionId` optional
+- `thresholdMs`
+- `silentForMs` optional
+- `tier`: `soft_prompt`, `wait_extension`, or `terminal`
+
+### `wait_requested`
+
+Emitted when the candidate asks for more time.
+
+Expected actor: `candidate`
+
+Payload:
+
+- `questionId` optional
+- `requestedAt` optional
+- `waitUntil` optional
+- `reason`: `candidate_requested_time`
 
 ### `soft_reprompted`
 

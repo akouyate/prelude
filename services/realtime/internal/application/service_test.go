@@ -305,6 +305,82 @@ func TestServiceAcceptsInterviewerStateMachineControlEvents(t *testing.T) {
 	}
 }
 
+func TestServiceAcceptsTurnTakingGuardrailEvents(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	events := []struct {
+		eventType domain.EventType
+		actor     domain.EventActor
+		payload   json.RawMessage
+	}{
+		{domain.EventSessionStarted, domain.EventActorAgent, json.RawMessage(`{"provider":"mock"}`)},
+		{domain.EventAgentSpeechStarted, domain.EventActorAgent, json.RawMessage(`{"question_id":"q1","utterance_id":"q1:question:0"}`)},
+		{domain.EventCandidateSpeechStarted, domain.EventActorCandidate, json.RawMessage(`{"question_id":"q1"}`)},
+		{domain.EventBargeInDetected, domain.EventActorCandidate, json.RawMessage(`{"utterance_id":"q1:question:0","overlap_ms":340}`)},
+		{domain.EventBargeInRejected, domain.EventActorSystem, json.RawMessage(`{"reason":"backchannel","observed_speech_ms":180}`)},
+		{domain.EventBackchannelDetected, domain.EventActorSystem, json.RawMessage(`{"reason":"backchannel","observed_speech_ms":180}`)},
+		{domain.EventCandidateSpeechStopped, domain.EventActorCandidate, json.RawMessage(`{"question_id":"q1"}`)},
+		{domain.EventCandidateTurnDetected, domain.EventActorSystem, json.RawMessage(`{"question_id":"q1","semantic_complete":true}`)},
+		{domain.EventWaitRequested, domain.EventActorCandidate, json.RawMessage(`{"question_id":"q1","reason":"candidate_requested_time"}`)},
+		{domain.EventSilenceTimeoutStarted, domain.EventActorSystem, json.RawMessage(`{"question_id":"q1","tier":"soft_prompt","threshold_ms":10000}`)},
+		{domain.EventBargeInAccepted, domain.EventActorSystem, json.RawMessage(`{"utterance_id":"q1:question:0","cancel_latency_ms":120}`)},
+		{domain.EventAgentSpeechInterrupted, domain.EventActorSystem, json.RawMessage(`{"utterance_id":"q1:question:0","cancel_agent_audio":true}`)},
+		{domain.EventAgentSpeechCompleted, domain.EventActorAgent, json.RawMessage(`{"utterance_id":"q1:question:0"}`)},
+	}
+
+	for index, event := range events {
+		input := eventInput(session.Session.ID, index+1, "evt_turn_taking_"+string(event.eventType), event.eventType)
+		input.Actor = event.actor
+		input.Payload = event.payload
+		if _, err := service.IngestEvent(context.Background(), input); err != nil {
+			t.Fatalf("IngestEvent(%s) returned error: %v", event.eventType, err)
+		}
+	}
+
+	got, err := service.GetSession(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if len(got.Events) != len(events) {
+		t.Fatalf("expected %d events, got %d", len(events), len(got.Events))
+	}
+	if got.Events[2].Actor != domain.EventActorCandidate {
+		t.Fatalf("expected candidate actor, got %s", got.Events[2].Actor)
+	}
+	if string(got.Events[3].Payload) != `{"utterance_id":"q1:question:0","overlap_ms":340}` {
+		t.Fatalf("expected barge-in payload roundtrip, got %s", string(got.Events[3].Payload))
+	}
+}
+
+func TestServiceRejectsTurnTakingEventsBeforeSessionStarts(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	input := eventInput(session.Session.ID, 1, "evt_candidate_speech", domain.EventCandidateSpeechStarted)
+	input.Actor = domain.EventActorCandidate
+	_, err = service.IngestEvent(context.Background(), input)
+	if !errors.Is(err, application.ErrInvalidEvent) {
+		t.Fatalf("expected ErrInvalidEvent, got %v", err)
+	}
+}
+
 func TestServiceRejectsMissingEventActor(t *testing.T) {
 	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
 	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)

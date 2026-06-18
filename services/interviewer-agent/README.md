@@ -53,6 +53,17 @@ POST /v1/interview-sessions/{session_id}/events
 The Go API should treat events as append-only, idempotent records keyed by
 `idempotency_key`.
 
+To smoke-test mocked interruption handling:
+
+```bash
+python -m app.cli \
+  --session-id demo-session \
+  --simulate-barge-in
+```
+
+The first question emits `barge_in_detected`, `barge_in_accepted`, and
+`agent_speech_interrupted` without requiring a real media provider.
+
 ## Join a mocked LiveKit room from Go config
 
 Start the Go Realtime API, create a session, then run:
@@ -84,5 +95,7 @@ pytest
 
 1. Replace `MockOpenAIRealtimeAdapter` with a real OpenAI Realtime adapter.
 2. Replace mocked LiveKit tokens with real LiveKit room/token minting.
-3. Add provider latency and cost metrics around every provider call.
-4. Persist provider metadata in the event payloads without leaking secrets.
+3. Map provider turn-taking signals into `TurnTakingPolicy` instead of letting
+   provider callbacks advance interview state directly.
+4. Add provider latency and cost metrics around every provider call.
+5. Persist provider metadata in the event payloads without leaking secrets.

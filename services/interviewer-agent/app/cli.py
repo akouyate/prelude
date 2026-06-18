@@ -25,6 +25,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Load agent config from the Go API and join the LiveKit room before running.",
     )
+    parser.add_argument(
+        "--simulate-barge-in",
+        action="store_true",
+        help="Emit a mocked accepted candidate interruption during the first question.",
+    )
     return parser.parse_args()
 
 
@@ -58,6 +63,7 @@ async def main() -> None:
         livekit_room=livekit_room,
         livekit_join=livekit_join,
         provider_name=provider_name,
+        simulate_first_question_barge_in=args.simulate_barge_in,
     )
     result = await runner.run()
     print(
