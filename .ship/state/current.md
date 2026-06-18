@@ -2,7 +2,7 @@
 
 ## Objective
 
-Ship issue #17: implement turn-taking and interruption guardrails for the live IA interviewer POC.
+Ship issue #18: add the local Docker Postgres environment and Makefile foundation for the realtime event and transcript store.
 
 ## Source
 
@@ -12,7 +12,7 @@ Ship issue #17: implement turn-taking and interruption guardrails for the live I
 - Python LiveKit Agent POC ticket: https://github.com/akouyate/prelude/issues/15
 - Candidate LiveKit room ticket: https://github.com/akouyate/prelude/issues/13
 - Interviewer state machine ticket: https://github.com/akouyate/prelude/issues/16
-- Turn-taking and interruption guardrails ticket: https://github.com/akouyate/prelude/issues/17
+- Realtime event and transcript store ticket: https://github.com/akouyate/prelude/issues/18
 
 ## Phases
 
@@ -32,30 +32,27 @@ Ship issue #17: implement turn-taking and interruption guardrails for the live I
 ## Team
 
 - Orchestrator: main Codex thread, owns integration and final validation.
-- Architecture lane: docs and shared contracts.
-- Go lane: `services/realtime/**` event acceptance.
-- Python lane: `services/interviewer-agent/**` turn-taking policy and mocked behavior.
+- Ops/DevOps lane: Docker Compose, Postgres defaults, Makefile ergonomics, and local validation.
 
 ## Architecture Decision
 
-- Keep Go as the product/event control plane.
-- Keep Python as the IA interviewer policy/runtime boundary.
-- Keep LiveKit/OpenAI/ElevenLabs decisions provider-switchable until #19.
-- Implement #17 as a provider-neutral policy layer that consumes normalized turn signals.
-- Do not model turn-taking as raw silence timeout only; use VAD/semantic/acoustic/provider signals where available, with configurable POC defaults.
-- Use TDD for policy rules: normal turn, true barge-in, false barge-in/backchannel, wait request, repeat, silence recovery, and no agent speech while candidate speaks.
+- Keep this pass scoped to local infrastructure for #18, not the durable event schema.
+- Use Docker Compose for local Postgres only; do not introduce production containerization yet.
+- Keep the Makefile as thin wrappers around Docker Compose, pnpm, and Prisma.
+- Keep `.env.example`, Compose defaults, and Makefile `DATABASE_URL` aligned.
+- Prefer boring, explicit defaults: Postgres 16 Alpine image, named local volume, and `pg_isready` healthcheck.
 
 ## Notes
 
-- Current branch: `codex/turn-taking-guardrails`.
-- LiveKit Adaptive Interruption Handling confirms VAD-only false barge-ins are a known product problem.
-- OpenAI Realtime exposes VAD turn events plus interruption/truncation semantics.
-- ElevenLabs exposes silence, interruptions, and turn eagerness controls.
-- #17 refinement is already posted on GitHub in issue comments; implementation should align with that refinement.
-- Added provider-neutral Python `TurnTakingPolicy` plus deterministic tests.
-- Added runner events for speech start/complete, candidate speech signals, turn detection, silence thresholds, wait request, and mocked accepted barge-in smoke.
-- Added Go and TypeScript contract support for the #17 event vocabulary.
-- Added dedicated research doc `docs/research/live-ia-interviewer-turn-taking.md`.
-- Validation passed: Python compileall/pytest, Go test/vet/race, TypeScript contracts test, monorepo typecheck/lint/test/build, git diff --check.
-- Manual smoke passed: Go API on port 18080 plus Python worker `--join-livekit --simulate-barge-in` persisted `barge_in_accepted` and `agent_speech_interrupted`.
-- Delivery PR: https://github.com/akouyate/prelude/pull/27
+- Current branch: `codex/ds18-local-postgres-env`.
+- Refinement posted on #18: https://github.com/akouyate/prelude/issues/18#issuecomment-4738682566
+- Added root `docker-compose.yml` with local Postgres.
+- Added root `Makefile` for local infra and Prisma helpers.
+- Updated `README.md` with Docker/Postgres setup commands.
+- Ops/DevOps review integrated: no fixed container name, configurable `POSTGRES_PORT`, and `make env-up` waits for Postgres health.
+- Made `make db-migrate` non-interactive through `MIGRATION_NAME`, so the initial local migration flow does not hang.
+- Made the Postgres Docker volume name explicit and stable: `prelude_postgres_data`.
+- Generated and validated the initial Prisma migration for the existing schema.
+- Validation passed: `make help`, `docker compose config`, `make env-up POSTGRES_PORT=15432`, psql connectivity, `make db-migrate POSTGRES_PORT=15432`, `make db-generate POSTGRES_PORT=15432`, `pnpm --dir packages/db test`, `pnpm --dir packages/db typecheck`, `pnpm --dir packages/db lint`, `pnpm exec turbo run typecheck`, `pnpm lint`, `pnpm test`, `git diff --check`, and `make env-reset`.
+- Port 5432 and 5433 were already allocated on this machine during validation; `POSTGRES_PORT=15432` confirmed the override works.
+- Docker cleanup completed: no running Prelude Compose services and no remaining Prelude Docker volume.

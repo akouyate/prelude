@@ -26,6 +26,8 @@ This repository is a pnpm/Turborepo monorepo with two Next.js App Router apps an
 corepack enable
 pnpm install
 cp .env.example .env
+make env-up
+make db-generate
 pnpm dev
 ```
 
@@ -44,4 +46,33 @@ pnpm test:e2e
 
 ## Database
 
-`packages/db` owns Prisma. Set `DATABASE_URL` in `.env` before running Prisma commands or adding migrations.
+`packages/db` owns Prisma. Local development uses Postgres through Docker Compose.
+
+The default local connection string is committed in `.env.example`:
+
+```bash
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/prelude?schema=public"
+```
+
+If port `5432` is already used on your machine, start Postgres on another host port and align `DATABASE_URL` in `.env`:
+
+```bash
+POSTGRES_PORT=5433 make env-up
+```
+
+Useful local commands:
+
+```bash
+make help
+make env-up
+make db-generate
+make db-migrate
+make db-shell
+make db-logs
+make env-down
+make env-reset
+```
+
+`make env-reset` removes the local Docker volume and should only be used when you want a clean database. Keep real secrets in `.env`; it is ignored by git.
+
+Use `MIGRATION_NAME=your_migration_name make db-migrate` when adding a new Prisma migration.
