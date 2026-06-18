@@ -5,6 +5,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Mapping
 
+from app.adapters.openai_realtime import (
+    OpenAIRealtimeConfig,
+    OpenAIRealtimeSmokeProvider,
+)
 from app.benchmark.scenarios import BenchmarkScenario
 from app.domain.models import CandidateTurn, InterviewPlan, InterviewQuestion
 from app.domain.state_machine import INTERVIEWER_STATE_MACHINE_INSTRUCTIONS
@@ -26,6 +30,9 @@ PROVIDER_REQUIREMENTS: dict[str, ProviderRequirements] = {
         required_env=(
             "OPENAI_API_KEY",
             "OPENAI_REALTIME_MODEL",
+            "OPENAI_REALTIME_VOICE",
+            "OPENAI_REALTIME_TURN_DETECTION",
+            "OPENAI_REALTIME_REASONING_EFFORT",
             "LIVEKIT_URL",
             "LIVEKIT_API_KEY",
             "LIVEKIT_API_SECRET",
@@ -105,7 +112,7 @@ def build_benchmark_provider(
     provider: str,
     scenario: BenchmarkScenario,
     env: Mapping[str, str],
-) -> ScriptedBenchmarkProvider:
+) -> ScriptedBenchmarkProvider | OpenAIRealtimeSmokeProvider:
     if provider == "mock_openai_realtime":
         return ScriptedBenchmarkProvider(scenario, provider_name=provider)
 
@@ -121,6 +128,12 @@ def build_benchmark_provider(
         raise ProviderBenchmarkBlocked(
             f"{provider} benchmark requires missing environment variables: "
             f"{', '.join(missing)}."
+        )
+
+    if provider == "openai_realtime":
+        return OpenAIRealtimeSmokeProvider(
+            scenario,
+            OpenAIRealtimeConfig.from_env(env),
         )
 
     raise ProviderBenchmarkBlocked(

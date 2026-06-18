@@ -145,9 +145,30 @@ ELEVENLABS_CONVERSATION_MODE="speech_engine"
 ELEVENLABS_TURN_EAGERNESS="normal"
 ```
 
+OpenAI Realtime smoke runs must persist through the Go Realtime API because
+issue #31 verifies end-to-end event ingestion and transcript reconstruction:
+
+```bash
+make agent-benchmark \
+  BENCHMARK_PROVIDER=openai_realtime \
+  BENCHMARK_SCENARIO=normal \
+  BENCHMARK_ITERATIONS=1 \
+  BENCHMARK_RUN_ID=openai-livekit-smoke \
+  BENCHMARK_PERSIST_REALTIME=1
+```
+
+The OpenAI smoke creates a Go interview session, mints an agent LiveKit token
+from `LIVEKIT_*`, joins the `prelude-{session_id}` room, opens an OpenAI
+Realtime session handshake, then runs a deterministic candidate scenario through
+Prelude's state machine. Candidate answers are still scripted in this POC so the
+benchmark remains reproducible until the candidate browser/mobile media path is
+implemented.
+
 The harness fails with an actionable blocker when required provider variables
 are missing. Provider-specific raw IDs and timing details should stay in
-`provider_metadata`; business events must remain provider-neutral.
+`provider_metadata`; business events must remain provider-neutral. Never put
+OpenAI API keys, LiveKit API secrets, or LiveKit join tokens in reports or
+metadata.
 
 ## Join a mocked LiveKit room from Go config
 
