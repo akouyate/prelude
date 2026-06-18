@@ -16,7 +16,15 @@ from app.adapters.livekit_openai_worker import (
     _supports_realtime_reasoning,
     _soft_prompt_after_initial_silence,
 )
-from app.domain.models import EventActor, EventType, InterviewEvent, create_demo_plan
+from app.domain.models import (
+    EventActor,
+    EventType,
+    InterviewEvent,
+    InterviewPlan,
+    InterviewQuestion,
+    QuestionCategory,
+    create_demo_plan,
+)
 
 
 class FakeAgentSession:
@@ -315,6 +323,62 @@ def test_live_interviewer_instructions_keep_first_screening_scope() -> None:
     assert "Ask one question at a time" in instructions
     assert "Never score or comment on face, accent, tone, emotion" in instructions
     assert "Product Manager B2B SaaS" in instructions
+
+
+def test_live_interviewer_instructions_onboard_without_product_narration() -> None:
+    instructions = build_live_interviewer_instructions(create_demo_plan())
+
+    assert "Candidate onboarding:" in instructions
+    assert "one brief orientation sentence" in instructions
+    assert "short first-screening conversation" in instructions
+    assert "consistent interview" in instructions
+    assert "Do not turn the introduction into product narration" in instructions
+
+
+def test_live_interviewer_instructions_adapt_to_operational_roles() -> None:
+    plan = InterviewPlan(
+        id="plan-restaurant-server",
+        role_title="Serveur en restauration",
+        questions=[
+            InterviewQuestion(
+                id="q1",
+                prompt="Pouvez-vous me parler de votre experience en service ?",
+                category=QuestionCategory.EXPERIENCE,
+            ),
+            InterviewQuestion(
+                id="q2",
+                prompt="Quelles sont vos disponibilites pour les prochains mois ?",
+                category=QuestionCategory.LOGISTICS,
+            ),
+        ],
+    )
+
+    instructions = build_live_interviewer_instructions(plan)
+
+    assert (
+        "frontline, operational, shift-based, hospitality, logistics, restaurant"
+        in instructions
+    )
+    assert "plain and concrete language" in instructions
+    assert "experience, availability" in instructions
+    assert (
+        "mobility, customer interaction, work rhythm, safety, and team fit"
+        in instructions
+    )
+    assert "Never force a corporate interview style" in instructions
+
+
+def test_live_interviewer_instructions_use_listening_without_fake_empathy() -> None:
+    instructions = build_live_interviewer_instructions(create_demo_plan())
+
+    assert "Candidate comfort:" in instructions
+    assert "fixed canned comfort phrases" in instructions
+    assert "Do not pretend to feel emotions" in instructions
+    assert "Listening and pacing:" in instructions
+    assert "Do not interrupt" in instructions
+    assert "Avoid paraphrasing every answer" in instructions
+    assert "If an answer is complete, move to the next planned question" in instructions
+    assert "ask at most one concise follow-up" in instructions
 
 
 def test_realtime_reasoning_is_only_enabled_for_supported_models() -> None:
