@@ -520,3 +520,69 @@ func TestServiceReconstructsTranscriptFromFinalizedTurnEvents(t *testing.T) {
 		t.Fatalf("expected confidence 0.92, got %#v", transcript[0].Confidence)
 	}
 }
+
+func TestServiceReconstructsTranscriptFromAnyNormalizedTranscriptEvent(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	_, err = service.IngestEvent(context.Background(), eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted))
+	if err != nil {
+		t.Fatalf("session_started returned error: %v", err)
+	}
+
+	assistant := eventInput(session.Session.ID, 2, "evt_assistant_turn", domain.EventAgentSpeechCompleted)
+	assistant.Actor = domain.EventActorAgent
+	assistant.Payload = json.RawMessage(`{
+		"transcript_turn": {
+			"turn_id": "turn_interviewer_1",
+			"session_id": "` + session.Session.ID + `",
+			"speaker": "interviewer",
+			"text": "Bonjour, pouvez-vous vous presenter ?",
+			"is_final": true,
+			"started_at": "2026-06-17T10:00:02Z",
+			"ended_at": "2026-06-17T10:00:04Z"
+		}
+	}`)
+	if _, err := service.IngestEvent(context.Background(), assistant); err != nil {
+		t.Fatalf("assistant transcript event returned error: %v", err)
+	}
+
+	candidate := eventInput(session.Session.ID, 3, "evt_candidate_turn", domain.EventCandidateTurnFinalized)
+	candidate.Actor = domain.EventActorCandidate
+	candidate.Payload = json.RawMessage(`{
+		"transcript_turn": {
+			"turn_id": "turn_candidate_1",
+			"session_id": "` + session.Session.ID + `",
+			"speaker": "candidate",
+			"text": "Oui, je suis product manager.",
+			"is_final": true,
+			"started_at": "2026-06-17T10:00:05Z",
+			"ended_at": "2026-06-17T10:00:08Z"
+		}
+	}`)
+	if _, err := service.IngestEvent(context.Background(), candidate); err != nil {
+		t.Fatalf("candidate transcript event returned error: %v", err)
+	}
+
+	transcript, err := service.GetTranscript(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetTranscript returned error: %v", err)
+	}
+	if len(transcript) != 2 {
+		t.Fatalf("expected 2 transcript turns, got %d", len(transcript))
+	}
+	if transcript[0].Speaker != domain.TranscriptSpeakerInterviewer {
+		t.Fatalf("expected interviewer first, got %s", transcript[0].Speaker)
+	}
+	if transcript[1].Speaker != domain.TranscriptSpeakerCandidate {
+		t.Fatalf("expected candidate second, got %s", transcript[1].Speaker)
+	}
+}

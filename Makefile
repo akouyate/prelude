@@ -13,6 +13,7 @@ BENCHMARK_PERSIST_REALTIME ?=
 REALTIME_API_URL ?=
 SESSION_ID ?=
 LIVE_WORKER_SKIP_OPENAI ?=
+LIVE_WORKER_MAX_DURATION_SECONDS ?=
 
 .DEFAULT_GOAL := help
 
@@ -93,6 +94,9 @@ live-openai-worker: ## Run the Python OpenAI live interviewer worker for SESSION
 	fi; \
 	if [ "$(LIVE_WORKER_SKIP_OPENAI)" = "1" ]; then \
 		worker_args="$$worker_args --skip-openai-handshake"; \
+	fi; \
+	if [ -n "$(LIVE_WORKER_MAX_DURATION_SECONDS)" ]; then \
+		export LIVE_WORKER_MAX_DURATION_SECONDS="$(LIVE_WORKER_MAX_DURATION_SECONDS)"; \
 	fi; \
 	cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.live_worker \
 		--session-id "$(SESSION_ID)" \

@@ -277,10 +277,6 @@ func (s *Service) GetTranscript(ctx context.Context, sessionID string) ([]domain
 
 	turns := make([]domain.TranscriptTurn, 0)
 	for _, event := range session.Events {
-		if event.Type != domain.EventCandidateTurnFinalized {
-			continue
-		}
-
 		turn, ok := transcriptTurnFromEvent(event)
 		if !ok {
 			continue
