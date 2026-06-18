@@ -20,6 +20,7 @@ type RoomStatus =
   | "preparing"
   | "permission_required"
   | "connecting"
+  | "interviewer_joining"
   | "connected"
   | "reconnecting"
   | "failed"
@@ -40,6 +41,7 @@ type LiveInterviewSession = {
 
 type ConnectedRoom = {
   disconnect: () => void;
+  startAudio: () => Promise<void>;
 };
 
 const statusCopy: Record<RoomStatus, string> = {
@@ -47,6 +49,7 @@ const statusCopy: Record<RoomStatus, string> = {
   preparing: "Preparing",
   permission_required: "Permission required",
   connecting: "Connecting",
+  interviewer_joining: "Interviewer joining",
   connected: "Live",
   reconnecting: "Reconnecting",
   failed: "Failed",
@@ -58,6 +61,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
   const [session, setSession] = React.useState<LiveInterviewSession | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [isVideoEnabled, setIsVideoEnabled] = React.useState(true);
+  const [isAudioPlaybackBlocked, setIsAudioPlaybackBlocked] = React.useState(false);
   const [localStream, setLocalStream] = React.useState<MediaStream | null>(null);
   const roomRef = React.useRef<ConnectedRoom | null>(null);
   const localStreamRef = React.useRef<MediaStream | null>(null);
@@ -79,6 +83,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
 
   const startInterview = React.useCallback(async () => {
     setError(null);
+    setIsAudioPlaybackBlocked(false);
     setStatus("preparing");
 
     try {
@@ -97,10 +102,12 @@ export function LiveInterviewRoom({ token }: { token: string }) {
         session: nextSession,
         stream,
         onReconnecting: () => setStatus("reconnecting"),
-        onConnected: () => setStatus("connected"),
-        onDisconnected: () => setStatus("completed")
+        onConnected: () => setStatus("interviewer_joining"),
+        onReady: () => setStatus("connected"),
+        onDisconnected: () => setStatus("completed"),
+        onAudioPlaybackBlocked: () => setIsAudioPlaybackBlocked(true),
+        onAudioPlaybackReady: () => setIsAudioPlaybackBlocked(false)
       });
-      setStatus("connected");
     } catch (cause) {
       setStatus("failed");
       setError(toCandidateError(cause));
@@ -112,13 +119,24 @@ export function LiveInterviewRoom({ token }: { token: string }) {
     roomRef.current = null;
     stopLocalStream(localStream);
     setLocalStream(null);
+    setIsAudioPlaybackBlocked(false);
     setStatus("completed");
   }, [localStream]);
+
+  const enableAudio = React.useCallback(async () => {
+    try {
+      await roomRef.current?.startAudio();
+      setIsAudioPlaybackBlocked(false);
+    } catch {
+      setIsAudioPlaybackBlocked(true);
+    }
+  }, []);
 
   const isBusy =
     status === "preparing" ||
     status === "permission_required" ||
     status === "connecting" ||
+    status === "interviewer_joining" ||
     status === "reconnecting";
   const isConnected = status === "connected" || status === "reconnecting";
 
@@ -187,6 +205,19 @@ export function LiveInterviewRoom({ token }: { token: string }) {
             <div className="mt-4 flex gap-2 rounded-md bg-coral-100 p-3 text-sm text-ink-900">
               <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-coral-500" />
               <p>{error}</p>
+            </div>
+          ) : null}
+
+          {isAudioPlaybackBlocked ? (
+            <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-ink-900">
+              <p className="font-medium">Audio paused by your browser</p>
+              <p className="mt-1 text-ink-600">
+                Tap once to hear the interviewer on this device.
+              </p>
+              <Button className="mt-3 w-full" onClick={enableAudio} variant="secondary">
+                <Mic aria-hidden="true" className="h-4 w-4" />
+                Enable audio
+              </Button>
             </div>
           ) : null}
 
@@ -277,36 +308,123 @@ async function connectRoom({
   stream,
   onConnected,
   onDisconnected,
+  onAudioPlaybackBlocked,
+  onAudioPlaybackReady,
+  onReady,
   onReconnecting
 }: {
   session: LiveInterviewSession;
   stream: MediaStream;
   onConnected: () => void;
   onDisconnected: () => void;
+  onAudioPlaybackBlocked: () => void;
+  onAudioPlaybackReady: () => void;
+  onReady: () => void;
   onReconnecting: () => void;
 }): Promise<ConnectedRoom> {
   if (session.livekit.isMock) {
     onConnected();
+    onReady();
     return {
-      disconnect: onDisconnected
+      disconnect: onDisconnected,
+      startAudio: async () => undefined
     };
   }
 
-  const { Room, RoomEvent } = await import("livekit-client");
+  const { Room, RoomEvent, Track } = await import("livekit-client");
   const room = new Room();
+  const remoteAudioElements: HTMLMediaElement[] = [];
   room.on(RoomEvent.Reconnecting, onReconnecting);
   room.on(RoomEvent.Reconnected, onConnected);
   room.on(RoomEvent.Disconnected, onDisconnected);
+  room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
+    if (room.canPlaybackAudio) {
+      onAudioPlaybackReady();
+    } else {
+      onAudioPlaybackBlocked();
+    }
+  });
+  room.on(RoomEvent.TrackSubscribed, (track) => {
+    if (track.kind !== Track.Kind.Audio) {
+      return;
+    }
 
-  await room.connect(session.livekit.url, session.livekit.token);
-  await Promise.all(
-    stream.getTracks().map((track) => room.localParticipant.publishTrack(track))
-  );
-  onConnected();
+    const element = track.attach();
+    element.autoplay = true;
+    element.controls = false;
+    element.style.display = "none";
+    remoteAudioElements.push(element);
+    document.body.appendChild(element);
+    void element
+      .play()
+      .then(onAudioPlaybackReady)
+      .catch(onAudioPlaybackBlocked);
+  });
+  room.on(RoomEvent.TrackUnsubscribed, (track) => {
+    track.detach().forEach((element) => {
+      element.remove();
+      const index = remoteAudioElements.indexOf(element);
+      if (index >= 0) {
+        remoteAudioElements.splice(index, 1);
+      }
+    });
+  });
+
+  try {
+    await room.connect(session.livekit.url, session.livekit.token);
+    await Promise.all(
+      stream.getTracks().map((track) =>
+        room.localParticipant.publishTrack(track, {
+          source:
+            track.kind === "audio" ? Track.Source.Microphone : Track.Source.Camera
+        })
+      )
+    );
+    onConnected();
+    await markCandidateJoined(session, stream);
+    if (!room.canPlaybackAudio) {
+      onAudioPlaybackBlocked();
+    }
+    onReady();
+  } catch (cause) {
+    remoteAudioElements.forEach((element) => element.remove());
+    room.disconnect();
+    throw cause;
+  }
 
   return {
-    disconnect: () => room.disconnect()
+    startAudio: async () => {
+      await room.startAudio();
+      await Promise.all(remoteAudioElements.map((element) => element.play()));
+      onAudioPlaybackReady();
+    },
+    disconnect: () => {
+      remoteAudioElements.forEach((element) => element.remove());
+      room.disconnect();
+    }
   };
+}
+
+async function markCandidateJoined(session: LiveInterviewSession, stream: MediaStream) {
+  const response = await fetch(`/api/live-interview-sessions/${session.sessionId}/events`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "candidate_joined",
+      payload: {
+        participant: session.livekit.participant,
+        room_name: session.livekit.roomName,
+        media: {
+          audio: stream.getAudioTracks().some((track) => track.readyState === "live"),
+          video: stream.getVideoTracks().some((track) => track.readyState === "live")
+        }
+      }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("candidate_ready_unavailable");
+  }
 }
 
 function stopLocalStream(stream: MediaStream | null) {
@@ -320,6 +438,10 @@ function toCandidateError(cause: unknown) {
 
   if (cause instanceof Error && cause.message === "session_unavailable") {
     return "We could not prepare the interview room. Please retry in a moment.";
+  }
+
+  if (cause instanceof Error && cause.message === "candidate_ready_unavailable") {
+    return "We could not notify the interviewer that you are ready. Please retry in a moment.";
   }
 
   return "We could not join the live interview room. Please check your connection and retry.";

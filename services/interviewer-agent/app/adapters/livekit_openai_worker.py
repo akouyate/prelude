@@ -25,10 +25,14 @@ class OpenAILiveWorkerConfig:
     reasoning_effort: str
     input_transcription_model: str = "gpt-4o-transcribe"
     max_duration_seconds: float | None = None
+    candidate_ready_timeout_seconds: float = 120.0
+    soft_prompt_after_seconds: float = 10.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> OpenAILiveWorkerConfig:
         max_duration = env.get("LIVE_WORKER_MAX_DURATION_SECONDS")
+        candidate_ready_timeout = env.get("LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS")
+        soft_prompt_after = env.get("LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS")
         return cls(
             model=env["OPENAI_REALTIME_MODEL"],
             voice=env["OPENAI_REALTIME_VOICE"],
@@ -39,6 +43,10 @@ class OpenAILiveWorkerConfig:
                 "gpt-4o-transcribe",
             ),
             max_duration_seconds=float(max_duration) if max_duration else None,
+            candidate_ready_timeout_seconds=float(candidate_ready_timeout)
+            if candidate_ready_timeout
+            else 120.0,
+            soft_prompt_after_seconds=float(soft_prompt_after) if soft_prompt_after else 10.0,
         )
 
 
@@ -50,12 +58,13 @@ class PreludeEventEmitter:
         candidate_id: str | None,
         provider_metadata: dict[str, object],
         emit_event: Callable[[InterviewEvent], Awaitable[None]],
+        initial_sequence: int = 0,
     ) -> None:
         self._session_id = session_id
         self._candidate_id = candidate_id
         self._provider_metadata = provider_metadata
         self._emit_event = emit_event
-        self._sequence = 0
+        self._sequence = initial_sequence
         self._lock = asyncio.Lock()
 
     async def emit(
@@ -69,20 +78,19 @@ class PreludeEventEmitter:
         async with self._lock:
             self._sequence += 1
             sequence = self._sequence
-
-        await self._emit_event(
-            InterviewEvent(
-                type=event_type,
-                actor=actor,
-                session_id=self._session_id,
-                candidate_id=self._candidate_id,
-                sequence=sequence,
-                idempotency_key=f"{self._session_id}:live-openai:{sequence}",
-                occurred_at=occurred_at or datetime.now(timezone.utc),
-                payload=payload,
-                provider_metadata=self._provider_metadata,
+            await self._emit_event(
+                InterviewEvent(
+                    type=event_type,
+                    actor=actor,
+                    session_id=self._session_id,
+                    candidate_id=self._candidate_id,
+                    sequence=sequence,
+                    idempotency_key=f"{self._session_id}:live-openai:{sequence}",
+                    occurred_at=occurred_at or datetime.now(timezone.utc),
+                    payload=payload,
+                    provider_metadata=self._provider_metadata,
+                )
             )
-        )
 
 
 class LiveKitAgentEventBridge:
@@ -95,6 +103,8 @@ class LiveKitAgentEventBridge:
         self._tasks: set[asyncio.Task[None]] = set()
         self._assistant_turns = 0
         self._candidate_turns = 0
+        self._candidate_speaking = False
+        self._candidate_activity_seen = False
 
     def register(self, session: object) -> None:
         on = getattr(session, "on")
@@ -129,6 +139,8 @@ class LiveKitAgentEventBridge:
             new_state = getattr(event, "new_state", None)
             created_at = _created_at(event)
             if new_state == "speaking":
+                self._candidate_speaking = True
+                self._candidate_activity_seen = True
                 self._schedule(
                     self._emitter.emit(
                         EventType.CANDIDATE_SPEECH_STARTED,
@@ -138,6 +150,7 @@ class LiveKitAgentEventBridge:
                     )
                 )
             elif old_state == "speaking":
+                self._candidate_speaking = False
                 self._schedule(
                     self._emitter.emit(
                         EventType.CANDIDATE_SPEECH_STOPPED,
@@ -157,6 +170,7 @@ class LiveKitAgentEventBridge:
                 return
 
             self._candidate_turns += 1
+            self._candidate_activity_seen = True
             created_at = _created_at(event)
             turn_id = f"{self._emitter._session_id}:candidate:{self._candidate_turns}"
             self._schedule(
@@ -233,6 +247,18 @@ class LiveKitAgentEventBridge:
             for task in pending:
                 self._tasks.discard(task)
 
+    @property
+    def candidate_turn_count(self) -> int:
+        return self._candidate_turns
+
+    @property
+    def candidate_is_speaking(self) -> bool:
+        return self._candidate_speaking
+
+    @property
+    def candidate_activity_seen(self) -> bool:
+        return self._candidate_activity_seen
+
     def _schedule(self, awaitable: Awaitable[None]) -> None:
         task = asyncio.create_task(awaitable)
         self._tasks.add(task)
@@ -244,10 +270,14 @@ class OpenAILiveKitWorker:
         *,
         agent_config: AgentConfig,
         realtime_api_emit_event: Callable[[InterviewEvent], Awaitable[None]],
+        realtime_api_has_event: Callable[[str, EventType], Awaitable[bool]],
+        realtime_api_count_events: Callable[[str], Awaitable[int]],
         worker_config: OpenAILiveWorkerConfig,
     ) -> None:
         self._agent_config = agent_config
         self._emit_event = realtime_api_emit_event
+        self._has_event = realtime_api_has_event
+        self._count_events = realtime_api_count_events
         self._worker_config = worker_config
         self._room = None
         self._agent_session = None
@@ -280,11 +310,18 @@ class OpenAILiveKitWorker:
                     "agent_participant": self._agent_config.livekit_join.participant,
                 },
             }
+            await _wait_for_candidate_ready(
+                session_id=self._agent_config.session.id,
+                has_event=self._has_event,
+                timeout_seconds=self._worker_config.candidate_ready_timeout_seconds,
+            )
+            initial_sequence = await self._count_events(self._agent_config.session.id)
             emitter = PreludeEventEmitter(
                 session_id=self._agent_config.session.id,
                 candidate_id=self._agent_config.session.candidate_id,
                 provider_metadata=provider_metadata,
                 emit_event=self._emit_event,
+                initial_sequence=initial_sequence,
             )
 
             room = rtc.Room()
@@ -342,6 +379,7 @@ class OpenAILiveKitWorker:
                 room=room,
                 agent=agents.Agent(instructions=instructions),
                 room_options=room_io.RoomOptions(
+                    participant_identity=f"candidate-{self._agent_config.session.candidate_id}",
                     audio_input=room_io.AudioInputOptions(
                         sample_rate=24000,
                         num_channels=1,
@@ -356,6 +394,7 @@ class OpenAILiveKitWorker:
                     close_on_disconnect=True,
                 ),
             )
+            await session.room_io.wait_for_ready()
 
             await emitter.emit(
                 EventType.SESSION_STARTED,
@@ -407,15 +446,30 @@ class OpenAILiveKitWorker:
                 ),
                 allow_interruptions=True,
             )
+            await greeting.wait_for_playout()
+            silence_prompt_task = asyncio.create_task(
+                _soft_prompt_after_initial_silence(
+                    session=session,
+                    emitter=emitter,
+                    bridge=bridge,
+                    question_id=first_question.id,
+                    threshold_seconds=self._worker_config.soft_prompt_after_seconds,
+                )
+            )
 
-            if self._worker_config.max_duration_seconds:
-                with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(
-                        greeting.wait_for_playout(),
-                        timeout=self._worker_config.max_duration_seconds,
-                    )
-            else:
-                await _wait_until_room_disconnected(room)
+            try:
+                if self._worker_config.max_duration_seconds:
+                    with contextlib.suppress(asyncio.TimeoutError):
+                        await asyncio.wait_for(
+                            _wait_until_room_disconnected(room),
+                            timeout=self._worker_config.max_duration_seconds,
+                        )
+                else:
+                    await _wait_until_room_disconnected(room)
+            finally:
+                silence_prompt_task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await silence_prompt_task
 
             await bridge.drain()
             return emitter._sequence
@@ -468,6 +522,47 @@ Planned questions:
 """
 
 
+async def _soft_prompt_after_initial_silence(
+    *,
+    session: object,
+    emitter: PreludeEventEmitter,
+    bridge: LiveKitAgentEventBridge,
+    question_id: str,
+    threshold_seconds: float,
+) -> None:
+    await asyncio.sleep(threshold_seconds)
+    await bridge.drain()
+    if (
+        bridge.candidate_activity_seen
+        or bridge.candidate_turn_count > 0
+        or bridge.candidate_is_speaking
+    ):
+        return
+
+    threshold_ms = int(threshold_seconds * 1000)
+    await emitter.emit(
+        EventType.SILENCE_TIMEOUT_STARTED,
+        {
+            "question_id": question_id,
+            "tier": "soft_prompt",
+            "threshold_ms": threshold_ms,
+        },
+        actor=EventActor.SYSTEM,
+    )
+
+    reply = getattr(session, "generate_reply")(
+        instructions=(
+            "The candidate has been silent after the first question. "
+            "Briefly and politely ask if they can hear you, if there is a technical issue, "
+            "or if they need a moment. Do not move to the next planned question."
+        ),
+        allow_interruptions=True,
+    )
+    wait_for_playout = getattr(reply, "wait_for_playout", None)
+    if callable(wait_for_playout):
+        await wait_for_playout()
+
+
 def _turn_detection(realtime: object, value: str) -> object:
     module = realtime.realtime_audio_input_turn_detection
     if value == "server_vad":
@@ -489,6 +584,24 @@ def _turn_detection(realtime: object, value: str) -> object:
 
 def _supports_realtime_reasoning(model: str) -> bool:
     return "realtime-2" in model
+
+
+async def _wait_for_candidate_ready(
+    *,
+    session_id: str,
+    has_event: Callable[[str, EventType], Awaitable[bool]],
+    timeout_seconds: float,
+    poll_interval_seconds: float = 0.5,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        if await has_event(session_id, EventType.CANDIDATE_JOINED):
+            return
+        if asyncio.get_running_loop().time() >= deadline:
+            raise TimeoutError(
+                f"candidate readiness event was not received for session {session_id}"
+            )
+        await asyncio.sleep(poll_interval_seconds)
 
 
 async def _wait_until_room_disconnected(room: object) -> None:

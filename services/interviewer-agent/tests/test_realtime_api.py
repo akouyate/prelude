@@ -2,6 +2,7 @@ import httpx
 import pytest
 
 from app.adapters.realtime_api import HttpRealtimeApiClient
+from app.domain.models import EventType
 
 
 @pytest.mark.asyncio
@@ -59,3 +60,31 @@ async def test_http_realtime_client_loads_agent_config() -> None:
     assert config.livekit_join.participant == "agent-session-test"
     assert config.interview_plan.questions[0].id == "q1"
     assert config.provider == "mock"
+
+
+@pytest.mark.asyncio
+async def test_http_realtime_client_counts_and_checks_events() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v1/interview-sessions/session-test"
+        return httpx.Response(
+            200,
+            json={
+                "session": {
+                    "id": "session-test",
+                    "events": [
+                        {"type": "candidate_joined"},
+                        {"type": "agent_joined"},
+                    ],
+                },
+            },
+        )
+
+    client = HttpRealtimeApiClient(
+        "https://realtime.example.test",
+        transport=httpx.MockTransport(handler),
+    )
+
+    assert await client.count_events("session-test") == 2
+    assert await client.has_event("session-test", EventType.CANDIDATE_JOINED)
+    assert not await client.has_event("session-test", EventType.SESSION_COMPLETED)

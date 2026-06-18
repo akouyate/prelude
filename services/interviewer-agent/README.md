@@ -193,8 +193,8 @@ at join time and connects to the provided room URL.
 
 ## Run the OpenAI live worker from Make
 
-After creating a Go realtime session, run the OpenAI-only worker from the
-repository root:
+After the candidate app creates a Go realtime session and emits
+`candidate_joined`, run the OpenAI-only worker from the repository root:
 
 ```bash
 make live-openai-worker SESSION_ID={session_id}
@@ -206,18 +206,34 @@ The target loads `.env`, requires `REALTIME_API_URL`, fetches:
 GET /v1/interview-sessions/{session_id}/agent-config
 ```
 
-Then the worker joins the LiveKit room as `agent-{session_id}`, starts a
-LiveKit Agents `AgentSession` with OpenAI Realtime, publishes the interviewer
-audio back into the same room, listens to candidate microphone audio, and
-persists normalized Prelude events and transcript turns back to the Go API.
+Then the worker waits for the candidate readiness event, joins the LiveKit room
+as `agent-{session_id}`, starts a LiveKit Agents `AgentSession` with OpenAI
+Realtime, publishes the interviewer audio back into the same room, listens to
+candidate microphone audio, and persists normalized Prelude events and
+transcript turns back to the Go API.
 
 For a bounded real-provider smoke:
 
 ```bash
 make live-openai-worker \
   SESSION_ID={session_id} \
-  LIVE_WORKER_MAX_DURATION_SECONDS=15
+  LIVE_WORKER_MAX_DURATION_SECONDS=15 \
+  LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS=120 \
+  LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS=10
 ```
+
+Manual desktop/mobile smoke:
+
+1. Start Go realtime API and the candidate app.
+2. Open `/interview/demo-token` in the browser or on the mobile LAN URL.
+3. Start the live interview and allow microphone access.
+4. Confirm Go has a `candidate_joined` event for the session.
+5. Start `make live-openai-worker SESSION_ID={session_id}`.
+6. Confirm the candidate hears interviewer audio and `/transcript` contains the
+   interviewer turn, then candidate turns after speech is transcribed.
+7. Stay silent after the first question and confirm the worker emits
+   `silence_timeout_started`, then the interviewer asks whether there is a
+   technical issue or whether the candidate needs a moment.
 
 For a local room/join smoke without calling OpenAI:
 

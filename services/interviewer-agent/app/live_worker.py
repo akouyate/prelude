@@ -58,6 +58,8 @@ async def run_live_worker(
         return await OpenAILiveKitWorker(
             agent_config=config,
             realtime_api_emit_event=realtime_api.emit_event,
+            realtime_api_has_event=realtime_api.has_event,
+            realtime_api_count_events=realtime_api.count_events,
             worker_config=OpenAILiveWorkerConfig.from_env(worker_env),
         ).run()
 
