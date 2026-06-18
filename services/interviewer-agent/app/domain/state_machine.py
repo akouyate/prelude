@@ -47,6 +47,9 @@ class InterviewerStateMachine:
         self.completed_question_ids: set[str] = set()
         self.followups_by_question: dict[str, int] = {}
         self.reprompts_by_question: dict[str, int] = {}
+        self._answer_evaluated = False
+        self._last_answer_classification: str | None = None
+        self._last_policy_action: str | None = None
 
     def apply(
         self,
@@ -72,6 +75,8 @@ class InterviewerStateMachine:
             EventType.CANDIDATE_TURN_STARTED: self._apply_candidate_turn_started,
             EventType.QUESTION_REPEATED: self._apply_question_repeated,
             EventType.CANDIDATE_TURN_FINALIZED: self._apply_candidate_turn_finalized,
+            EventType.ANSWER_EVALUATED: self._apply_answer_evaluated,
+            EventType.WAIT_REQUESTED: self._apply_wait_requested,
             EventType.SOFT_REPROMPTED: self._apply_soft_reprompted,
             EventType.FOLLOWUP_ASKED: self._apply_followup_asked,
             EventType.QUESTION_COMPLETED: self._apply_question_completed,
@@ -124,44 +129,90 @@ class InterviewerStateMachine:
         return self.state
 
     def _apply_question_repeated(self, payload: Mapping[str, Any]) -> InterviewerState:
-        self._require_state(EventType.QUESTION_REPEATED, {InterviewerState.LISTEN})
+        self._require_state(
+            EventType.QUESTION_REPEATED,
+            {InterviewerState.LISTEN, InterviewerState.EVALUATE_ANSWER},
+        )
         self._require_current_question(payload, EventType.QUESTION_REPEATED)
+        if self.state == InterviewerState.EVALUATE_ANSWER:
+            self._require_answer_evaluated(EventType.QUESTION_REPEATED)
+            self._require_policy_action(EventType.QUESTION_REPEATED, {"repeat_question"})
+            self._clear_answer_evaluation()
         self.state = InterviewerState.ASK_QUESTION
         return self.state
 
     def _apply_candidate_turn_finalized(self, payload: Mapping[str, Any]) -> InterviewerState:
         self._require_state(EventType.CANDIDATE_TURN_FINALIZED, {InterviewerState.LISTEN})
         self._require_current_question(payload, EventType.CANDIDATE_TURN_FINALIZED)
+        self._clear_answer_evaluation()
         self.state = InterviewerState.EVALUATE_ANSWER
+        return self.state
+
+    def _apply_answer_evaluated(self, payload: Mapping[str, Any]) -> InterviewerState:
+        self._require_state(EventType.ANSWER_EVALUATED, {InterviewerState.EVALUATE_ANSWER})
+        self._require_current_question(payload, EventType.ANSWER_EVALUATED)
+        classification = payload.get("classification")
+        policy_action = payload.get("policy_action")
+        if not isinstance(classification, str) or not classification.strip():
+            raise InvalidTransitionError("answer_evaluated requires classification")
+        if not isinstance(policy_action, str) or not policy_action.strip():
+            raise InvalidTransitionError("answer_evaluated requires policy_action")
+
+        self._answer_evaluated = True
+        self._last_answer_classification = classification
+        self._last_policy_action = policy_action
+        return self.state
+
+    def _apply_wait_requested(self, payload: Mapping[str, Any]) -> InterviewerState:
+        self._require_state(EventType.WAIT_REQUESTED, {InterviewerState.EVALUATE_ANSWER})
+        self._require_current_question(payload, EventType.WAIT_REQUESTED)
+        self._require_answer_evaluated(EventType.WAIT_REQUESTED)
+        self._require_policy_action(EventType.WAIT_REQUESTED, {"wait"})
+        self._clear_answer_evaluation()
+        self.state = InterviewerState.ASK_QUESTION
         return self.state
 
     def _apply_soft_reprompted(self, payload: Mapping[str, Any]) -> InterviewerState:
         self._require_state(EventType.SOFT_REPROMPTED, {InterviewerState.EVALUATE_ANSWER})
         question_id = self._require_current_question(payload, EventType.SOFT_REPROMPTED)
+        self._require_answer_evaluated(EventType.SOFT_REPROMPTED)
+        self._require_policy_action(EventType.SOFT_REPROMPTED, {"soft_reprompt"})
+        self._require_classification(EventType.SOFT_REPROMPTED, {"incomplete", "silent"})
         reprompts_used = self.reprompts_by_question.get(question_id, 0)
         if reprompts_used >= 1:
             raise InvalidTransitionError(f"Question {question_id} already used a soft reprompt")
 
         self.reprompts_by_question[question_id] = reprompts_used + 1
+        self._clear_answer_evaluation()
         self.state = InterviewerState.SOFT_REPROMPT
         return self.state
 
     def _apply_followup_asked(self, payload: Mapping[str, Any]) -> InterviewerState:
         self._require_state(EventType.FOLLOWUP_ASKED, {InterviewerState.EVALUATE_ANSWER})
         question_id = self._require_current_question(payload, EventType.FOLLOWUP_ASKED)
+        self._require_answer_evaluated(EventType.FOLLOWUP_ASKED)
+        self._require_policy_action(EventType.FOLLOWUP_ASKED, {"ask_followup"})
+        self._require_classification(EventType.FOLLOWUP_ASKED, {"vague"})
         followups_used = self.followups_by_question.get(question_id, 0)
         if followups_used >= 1:
             raise InvalidTransitionError(f"Question {question_id} already used a follow-up")
 
         self.followups_by_question[question_id] = followups_used + 1
+        self._clear_answer_evaluation()
         self.state = InterviewerState.SINGLE_FOLLOW_UP
         return self.state
 
     def _apply_question_completed(self, payload: Mapping[str, Any]) -> InterviewerState:
         self._require_state(EventType.QUESTION_COMPLETED, {InterviewerState.EVALUATE_ANSWER})
         question_id = self._require_current_question(payload, EventType.QUESTION_COMPLETED)
+        self._require_answer_evaluated(EventType.QUESTION_COMPLETED)
+        self._require_policy_action(
+            EventType.QUESTION_COMPLETED,
+            {"complete_question", "mark_skipped", "timebox"},
+        )
         self.completed_question_ids.add(question_id)
         self.current_question_id = None
+        self._clear_answer_evaluation()
         self.state = InterviewerState.CONFIRM_NEXT
         return self.state
 
@@ -213,3 +264,36 @@ class InterviewerStateMachine:
             )
 
         return question_id
+
+    def _require_answer_evaluated(self, event_type: EventType) -> None:
+        if not self._answer_evaluated:
+            raise InvalidTransitionError(
+                f"{event_type.value} requires a preceding answer_evaluated event"
+            )
+
+    def _require_classification(
+        self,
+        event_type: EventType,
+        allowed_classifications: set[str],
+    ) -> None:
+        if self._last_answer_classification not in allowed_classifications:
+            allowed = ", ".join(sorted(allowed_classifications))
+            raise InvalidTransitionError(
+                f"{event_type.value} requires answer classification {allowed}"
+            )
+
+    def _require_policy_action(
+        self,
+        event_type: EventType,
+        allowed_policy_actions: set[str],
+    ) -> None:
+        if self._last_policy_action not in allowed_policy_actions:
+            allowed = ", ".join(sorted(allowed_policy_actions))
+            raise InvalidTransitionError(
+                f"{event_type.value} requires policy action {allowed}"
+            )
+
+    def _clear_answer_evaluation(self) -> None:
+        self._answer_evaluated = False
+        self._last_answer_classification = None
+        self._last_policy_action = None

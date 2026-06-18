@@ -92,8 +92,13 @@ Use these domain states for the POC:
 - `intro|confirm_next -> ask_question` on `question_asked`
 - `ask_question|single_follow_up|soft_reprompt -> listen` on
   `candidate_turn_started`
-- `listen -> ask_question` on `question_repeated`
+- `listen -> ask_question` on legacy `question_repeated`
 - `listen -> evaluate_answer` on `candidate_turn_finalized`
+- `evaluate_answer -> evaluate_answer` on `answer_evaluated`
+- `evaluate_answer -> ask_question` on `question_repeated` after
+  `answer_evaluated.policy_action = repeat_question`
+- `evaluate_answer -> ask_question` on `wait_requested` after
+  `answer_evaluated.policy_action = wait`
 - `evaluate_answer -> soft_reprompt` on `soft_reprompted`
 - `evaluate_answer -> single_follow_up` on `followup_asked`
 - `evaluate_answer -> confirm_next` on `question_completed`
@@ -106,7 +111,8 @@ Use these domain states for the POC:
 
 - A new planned question cannot be asked before the previous question reaches
   `confirm_next`.
-- A follow-up cannot be asked before a candidate turn for that question.
+- A follow-up cannot be asked before `answer_evaluated.classification = vague`
+  for that question.
 - More than one contextual follow-up per configured question is rejected.
 - More than one soft reprompt per question is rejected in the POC.
 - `free_chat_requested` is always rejected.
@@ -115,6 +121,9 @@ Use these domain states for the POC:
   `answered`, `skipped`, or `incomplete`.
 - `question_completed` is emitted only after answer evaluation and moves the
   machine to `confirm_next`.
+- `answer_evaluated` records the semantic classification, reason codes,
+  evaluator version, confidence, and bounded policy action used for audit and
+  later metrics.
 
 ## Implementation Notes
 

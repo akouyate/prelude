@@ -10,6 +10,7 @@ import pytest
 from app.adapters.livekit_openai_worker import (
     FIRST_REPLY_INSTRUCTIONS,
     LiveKitAgentEventBridge,
+    LiveInterviewOrchestrationController,
     OpenAILiveWorkerConfig,
     PreludeEventEmitter,
     build_live_interviewer_instructions,
@@ -159,6 +160,9 @@ async def test_livekit_agent_bridge_persists_final_candidate_transcript() -> Non
     assert len(events) == 1
     assert events[0].type == EventType.CANDIDATE_TURN_FINALIZED
     assert events[0].actor == EventActor.CANDIDATE
+    assert events[0].payload["question_id"] == "unscoped_livekit"
+    assert events[0].payload["completion_reason"] == "answered"
+    assert events[0].payload["transcript_turn"]["question_id"] == "unscoped_livekit"
     assert events[0].payload["transcript_turn"]["speaker"] == "candidate"
     assert events[0].payload["transcript_turn"]["text"] == "Je suis disponible dans deux semaines."
 
@@ -196,11 +200,161 @@ async def test_livekit_agent_bridge_persists_assistant_transcript() -> None:
     assert len(events) == 1
     assert events[0].type == EventType.AGENT_SPEECH_COMPLETED
     assert events[0].actor == EventActor.AGENT
+    assert events[0].payload["utterance_id"] == "session-test:livekit:unscoped:1"
+    assert events[0].payload["utterance_kind"] == "intro"
     assert events[0].payload["transcript_turn"]["speaker"] == "interviewer"
     assert (
         events[0].payload["transcript_turn"]["text"]
         == "Bonjour, pouvez-vous vous presenter brievement ?"
     )
+
+
+@pytest.mark.asyncio
+async def test_livekit_agent_bridge_emits_contract_aligned_session_failed() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeAgentSession()
+    bridge = LiveKitAgentEventBridge(emitter=emitter)
+    bridge.register(session)
+
+    session.handlers["error"](
+        SimpleNamespace(
+            error=RuntimeError("provider failure"),
+            created_at=datetime(2026, 6, 18, tzinfo=timezone.utc).timestamp(),
+        )
+    )
+    await bridge.drain()
+
+    assert len(events) == 1
+    assert events[0].type == EventType.SESSION_FAILED
+    assert events[0].payload == {
+        "code": "livekit_agent_session_error",
+        "message": "LiveKit agent session failed: RuntimeError",
+        "retryable": True,
+    }
+
+
+@pytest.mark.asyncio
+async def test_livekit_agent_bridge_scopes_state_events_to_current_question() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeAgentSession()
+    bridge = LiveKitAgentEventBridge(
+        emitter=emitter,
+        question_id_provider=lambda: "q1",
+    )
+    bridge.register(session)
+
+    session.handlers["agent_state_changed"](
+        SimpleNamespace(
+            old_state="listening",
+            new_state="speaking",
+            created_at=datetime(2026, 6, 18, tzinfo=timezone.utc).timestamp(),
+        )
+    )
+    session.handlers["agent_state_changed"](
+        SimpleNamespace(
+            old_state="speaking",
+            new_state="listening",
+            created_at=datetime(2026, 6, 18, tzinfo=timezone.utc).timestamp(),
+        )
+    )
+    await bridge.drain()
+
+    assert [event.type for event in events] == [
+        EventType.AGENT_SPEECH_STARTED,
+        EventType.AGENT_SPEECH_COMPLETED,
+    ]
+    assert events[0].payload["question_id"] == "q1"
+    assert events[0].payload["utterance_id"] == "session-test:livekit:q1:1"
+    assert events[0].payload["utterance_kind"] == "question"
+    assert events[1].payload["utterance_id"] == events[0].payload["utterance_id"]
+
+
+@pytest.mark.asyncio
+async def test_live_orchestration_controller_completes_three_question_flow() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+
+    await controller.start()
+    await controller.handle_candidate_transcript(
+        "Je suis interesse par le poste et le contexte B2B.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+    await controller.handle_candidate_transcript(
+        "J'ai priorise une roadmap avec des contraintes clients fortes.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+    await controller.handle_candidate_transcript(
+        "Je suis disponible dans deux semaines.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+
+    event_types = [event.type for event in events]
+    assert event_types.count(EventType.QUESTION_ASKED) == 3
+    assert event_types.count(EventType.CANDIDATE_TURN_FINALIZED) == 3
+    assert event_types.count(EventType.ANSWER_EVALUATED) == 3
+    assert event_types.count(EventType.QUESTION_COMPLETED) == 3
+    assert events[-2].type == EventType.SESSION_CLOSING
+    assert events[-1].type == EventType.SESSION_COMPLETED
+    assert events[-1].payload["completed_questions"] == 3
+    assert events[-1].payload["total_questions"] == 3
+    assert len(session.replies) >= 4
+
+
+@pytest.mark.asyncio
+async def test_live_orchestration_controller_routes_initial_silence_to_soft_reprompt() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+    await controller.start()
+
+    await _soft_prompt_after_initial_silence(
+        bridge=FakeBridge(),
+        threshold_seconds=0,
+        on_initial_silence=controller.handle_initial_silence,
+        emitter=emitter,
+        question_id="q1",
+    )
+
+    event_types = [event.type for event in events]
+    assert EventType.SILENCE_TIMEOUT_STARTED in event_types
+    assert EventType.ANSWER_EVALUATED in event_types
+    assert EventType.SOFT_REPROMPTED in event_types
+    evaluated = next(event for event in events if event.type == EventType.ANSWER_EVALUATED)
+    assert evaluated.payload["classification"] == "silent"
+    assert evaluated.payload["policy_action"] == "soft_reprompt"
 
 
 def test_live_worker_config_reads_max_duration_from_env() -> None:

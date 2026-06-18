@@ -42,6 +42,7 @@ const (
 	EventCandidateTurnDetected  EventType = "candidate_turn_detected"
 	EventCandidateTurnStarted   EventType = "candidate_turn_started"
 	EventCandidateTurnFinalized EventType = "candidate_turn_finalized"
+	EventAnswerEvaluated        EventType = "answer_evaluated"
 	EventBargeInDetected        EventType = "barge_in_detected"
 	EventBargeInAccepted        EventType = "barge_in_accepted"
 	EventBargeInRejected        EventType = "barge_in_rejected"
@@ -151,6 +152,7 @@ func CanApplyEvent(status SessionStatus, eventType EventType) bool {
 		EventCandidateTurnDetected,
 		EventCandidateTurnStarted,
 		EventCandidateTurnFinalized,
+		EventAnswerEvaluated,
 		EventBargeInDetected,
 		EventBargeInAccepted,
 		EventBargeInRejected,

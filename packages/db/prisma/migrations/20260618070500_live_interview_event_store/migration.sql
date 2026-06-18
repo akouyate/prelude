@@ -37,5 +37,11 @@ CREATE UNIQUE INDEX "live_interview_events_session_id_sequence_number_key" ON "l
 -- CreateIndex
 CREATE INDEX "live_interview_events_session_id_occurred_at_event_id_idx" ON "live_interview_events"("session_id", "occurred_at", "event_id");
 
+-- CreateIndex
+CREATE INDEX "live_interview_events_session_id_type_sequence_number_idx" ON "live_interview_events"("session_id", "type", "sequence_number");
+
+-- CreateIndex
+CREATE INDEX "live_interview_events_session_id_question_id_idx" ON "live_interview_events"("session_id", ((payload->>'question_id'))) WHERE payload ? 'question_id';
+
 -- AddForeignKey
 ALTER TABLE "live_interview_events" ADD CONSTRAINT "live_interview_events_session_id_fkey" FOREIGN KEY ("session_id") REFERENCES "live_interview_sessions"("id") ON DELETE CASCADE ON UPDATE CASCADE;

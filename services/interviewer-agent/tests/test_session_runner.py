@@ -20,6 +20,11 @@ class RecordingLiveKitRoom:
         self.disconnects += 1
 
 
+class FailingStartProvider(MockOpenAIRealtimeAdapter):
+    async def start_session(self, plan):  # type: ignore[no-untyped-def]
+        raise RuntimeError("provider failed before intro")
+
+
 @pytest.mark.asyncio
 async def test_runner_emits_ordered_interview_events() -> None:
     realtime_api = InMemoryRealtimeApiClient()
@@ -50,12 +55,39 @@ async def test_runner_emits_ordered_interview_events() -> None:
         event for event in realtime_api.events if event.type == EventType.QUESTION_ASKED
     )
     assert first_question.payload["question_index"] == 0
+    assert first_question.payload["transcript_turn"]["speaker"] == "interviewer"
+    assert first_question.payload["transcript_turn"]["text"] == first_question.payload["prompt"]
+    assert "question_id" not in realtime_api.events[-2].payload["transcript_turn"]
     assert realtime_api.events[-1].payload["completed_reason"] == "all_questions_completed"
     assert any(event.type == EventType.FOLLOWUP_ASKED for event in realtime_api.events)
+    assert any(event.type == EventType.ANSWER_EVALUATED for event in realtime_api.events)
     assert any(event.type == EventType.AGENT_SPEECH_STARTED for event in realtime_api.events)
     assert any(event.type == EventType.AGENT_SPEECH_COMPLETED for event in realtime_api.events)
     assert any(event.type == EventType.CANDIDATE_SPEECH_STARTED for event in realtime_api.events)
     assert any(event.type == EventType.CANDIDATE_TURN_DETECTED for event in realtime_api.events)
+
+
+@pytest.mark.asyncio
+async def test_runner_emits_contract_aligned_session_failed_payload() -> None:
+    realtime_api = InMemoryRealtimeApiClient()
+    runner = InterviewSessionRunner(
+        plan=create_demo_plan(),
+        provider=FailingStartProvider(),
+        realtime_api=realtime_api,
+        session_id="session-test",
+    )
+
+    with pytest.raises(RuntimeError):
+        await runner.run()
+
+    assert realtime_api.events[-1].type == EventType.SESSION_FAILED
+    assert realtime_api.events[-1].payload == {
+        "code": "agent_runtime_error",
+        "message": "Interview agent failed: RuntimeError",
+        "retryable": False,
+    }
+    assert "error" not in realtime_api.events[-1].payload
+    assert "error_type" not in realtime_api.events[-1].payload
 
 
 @pytest.mark.asyncio

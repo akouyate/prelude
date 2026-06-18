@@ -12,6 +12,10 @@ and token creation without changing HTTP contracts.
 - Create interview session.
 - Return LiveKit join responses for candidate and agent participants.
 - Ingest realtime events idempotently.
+- Validate the semantic `answer_evaluated` event shape while keeping question
+  progression policy in the Python worker.
+- Reject payload or provider metadata keys that look like provider secrets,
+  API keys, authorization headers, passwords, or tokens.
 - Persist sessions and append-only events in Postgres when `DATABASE_URL` is set.
 - Fetch a session with its ingested events.
 - Reconstruct candidate transcript turns from finalized turn events.
@@ -120,6 +124,29 @@ curl -X POST http://localhost:8080/v1/interview-sessions/{session_id}/events \
     "provider_metadata": {"provider_event_id": "raw_provider_evt_123"}
   }'
 ```
+
+The Python worker emits `answer_evaluated` after each finalized candidate turn.
+The event explains the classification and bounded policy action used by the
+deterministic interviewer runtime:
+
+```json
+{
+  "question_id": "q1",
+  "turn_ids": ["turn_123"],
+  "attempt_index": 1,
+  "classification": "vague",
+  "reason_codes": ["too_generic"],
+  "policy_action": "ask_followup",
+  "confidence": 0.78,
+  "evaluator_version": "answer-eval-v1"
+}
+```
+
+Go validates this shape and stores it; it does not decide whether to ask the
+next question, follow up, reprompt, or close. Go also validates metric-bearing
+payloads such as `question_asked`, `candidate_turn_finalized`,
+`question_completed`, `session_closing`, `session_completed`, `session_failed`,
+and barge-in events so analytics can be replayed from persisted events.
 
 ```bash
 curl http://localhost:8080/v1/interview-sessions/{session_id}/transcript

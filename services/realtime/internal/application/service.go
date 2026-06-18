@@ -254,6 +254,15 @@ func (s *Service) IngestEvent(ctx context.Context, input IngestEventInput) (Inge
 	if len(input.ProviderMetadata) > 0 && !json.Valid(input.ProviderMetadata) {
 		return IngestEventOutput{}, fmt.Errorf("%w: provider_metadata must be valid json", ErrInvalidInput)
 	}
+	if secretKey, ok := secretKeyInJSON(input.Payload); ok {
+		return IngestEventOutput{}, fmt.Errorf("%w: payload contains forbidden sensitive key %q", ErrInvalidEvent, secretKey)
+	}
+	if secretKey, ok := secretKeyInJSON(input.ProviderMetadata); ok {
+		return IngestEventOutput{}, fmt.Errorf("%w: provider_metadata contains forbidden sensitive key %q", ErrInvalidEvent, secretKey)
+	}
+	if err := validateEventPayload(input.Type, input.Payload); err != nil {
+		return IngestEventOutput{}, err
+	}
 	if input.OccurredAt.IsZero() {
 		input.OccurredAt = s.clock.Now()
 	}
@@ -409,6 +418,7 @@ func knownEventType(eventType domain.EventType) bool {
 		domain.EventCandidateTurnDetected,
 		domain.EventCandidateTurnStarted,
 		domain.EventCandidateTurnFinalized,
+		domain.EventAnswerEvaluated,
 		domain.EventBargeInDetected,
 		domain.EventBargeInAccepted,
 		domain.EventBargeInRejected,
@@ -425,6 +435,803 @@ func knownEventType(eventType domain.EventType) bool {
 	default:
 		return false
 	}
+}
+
+type eventPayloadObject map[string]json.RawMessage
+
+func validateEventPayload(eventType domain.EventType, payload json.RawMessage) error {
+	switch eventType {
+	case domain.EventQuestionAsked:
+		return validateQuestionAskedPayload(eventType, payload)
+	case domain.EventQuestionRepeated:
+		return validateQuestionRepeatedPayload(eventType, payload)
+	case domain.EventCandidateTurnFinalized:
+		return validateCandidateTurnFinalizedPayload(eventType, payload)
+	case domain.EventAnswerEvaluated:
+		return validateAnswerEvaluatedPayload(eventType, payload)
+	case domain.EventBargeInDetected:
+		return validateBargeInDetectedPayload(eventType, payload)
+	case domain.EventBargeInAccepted:
+		return validateBargeInAcceptedPayload(eventType, payload)
+	case domain.EventAgentSpeechInterrupted:
+		return validateAgentSpeechInterruptedPayload(eventType, payload)
+	case domain.EventBargeInRejected, domain.EventBackchannelDetected:
+		return validateRejectedInterruptionPayload(eventType, payload)
+	case domain.EventSilenceTimeoutStarted:
+		return validateSilenceTimeoutStartedPayload(eventType, payload)
+	case domain.EventWaitRequested:
+		return validateWaitRequestedPayload(eventType, payload)
+	case domain.EventSoftReprompted:
+		return validateSoftRepromptedPayload(eventType, payload)
+	case domain.EventFollowupAsked:
+		return validateFollowupAskedPayload(eventType, payload)
+	case domain.EventQuestionCompleted:
+		return validateQuestionCompletedPayload(eventType, payload)
+	case domain.EventSessionClosing:
+		return validateSessionClosingPayload(eventType, payload)
+	case domain.EventSessionCompleted:
+		return validateSessionCompletedPayload(eventType, payload)
+	case domain.EventSessionFailed:
+		return validateSessionFailedPayload(eventType, payload)
+	default:
+		return nil
+	}
+}
+
+func validateQuestionAskedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	if _, err := requireIntRangeField(object, eventType, "question_index", 0, 1000, "question_index", "questionIndex"); err != nil {
+		return err
+	}
+	if _, err := requireTextField(object, eventType, "prompt", 8, 800, "prompt"); err != nil {
+		return err
+	}
+	return validateOptionalTranscriptTurn(object, eventType, string(domain.TranscriptSpeakerInterviewer))
+}
+
+func validateQuestionRepeatedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	if _, err := requireTextField(object, eventType, "prompt", 8, 800, "prompt"); err != nil {
+		return err
+	}
+	if err := requireExactStringField(object, eventType, "reason", "candidate_requested_repeat", "reason"); err != nil {
+		return err
+	}
+	return validateOptionalTranscriptTurn(object, eventType, string(domain.TranscriptSpeakerInterviewer))
+}
+
+func validateCandidateTurnFinalizedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	completionReason, err := requireStringField(object, eventType, "completion_reason", "completion_reason", "completionReason")
+	if err != nil {
+		return err
+	}
+	if !knownTurnCompletionReason(completionReason) {
+		return fmt.Errorf("%w: unsupported completion reason %q", ErrInvalidEvent, completionReason)
+	}
+	return validateRequiredTranscriptTurn(object, eventType, string(domain.TranscriptSpeakerCandidate))
+}
+
+func validateAnswerEvaluatedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	turnIDs, err := requireStringArrayField(object, eventType, "turn_ids", 1, "turn_ids", "turnIds")
+	if err != nil {
+		return err
+	}
+	for _, turnID := range turnIDs {
+		if strings.TrimSpace(turnID) == "" {
+			return fmt.Errorf("%w: answer_evaluated turn_ids cannot contain empty values", ErrInvalidEvent)
+		}
+	}
+	if _, err := requireIntRangeField(object, eventType, "attempt_index", 1, 1000, "attempt_index", "attemptIndex"); err != nil {
+		return err
+	}
+	classification, err := requireStringField(object, eventType, "classification", "classification")
+	if err != nil {
+		return err
+	}
+	if !knownAnswerClassification(classification) {
+		return fmt.Errorf("%w: unsupported answer classification %q", ErrInvalidEvent, classification)
+	}
+	if _, err := requireStringArrayField(object, eventType, "reason_codes", 0, "reason_codes", "reasonCodes"); err != nil {
+		return err
+	}
+	policyAction, err := requireStringField(object, eventType, "policy_action", "policy_action", "policyAction")
+	if err != nil {
+		return err
+	}
+	if !knownPolicyAction(policyAction) {
+		return fmt.Errorf("%w: unsupported policy action %q", ErrInvalidEvent, policyAction)
+	}
+	if _, err := requireFloatRangeField(object, eventType, "confidence", 0, 1, "confidence"); err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "evaluator_version", "evaluator_version", "evaluatorVersion"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateBargeInDetectedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "utterance_id", "utterance_id", "utteranceId"); err != nil {
+		return err
+	}
+	if _, _, err := optionalStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	if _, _, err := optionalIntRangeField(object, eventType, "overlap_ms", 0, 3600000, "overlap_ms", "overlapMs"); err != nil {
+		return err
+	}
+	if _, _, err := optionalIntRangeField(object, eventType, "candidate_speech_ms", 0, 3600000, "candidate_speech_ms", "candidateSpeechMs"); err != nil {
+		return err
+	}
+	_, _, err = optionalFloatRangeField(object, eventType, "confidence", 0, 1, "confidence")
+	return err
+}
+
+func validateBargeInAcceptedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "utterance_id", "utterance_id", "utteranceId"); err != nil {
+		return err
+	}
+	if _, _, err := optionalStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	if _, err := requireIntRangeField(object, eventType, "cancel_latency_ms", 0, 3600000, "cancel_latency_ms", "cancelLatencyMs"); err != nil {
+		return err
+	}
+	_, _, err = optionalIntRangeField(object, eventType, "truncated_at_ms", 0, 3600000, "truncated_at_ms", "truncatedAtMs")
+	return err
+}
+
+func validateAgentSpeechInterruptedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "utterance_id", "utterance_id", "utteranceId"); err != nil {
+		return err
+	}
+	if _, _, err := optionalStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	if _, err := requireIntRangeField(object, eventType, "cancel_latency_ms", 0, 3600000, "cancel_latency_ms", "cancelLatencyMs"); err != nil {
+		return err
+	}
+	if err := requireExactBoolField(object, eventType, "cancel_agent_audio", true, "cancel_agent_audio", "cancelAgentAudio"); err != nil {
+		return err
+	}
+	_, _, err = optionalIntRangeField(object, eventType, "truncated_at_ms", 0, 3600000, "truncated_at_ms", "truncatedAtMs")
+	return err
+}
+
+func validateRejectedInterruptionPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, _, err := optionalStringField(object, eventType, "utterance_id", "utterance_id", "utteranceId"); err != nil {
+		return err
+	}
+	if _, _, err := optionalStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	reason, err := requireStringField(object, eventType, "reason", "reason")
+	if err != nil {
+		return err
+	}
+	if !knownRejectedInterruptionReason(reason) {
+		return fmt.Errorf("%w: unsupported interruption rejection reason %q", ErrInvalidEvent, reason)
+	}
+	_, _, err = optionalIntRangeField(object, eventType, "observed_speech_ms", 0, 3600000, "observed_speech_ms", "observedSpeechMs")
+	return err
+}
+
+func validateSilenceTimeoutStartedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, _, err := optionalStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	if _, err := requireIntRangeField(object, eventType, "threshold_ms", 1, 3600000, "threshold_ms", "thresholdMs"); err != nil {
+		return err
+	}
+	if _, _, err := optionalIntRangeField(object, eventType, "silent_for_ms", 0, 3600000, "silent_for_ms", "silentForMs"); err != nil {
+		return err
+	}
+	tier, err := requireStringField(object, eventType, "tier", "tier")
+	if err != nil {
+		return err
+	}
+	if !knownSilenceTier(tier) {
+		return fmt.Errorf("%w: unsupported silence tier %q", ErrInvalidEvent, tier)
+	}
+	return nil
+}
+
+func validateWaitRequestedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, _, err := optionalStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	if err := requireExactStringField(object, eventType, "reason", "candidate_requested_time", "reason"); err != nil {
+		return err
+	}
+	if _, _, err := optionalRFC3339StringField(object, eventType, "requested_at", "requested_at", "requestedAt"); err != nil {
+		return err
+	}
+	_, _, err = optionalRFC3339StringField(object, eventType, "wait_until", "wait_until", "waitUntil")
+	return err
+}
+
+func validateSoftRepromptedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	if _, err := requireTextField(object, eventType, "prompt", 8, 800, "prompt"); err != nil {
+		return err
+	}
+	if _, err := requireIntRangeField(object, eventType, "reprompts_used", 1, 1, "reprompts_used", "repromptsUsed"); err != nil {
+		return err
+	}
+	if _, _, err := optionalIntRangeField(object, eventType, "attempt_index", 1, 1000, "attempt_index", "attemptIndex"); err != nil {
+		return err
+	}
+	return validateOptionalTranscriptTurn(object, eventType, string(domain.TranscriptSpeakerInterviewer))
+}
+
+func validateFollowupAskedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "followup_id", "followup_id", "followupId"); err != nil {
+		return err
+	}
+	if _, err := requireTextField(object, eventType, "prompt", 8, 800, "prompt"); err != nil {
+		return err
+	}
+	if _, err := requireIntRangeField(object, eventType, "followups_used", 1, 1, "followups_used", "followupsUsed"); err != nil {
+		return err
+	}
+	if _, _, err := optionalIntRangeField(object, eventType, "attempt_index", 1, 1000, "attempt_index", "attemptIndex"); err != nil {
+		return err
+	}
+	return validateOptionalTranscriptTurn(object, eventType, string(domain.TranscriptSpeakerInterviewer))
+}
+
+func validateQuestionCompletedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	completionReason, err := requireStringField(object, eventType, "completion_reason", "completion_reason", "completionReason")
+	if err != nil {
+		return err
+	}
+	if !knownQuestionCompletionReason(completionReason) {
+		return fmt.Errorf("%w: unsupported question completion reason %q", ErrInvalidEvent, completionReason)
+	}
+	_, _, err = optionalIntRangeField(object, eventType, "attempt_index", 1, 1000, "attempt_index", "attemptIndex")
+	return err
+}
+
+func validateSessionClosingPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	completed, total, err := validateTerminalCounters(object, eventType)
+	if err != nil {
+		return err
+	}
+	if completed > total {
+		return fmt.Errorf("%w: session_closing completed_questions cannot exceed total_questions", ErrInvalidEvent)
+	}
+	if _, err := requireTextField(object, eventType, "closing", 1, 800, "closing"); err != nil {
+		return err
+	}
+	return validateOptionalTranscriptTurn(object, eventType, string(domain.TranscriptSpeakerInterviewer))
+}
+
+func validateSessionCompletedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	completedReason, err := requireStringField(object, eventType, "completed_reason", "completed_reason", "completedReason")
+	if err != nil {
+		return err
+	}
+	if !knownSessionCompletionReason(completedReason) {
+		return fmt.Errorf("%w: unsupported session completion reason %q", ErrInvalidEvent, completedReason)
+	}
+	completed, total, err := validateTerminalCounters(object, eventType)
+	if err != nil {
+		return err
+	}
+	if completed > total {
+		return fmt.Errorf("%w: session_completed completed_questions cannot exceed total_questions", ErrInvalidEvent)
+	}
+	return nil
+}
+
+func validateSessionFailedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireTextField(object, eventType, "code", 2, 80, "code"); err != nil {
+		return err
+	}
+	if _, err := requireTextField(object, eventType, "message", 1, 500, "message"); err != nil {
+		return err
+	}
+	_, err = requireBoolField(object, eventType, "retryable", "retryable")
+	return err
+}
+
+func validateTerminalCounters(object eventPayloadObject, eventType domain.EventType) (int, int, error) {
+	completed, err := requireIntRangeField(object, eventType, "completed_questions", 0, 1000, "completed_questions", "completedQuestions")
+	if err != nil {
+		return 0, 0, err
+	}
+	total, err := requireIntRangeField(object, eventType, "total_questions", 1, 1000, "total_questions", "totalQuestions")
+	if err != nil {
+		return 0, 0, err
+	}
+	return completed, total, nil
+}
+
+func validateOptionalTranscriptTurn(object eventPayloadObject, eventType domain.EventType, expectedSpeaker string) error {
+	raw, _, ok := payloadField(object, "transcript_turn", "transcriptTurn")
+	if !ok {
+		return nil
+	}
+	return validateTranscriptTurnPayload(eventType, raw, expectedSpeaker)
+}
+
+func validateRequiredTranscriptTurn(object eventPayloadObject, eventType domain.EventType, expectedSpeaker string) error {
+	raw, _, ok := payloadField(object, "transcript_turn", "transcriptTurn")
+	if !ok {
+		return fmt.Errorf("%w: %s requires transcript_turn", ErrInvalidEvent, eventType)
+	}
+	return validateTranscriptTurnPayload(eventType, raw, expectedSpeaker)
+}
+
+func validateTranscriptTurnPayload(eventType domain.EventType, payload json.RawMessage, expectedSpeaker string) error {
+	object, err := decodeNamedPayloadObject("transcript_turn", payload)
+	if err != nil {
+		return fmt.Errorf("%w: %s %v", ErrInvalidEvent, eventType, err)
+	}
+	if _, err := requireStringField(object, eventType, "transcript_turn.turn_id", "turn_id", "turnId"); err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "transcript_turn.session_id", "session_id", "sessionId"); err != nil {
+		return err
+	}
+	if _, _, err := optionalStringField(object, eventType, "transcript_turn.question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	speaker, err := requireStringField(object, eventType, "transcript_turn.speaker", "speaker")
+	if err != nil {
+		return err
+	}
+	if !knownTranscriptSpeaker(speaker) {
+		return fmt.Errorf("%w: unsupported transcript speaker %q", ErrInvalidEvent, speaker)
+	}
+	if expectedSpeaker != "" && speaker != expectedSpeaker {
+		return fmt.Errorf("%w: %s transcript_turn speaker must be %q", ErrInvalidEvent, eventType, expectedSpeaker)
+	}
+	if _, err := requireTextField(object, eventType, "transcript_turn.text", 1, 12000, "text"); err != nil {
+		return err
+	}
+	if _, _, err := optionalBoolField(object, eventType, "transcript_turn.is_final", "is_final", "isFinal"); err != nil {
+		return err
+	}
+	if _, _, err := optionalFloatRangeField(object, eventType, "transcript_turn.confidence", 0, 1, "confidence"); err != nil {
+		return err
+	}
+	if _, err := requireRFC3339StringField(object, eventType, "transcript_turn.started_at", "started_at", "startedAt"); err != nil {
+		return err
+	}
+	_, _, err = optionalRFC3339StringField(object, eventType, "transcript_turn.ended_at", "ended_at", "endedAt")
+	return err
+}
+
+func decodePayloadObject(eventType domain.EventType, payload json.RawMessage) (eventPayloadObject, error) {
+	object, err := decodeNamedPayloadObject(string(eventType), payload)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidEvent, err)
+	}
+	return object, nil
+}
+
+func decodeNamedPayloadObject(name string, payload json.RawMessage) (eventPayloadObject, error) {
+	var object eventPayloadObject
+	if err := json.Unmarshal(payload, &object); err != nil {
+		return nil, fmt.Errorf("%s payload must be an object", name)
+	}
+	if object == nil {
+		return nil, fmt.Errorf("%s payload must be an object", name)
+	}
+	return object, nil
+}
+
+func payloadField(object eventPayloadObject, names ...string) (json.RawMessage, string, bool) {
+	for _, name := range names {
+		if raw, ok := object[name]; ok {
+			return raw, name, true
+		}
+	}
+	return nil, "", false
+}
+
+func requireStringField(object eventPayloadObject, eventType domain.EventType, label string, names ...string) (string, error) {
+	value, ok, err := optionalStringField(object, eventType, label, names...)
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return "", fmt.Errorf("%w: %s requires %s", ErrInvalidEvent, eventType, label)
+	}
+	return value, nil
+}
+
+func optionalStringField(object eventPayloadObject, eventType domain.EventType, label string, names ...string) (string, bool, error) {
+	raw, _, ok := payloadField(object, names...)
+	if !ok {
+		return "", false, nil
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", true, fmt.Errorf("%w: %s %s must be a string", ErrInvalidEvent, eventType, label)
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", true, fmt.Errorf("%w: %s %s cannot be empty", ErrInvalidEvent, eventType, label)
+	}
+	return value, true, nil
+}
+
+func requireTextField(object eventPayloadObject, eventType domain.EventType, label string, minLength int, maxLength int, names ...string) (string, error) {
+	value, err := requireStringField(object, eventType, label, names...)
+	if err != nil {
+		return "", err
+	}
+	length := len([]rune(value))
+	if length < minLength || length > maxLength {
+		return "", fmt.Errorf("%w: %s %s must be between %d and %d characters", ErrInvalidEvent, eventType, label, minLength, maxLength)
+	}
+	return value, nil
+}
+
+func requireExactStringField(object eventPayloadObject, eventType domain.EventType, label string, expected string, names ...string) error {
+	value, err := requireStringField(object, eventType, label, names...)
+	if err != nil {
+		return err
+	}
+	if value != expected {
+		return fmt.Errorf("%w: %s %s must be %q", ErrInvalidEvent, eventType, label, expected)
+	}
+	return nil
+}
+
+func requireStringArrayField(object eventPayloadObject, eventType domain.EventType, label string, minLength int, names ...string) ([]string, error) {
+	raw, _, ok := payloadField(object, names...)
+	if !ok {
+		return nil, fmt.Errorf("%w: %s requires %s", ErrInvalidEvent, eventType, label)
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return nil, fmt.Errorf("%w: %s %s must be a string array", ErrInvalidEvent, eventType, label)
+	}
+	if values == nil {
+		return nil, fmt.Errorf("%w: %s %s cannot be null", ErrInvalidEvent, eventType, label)
+	}
+	if len(values) < minLength {
+		return nil, fmt.Errorf("%w: %s %s must contain at least %d value(s)", ErrInvalidEvent, eventType, label, minLength)
+	}
+	return values, nil
+}
+
+func requireIntRangeField(object eventPayloadObject, eventType domain.EventType, label string, minimum int, maximum int, names ...string) (int, error) {
+	value, ok, err := optionalIntRangeField(object, eventType, label, minimum, maximum, names...)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, fmt.Errorf("%w: %s requires %s", ErrInvalidEvent, eventType, label)
+	}
+	return value, nil
+}
+
+func optionalIntRangeField(object eventPayloadObject, eventType domain.EventType, label string, minimum int, maximum int, names ...string) (int, bool, error) {
+	raw, _, ok := payloadField(object, names...)
+	if !ok {
+		return 0, false, nil
+	}
+	var value int
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return 0, true, fmt.Errorf("%w: %s %s must be an integer", ErrInvalidEvent, eventType, label)
+	}
+	if value < minimum || value > maximum {
+		return 0, true, fmt.Errorf("%w: %s %s must be between %d and %d", ErrInvalidEvent, eventType, label, minimum, maximum)
+	}
+	return value, true, nil
+}
+
+func requireFloatRangeField(object eventPayloadObject, eventType domain.EventType, label string, minimum float64, maximum float64, names ...string) (float64, error) {
+	value, ok, err := optionalFloatRangeField(object, eventType, label, minimum, maximum, names...)
+	if err != nil {
+		return 0, err
+	}
+	if !ok {
+		return 0, fmt.Errorf("%w: %s requires %s", ErrInvalidEvent, eventType, label)
+	}
+	return value, nil
+}
+
+func optionalFloatRangeField(object eventPayloadObject, eventType domain.EventType, label string, minimum float64, maximum float64, names ...string) (float64, bool, error) {
+	raw, _, ok := payloadField(object, names...)
+	if !ok {
+		return 0, false, nil
+	}
+	var value float64
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return 0, true, fmt.Errorf("%w: %s %s must be a number", ErrInvalidEvent, eventType, label)
+	}
+	if value < minimum || value > maximum {
+		return 0, true, fmt.Errorf("%w: %s %s must be between %.2f and %.2f", ErrInvalidEvent, eventType, label, minimum, maximum)
+	}
+	return value, true, nil
+}
+
+func requireBoolField(object eventPayloadObject, eventType domain.EventType, label string, names ...string) (bool, error) {
+	value, ok, err := optionalBoolField(object, eventType, label, names...)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, fmt.Errorf("%w: %s requires %s", ErrInvalidEvent, eventType, label)
+	}
+	return value, nil
+}
+
+func optionalBoolField(object eventPayloadObject, eventType domain.EventType, label string, names ...string) (bool, bool, error) {
+	raw, _, ok := payloadField(object, names...)
+	if !ok {
+		return false, false, nil
+	}
+	var value bool
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return false, true, fmt.Errorf("%w: %s %s must be a boolean", ErrInvalidEvent, eventType, label)
+	}
+	return value, true, nil
+}
+
+func requireExactBoolField(object eventPayloadObject, eventType domain.EventType, label string, expected bool, names ...string) error {
+	value, err := requireBoolField(object, eventType, label, names...)
+	if err != nil {
+		return err
+	}
+	if value != expected {
+		return fmt.Errorf("%w: %s %s must be %t", ErrInvalidEvent, eventType, label, expected)
+	}
+	return nil
+}
+
+func requireRFC3339StringField(object eventPayloadObject, eventType domain.EventType, label string, names ...string) (time.Time, error) {
+	value, err := requireStringField(object, eventType, label, names...)
+	if err != nil {
+		return time.Time{}, err
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("%w: %s %s must be RFC3339", ErrInvalidEvent, eventType, label)
+	}
+	return parsed, nil
+}
+
+func optionalRFC3339StringField(object eventPayloadObject, eventType domain.EventType, label string, names ...string) (time.Time, bool, error) {
+	value, ok, err := optionalStringField(object, eventType, label, names...)
+	if err != nil || !ok {
+		return time.Time{}, ok, err
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return time.Time{}, true, fmt.Errorf("%w: %s %s must be RFC3339", ErrInvalidEvent, eventType, label)
+	}
+	return parsed, true, nil
+}
+
+func knownAnswerClassification(classification string) bool {
+	switch classification {
+	case "complete",
+		"vague",
+		"incomplete",
+		"silent",
+		"skipped",
+		"repeat_requested",
+		"wait_requested":
+		return true
+	default:
+		return false
+	}
+}
+
+func knownPolicyAction(action string) bool {
+	switch action {
+	case "complete_question",
+		"ask_followup",
+		"soft_reprompt",
+		"repeat_question",
+		"wait",
+		"mark_skipped",
+		"timebox":
+		return true
+	default:
+		return false
+	}
+}
+
+func knownTurnCompletionReason(reason string) bool {
+	switch reason {
+	case "answered", "skipped", "incomplete":
+		return true
+	default:
+		return false
+	}
+}
+
+func knownQuestionCompletionReason(reason string) bool {
+	switch reason {
+	case "answered", "skipped", "candidate_silent", "timeboxed":
+		return true
+	default:
+		return false
+	}
+}
+
+func knownSessionCompletionReason(reason string) bool {
+	switch reason {
+	case "all_questions_completed", "candidate_ended", "timeboxed":
+		return true
+	default:
+		return false
+	}
+}
+
+func knownRejectedInterruptionReason(reason string) bool {
+	switch reason {
+	case "backchannel", "noise", "too_short", "low_confidence":
+		return true
+	default:
+		return false
+	}
+}
+
+func knownSilenceTier(tier string) bool {
+	switch tier {
+	case "soft_prompt", "wait_extension", "terminal":
+		return true
+	default:
+		return false
+	}
+}
+
+func knownTranscriptSpeaker(speaker string) bool {
+	switch domain.TranscriptSpeaker(speaker) {
+	case domain.TranscriptSpeakerCandidate,
+		domain.TranscriptSpeakerInterviewer,
+		domain.TranscriptSpeakerSystem:
+		return true
+	default:
+		return false
+	}
+}
+
+func secretKeyInJSON(raw json.RawMessage) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", false
+	}
+
+	return secretKeyInValue(value)
+}
+
+func secretKeyInValue(value any) (string, bool) {
+	object, ok := value.(map[string]any)
+	if ok {
+		for key, child := range object {
+			if isSensitiveKey(key) {
+				return key, true
+			}
+			if secretKey, ok := secretKeyInValue(child); ok {
+				return secretKey, true
+			}
+		}
+		return "", false
+	}
+
+	array, ok := value.([]any)
+	if ok {
+		for _, child := range array {
+			if secretKey, ok := secretKeyInValue(child); ok {
+				return secretKey, true
+			}
+		}
+	}
+
+	return "", false
+}
+
+func isSensitiveKey(key string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(key, "_", ""), "-", ""))
+	for _, marker := range []string{
+		"token",
+		"apikey",
+		"secret",
+		"authorization",
+		"password",
+		"bearer",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func demoInterviewPlan(planID string) InterviewPlan {

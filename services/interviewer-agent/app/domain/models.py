@@ -73,6 +73,7 @@ class EventType(StrEnum):
     CANDIDATE_TURN_DETECTED = "candidate_turn_detected"
     CANDIDATE_TURN_STARTED = "candidate_turn_started"
     CANDIDATE_TURN_FINALIZED = "candidate_turn_finalized"
+    ANSWER_EVALUATED = "answer_evaluated"
     BARGE_IN_DETECTED = "barge_in_detected"
     BARGE_IN_ACCEPTED = "barge_in_accepted"
     BARGE_IN_REJECTED = "barge_in_rejected"

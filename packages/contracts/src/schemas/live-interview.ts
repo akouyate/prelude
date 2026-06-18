@@ -3,7 +3,7 @@ import { z } from "zod";
 export const liveInterviewProviderSchema = z.enum([
   "openai_realtime",
   "elevenlabs",
-  "mock"
+  "mock",
 ]);
 
 export const liveInterviewModeSchema = z.enum(["audio", "video", "form"]);
@@ -16,19 +16,39 @@ export const liveInterviewSessionStatusSchema = z.enum([
   "paused",
   "completed",
   "failed",
-  "expired"
+  "expired",
 ]);
 
 export const liveInterviewSpeakerSchema = z.enum([
   "candidate",
   "interviewer",
-  "system"
+  "system",
 ]);
 
 export const liveInterviewEventActorSchema = z.enum([
   "agent",
   "candidate",
-  "system"
+  "system",
+]);
+
+export const liveInterviewAnswerClassificationSchema = z.enum([
+  "complete",
+  "vague",
+  "incomplete",
+  "silent",
+  "skipped",
+  "repeat_requested",
+  "wait_requested",
+]);
+
+export const liveInterviewPolicyActionSchema = z.enum([
+  "complete_question",
+  "ask_followup",
+  "soft_reprompt",
+  "repeat_question",
+  "wait",
+  "mark_skipped",
+  "timebox",
 ]);
 
 export const liveInterviewQuestionCategorySchema = z.enum([
@@ -38,7 +58,7 @@ export const liveInterviewQuestionCategorySchema = z.enum([
   "logistics",
   "availability",
   "compensation",
-  "custom"
+  "custom",
 ]);
 
 export const liveInterviewQuestionSchema = z.object({
@@ -47,7 +67,7 @@ export const liveInterviewQuestionSchema = z.object({
   category: liveInterviewQuestionCategorySchema.default("custom"),
   expectedSignal: z.string().trim().min(4).max(500).optional(),
   required: z.boolean().default(true),
-  maxFollowups: z.number().int().min(0).max(1).default(1)
+  maxFollowups: z.number().int().min(0).max(1).default(1),
 });
 
 export const liveInterviewPlanSchema = z.object({
@@ -56,7 +76,7 @@ export const liveInterviewPlanSchema = z.object({
   roleTitle: z.string().trim().min(2).max(160),
   locale: z.string().min(2).default("fr-FR"),
   candidateModes: z.array(liveInterviewModeSchema).min(1).max(3),
-  questions: z.array(liveInterviewQuestionSchema).min(1).max(8)
+  questions: z.array(liveInterviewQuestionSchema).min(1).max(8),
 });
 
 export const liveInterviewSessionSchema = z.object({
@@ -66,7 +86,7 @@ export const liveInterviewSessionSchema = z.object({
   status: liveInterviewSessionStatusSchema,
   livekitRoomName: z.string().min(1),
   createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime()
+  updatedAt: z.string().datetime(),
 });
 
 export const liveInterviewTranscriptTurnSchema = z.object({
@@ -78,7 +98,7 @@ export const liveInterviewTranscriptTurnSchema = z.object({
   isFinal: z.boolean().default(true),
   startedAt: z.string().datetime(),
   endedAt: z.string().datetime().optional(),
-  confidence: z.number().min(0).max(1).optional()
+  confidence: z.number().min(0).max(1).optional(),
 });
 
 const liveInterviewEventBaseSchema = z.object({
@@ -89,21 +109,28 @@ const liveInterviewEventBaseSchema = z.object({
   sequenceNumber: z.number().int().min(1),
   idempotencyKey: z.string().min(8),
   occurredAt: z.string().datetime(),
-  providerMetadata: z.record(z.string(), z.unknown()).default({})
+  providerMetadata: z.record(z.string(), z.unknown()).default({}),
 });
 
 const optionalQuestionSignalPayloadSchema = z.object({
   questionId: z.string().min(1).optional(),
   turnId: z.string().min(1).optional(),
   trackId: z.string().min(1).optional(),
-  confidence: z.number().min(0).max(1).optional()
+  confidence: z.number().min(0).max(1).optional(),
 });
 
 const agentSpeechPayloadSchema = z.object({
   questionId: z.string().min(1).optional(),
   utteranceId: z.string().min(1),
-  utteranceKind: z.enum(["intro", "question", "repeat", "soft_reprompt", "followup", "closing"]),
-  audioDurationMs: z.number().int().min(0).optional()
+  utteranceKind: z.enum([
+    "intro",
+    "question",
+    "repeat",
+    "soft_reprompt",
+    "followup",
+    "closing",
+  ]),
+  audioDurationMs: z.number().int().min(0).optional(),
 });
 
 const interruptionPayloadSchema = z.object({
@@ -111,14 +138,14 @@ const interruptionPayloadSchema = z.object({
   questionId: z.string().min(1).optional(),
   overlapMs: z.number().int().min(0).optional(),
   candidateSpeechMs: z.number().int().min(0).optional(),
-  confidence: z.number().min(0).max(1).optional()
+  confidence: z.number().min(0).max(1).optional(),
 });
 
 const rejectedInterruptionPayloadSchema = z.object({
   utteranceId: z.string().min(1).optional(),
   questionId: z.string().min(1).optional(),
   reason: z.enum(["backchannel", "noise", "too_short", "low_confidence"]),
-  observedSpeechMs: z.number().int().min(0).optional()
+  observedSpeechMs: z.number().int().min(0).optional(),
 });
 
 export const liveInterviewEventSchema = z.discriminatedUnion("type", [
@@ -126,64 +153,66 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
     type: z.literal("session_started"),
     payload: z.object({
       provider: liveInterviewProviderSchema,
-      agentParticipantId: z.string().min(1)
-    })
+      agentParticipantId: z.string().min(1),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("candidate_joined"),
     payload: z.object({
       candidateParticipantId: z.string().min(1),
-      modes: z.array(liveInterviewModeSchema).min(1).max(3)
-    })
+      modes: z.array(liveInterviewModeSchema).min(1).max(3),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("agent_joined"),
     payload: z.object({
       agentParticipantId: z.string().min(1),
-      provider: liveInterviewProviderSchema
-    })
+      provider: liveInterviewProviderSchema,
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("agent_speech_started"),
-    payload: agentSpeechPayloadSchema
+    payload: agentSpeechPayloadSchema,
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("agent_speech_completed"),
-    payload: agentSpeechPayloadSchema
+    payload: agentSpeechPayloadSchema,
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("agent_speech_interrupted"),
     payload: interruptionPayloadSchema.extend({
       cancelLatencyMs: z.number().int().min(0),
       truncatedAtMs: z.number().int().min(0).optional(),
-      cancelAgentAudio: z.literal(true)
-    })
+      cancelAgentAudio: z.literal(true),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("question_asked"),
     payload: z.object({
       questionId: z.string().min(1),
       questionIndex: z.number().int().min(0),
-      prompt: z.string().trim().min(8).max(800)
-    })
+      prompt: z.string().trim().min(8).max(800),
+      transcriptTurn: liveInterviewTranscriptTurnSchema.optional(),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("question_repeated"),
     payload: z.object({
       questionId: z.string().min(1),
       prompt: z.string().trim().min(8).max(800),
-      reason: z.literal("candidate_requested_repeat")
-    })
+      reason: z.literal("candidate_requested_repeat"),
+      transcriptTurn: liveInterviewTranscriptTurnSchema.optional(),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("candidate_speech_started"),
-    payload: optionalQuestionSignalPayloadSchema
+    payload: optionalQuestionSignalPayloadSchema,
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("candidate_speech_stopped"),
     payload: optionalQuestionSignalPayloadSchema.extend({
-      speechDurationMs: z.number().int().min(0).optional()
-    })
+      speechDurationMs: z.number().int().min(0).optional(),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("candidate_turn_detected"),
@@ -191,41 +220,55 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
       questionId: z.string().min(1),
       semanticComplete: z.boolean().optional(),
       stableSilenceMs: z.number().int().min(0).optional(),
-      confidence: z.number().min(0).max(1).optional()
-    })
+      confidence: z.number().min(0).max(1).optional(),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("candidate_turn_started"),
     payload: z.object({
-      questionId: z.string().min(1).optional()
-    })
+      questionId: z.string().min(1).optional(),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("candidate_turn_finalized"),
     payload: z.object({
       questionId: z.string().min(1),
       completionReason: z.enum(["answered", "skipped", "incomplete"]),
-      transcriptTurn: liveInterviewTranscriptTurnSchema
-    })
+      transcriptTurn: liveInterviewTranscriptTurnSchema,
+    }),
+  }),
+  liveInterviewEventBaseSchema.extend({
+    type: z.literal("answer_evaluated"),
+    payload: z.object({
+      questionId: z.string().min(1),
+      questionIndex: z.number().int().min(0).optional(),
+      turnIds: z.array(z.string().min(1)).min(1),
+      attemptIndex: z.number().int().min(1),
+      classification: liveInterviewAnswerClassificationSchema,
+      reasonCodes: z.array(z.string().min(1).max(80)),
+      policyAction: liveInterviewPolicyActionSchema,
+      confidence: z.number().min(0).max(1),
+      evaluatorVersion: z.string().min(1).max(80),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("barge_in_detected"),
-    payload: interruptionPayloadSchema
+    payload: interruptionPayloadSchema,
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("barge_in_accepted"),
     payload: interruptionPayloadSchema.extend({
       cancelLatencyMs: z.number().int().min(0),
-      truncatedAtMs: z.number().int().min(0).optional()
-    })
+      truncatedAtMs: z.number().int().min(0).optional(),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("barge_in_rejected"),
-    payload: rejectedInterruptionPayloadSchema
+    payload: rejectedInterruptionPayloadSchema,
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("backchannel_detected"),
-    payload: rejectedInterruptionPayloadSchema
+    payload: rejectedInterruptionPayloadSchema,
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("silence_timeout_started"),
@@ -233,8 +276,8 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
       questionId: z.string().min(1).optional(),
       thresholdMs: z.number().int().min(1),
       silentForMs: z.number().int().min(0).optional(),
-      tier: z.enum(["soft_prompt", "wait_extension", "terminal"])
-    })
+      tier: z.enum(["soft_prompt", "wait_extension", "terminal"]),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("wait_requested"),
@@ -242,24 +285,28 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
       questionId: z.string().min(1).optional(),
       requestedAt: z.string().datetime().optional(),
       waitUntil: z.string().datetime().optional(),
-      reason: z.literal("candidate_requested_time")
-    })
+      reason: z.literal("candidate_requested_time"),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("soft_reprompted"),
     payload: z.object({
       questionId: z.string().min(1),
       prompt: z.string().trim().min(8).max(800),
-      repromptsUsed: z.number().int().min(1).max(1)
-    })
+      repromptsUsed: z.number().int().min(1).max(1),
+      transcriptTurn: liveInterviewTranscriptTurnSchema.optional(),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("followup_asked"),
     payload: z.object({
       questionId: z.string().min(1),
       followupId: z.string().min(1),
-      prompt: z.string().trim().min(8).max(800)
-    })
+      prompt: z.string().trim().min(8).max(800),
+      followupsUsed: z.number().int().min(1).max(1),
+      attemptIndex: z.number().int().min(1).optional(),
+      transcriptTurn: liveInterviewTranscriptTurnSchema.optional(),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("question_completed"),
@@ -269,9 +316,9 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
         "answered",
         "skipped",
         "candidate_silent",
-        "timeboxed"
-      ])
-    })
+        "timeboxed",
+      ]),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("session_completed"),
@@ -279,30 +326,77 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
       completedReason: z.enum([
         "all_questions_completed",
         "candidate_ended",
-        "timeboxed"
-      ])
-    })
+        "timeboxed",
+      ]),
+      completedQuestions: z.number().int().min(0),
+      totalQuestions: z.number().int().min(1),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("session_closing"),
     payload: z.object({
       completedQuestions: z.number().int().min(0),
-      closing: z.string().trim().min(1).max(800)
-    })
+      closing: z.string().trim().min(1).max(800),
+      totalQuestions: z.number().int().min(1),
+      transcriptTurn: liveInterviewTranscriptTurnSchema.optional(),
+    }),
   }),
   liveInterviewEventBaseSchema.extend({
     type: z.literal("session_failed"),
     payload: z.object({
       code: z.string().min(2).max(80),
       message: z.string().min(1).max(500),
-      retryable: z.boolean().default(false)
-    })
-  })
+      retryable: z.boolean().default(false),
+    }),
+  }),
 ]);
+
+type UnknownRecord = Record<string, unknown>;
+
+export const liveInterviewWireEventSchema = z.preprocess((value) => {
+  const normalized = normalizeWireKeys(value);
+  if (isUnknownRecord(normalized) && normalized.sequenceNumber === undefined) {
+    const sequence = normalized.sequence;
+    if (sequence !== undefined) {
+      return {
+        ...normalized,
+        sequenceNumber: sequence,
+      };
+    }
+  }
+  return normalized;
+}, liveInterviewEventSchema);
+
+function normalizeWireKeys(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeWireKeys(item));
+  }
+  if (!isUnknownRecord(value)) {
+    return value;
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => {
+      const normalizedKey = wireKeyToCamel(key);
+      if (normalizedKey === "providerMetadata") {
+        return [normalizedKey, child];
+      }
+      return [normalizedKey, normalizeWireKeys(child)];
+    }),
+  );
+}
+
+function wireKeyToCamel(key: string): string {
+  return key.replace(/_([a-z])/g, (_, letter: string) => letter.toUpperCase());
+}
+
+function isUnknownRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export const createLiveInterviewSessionInputSchema = z.object({
   candidateToken: z.string().min(8),
-  planId: z.string().min(1)
+  planId: z.string().min(1),
 });
 
 export const createLiveInterviewSessionResponseSchema = z.object({
@@ -310,14 +404,14 @@ export const createLiveInterviewSessionResponseSchema = z.object({
   status: liveInterviewSessionStatusSchema,
   livekitRoomName: z.string().min(1),
   candidateLivekitToken: z.string().min(1),
-  expiresAt: z.string().datetime()
+  expiresAt: z.string().datetime(),
 });
 
 export const liveInterviewAgentConfigSchema = z.object({
   session: liveInterviewSessionSchema,
   plan: liveInterviewPlanSchema,
   agentLivekitToken: z.string().min(1),
-  provider: liveInterviewProviderSchema
+  provider: liveInterviewProviderSchema,
 });
 
 export const liveInterviewWorkerAgentConfigSchema = z.object({
@@ -329,37 +423,38 @@ export const liveInterviewWorkerAgentConfigSchema = z.object({
     livekit_room_name: z.string().min(1),
     allowed_modalities: z.array(liveInterviewModeSchema).min(1),
     created_at: z.string().datetime(),
-    updated_at: z.string().datetime()
+    updated_at: z.string().datetime(),
   }),
   livekit_join: z.object({
     room_name: z.string().min(1),
     url: z.string().url().or(z.string().startsWith("wss://")),
     token: z.string().min(1),
     participant: z.string().min(1),
-    expires_at: z.string().datetime()
+    expires_at: z.string().datetime(),
   }),
   interview_plan: z.object({
     id: z.string().min(1),
     role_title: z.string().trim().min(2).max(160),
     language: z.string().min(2).default("fr"),
-    questions: z.array(
-      z.object({
-        id: z.string().min(1),
-        prompt: z.string().trim().min(8).max(800),
-        category: z.string().min(1),
-        follow_up_prompt: z.string().trim().min(8).max(800).optional()
-      })
-    ).min(1).max(8),
+    questions: z
+      .array(
+        z.object({
+          id: z.string().min(1),
+          prompt: z.string().trim().min(8).max(800),
+          category: z.string().min(1),
+          follow_up_prompt: z.string().trim().min(8).max(800).optional(),
+        }),
+      )
+      .min(1)
+      .max(8),
     allow_video: z.boolean().default(true),
     allow_audio_only: z.boolean().default(true),
-    max_followups_per_question: z.number().int().min(0).max(2).default(1)
+    max_followups_per_question: z.number().int().min(0).max(2).default(1),
   }),
-  provider: liveInterviewProviderSchema
+  provider: liveInterviewProviderSchema,
 });
 
-export type LiveInterviewProvider = z.infer<
-  typeof liveInterviewProviderSchema
->;
+export type LiveInterviewProvider = z.infer<typeof liveInterviewProviderSchema>;
 export type LiveInterviewMode = z.infer<typeof liveInterviewModeSchema>;
 export type LiveInterviewSessionStatus = z.infer<
   typeof liveInterviewSessionStatusSchema
@@ -372,7 +467,16 @@ export type LiveInterviewTranscriptTurn = z.infer<
 export type LiveInterviewEventActor = z.infer<
   typeof liveInterviewEventActorSchema
 >;
+export type LiveInterviewAnswerClassification = z.infer<
+  typeof liveInterviewAnswerClassificationSchema
+>;
+export type LiveInterviewPolicyAction = z.infer<
+  typeof liveInterviewPolicyActionSchema
+>;
 export type LiveInterviewEvent = z.infer<typeof liveInterviewEventSchema>;
+export type LiveInterviewWireEvent = z.infer<
+  typeof liveInterviewWireEventSchema
+>;
 export type CreateLiveInterviewSessionInput = z.infer<
   typeof createLiveInterviewSessionInputSchema
 >;

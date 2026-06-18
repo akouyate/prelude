@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -69,6 +70,153 @@ func eventInput(sessionID string, sequence int, eventID string, eventType domain
 		IdempotencyKey: eventID + ":idempotency",
 		Payload:        json.RawMessage(`{"source":"agent"}`),
 	}
+}
+
+func validAnswerEvaluatedPayload(questionID string, turnID string, classification string, policyAction string) json.RawMessage {
+	return json.RawMessage(`{
+		"question_id": "` + questionID + `",
+		"turn_ids": ["` + turnID + `"],
+		"attempt_index": 1,
+		"classification": "` + classification + `",
+		"reason_codes": ["too_generic"],
+		"policy_action": "` + policyAction + `",
+		"confidence": 0.78,
+		"evaluator_version": "answer-eval-v1"
+	}`)
+}
+
+func validQuestionAskedPayload(sessionID string, questionID string, questionIndex int) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{
+		"question_id": %q,
+		"question_index": %d,
+		"prompt": "Pouvez-vous presenter votre parcours en quelques phrases ?",
+		"transcript_turn": {
+			"turn_id": "turn_interviewer_%d",
+			"session_id": %q,
+			"question_id": %q,
+			"speaker": "interviewer",
+			"text": "Pouvez-vous presenter votre parcours en quelques phrases ?",
+			"is_final": true,
+			"started_at": "2026-06-17T10:00:02Z",
+			"ended_at": "2026-06-17T10:00:04Z"
+		}
+	}`, questionID, questionIndex, questionIndex+1, sessionID, questionID))
+}
+
+func validQuestionRepeatedPayload(sessionID string, questionID string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{
+		"question_id": %q,
+		"prompt": "Pouvez-vous presenter votre parcours en quelques phrases ?",
+		"reason": "candidate_requested_repeat",
+		"transcript_turn": {
+			"turn_id": "turn_repeat_1",
+			"session_id": %q,
+			"question_id": %q,
+			"speaker": "interviewer",
+			"text": "Pouvez-vous presenter votre parcours en quelques phrases ?",
+			"is_final": true,
+			"started_at": "2026-06-17T10:00:04Z",
+			"ended_at": "2026-06-17T10:00:05Z"
+		}
+	}`, questionID, sessionID, questionID))
+}
+
+func validCandidateTurnFinalizedPayload(sessionID string, questionID string, turnID string, text string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{
+		"question_id": %q,
+		"completion_reason": "answered",
+		"transcript_turn": {
+			"turn_id": %q,
+			"session_id": %q,
+			"question_id": %q,
+			"speaker": "candidate",
+			"text": %q,
+			"is_final": true,
+			"started_at": "2026-06-17T10:00:05Z",
+			"ended_at": "2026-06-17T10:00:08Z",
+			"confidence": 0.92
+		}
+	}`, questionID, turnID, sessionID, questionID, text))
+}
+
+func validSoftRepromptedPayload(sessionID string, questionID string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{
+		"question_id": %q,
+		"prompt": "Pouvez-vous preciser en une ou deux phrases ?",
+		"reprompts_used": 1,
+		"attempt_index": 1,
+		"transcript_turn": {
+			"turn_id": "turn_reprompt_1",
+			"session_id": %q,
+			"question_id": %q,
+			"speaker": "interviewer",
+			"text": "Pouvez-vous preciser en une ou deux phrases ?",
+			"is_final": true,
+			"started_at": "2026-06-17T10:00:09Z",
+			"ended_at": "2026-06-17T10:00:10Z"
+		}
+	}`, questionID, sessionID, questionID))
+}
+
+func validFollowupAskedPayload(sessionID string, questionID string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{
+		"question_id": %q,
+		"followup_id": "followup_1",
+		"prompt": "Quel exemple concret pouvez-vous donner ?",
+		"followups_used": 1,
+		"attempt_index": 1,
+		"transcript_turn": {
+			"turn_id": "turn_followup_1",
+			"session_id": %q,
+			"question_id": %q,
+			"speaker": "interviewer",
+			"text": "Quel exemple concret pouvez-vous donner ?",
+			"is_final": true,
+			"started_at": "2026-06-17T10:00:09Z",
+			"ended_at": "2026-06-17T10:00:10Z"
+		}
+	}`, questionID, sessionID, questionID))
+}
+
+func validQuestionCompletedPayload(questionID string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{
+		"question_id": %q,
+		"completion_reason": "answered",
+		"attempt_index": 2
+	}`, questionID))
+}
+
+func validSessionClosingPayload(sessionID string) json.RawMessage {
+	return json.RawMessage(fmt.Sprintf(`{
+		"completed_questions": 3,
+		"total_questions": 3,
+		"closing": "Merci, l'entretien est termine.",
+		"transcript_turn": {
+			"turn_id": "turn_closing",
+			"session_id": %q,
+			"speaker": "interviewer",
+			"text": "Merci, l'entretien est termine.",
+			"is_final": true,
+			"started_at": "2026-06-17T10:05:00Z",
+			"ended_at": "2026-06-17T10:05:02Z"
+		}
+	}`, sessionID))
+}
+
+func validSessionCompletedPayload() json.RawMessage {
+	return json.RawMessage(`{
+		"completed_reason": "all_questions_completed",
+		"completed_questions": 3,
+		"total_questions": 3
+	}`)
+}
+
+func validSessionFailedPayload() json.RawMessage {
+	return json.RawMessage(`{
+		"code": "agent_runtime_error",
+		"message": "Interview agent failed: RuntimeError",
+		"retryable": false
+	}`)
 }
 
 func TestServiceGetAgentConfigReturnsAgentJoinAndDemoPlan(t *testing.T) {
@@ -164,6 +312,27 @@ func TestServiceIngestEventIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestServiceIngestEventRejectsMismatchedCandidateID(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	input := eventInput(session.Session.ID, 1, "evt_wrong_candidate", domain.EventSessionStarted)
+	input.CandidateID = "candidate_other"
+
+	_, err = service.IngestEvent(context.Background(), input)
+	if !errors.Is(err, application.ErrInvalidEvent) {
+		t.Fatalf("expected ErrInvalidEvent, got %v", err)
+	}
+}
+
 func TestServiceIngestEventRejectsConflictingDuplicateID(t *testing.T) {
 	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
 	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
@@ -220,7 +389,9 @@ func TestServiceIngestEventTransitionsSessionState(t *testing.T) {
 		t.Fatalf("expected in_progress, got %s", inProgress.Status)
 	}
 
-	_, err = service.IngestEvent(context.Background(), eventInput(session.Session.ID, 2, "evt_completed", domain.EventSessionCompleted))
+	completedInput := eventInput(session.Session.ID, 2, "evt_completed", domain.EventSessionCompleted)
+	completedInput.Payload = validSessionCompletedPayload()
+	_, err = service.IngestEvent(context.Background(), completedInput)
 	if err != nil {
 		t.Fatalf("session_completed returned error: %v", err)
 	}
@@ -247,7 +418,7 @@ func TestServiceRejectsOutOfOrderQuestionEvent(t *testing.T) {
 	}
 
 	input := eventInput(session.Session.ID, 1, "evt_question", domain.EventQuestionAsked)
-	input.Payload = json.RawMessage(`{"question_id":"q_1"}`)
+	input.Payload = validQuestionAskedPayload(session.Session.ID, "q_1", 0)
 	_, err = service.IngestEvent(context.Background(), input)
 	if !errors.Is(err, application.ErrInvalidEvent) {
 		t.Fatalf("expected ErrInvalidEvent, got %v", err)
@@ -290,11 +461,27 @@ func TestServiceAcceptsInterviewerStateMachineControlEvents(t *testing.T) {
 		eventInput(session.Session.ID, 3, "evt_repeat", domain.EventQuestionRepeated),
 		eventInput(session.Session.ID, 4, "evt_turn", domain.EventCandidateTurnStarted),
 		eventInput(session.Session.ID, 5, "evt_finalized", domain.EventCandidateTurnFinalized),
-		eventInput(session.Session.ID, 6, "evt_reprompt", domain.EventSoftReprompted),
-		eventInput(session.Session.ID, 7, "evt_completed", domain.EventQuestionCompleted),
-		eventInput(session.Session.ID, 8, "evt_closing", domain.EventSessionClosing),
-		eventInput(session.Session.ID, 9, "evt_done", domain.EventSessionCompleted),
+		eventInput(session.Session.ID, 6, "evt_answer_eval", domain.EventAnswerEvaluated),
+		eventInput(session.Session.ID, 7, "evt_reprompt", domain.EventSoftReprompted),
+		eventInput(session.Session.ID, 8, "evt_completed", domain.EventQuestionCompleted),
+		eventInput(session.Session.ID, 9, "evt_closing", domain.EventSessionClosing),
+		eventInput(session.Session.ID, 10, "evt_done", domain.EventSessionCompleted),
 	}
+	events[1].Payload = validQuestionAskedPayload(session.Session.ID, "q1", 0)
+	events[2].Payload = validQuestionRepeatedPayload(session.Session.ID, "q1")
+	events[4].Actor = domain.EventActorCandidate
+	events[4].Payload = validCandidateTurnFinalizedPayload(
+		session.Session.ID,
+		"q1",
+		"turn_1",
+		"Je peux donner un exemple concret.",
+	)
+	events[5].Actor = domain.EventActorSystem
+	events[5].Payload = validAnswerEvaluatedPayload("q1", "turn_1", "incomplete", "soft_reprompt")
+	events[6].Payload = validSoftRepromptedPayload(session.Session.ID, "q1")
+	events[7].Payload = validQuestionCompletedPayload("q1")
+	events[8].Payload = validSessionClosingPayload(session.Session.ID)
+	events[9].Payload = validSessionCompletedPayload()
 
 	for _, event := range events {
 		if _, err := service.IngestEvent(context.Background(), event); err != nil {
@@ -308,6 +495,158 @@ func TestServiceAcceptsInterviewerStateMachineControlEvents(t *testing.T) {
 	}
 	if completed.Status != domain.SessionStatusCompleted {
 		t.Fatalf("expected completed status, got %s", completed.Status)
+	}
+}
+
+func TestServiceAcceptsAnswerEvaluatedEvent(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if _, err := service.IngestEvent(context.Background(), eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted)); err != nil {
+		t.Fatalf("session_started returned error: %v", err)
+	}
+
+	input := eventInput(session.Session.ID, 2, "evt_answer_eval", domain.EventAnswerEvaluated)
+	input.Actor = domain.EventActorSystem
+	input.Payload = validAnswerEvaluatedPayload("q1", "turn_1", "vague", "ask_followup")
+
+	output, err := service.IngestEvent(context.Background(), input)
+	if err != nil {
+		t.Fatalf("answer_evaluated returned error: %v", err)
+	}
+	if output.Event.Type != domain.EventAnswerEvaluated {
+		t.Fatalf("expected answer_evaluated, got %s", output.Event.Type)
+	}
+}
+
+func TestServiceRejectsInvalidAnswerEvaluatedPayload(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if _, err := service.IngestEvent(context.Background(), eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted)); err != nil {
+		t.Fatalf("session_started returned error: %v", err)
+	}
+
+	input := eventInput(session.Session.ID, 2, "evt_answer_eval_bad", domain.EventAnswerEvaluated)
+	input.Actor = domain.EventActorSystem
+	input.Payload = validAnswerEvaluatedPayload("q1", "turn_1", "candidate_quality_score", "ask_followup")
+
+	_, err = service.IngestEvent(context.Background(), input)
+	if !errors.Is(err, application.ErrInvalidEvent) {
+		t.Fatalf("expected ErrInvalidEvent, got %v", err)
+	}
+}
+
+func TestServiceRejectsInvalidMetricBearingPayloads(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if _, err := service.IngestEvent(context.Background(), eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted)); err != nil {
+		t.Fatalf("session_started returned error: %v", err)
+	}
+
+	cases := []struct {
+		name      string
+		eventType domain.EventType
+		actor     domain.EventActor
+		payload   json.RawMessage
+	}{
+		{
+			name:      "question asked missing index",
+			eventType: domain.EventQuestionAsked,
+			actor:     domain.EventActorAgent,
+			payload:   json.RawMessage(`{"question_id":"q1","prompt":"Pouvez-vous presenter votre parcours ?"}`),
+		},
+		{
+			name:      "candidate turn with interviewer speaker",
+			eventType: domain.EventCandidateTurnFinalized,
+			actor:     domain.EventActorCandidate,
+			payload: json.RawMessage(`{
+				"question_id": "q1",
+				"completion_reason": "answered",
+				"transcript_turn": {
+					"turn_id": "turn_1",
+					"session_id": "` + session.Session.ID + `",
+					"question_id": "q1",
+					"speaker": "interviewer",
+					"text": "Mauvais speaker pour un tour candidat.",
+					"started_at": "2026-06-17T10:00:05Z"
+				}
+			}`),
+		},
+		{
+			name:      "session completed impossible counters",
+			eventType: domain.EventSessionCompleted,
+			actor:     domain.EventActorAgent,
+			payload:   json.RawMessage(`{"completed_reason":"all_questions_completed","completed_questions":4,"total_questions":3}`),
+		},
+		{
+			name:      "legacy session failed shape",
+			eventType: domain.EventSessionFailed,
+			actor:     domain.EventActorAgent,
+			payload:   json.RawMessage(`{"error":"boom","error_type":"RuntimeError"}`),
+		},
+		{
+			name:      "negative barge in latency",
+			eventType: domain.EventBargeInAccepted,
+			actor:     domain.EventActorSystem,
+			payload:   json.RawMessage(`{"utterance_id":"q1:question:0","cancel_latency_ms":-1}`),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := eventInput(session.Session.ID, 2, "evt_invalid_"+tc.name, tc.eventType)
+			input.Actor = tc.actor
+			input.Payload = tc.payload
+
+			_, err := service.IngestEvent(context.Background(), input)
+			if !errors.Is(err, application.ErrInvalidEvent) {
+				t.Fatalf("expected ErrInvalidEvent, got %v", err)
+			}
+		})
+	}
+}
+
+func TestServiceRejectsSensitiveKeysInEventPayloads(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	input := eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted)
+	input.ProviderMetadata = json.RawMessage(`{"openai_api_key":"sk-test"}`)
+
+	_, err = service.IngestEvent(context.Background(), input)
+	if !errors.Is(err, application.ErrInvalidEvent) {
+		t.Fatalf("expected ErrInvalidEvent, got %v", err)
 	}
 }
 
@@ -339,7 +678,7 @@ func TestServiceAcceptsTurnTakingGuardrailEvents(t *testing.T) {
 		{domain.EventWaitRequested, domain.EventActorCandidate, json.RawMessage(`{"question_id":"q1","reason":"candidate_requested_time"}`)},
 		{domain.EventSilenceTimeoutStarted, domain.EventActorSystem, json.RawMessage(`{"question_id":"q1","tier":"soft_prompt","threshold_ms":10000}`)},
 		{domain.EventBargeInAccepted, domain.EventActorSystem, json.RawMessage(`{"utterance_id":"q1:question:0","cancel_latency_ms":120}`)},
-		{domain.EventAgentSpeechInterrupted, domain.EventActorSystem, json.RawMessage(`{"utterance_id":"q1:question:0","cancel_agent_audio":true}`)},
+		{domain.EventAgentSpeechInterrupted, domain.EventActorSystem, json.RawMessage(`{"utterance_id":"q1:question:0","cancel_latency_ms":120,"cancel_agent_audio":true}`)},
 		{domain.EventAgentSpeechCompleted, domain.EventActorAgent, json.RawMessage(`{"utterance_id":"q1:question:0"}`)},
 	}
 
@@ -448,7 +787,7 @@ func TestServiceReturnsEventsInSequenceOrder(t *testing.T) {
 			Sequence:       3,
 			IdempotencyKey: "evt_question:idempotency",
 			OccurredAt:     time.Date(2026, 6, 17, 10, 0, 2, 0, time.UTC),
-			Payload:        json.RawMessage(`{"question_id":"q_1"}`),
+			Payload:        validQuestionAskedPayload(session.Session.ID, "q_1", 0),
 		},
 	}
 
@@ -467,6 +806,189 @@ func TestServiceReturnsEventsInSequenceOrder(t *testing.T) {
 	}
 	if got.Events[0].ID != "evt_started" || got.Events[1].ID != "evt_turn" || got.Events[2].ID != "evt_question" {
 		t.Fatalf("expected chronological events, got %s, %s, %s", got.Events[0].ID, got.Events[1].ID, got.Events[2].ID)
+	}
+}
+
+func TestServicePersistsReplayableSmokeMetrics(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	events := []application.IngestEventInput{
+		eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted),
+		eventInput(session.Session.ID, 2, "evt_q1", domain.EventQuestionAsked),
+		eventInput(session.Session.ID, 3, "evt_q1_turn_1", domain.EventCandidateTurnFinalized),
+		eventInput(session.Session.ID, 4, "evt_q1_eval_1", domain.EventAnswerEvaluated),
+		eventInput(session.Session.ID, 5, "evt_q1_followup", domain.EventFollowupAsked),
+		eventInput(session.Session.ID, 6, "evt_q1_turn_2", domain.EventCandidateTurnFinalized),
+		eventInput(session.Session.ID, 7, "evt_q1_eval_2", domain.EventAnswerEvaluated),
+		eventInput(session.Session.ID, 8, "evt_q1_done", domain.EventQuestionCompleted),
+		eventInput(session.Session.ID, 9, "evt_q2", domain.EventQuestionAsked),
+		eventInput(session.Session.ID, 10, "evt_q2_barge", domain.EventBargeInDetected),
+		eventInput(session.Session.ID, 11, "evt_q2_barge_ok", domain.EventBargeInAccepted),
+		eventInput(session.Session.ID, 12, "evt_q2_interrupted", domain.EventAgentSpeechInterrupted),
+		eventInput(session.Session.ID, 13, "evt_q2_turn", domain.EventCandidateTurnFinalized),
+		eventInput(session.Session.ID, 14, "evt_q2_eval", domain.EventAnswerEvaluated),
+		eventInput(session.Session.ID, 15, "evt_q2_done", domain.EventQuestionCompleted),
+		eventInput(session.Session.ID, 16, "evt_q3", domain.EventQuestionAsked),
+		eventInput(session.Session.ID, 17, "evt_q3_turn", domain.EventCandidateTurnFinalized),
+		eventInput(session.Session.ID, 18, "evt_q3_eval", domain.EventAnswerEvaluated),
+		eventInput(session.Session.ID, 19, "evt_q3_done", domain.EventQuestionCompleted),
+		eventInput(session.Session.ID, 20, "evt_closing", domain.EventSessionClosing),
+		eventInput(session.Session.ID, 21, "evt_completed", domain.EventSessionCompleted),
+	}
+	events[1].Payload = validQuestionAskedPayload(session.Session.ID, "q1", 0)
+	events[2].Actor = domain.EventActorCandidate
+	events[2].Payload = validCandidateTurnFinalizedPayload(
+		session.Session.ID,
+		"q1",
+		"turn_q1_1",
+		"J'ai une experience pertinente, mais je peux donner plus de details.",
+	)
+	events[3].Actor = domain.EventActorSystem
+	events[3].Payload = validAnswerEvaluatedPayload("q1", "turn_q1_1", "vague", "ask_followup")
+	events[4].Payload = validFollowupAskedPayload(session.Session.ID, "q1")
+	events[5].Actor = domain.EventActorCandidate
+	events[5].Payload = validCandidateTurnFinalizedPayload(
+		session.Session.ID,
+		"q1",
+		"turn_q1_2",
+		"Je peux illustrer avec un exemple concret et le resultat obtenu.",
+	)
+	events[6].Actor = domain.EventActorSystem
+	events[6].Payload = validAnswerEvaluatedPayload("q1", "turn_q1_2", "complete", "complete_question")
+	events[7].Payload = validQuestionCompletedPayload("q1")
+	events[8].Payload = validQuestionAskedPayload(session.Session.ID, "q2", 1)
+	events[9].Actor = domain.EventActorCandidate
+	events[9].Payload = json.RawMessage(`{
+		"utterance_id": "q2:question:1",
+		"question_id": "q2",
+		"overlap_ms": 340,
+		"candidate_speech_ms": 340,
+		"confidence": 0.92
+	}`)
+	events[10].Actor = domain.EventActorSystem
+	events[10].Payload = json.RawMessage(`{
+		"utterance_id": "q2:question:1",
+		"question_id": "q2",
+		"cancel_latency_ms": 120,
+		"truncated_at_ms": 340
+	}`)
+	events[11].Actor = domain.EventActorSystem
+	events[11].Payload = json.RawMessage(`{
+		"utterance_id": "q2:question:1",
+		"question_id": "q2",
+		"cancel_latency_ms": 120,
+		"truncated_at_ms": 340,
+		"cancel_agent_audio": true
+	}`)
+	events[12].Actor = domain.EventActorCandidate
+	events[12].Payload = validCandidateTurnFinalizedPayload(
+		session.Session.ID,
+		"q2",
+		"turn_q2_1",
+		"J'ai priorise une roadmap sous contrainte forte.",
+	)
+	events[13].Actor = domain.EventActorSystem
+	events[13].Payload = validAnswerEvaluatedPayload("q2", "turn_q2_1", "complete", "complete_question")
+	events[14].Payload = validQuestionCompletedPayload("q2")
+	events[15].Payload = validQuestionAskedPayload(session.Session.ID, "q3", 2)
+	events[16].Actor = domain.EventActorCandidate
+	events[16].Payload = validCandidateTurnFinalizedPayload(
+		session.Session.ID,
+		"q3",
+		"turn_q3_1",
+		"Je suis disponible sous un mois avec deux jours de preavis.",
+	)
+	events[17].Actor = domain.EventActorSystem
+	events[17].Payload = validAnswerEvaluatedPayload("q3", "turn_q3_1", "complete", "complete_question")
+	events[18].Payload = validQuestionCompletedPayload("q3")
+	events[19].Payload = validSessionClosingPayload(session.Session.ID)
+	events[20].Payload = validSessionCompletedPayload()
+
+	for _, event := range events {
+		if _, err := service.IngestEvent(context.Background(), event); err != nil {
+			t.Fatalf("IngestEvent(%s) returned error: %v", event.EventID, err)
+		}
+	}
+
+	got, err := service.GetSession(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if got.Status != domain.SessionStatusCompleted {
+		t.Fatalf("expected completed session, got %s", got.Status)
+	}
+	if len(got.Events) != len(events) {
+		t.Fatalf("expected %d events, got %d", len(events), len(got.Events))
+	}
+
+	counts := map[domain.EventType]int{}
+	for index, event := range got.Events {
+		if event.Sequence != index+1 {
+			t.Fatalf("expected contiguous sequence %d, got %d", index+1, event.Sequence)
+		}
+		if event.CandidateID != session.Session.CandidateID {
+			t.Fatalf("expected candidate id %s, got %s", session.Session.CandidateID, event.CandidateID)
+		}
+		counts[event.Type]++
+	}
+	if counts[domain.EventQuestionCompleted] != 3 {
+		t.Fatalf("expected 3 completed questions, got %d", counts[domain.EventQuestionCompleted])
+	}
+	if counts[domain.EventFollowupAsked] != 1 {
+		t.Fatalf("expected 1 follow-up, got %d", counts[domain.EventFollowupAsked])
+	}
+	if counts[domain.EventBargeInDetected] != 1 {
+		t.Fatalf("expected 1 barge-in, got %d", counts[domain.EventBargeInDetected])
+	}
+	if counts[domain.EventAnswerEvaluated] != 4 {
+		t.Fatalf("expected 4 answer evaluations, got %d", counts[domain.EventAnswerEvaluated])
+	}
+
+	var completedPayload struct {
+		CompletedReason    string `json:"completed_reason"`
+		CompletedQuestions int    `json:"completed_questions"`
+		TotalQuestions     int    `json:"total_questions"`
+	}
+	if err := json.Unmarshal(got.Events[len(got.Events)-1].Payload, &completedPayload); err != nil {
+		t.Fatalf("failed to decode completion payload: %v", err)
+	}
+	if completedPayload.CompletedReason != "all_questions_completed" ||
+		completedPayload.CompletedQuestions != 3 ||
+		completedPayload.TotalQuestions != 3 {
+		t.Fatalf("unexpected terminal counters: %#v", completedPayload)
+	}
+
+	transcript, err := service.GetTranscript(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetTranscript returned error: %v", err)
+	}
+	if len(transcript) != 9 {
+		t.Fatalf("expected 9 transcript turns, got %d", len(transcript))
+	}
+	if transcript[0].Speaker != domain.TranscriptSpeakerInterviewer {
+		t.Fatalf("expected interviewer to open transcript, got %s", transcript[0].Speaker)
+	}
+	candidateTurns := 0
+	interviewerTurns := 0
+	for _, turn := range transcript {
+		switch turn.Speaker {
+		case domain.TranscriptSpeakerCandidate:
+			candidateTurns++
+		case domain.TranscriptSpeakerInterviewer:
+			interviewerTurns++
+		}
+	}
+	if candidateTurns != 4 || interviewerTurns != 5 {
+		t.Fatalf("expected 4 candidate and 5 interviewer turns, got %d and %d", candidateTurns, interviewerTurns)
 	}
 }
 
@@ -564,9 +1086,12 @@ func TestServiceReconstructsTranscriptFromAnyNormalizedTranscriptEvent(t *testin
 	candidate := eventInput(session.Session.ID, 3, "evt_candidate_turn", domain.EventCandidateTurnFinalized)
 	candidate.Actor = domain.EventActorCandidate
 	candidate.Payload = json.RawMessage(`{
+		"question_id": "q1",
+		"completion_reason": "answered",
 		"transcript_turn": {
 			"turn_id": "turn_candidate_1",
 			"session_id": "` + session.Session.ID + `",
+			"question_id": "q1",
 			"speaker": "candidate",
 			"text": "Oui, je suis product manager.",
 			"is_final": true,

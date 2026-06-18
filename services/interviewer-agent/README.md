@@ -8,8 +8,10 @@ credentials.
 
 ## Boundaries
 
-- `app/domain`: interview plan models, event contracts, interviewer state machine.
-- `app/application`: orchestration use cases and ports.
+- `app/domain`: interview plan models, event contracts, deterministic
+  `InterviewOrchestrator`, and interviewer state machine.
+- `app/application`: orchestration use cases and ports that execute domain
+  commands against providers and the Go API.
 - `app/adapters`: mock OpenAI Realtime provider, Go Realtime API client, and LiveKit room adapter.
 - `app/cli.py`: local simulation that emits events to stdout or the Go API.
 
@@ -217,6 +219,14 @@ Realtime, publishes the interviewer audio back into the same room, listens to
 candidate microphone audio, and persists normalized Prelude events and
 transcript turns back to the Go API.
 
+Question progression is owned by Prelude's deterministic
+`InterviewOrchestrator`, not by the realtime model. The worker disables automatic
+provider responses where supported, emits `candidate_turn_finalized`, then emits
+`answer_evaluated` before it repeats, waits, soft-reprompts, asks a bounded
+follow-up, completes the question, asks the next planned question, or closes the
+session. The model remains responsible for speech generation and transcription
+support inside those bounded commands.
+
 For a bounded real-provider smoke:
 
 ```bash
@@ -237,8 +247,9 @@ Manual desktop/mobile smoke:
 6. Confirm the candidate hears interviewer audio and `/transcript` contains the
    interviewer turn, then candidate turns after speech is transcribed.
 7. Stay silent after the first question and confirm the worker emits
-   `silence_timeout_started`, then the interviewer asks whether there is a
-   technical issue or whether the candidate needs a moment.
+   `silence_timeout_started`, `answer_evaluated`, and `soft_reprompted`, then
+   the interviewer asks whether there is a technical issue or whether the
+   candidate needs a moment.
 
 For a local room/join smoke without calling OpenAI:
 

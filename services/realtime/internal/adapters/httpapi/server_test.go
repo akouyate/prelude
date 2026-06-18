@@ -240,6 +240,67 @@ func TestServerReturnsTranscriptFromFinalizedTurns(t *testing.T) {
 	}
 }
 
+func TestServerAcceptsAnswerEvaluatedEvent(t *testing.T) {
+	server := newTestServer()
+
+	createResponse := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/interview-sessions", bytes.NewBufferString(`{
+		"interview_plan_id": "plan_123",
+		"candidate_id": "candidate_123"
+	}`))
+	createRequest.Header.Set("content-type", "application/json")
+	server.ServeHTTP(createResponse, createRequest)
+
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createResponse.Code, createResponse.Body.String())
+	}
+
+	var createBody struct {
+		Session struct {
+			ID string `json:"id"`
+		} `json:"session"`
+	}
+	if err := json.Unmarshal(createResponse.Body.Bytes(), &createBody); err != nil {
+		t.Fatalf("failed to decode create response: %v", err)
+	}
+
+	for _, body := range []string{
+		`{
+			"event_id": "evt_started",
+			"type": "session_started",
+			"actor": "agent",
+			"sequence_number": 1,
+			"idempotency_key": "evt_started:idempotency",
+			"payload": {"source": "agent"}
+		}`,
+		`{
+			"event_id": "evt_answer_eval",
+			"type": "answer_evaluated",
+			"actor": "system",
+			"sequence_number": 2,
+			"idempotency_key": "evt_answer_eval:idempotency",
+			"payload": {
+				"question_id": "q1",
+				"turn_ids": ["turn_1"],
+				"attempt_index": 1,
+				"classification": "vague",
+				"reason_codes": ["too_generic"],
+				"policy_action": "ask_followup",
+				"confidence": 0.78,
+				"evaluator_version": "answer-eval-v1"
+			}
+		}`,
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/v1/interview-sessions/"+createBody.Session.ID+"/events", bytes.NewBufferString(body))
+		request.Header.Set("content-type", "application/json")
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("expected event status 202, got %d: %s", response.Code, response.Body.String())
+		}
+	}
+}
+
 func newTestServer() *Server {
 	repository := store.NewMemoryStore()
 	livekitGateway := livekit.NewMockGateway("wss://livekit.example.test")
