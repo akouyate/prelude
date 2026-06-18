@@ -46,13 +46,18 @@ experience, active listening, and conversational-agent pacing.
 
 ## Architecture Decision
 
-- Keep #39 as prompt-level behavior for the POC.
-- Do not add `InterviewPlan` fields yet because the current runtime only has
-  `role_title`, language, modalities, and planned questions.
+- Keep #39 in the existing Go realtime API + Python worker architecture.
+- Add a small structured `interview_style` object to `InterviewPlan` instead of
+  introducing a new style service or persistence layer.
+- Have Go `/agent-config` return sector, seniority, work environment, role
+  constraints, company context, and candidate tone for the demo plan.
+- Have the Python worker parse that context and use it first when generating
+  live interviewer instructions.
+- Preserve fallback inference from role title and planned questions for older or
+  minimal plans that do not include `interview_style`.
 - Preserve the structured interview state machine and first-screening scope.
-- Add explicit prompt sections for candidate onboarding, role adaptation,
-  candidate comfort, and listening/pacing.
-- Test for the intended guardrails rather than exact LLM phrasing.
+- Test the contract at Go HTTP, Go application, Python realtime client, and
+  Python prompt levels.
 
 ## Validation
 
@@ -66,6 +71,9 @@ experience, active listening, and conversational-agent pacing.
 - `git diff --check`: passed.
 - Final `uv run --with-requirements requirements.txt python -m pytest -q` in
   `services/interviewer-agent`: 56 passed.
+- Full implementation `uv run --with-requirements requirements.txt python -m
+  pytest -q` in `services/interviewer-agent`: 57 passed.
+- Full implementation `go test ./...` in `services/realtime`: 22 passed.
 - Automated LiveKit/OpenAI smoke with Playwright fake media:
   - Session `is_32a09352e0ab16d59fb12d67` exposed repeated onboarding/greeting
     when the fake mic interrupted the agent.

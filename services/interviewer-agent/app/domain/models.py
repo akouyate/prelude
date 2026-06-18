@@ -22,6 +22,15 @@ class InterviewQuestion(BaseModel):
     follow_up_prompt: str | None = None
 
 
+class InterviewStyle(BaseModel):
+    sector: str | None = None
+    seniority: str | None = None
+    work_environment: str | None = None
+    role_constraints: list[str] = Field(default_factory=list)
+    company_context: str | None = None
+    candidate_tone: str | None = None
+
+
 class InterviewPlan(BaseModel):
     id: str
     role_title: str
@@ -30,6 +39,7 @@ class InterviewPlan(BaseModel):
     allow_video: bool = True
     allow_audio_only: bool = True
     max_followups_per_question: int = Field(default=1, ge=0, le=2)
+    interview_style: InterviewStyle = Field(default_factory=InterviewStyle)
 
 
 class CandidateTurn(BaseModel):
@@ -123,6 +133,21 @@ def create_demo_plan() -> InterviewPlan:
     return InterviewPlan(
         id="plan-demo-product-manager",
         role_title="Product Manager B2B SaaS",
+        interview_style=InterviewStyle(
+            sector="B2B SaaS",
+            seniority="mid to senior",
+            work_environment="office or hybrid customer-facing product work",
+            role_constraints=[
+                "coordinate with product and customer-facing teams",
+                "handle roadmap trade-offs under customer pressure",
+                "communicate clearly with SMB stakeholders",
+            ],
+            company_context=(
+                "Prelude is screening candidates for a structured first interview "
+                "before recruiter review."
+            ),
+            candidate_tone="professional, concise, and concrete",
+        ),
         questions=[
             InterviewQuestion(
                 id="q1",

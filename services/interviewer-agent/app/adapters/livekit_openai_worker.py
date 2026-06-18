@@ -14,6 +14,7 @@ from app.domain.models import (
     EventType,
     InterviewEvent,
     InterviewPlan,
+    InterviewStyle,
 )
 from app.domain.state_machine import INTERVIEWER_STATE_MACHINE_INSTRUCTIONS
 
@@ -519,6 +520,9 @@ Role: {plan.role_title}
 Language: {plan.language}
 Allowed candidate modalities: {", ".join(modalities) or "audio"}
 
+Structured interview style:
+{_format_interview_style(plan.interview_style)}
+
 Candidate onboarding:
 - Start with one brief orientation sentence before the first question.
 - Explain that this is a short first-screening conversation and that the same
@@ -530,8 +534,11 @@ Candidate onboarding:
   again when asking the first planned question.
 
 Role adaptation:
-- Infer the interview style from the role title, planned questions, language,
-  and any job context available in the conversation.
+- Use the structured interview style first when adapting vocabulary, pacing,
+  and examples.
+- If structured style context is missing, infer the interview style from the
+  role title, planned questions, language, and any job context available in the
+  conversation.
 - For frontline, operational, shift-based, hospitality, logistics, restaurant,
   tourism, retail, or customer-facing roles, use plain and concrete language.
 - For operational roles, prefer concrete topics such as experience, availability,
@@ -580,6 +587,27 @@ Planned questions for speech:
 def _spoken_question_prompt(prompt: str) -> str:
     spoken = INITIAL_GREETING_RE.sub("", prompt, count=1).strip()
     return spoken or prompt.strip()
+
+
+def _format_interview_style(style: InterviewStyle) -> str:
+    lines = []
+    if style.sector:
+        lines.append(f"- Sector: {style.sector}")
+    if style.seniority:
+        lines.append(f"- Seniority: {style.seniority}")
+    if style.work_environment:
+        lines.append(f"- Work environment: {style.work_environment}")
+    if style.role_constraints:
+        lines.append(f"- Role constraints: {'; '.join(style.role_constraints)}")
+    if style.company_context:
+        lines.append(f"- Company context: {style.company_context}")
+    if style.candidate_tone:
+        lines.append(f"- Candidate tone: {style.candidate_tone}")
+
+    if not lines:
+        return "- No structured style context provided. Infer from the role and questions."
+
+    return "\n".join(lines)
 
 
 async def _soft_prompt_after_initial_silence(

@@ -132,6 +132,12 @@ func TestServerReturnsAgentConfig(t *testing.T) {
 	if !bytes.Contains(configResponse.Body.Bytes(), []byte(`"interview_plan"`)) {
 		t.Fatalf("expected interview plan in config, got %s", configResponse.Body.String())
 	}
+	if !bytes.Contains(configResponse.Body.Bytes(), []byte(`"interview_style"`)) {
+		t.Fatalf("expected interview style in config, got %s", configResponse.Body.String())
+	}
+	if !bytes.Contains(configResponse.Body.Bytes(), []byte(`"sector":"B2B SaaS"`)) {
+		t.Fatalf("expected interview style sector in config, got %s", configResponse.Body.String())
+	}
 }
 
 func TestServerRejectsMismatchedBodySessionID(t *testing.T) {

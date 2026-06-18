@@ -15,7 +15,8 @@ and token creation without changing HTTP contracts.
 - Persist sessions and append-only events in Postgres when `DATABASE_URL` is set.
 - Fetch a session with its ingested events.
 - Reconstruct candidate transcript turns from finalized turn events.
-- Serve the Python worker config for a mocked InterviewPlan.
+- Serve the Python worker config for a mocked InterviewPlan with structured
+  interview style context.
 
 Out of scope for this POC:
 
@@ -99,6 +100,12 @@ curl http://localhost:8080/v1/interview-sessions/{session_id}
 ```bash
 curl http://localhost:8080/v1/interview-sessions/{session_id}/agent-config
 ```
+
+The agent config includes `interview_plan.interview_style`, which carries
+structured guidance such as sector, seniority, work environment, role
+constraints, company context, and candidate tone. The Python live interviewer
+uses this context before falling back to inference from the role title and
+planned questions.
 
 ```bash
 curl -X POST http://localhost:8080/v1/interview-sessions/{session_id}/events \

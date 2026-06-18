@@ -103,6 +103,12 @@ func TestServiceGetAgentConfigReturnsAgentJoinAndDemoPlan(t *testing.T) {
 	if len(config.InterviewPlan.Questions) == 0 {
 		t.Fatal("expected questions in agent config")
 	}
+	if config.InterviewPlan.InterviewStyle.Sector != "B2B SaaS" {
+		t.Fatalf("expected interview style sector, got %s", config.InterviewPlan.InterviewStyle.Sector)
+	}
+	if len(config.InterviewPlan.InterviewStyle.RoleConstraints) == 0 {
+		t.Fatal("expected role constraints in interview style")
+	}
 }
 
 func TestServiceCreateSessionRejectsUnknownModality(t *testing.T) {

@@ -24,6 +24,7 @@ from app.domain.models import (
     InterviewEvent,
     InterviewPlan,
     InterviewQuestion,
+    InterviewStyle,
     QuestionCategory,
     create_demo_plan,
 )
@@ -342,6 +343,17 @@ def test_live_interviewer_instructions_adapt_to_operational_roles() -> None:
     plan = InterviewPlan(
         id="plan-restaurant-server",
         role_title="Serveur en restauration",
+        interview_style=InterviewStyle(
+            sector="restauration",
+            seniority="entry level",
+            work_environment="frontline shift work",
+            role_constraints=[
+                "late shifts",
+                "standing work",
+                "direct customer interaction",
+            ],
+            candidate_tone="simple, direct, and reassuring",
+        ),
         questions=[
             InterviewQuestion(
                 id="q1",
@@ -358,6 +370,12 @@ def test_live_interviewer_instructions_adapt_to_operational_roles() -> None:
 
     instructions = build_live_interviewer_instructions(plan)
 
+    assert "Structured interview style:" in instructions
+    assert "- Sector: restauration" in instructions
+    assert "- Work environment: frontline shift work" in instructions
+    assert "late shifts; standing work; direct customer interaction" in instructions
+    assert "- Candidate tone: simple, direct, and reassuring" in instructions
+    assert "Use the structured interview style first" in instructions
     assert (
         "frontline, operational, shift-based, hospitality, logistics, restaurant"
         in instructions
@@ -369,6 +387,26 @@ def test_live_interviewer_instructions_adapt_to_operational_roles() -> None:
         in instructions
     )
     assert "Never force a corporate interview style" in instructions
+
+
+def test_live_interviewer_instructions_have_style_fallback() -> None:
+    plan = InterviewPlan(
+        id="plan-minimal",
+        role_title="Support Agent",
+        questions=[
+            InterviewQuestion(
+                id="q1",
+                prompt="Tell me about your support experience.",
+            )
+        ],
+    )
+
+    instructions = build_live_interviewer_instructions(plan)
+
+    assert (
+        "- No structured style context provided. Infer from the role and questions."
+        in instructions
+    )
 
 
 def test_live_interviewer_instructions_use_listening_without_fake_empathy() -> None:
