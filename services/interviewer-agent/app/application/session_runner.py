@@ -7,11 +7,18 @@ from uuid import uuid4
 from app.application.ports import LiveKitRoomAdapter, ProviderAdapter, RealtimeApiClient
 from app.domain.models import (
     AgentLiveKitJoin,
+    CandidateTurn,
     EventActor,
     EventType,
     InterviewEvent,
     InterviewPlan,
     InterviewQuestion,
+)
+from app.domain.orchestrator import (
+    AnswerClassification,
+    InterviewOrchestrator,
+    OrchestratorCommand,
+    OrchestratorCommandType,
 )
 from app.domain.state_machine import InterviewerStateMachine
 from app.domain.turn_taking import (
@@ -56,6 +63,7 @@ class InterviewSessionRunner:
             **(provider_metadata or {}),
         }
         self._idempotency_key_prefix = idempotency_key_prefix
+        self._orchestrator = InterviewOrchestrator(plan)
         self._state_machine = InterviewerStateMachine()
         self._turn_taking = TurnTakingPolicy()
         self._sequence = 0
@@ -87,21 +95,40 @@ class InterviewSessionRunner:
                 },
             )
 
-            for question_index, question in enumerate(self._plan.questions):
-                await self._run_question(question, question_index)
+            command = self._orchestrator.start()
+            while command.type == OrchestratorCommandType.ASK_QUESTION:
+                if command.question is None or command.question_index is None:
+                    raise RuntimeError("orchestrator returned an incomplete ask_question command")
+                command = await self._run_question(
+                    command.question,
+                    command.question_index,
+                )
+
+            if command.type != OrchestratorCommandType.CLOSE_SESSION:
+                raise RuntimeError(f"unexpected terminal command {command.type.value}")
 
             closing = await self._provider.close_session()
             await self._emit(
                 EventType.SESSION_CLOSING,
                 {
-                    "completed_questions": len(self._plan.questions),
+                    "completed_questions": command.completed_questions or 0,
+                    "total_questions": command.total_questions or len(self._plan.questions),
                     "closing": closing,
+                    "transcript_turn": self._interviewer_transcript_turn(
+                        question_id=None,
+                        turn_id="closing",
+                        text=closing,
+                    ),
                 },
             )
+            self._orchestrator.mark_session_closed()
             await self._emit(
                 EventType.SESSION_COMPLETED,
                 {
-                    "completed_reason": "all_questions_completed",
+                    "completed_reason": command.terminal_reason
+                    or "all_questions_completed",
+                    "completed_questions": command.completed_questions or 0,
+                    "total_questions": command.total_questions or len(self._plan.questions),
                     "closing": closing,
                 },
             )
@@ -117,7 +144,11 @@ class InterviewSessionRunner:
             if joined_room and self._livekit_room:
                 await self._livekit_room.disconnect()
 
-    async def _run_question(self, question: InterviewQuestion, question_index: int) -> None:
+    async def _run_question(
+        self,
+        question: InterviewQuestion,
+        question_index: int,
+    ) -> OrchestratorCommand:
         utterance = await self._provider.ask_question(question)
         utterance_id = f"{question.id}:question:{question_index}"
         await self._emit_turn_decision(
@@ -139,8 +170,14 @@ class InterviewSessionRunner:
                 "question_index": question_index,
                 "prompt": utterance,
                 "category": question.category.value,
+                "transcript_turn": self._interviewer_transcript_turn(
+                    question_id=question.id,
+                    turn_id=f"{question.id}:question:{question_index}",
+                    text=utterance,
+                ),
             },
         )
+        self._orchestrator.mark_question_asked(question.id)
         if self._simulate_first_question_barge_in and question_index == 0:
             await self._emit_mock_barge_in(question.id, utterance_id)
         else:
@@ -154,8 +191,6 @@ class InterviewSessionRunner:
                 actor=EventActor.AGENT,
             )
 
-        followups_used = 0
-        soft_reprompts_used = 0
         while True:
             await self._emit(
                 EventType.CANDIDATE_TURN_STARTED,
@@ -189,18 +224,60 @@ class InterviewSessionRunner:
                 )
 
                 turn_decision = self._turn_taking.evaluate_candidate_turn(turn)
-                await self._emit_turn_decision(
-                    turn_decision,
-                    {"question_id": question.id},
-                    actor=EventActor.CANDIDATE
-                    if turn.wait_requested
-                    else EventActor.SYSTEM,
-                )
-                if turn_decision.action == TurnTakingAction.WAIT:
-                    continue
+                if turn_decision.action != TurnTakingAction.WAIT:
+                    await self._emit_turn_decision(
+                        turn_decision,
+                        {"question_id": question.id},
+                        actor=EventActor.SYSTEM,
+                    )
                 break
 
-            if turn.repeat_requested:
+            turn_id = f"{self._session_id}:{question.id}:{self._sequence + 1}"
+            await self._emit(
+                EventType.CANDIDATE_TURN_FINALIZED,
+                {
+                    "question_id": question.id,
+                    "completion_reason": self._completion_reason(turn),
+                    "transcript_turn": {
+                        "turn_id": turn_id,
+                        "session_id": self._session_id,
+                        "question_id": question.id,
+                        "speaker": "candidate",
+                        "text": turn.transcript or "[no audible response]",
+                        "is_final": True,
+                        "started_at": turn.started_at.isoformat(),
+                        "ended_at": turn.ended_at.isoformat(),
+                    },
+                },
+                actor=EventActor.CANDIDATE,
+            )
+
+            classification = await self._classify_answer(question, turn)
+            decision = self._orchestrator.evaluate_answer(
+                classification=classification,
+                turn_ids=[turn_id],
+                reason_codes=self._reason_codes(classification),
+                confidence=1.0,
+            )
+            await self._emit(
+                EventType.ANSWER_EVALUATED,
+                decision.answer_evaluation.to_payload(),
+                actor=EventActor.SYSTEM,
+            )
+            command = decision.commands[0]
+
+            if command.type == OrchestratorCommandType.WAIT:
+                await self._emit(
+                    EventType.WAIT_REQUESTED,
+                    {
+                        "question_id": question.id,
+                        "reason": "candidate_requested_time",
+                    },
+                    actor=EventActor.CANDIDATE,
+                )
+                continue
+
+            if command.type == OrchestratorCommandType.REPEAT_QUESTION:
                 repeated = await self._provider.ask_question(question)
                 repeat_utterance_id = f"{question.id}:repeat:{self._sequence + 1}"
                 await self._emit_turn_decision(
@@ -221,6 +298,11 @@ class InterviewSessionRunner:
                         "question_id": question.id,
                         "prompt": repeated,
                         "reason": "candidate_requested_repeat",
+                        "transcript_turn": self._interviewer_transcript_turn(
+                            question_id=question.id,
+                            turn_id=repeat_utterance_id,
+                            text=repeated,
+                        ),
                     },
                 )
                 await self._emit_turn_decision(
@@ -234,81 +316,63 @@ class InterviewSessionRunner:
                 )
                 continue
 
-            completion_reason = self._completion_reason(turn)
-            await self._emit(
-                EventType.CANDIDATE_TURN_FINALIZED,
-                {
-                    "question_id": question.id,
-                    "completion_reason": completion_reason,
-                    "transcript_turn": {
-                        "turn_id": f"{self._session_id}:{question.id}:{self._sequence + 1}",
-                        "session_id": self._session_id,
+            if command.type == OrchestratorCommandType.SOFT_REPROMPT:
+                reprompts_used = command.reprompts_used or 1
+                reprompt_utterance_id = f"{question.id}:reprompt:{reprompts_used}"
+                await self._emit_turn_decision(
+                    self._turn_taking.agent_speech_started(
+                        question_id=question.id,
+                        utterance_kind="soft_reprompt",
+                    ),
+                    {
                         "question_id": question.id,
-                        "speaker": "candidate",
-                        "text": turn.transcript or "[no audible response]",
-                        "is_final": True,
-                        "started_at": turn.started_at.isoformat(),
-                        "ended_at": turn.ended_at.isoformat(),
-                        },
+                        "utterance_id": reprompt_utterance_id,
+                        "utterance_kind": "soft_reprompt",
                     },
-                actor=EventActor.CANDIDATE,
-            )
-
-            if turn.skip_requested:
-                await self._complete_question(question.id, "skipped")
-                return
-
-            if not turn.is_complete:
-                if soft_reprompts_used < 1:
-                    soft_reprompts_used += 1
-                    reprompt_utterance_id = f"{question.id}:reprompt:{soft_reprompts_used}"
-                    await self._emit_turn_decision(
-                        self._turn_taking.agent_speech_started(
+                    actor=EventActor.AGENT,
+                )
+                await self._emit(
+                    EventType.SOFT_REPROMPTED,
+                    {
+                        "question_id": question.id,
+                        "prompt": "Je n'ai pas assez d'elements. Pouvez-vous preciser en une ou deux phrases ?",
+                        "reprompts_used": reprompts_used,
+                        "attempt_index": command.attempt_index,
+                        "transcript_turn": self._interviewer_transcript_turn(
                             question_id=question.id,
-                            utterance_kind="soft_reprompt",
+                            turn_id=reprompt_utterance_id,
+                            text="Je n'ai pas assez d'elements. Pouvez-vous preciser en une ou deux phrases ?",
                         ),
-                        {
-                            "question_id": question.id,
-                            "utterance_id": reprompt_utterance_id,
-                            "utterance_kind": "soft_reprompt",
-                        },
-                        actor=EventActor.AGENT,
-                    )
-                    await self._emit(
-                        EventType.SOFT_REPROMPTED,
-                        {
-                            "question_id": question.id,
-                            "prompt": "Je n'ai pas assez d'elements. Pouvez-vous preciser en une ou deux phrases ?",
-                            "reprompts_used": soft_reprompts_used,
-                        },
-                    )
-                    await self._emit_turn_decision(
-                        self._turn_taking.agent_speech_completed(question_id=question.id),
-                        {
-                            "question_id": question.id,
-                            "utterance_id": reprompt_utterance_id,
-                            "utterance_kind": "soft_reprompt",
-                        },
-                        actor=EventActor.AGENT,
-                    )
-                    continue
+                    },
+                )
+                await self._emit_turn_decision(
+                    self._turn_taking.agent_speech_completed(question_id=question.id),
+                    {
+                        "question_id": question.id,
+                        "utterance_id": reprompt_utterance_id,
+                        "utterance_kind": "soft_reprompt",
+                    },
+                    actor=EventActor.AGENT,
+                )
+                continue
 
-                await self._complete_question(question.id, "candidate_silent")
-                return
+            if command.type == OrchestratorCommandType.COMPLETE_QUESTION:
+                completion_reason = command.completion_reason or "answered"
+                await self._complete_question(
+                    question.id,
+                    completion_reason,
+                    attempt_index=command.attempt_index,
+                )
+                return self._orchestrator.mark_question_completed(
+                    question.id,
+                    completion_reason,
+                )
 
-            can_follow_up = followups_used < self._plan.max_followups_per_question
-            should_follow_up = can_follow_up and await self._provider.should_follow_up(
-                question,
-                turn,
-                followups_used,
-                self._plan.max_followups_per_question,
-            )
-            if not should_follow_up:
-                await self._complete_question(question.id, "answered")
-                return
+            if command.type != OrchestratorCommandType.ASK_FOLLOWUP:
+                raise RuntimeError(f"unsupported orchestrator command {command.type.value}")
 
-            followups_used += 1
             follow_up = await self._provider.ask_follow_up(question)
+            followups_used = command.followups_used or 1
             followup_utterance_id = f"{question.id}:followup:{followups_used}"
             await self._emit_turn_decision(
                 self._turn_taking.agent_speech_started(
@@ -329,6 +393,12 @@ class InterviewSessionRunner:
                     "followup_id": followup_utterance_id,
                     "prompt": follow_up,
                     "followups_used": followups_used,
+                    "attempt_index": command.attempt_index,
+                    "transcript_turn": self._interviewer_transcript_turn(
+                        question_id=question.id,
+                        turn_id=followup_utterance_id,
+                        text=follow_up,
+                    ),
                 },
             )
             await self._emit_turn_decision(
@@ -341,21 +411,90 @@ class InterviewSessionRunner:
                 actor=EventActor.AGENT,
             )
 
-    async def _complete_question(self, question_id: str, completion_reason: str) -> None:
+    async def _complete_question(
+        self,
+        question_id: str,
+        completion_reason: str,
+        *,
+        attempt_index: int | None,
+    ) -> None:
         await self._emit(
             EventType.QUESTION_COMPLETED,
             {
                 "question_id": question_id,
                 "completion_reason": completion_reason,
+                "attempt_index": attempt_index,
             },
         )
+
+    async def _classify_answer(
+        self,
+        question: InterviewQuestion,
+        turn: CandidateTurn,
+    ) -> AnswerClassification:
+        classification = InterviewOrchestrator.classify_candidate_turn(turn)
+        if classification != AnswerClassification.COMPLETE:
+            return classification
+
+        should_follow_up = await self._provider.should_follow_up(
+            question,
+            turn,
+            self._orchestrator.followups_used(question.id),
+            self._plan.max_followups_per_question,
+        )
+        if should_follow_up:
+            return AnswerClassification.VAGUE
+
+        return AnswerClassification.COMPLETE
+
+    def _reason_codes(self, classification: AnswerClassification) -> list[str]:
+        if classification == AnswerClassification.VAGUE:
+            return ["too_generic"]
+        if classification == AnswerClassification.INCOMPLETE:
+            return ["incomplete_answer"]
+        if classification == AnswerClassification.SILENT:
+            return ["candidate_silent"]
+        if classification == AnswerClassification.SKIPPED:
+            return ["candidate_requested_skip"]
+        if classification == AnswerClassification.REPEAT_REQUESTED:
+            return ["candidate_requested_repeat"]
+        if classification == AnswerClassification.WAIT_REQUESTED:
+            return ["candidate_requested_time"]
+        return []
 
     def _completion_reason(self, turn: object) -> str:
         if getattr(turn, "skip_requested", False):
             return "skipped"
+        if getattr(turn, "repeat_requested", False) or getattr(
+            turn,
+            "wait_requested",
+            False,
+        ):
+            return "incomplete"
         if not getattr(turn, "is_complete", True):
             return "incomplete"
         return "answered"
+
+    def _interviewer_transcript_turn(
+        self,
+        *,
+        question_id: str | None,
+        turn_id: str,
+        text: str,
+    ) -> dict[str, object]:
+        occurred_at = self._occurred_at().isoformat()
+        transcript_turn: dict[str, object] = {
+            "turn_id": f"{self._session_id}:interviewer:{turn_id}",
+            "session_id": self._session_id,
+            "speaker": "interviewer",
+            "text": text,
+            "is_final": True,
+            "started_at": occurred_at,
+            "ended_at": occurred_at,
+        }
+        if question_id:
+            transcript_turn["question_id"] = question_id
+        return transcript_turn
 
     async def _emit(
         self,
@@ -444,7 +583,11 @@ class InterviewSessionRunner:
             sequence=self._sequence,
             idempotency_key=self._idempotency_key(EventType.SESSION_FAILED),
             occurred_at=self._occurred_at(),
-            payload={"error": str(exc), "error_type": exc.__class__.__name__},
+            payload={
+                "code": "agent_runtime_error",
+                "message": f"Interview agent failed: {exc.__class__.__name__}",
+                "retryable": False,
+            },
             provider_metadata=dict(self._provider_metadata),
         )
         await self._realtime_api.emit_event(event)

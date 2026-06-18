@@ -11,7 +11,7 @@
 
 The TypeScript Zod schemas in `packages/contracts/src/schemas/live-interview.ts` are the POC contract reference for Next.js and for generating equivalent Go/Python structs later.
 
-For the current Go/Python POC wire API, JSON fields are serialized in `snake_case` to match Go and Python conventions. The TypeScript contracts use idiomatic `camelCase` for frontend DTOs. A later API hardening pass should either generate both shapes from one schema or add explicit mappers at the boundary.
+For the current Go/Python POC wire API, JSON fields are serialized in `snake_case` to match Go and Python conventions. `liveInterviewWireEventSchema` maps that wire shape into the frontend `camelCase` DTO validated by `liveInterviewEventSchema`. Keep this boundary explicit until code generation can produce both shapes from one source schema.
 
 ## Core Objects
 
@@ -50,7 +50,7 @@ A `TranscriptTurn` is a normalized speaking turn from the candidate or IA interv
 
 The Go API should persist final transcript turns. Interim transcripts can be streamed to the UI but should not be treated as durable truth.
 
-For the POC, candidate transcript turns are carried by `candidate_turn_finalized`. Interviewer prompts are carried by `question_asked` and `followup_asked`.
+For the POC, candidate transcript turns are carried by `candidate_turn_finalized`. Interviewer prompts are carried by `question_asked`, `question_repeated`, `soft_reprompted`, `followup_asked`, and `session_closing`.
 
 ## Event Envelope
 
@@ -62,7 +62,7 @@ Every event sent from Python to Go uses the same envelope:
   "session_id": "session_01",
   "type": "question_asked",
   "actor": "agent",
-  "sequence": 12,
+  "sequence_number": 12,
   "idempotency_key": "session_01:question_asked:q_01:1",
   "occurred_at": "2026-06-17T10:30:00.000Z",
   "payload": {}
@@ -71,11 +71,11 @@ Every event sent from Python to Go uses the same envelope:
 
 Rules:
 
-- `eventId` is unique.
+- `event_id` is unique.
 - `actor` is required and identifies the emitter as `agent`, `candidate`, or `system`.
-- `sequence` is monotonic per session from the producer perspective.
-- `idempotencyKey` must be stable for retries.
-- `occurredAt` is provider/runtime time in ISO 8601.
+- `sequence_number` is monotonic per session from the producer perspective.
+- `idempotency_key` must be stable for retries.
+- `occurred_at` is provider/runtime time in ISO 8601.
 - Go stores events append-only and ignores duplicated idempotency keys.
 - Tests should cover event acceptance, duplicated idempotency behavior in the Go event store, and rejection of malformed discriminated payloads.
 
@@ -158,6 +158,7 @@ Payload:
 - `questionId`
 - `questionIndex`
 - `prompt`
+- `transcriptTurn` optional, with `speaker = interviewer`
 
 ### `question_repeated`
 
@@ -168,6 +169,7 @@ Payload:
 - `questionId`
 - `prompt`
 - `reason`: `candidate_requested_repeat`
+- `transcriptTurn` optional, with `speaker = interviewer`
 
 ### `candidate_speech_started`
 
@@ -227,6 +229,29 @@ Payload:
 - `questionId`
 - `completionReason`: `answered`, `skipped`, or `incomplete`
 - `transcriptTurn`
+
+### `answer_evaluated`
+
+Emitted after a finalized candidate turn and before any policy action that
+advances, repeats, waits, reprompts, or follows up on the current question.
+This is the semantic audit event that explains why Prelude took the next
+bounded action.
+
+Expected actor: `system`
+
+Payload:
+
+- `questionId`
+- `questionIndex` optional
+- `turnIds`
+- `attemptIndex`
+- `classification`: `complete`, `vague`, `incomplete`, `silent`, `skipped`,
+  `repeat_requested`, or `wait_requested`
+- `reasonCodes`
+- `policyAction`: `complete_question`, `ask_followup`, `soft_reprompt`,
+  `repeat_question`, `wait`, `mark_skipped`, or `timebox`
+- `confidence`
+- `evaluatorVersion`
 
 ### `barge_in_detected`
 
@@ -320,6 +345,7 @@ Payload:
 - `questionId`
 - `prompt`
 - `repromptsUsed`
+- `transcriptTurn` optional, with `speaker = interviewer`
 
 ### `followup_asked`
 
@@ -330,6 +356,9 @@ Payload:
 - `questionId`
 - `followupId`
 - `prompt`
+- `followupsUsed`
+- `attemptIndex` optional
+- `transcriptTurn` optional, with `speaker = interviewer`
 
 ### `question_completed`
 
@@ -347,6 +376,8 @@ Emitted when the interview is complete.
 Payload:
 
 - `completedReason`
+- `completedQuestions`
+- `totalQuestions`
 
 ### `session_closing`
 
@@ -356,7 +387,9 @@ interview.
 Payload:
 
 - `completedQuestions`
+- `totalQuestions`
 - `closing`
+- `transcriptTurn` optional, with `speaker = interviewer`
 
 ### `session_failed`
 

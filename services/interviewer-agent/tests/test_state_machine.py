@@ -25,6 +25,17 @@ def test_state_machine_happy_path_with_followup() -> None:
         == InterviewerState.EVALUATE_ANSWER
     )
     assert (
+        machine.apply(
+            EventType.ANSWER_EVALUATED,
+            {
+                "question_id": "q1",
+                "classification": "vague",
+                "policy_action": "ask_followup",
+            },
+        )
+        == InterviewerState.EVALUATE_ANSWER
+    )
+    assert (
         machine.apply(EventType.FOLLOWUP_ASKED, {"question_id": "q1"})
         == InterviewerState.SINGLE_FOLLOW_UP
     )
@@ -34,6 +45,17 @@ def test_state_machine_happy_path_with_followup() -> None:
     )
     assert (
         machine.apply(EventType.CANDIDATE_TURN_FINALIZED, {"question_id": "q1"})
+        == InterviewerState.EVALUATE_ANSWER
+    )
+    assert (
+        machine.apply(
+            EventType.ANSWER_EVALUATED,
+            {
+                "question_id": "q1",
+                "classification": "complete",
+                "policy_action": "complete_question",
+            },
+        )
         == InterviewerState.EVALUATE_ANSWER
     )
     assert (
@@ -71,9 +93,25 @@ def test_state_machine_rejects_second_followup_for_same_question() -> None:
     machine.apply(EventType.QUESTION_ASKED, {"question_id": "q1"})
     machine.apply(EventType.CANDIDATE_TURN_STARTED, {"question_id": "q1"})
     machine.apply(EventType.CANDIDATE_TURN_FINALIZED, {"question_id": "q1"})
+    machine.apply(
+        EventType.ANSWER_EVALUATED,
+        {
+            "question_id": "q1",
+            "classification": "vague",
+            "policy_action": "ask_followup",
+        },
+    )
     machine.apply(EventType.FOLLOWUP_ASKED, {"question_id": "q1"})
     machine.apply(EventType.CANDIDATE_TURN_STARTED, {"question_id": "q1"})
     machine.apply(EventType.CANDIDATE_TURN_FINALIZED, {"question_id": "q1"})
+    machine.apply(
+        EventType.ANSWER_EVALUATED,
+        {
+            "question_id": "q1",
+            "classification": "vague",
+            "policy_action": "ask_followup",
+        },
+    )
 
     with pytest.raises(InvalidTransitionError):
         machine.apply(EventType.FOLLOWUP_ASKED, {"question_id": "q1"})
@@ -85,9 +123,36 @@ def test_state_machine_rejects_second_soft_reprompt_for_same_question() -> None:
     machine.apply(EventType.QUESTION_ASKED, {"question_id": "q1"})
     machine.apply(EventType.CANDIDATE_TURN_STARTED, {"question_id": "q1"})
     machine.apply(EventType.CANDIDATE_TURN_FINALIZED, {"question_id": "q1"})
+    machine.apply(
+        EventType.ANSWER_EVALUATED,
+        {
+            "question_id": "q1",
+            "classification": "incomplete",
+            "policy_action": "soft_reprompt",
+        },
+    )
     machine.apply(EventType.SOFT_REPROMPTED, {"question_id": "q1"})
+    machine.apply(EventType.CANDIDATE_TURN_STARTED, {"question_id": "q1"})
+    machine.apply(EventType.CANDIDATE_TURN_FINALIZED, {"question_id": "q1"})
+    machine.apply(
+        EventType.ANSWER_EVALUATED,
+        {
+            "question_id": "q1",
+            "classification": "silent",
+            "policy_action": "soft_reprompt",
+        },
+    )
+
+    with pytest.raises(InvalidTransitionError):
+        machine.apply(EventType.SOFT_REPROMPTED, {"question_id": "q1"})
+
+
+def test_state_machine_rejects_question_completion_without_answer_evaluation() -> None:
+    machine = InterviewerStateMachine()
+    machine.apply(EventType.SESSION_STARTED)
+    machine.apply(EventType.QUESTION_ASKED, {"question_id": "q1"})
     machine.apply(EventType.CANDIDATE_TURN_STARTED, {"question_id": "q1"})
     machine.apply(EventType.CANDIDATE_TURN_FINALIZED, {"question_id": "q1"})
 
     with pytest.raises(InvalidTransitionError):
-        machine.apply(EventType.SOFT_REPROMPTED, {"question_id": "q1"})
+        machine.apply(EventType.QUESTION_COMPLETED, {"question_id": "q1"})

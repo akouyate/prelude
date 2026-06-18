@@ -163,6 +163,7 @@ async def test_runner_emits_events_in_question_lifecycle_order() -> None:
             EventType.QUESTION_ASKED,
             EventType.CANDIDATE_TURN_STARTED,
             EventType.CANDIDATE_TURN_FINALIZED,
+            EventType.ANSWER_EVALUATED,
             EventType.FOLLOWUP_ASKED,
             EventType.QUESTION_COMPLETED,
             EventType.SESSION_CLOSING,
@@ -174,9 +175,11 @@ async def test_runner_emits_events_in_question_lifecycle_order() -> None:
         EventType.QUESTION_ASKED,
         EventType.CANDIDATE_TURN_STARTED,
         EventType.CANDIDATE_TURN_FINALIZED,
+        EventType.ANSWER_EVALUATED,
         EventType.FOLLOWUP_ASKED,
         EventType.CANDIDATE_TURN_STARTED,
         EventType.CANDIDATE_TURN_FINALIZED,
+        EventType.ANSWER_EVALUATED,
         EventType.QUESTION_COMPLETED,
         EventType.SESSION_CLOSING,
         EventType.SESSION_COMPLETED,
@@ -265,3 +268,42 @@ async def test_runner_completes_question_as_skipped_when_candidate_skips() -> No
         event for event in realtime_api.events if event.type == EventType.QUESTION_COMPLETED
     ]
     assert completed[0].payload["completion_reason"] == "skipped"
+    evaluated = [
+        event for event in realtime_api.events if event.type == EventType.ANSWER_EVALUATED
+    ]
+    assert evaluated[0].payload["classification"] == "skipped"
+    assert evaluated[0].payload["policy_action"] == "mark_skipped"
+
+
+@pytest.mark.asyncio
+async def test_runner_wait_keeps_current_question_active_without_followup() -> None:
+    realtime_api = InMemoryRealtimeApiClient(print_events=False)
+    runner = InterviewSessionRunner(
+        plan=one_question_plan(),
+        provider=ScriptedProvider(
+            [
+                CandidateTurn(
+                    question_id="q1",
+                    transcript="J'ai besoin d'une seconde.",
+                    wait_requested=True,
+                ),
+                CandidateTurn(question_id="q1", transcript="Here is my answer"),
+            ]
+        ),
+        realtime_api=realtime_api,
+        session_id="session-wait",
+    )
+
+    await runner.run()
+
+    assert [event.type for event in realtime_api.events].count(EventType.WAIT_REQUESTED) == 1
+    assert [event.type for event in realtime_api.events].count(EventType.FOLLOWUP_ASKED) == 0
+    evaluated = [
+        event for event in realtime_api.events if event.type == EventType.ANSWER_EVALUATED
+    ]
+    assert evaluated[0].payload["classification"] == "wait_requested"
+    assert evaluated[0].payload["policy_action"] == "wait"
+    completed = [
+        event for event in realtime_api.events if event.type == EventType.QUESTION_COMPLETED
+    ]
+    assert completed[0].payload["completion_reason"] == "answered"

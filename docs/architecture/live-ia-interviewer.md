@@ -225,6 +225,27 @@ Measure from the first POC:
 - `candidate_rating`
 - `recruiter_summary_rating`
 
+Minimum event-derived formulas:
+
+- `question_completion_rate` = `question_completed` count / `session_completed.total_questions`
+- `interview_completion_rate` = completed sessions / started sessions
+- `followup_rate` = `followup_asked` count / `question_asked` count
+- `reprompt_rate` = `soft_reprompted` count / `question_asked` count
+- `candidate_barge_in_success_count` = `barge_in_accepted` count
+- `false_interrupt_count` = `barge_in_rejected` count
+- `silence_recovery_count` = `soft_reprompted` count after `silence_timeout_started`
+- `answer_classification_distribution` = grouped `answer_evaluated.classification`
+- `provider_error_count` = `session_failed` count grouped by `session_failed.code`
+
+Exploitability rubric for each metric:
+
+- `0`: absent
+- `1`: emitted by the worker
+- `2`: persisted by Go
+- `3`: validated and replayable from events
+- `4`: covered by a persisted smoke metrics test
+- `5`: monitored in production with alert thresholds
+
 Store:
 
 - Append-only events.

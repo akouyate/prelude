@@ -97,6 +97,8 @@ func (s *PostgresStore) AppendEvent(ctx context.Context, event domain.Event) (ap
 	}
 	if strings.TrimSpace(event.CandidateID) == "" {
 		event.CandidateID = session.CandidateID
+	} else if event.CandidateID != session.CandidateID {
+		return application.AppendEventResult{}, application.ErrInvalidEvent
 	}
 
 	existing, exists, err := s.findExistingEvent(ctx, tx, event)

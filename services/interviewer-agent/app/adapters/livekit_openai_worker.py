@@ -10,11 +10,18 @@ from typing import Mapping
 
 from app.domain.models import (
     AgentConfig,
+    CandidateTurn,
     EventActor,
     EventType,
     InterviewEvent,
     InterviewPlan,
     InterviewStyle,
+)
+from app.domain.orchestrator import (
+    AnswerClassification,
+    InterviewOrchestrator,
+    OrchestratorCommand,
+    OrchestratorCommandType,
 )
 from app.domain.state_machine import INTERVIEWER_STATE_MACHINE_INSTRUCTIONS
 
@@ -114,11 +121,19 @@ class LiveKitAgentEventBridge:
         self,
         *,
         emitter: PreludeEventEmitter,
+        candidate_transcript_handler: Callable[[str, datetime], Awaitable[None]]
+        | None = None,
+        question_id_provider: Callable[[], str | None] | None = None,
+        emit_state_events: bool = True,
     ) -> None:
         self._emitter = emitter
+        self._candidate_transcript_handler = candidate_transcript_handler
+        self._question_id_provider = question_id_provider
+        self._emit_state_events = emit_state_events
         self._tasks: set[asyncio.Task[None]] = set()
         self._assistant_turns = 0
         self._candidate_turns = 0
+        self._agent_state_turns = 0
         self._candidate_speaking = False
         self._candidate_activity_seen = False
 
@@ -130,11 +145,14 @@ class LiveKitAgentEventBridge:
             old_state = getattr(event, "old_state", None)
             new_state = getattr(event, "new_state", None)
             created_at = _created_at(event)
+            if not self._emit_state_events:
+                return
             if new_state == "speaking":
+                self._agent_state_turns += 1
                 self._schedule(
                     self._emitter.emit(
                         EventType.AGENT_SPEECH_STARTED,
-                        {"source": "livekit_agent_session"},
+                        self._agent_signal_payload(self._agent_state_turns),
                         actor=EventActor.AGENT,
                         occurred_at=created_at,
                     )
@@ -143,7 +161,7 @@ class LiveKitAgentEventBridge:
                 self._schedule(
                     self._emitter.emit(
                         EventType.AGENT_SPEECH_COMPLETED,
-                        {"source": "livekit_agent_session"},
+                        self._agent_signal_payload(self._agent_state_turns),
                         actor=EventActor.AGENT,
                         occurred_at=created_at,
                     )
@@ -157,20 +175,26 @@ class LiveKitAgentEventBridge:
             if new_state == "speaking":
                 self._candidate_speaking = True
                 self._candidate_activity_seen = True
+                payload = {"source": "livekit_agent_session"}
+                if question_id := self._current_question_id():
+                    payload["question_id"] = question_id
                 self._schedule(
                     self._emitter.emit(
                         EventType.CANDIDATE_SPEECH_STARTED,
-                        {"source": "livekit_agent_session"},
+                        payload,
                         actor=EventActor.CANDIDATE,
                         occurred_at=created_at,
                     )
                 )
             elif old_state == "speaking":
                 self._candidate_speaking = False
+                payload = {"source": "livekit_agent_session"}
+                if question_id := self._current_question_id():
+                    payload["question_id"] = question_id
                 self._schedule(
                     self._emitter.emit(
                         EventType.CANDIDATE_SPEECH_STOPPED,
-                        {"source": "livekit_agent_session"},
+                        payload,
                         actor=EventActor.CANDIDATE,
                         occurred_at=created_at,
                     )
@@ -188,15 +212,22 @@ class LiveKitAgentEventBridge:
             self._candidate_turns += 1
             self._candidate_activity_seen = True
             created_at = _created_at(event)
+            if self._candidate_transcript_handler is not None:
+                self._schedule(self._candidate_transcript_handler(transcript, created_at))
+                return
+
+            question_id = self._current_question_id() or "unscoped_livekit"
             turn_id = f"{self._emitter._session_id}:candidate:{self._candidate_turns}"
             self._schedule(
                 self._emitter.emit(
                     EventType.CANDIDATE_TURN_FINALIZED,
                     {
-                        "completion_reason": "live_transcription_final",
+                        "question_id": question_id,
+                        "completion_reason": "answered",
                         "transcript_turn": {
                             "turn_id": turn_id,
                             "session_id": self._emitter._session_id,
+                            "question_id": question_id,
                             "speaker": "candidate",
                             "text": transcript,
                             "is_final": True,
@@ -225,21 +256,25 @@ class LiveKitAgentEventBridge:
             self._assistant_turns += 1
             created_at = _created_at(event)
             turn_id = f"{self._emitter._session_id}:interviewer:{self._assistant_turns}"
+            question_id = self._current_question_id()
+            payload = {
+                **self._agent_signal_payload(self._assistant_turns),
+                "transcript_turn": {
+                    "turn_id": turn_id,
+                    "session_id": self._emitter._session_id,
+                    "speaker": "interviewer",
+                    "text": text,
+                    "is_final": True,
+                    "started_at": created_at.isoformat(),
+                    "ended_at": created_at.isoformat(),
+                },
+            }
+            if question_id:
+                payload["transcript_turn"]["question_id"] = question_id
             self._schedule(
                 self._emitter.emit(
                     EventType.AGENT_SPEECH_COMPLETED,
-                    {
-                        "source": "livekit_agent_session",
-                        "transcript_turn": {
-                            "turn_id": turn_id,
-                            "session_id": self._emitter._session_id,
-                            "speaker": "interviewer",
-                            "text": text,
-                            "is_final": True,
-                            "started_at": created_at.isoformat(),
-                            "ended_at": created_at.isoformat(),
-                        },
-                    },
+                    payload,
                     actor=EventActor.AGENT,
                     occurred_at=created_at,
                 )
@@ -250,7 +285,14 @@ class LiveKitAgentEventBridge:
             self._schedule(
                 self._emitter.emit(
                     EventType.SESSION_FAILED,
-                    {"error": repr(getattr(event, "error", event))},
+                    {
+                        "code": "livekit_agent_session_error",
+                        "message": (
+                            "LiveKit agent session failed: "
+                            f"{getattr(event, 'error', event).__class__.__name__}"
+                        ),
+                        "retryable": True,
+                    },
                     actor=EventActor.SYSTEM,
                     occurred_at=_created_at(event),
                 )
@@ -275,9 +317,318 @@ class LiveKitAgentEventBridge:
     def candidate_activity_seen(self) -> bool:
         return self._candidate_activity_seen
 
+    def _current_question_id(self) -> str | None:
+        if self._question_id_provider is None:
+            return None
+        question_id = self._question_id_provider()
+        return question_id or None
+
+    def _agent_signal_payload(self, turn_index: int) -> dict[str, object]:
+        question_id = self._current_question_id()
+        utterance_kind = "question" if question_id else "intro"
+        utterance_scope = question_id or "unscoped"
+        payload: dict[str, object] = {
+            "source": "livekit_agent_session",
+            "utterance_id": (
+                f"{self._emitter._session_id}:livekit:{utterance_scope}:{turn_index}"
+            ),
+            "utterance_kind": utterance_kind,
+        }
+        if question_id:
+            payload["question_id"] = question_id
+        return payload
+
     def _schedule(self, awaitable: Awaitable[None]) -> None:
         task = asyncio.create_task(awaitable)
         self._tasks.add(task)
+
+
+class LiveInterviewOrchestrationController:
+    def __init__(
+        self,
+        *,
+        plan: InterviewPlan,
+        emitter: PreludeEventEmitter,
+        session: object,
+    ) -> None:
+        self._plan = plan
+        self._emitter = emitter
+        self._session = session
+        self._orchestrator = InterviewOrchestrator(plan)
+        self._lock = asyncio.Lock()
+        self._candidate_turns = 0
+        self._terminal = False
+        self._closed = asyncio.Event()
+
+    async def start(self) -> None:
+        command = self._orchestrator.start()
+        await self._execute_question_command(command, first=True)
+
+    async def wait_closed(self) -> None:
+        await self._closed.wait()
+
+    @property
+    def current_question_id(self) -> str | None:
+        return self._orchestrator.current_question_id
+
+    async def handle_candidate_transcript(
+        self,
+        transcript: str,
+        occurred_at: datetime,
+    ) -> None:
+        async with self._lock:
+            if self._terminal or self._orchestrator.current_question_id is None:
+                return
+
+            question_id = self._orchestrator.current_question_id
+            turn = _candidate_turn_from_live_transcript(
+                question_id=question_id,
+                transcript=transcript,
+                occurred_at=occurred_at,
+            )
+            self._candidate_turns += 1
+            turn_id = f"{self._emitter._session_id}:candidate:{self._candidate_turns}"
+            await self._emit_candidate_turn(turn, turn_id, occurred_at)
+            await self._evaluate_and_execute(turn, [turn_id])
+
+    async def handle_initial_silence(self) -> None:
+        async with self._lock:
+            if self._terminal or self._orchestrator.current_question_id is None:
+                return
+
+            question_id = self._orchestrator.current_question_id
+            occurred_at = datetime.now(timezone.utc)
+            turn = CandidateTurn(
+                question_id=question_id,
+                transcript="",
+                is_complete=False,
+                started_at=occurred_at,
+                ended_at=occurred_at,
+            )
+            self._candidate_turns += 1
+            turn_id = f"{self._emitter._session_id}:candidate:{self._candidate_turns}"
+            await self._emit_candidate_turn(turn, turn_id, occurred_at)
+            await self._evaluate_and_execute(turn, [turn_id])
+
+    async def _emit_candidate_turn(
+        self,
+        turn: CandidateTurn,
+        turn_id: str,
+        occurred_at: datetime,
+    ) -> None:
+        await self._emitter.emit(
+            EventType.CANDIDATE_TURN_FINALIZED,
+            {
+                "question_id": turn.question_id,
+                "completion_reason": _candidate_turn_completion_reason(turn),
+                "transcript_turn": {
+                    "turn_id": turn_id,
+                    "session_id": self._emitter._session_id,
+                    "question_id": turn.question_id,
+                    "speaker": "candidate",
+                    "text": turn.transcript or "[no audible response]",
+                    "is_final": True,
+                    "started_at": turn.started_at.isoformat(),
+                    "ended_at": turn.ended_at.isoformat(),
+                },
+            },
+            actor=EventActor.CANDIDATE,
+            occurred_at=occurred_at,
+        )
+
+    async def _evaluate_and_execute(
+        self,
+        turn: CandidateTurn,
+        turn_ids: list[str],
+    ) -> None:
+        classification = InterviewOrchestrator.classify_candidate_turn(turn)
+        decision = self._orchestrator.evaluate_answer(
+            classification=classification,
+            turn_ids=turn_ids,
+            reason_codes=_reason_codes(classification),
+            confidence=1.0,
+        )
+        await self._emitter.emit(
+            EventType.ANSWER_EVALUATED,
+            decision.answer_evaluation.to_payload(),
+            actor=EventActor.SYSTEM,
+        )
+        await self._execute_decision_command(decision.commands[0])
+
+    async def _execute_decision_command(self, command: OrchestratorCommand) -> None:
+        if command.type == OrchestratorCommandType.WAIT:
+            await self._emitter.emit(
+                EventType.WAIT_REQUESTED,
+                {
+                    "question_id": command.question_id,
+                    "reason": "candidate_requested_time",
+                },
+                actor=EventActor.CANDIDATE,
+            )
+            return
+
+        if command.type == OrchestratorCommandType.REPEAT_QUESTION:
+            await self._speak_question_control(
+                EventType.QUESTION_REPEATED,
+                command=command,
+                utterance_kind="repeat",
+                prompt=_current_question(self._plan, command).prompt,
+                instructions="Repeat only the current planned question. Do not add a new question.",
+                extra_payload={"reason": "candidate_requested_repeat"},
+            )
+            return
+
+        if command.type == OrchestratorCommandType.SOFT_REPROMPT:
+            reprompts_used = command.reprompts_used or 1
+            await self._speak_question_control(
+                EventType.SOFT_REPROMPTED,
+                command=command,
+                utterance_kind="soft_reprompt",
+                prompt="Je n'ai pas assez d'elements. Pouvez-vous preciser en une ou deux phrases ?",
+                instructions=(
+                    "The candidate answer was incomplete or silent. Ask one brief, warm "
+                    "clarification prompt. Do not move to the next question."
+                ),
+                extra_payload={
+                    "reprompts_used": reprompts_used,
+                    "attempt_index": command.attempt_index,
+                },
+            )
+            return
+
+        if command.type == OrchestratorCommandType.ASK_FOLLOWUP:
+            question = _current_question(self._plan, command)
+            followup = question.follow_up_prompt or "Pouvez-vous donner un exemple concret ?"
+            followups_used = command.followups_used or 1
+            await self._speak_question_control(
+                EventType.FOLLOWUP_ASKED,
+                command=command,
+                utterance_kind="followup",
+                prompt=followup,
+                instructions=f"Ask only this follow-up question: {followup}",
+                extra_payload={
+                    "followup_id": f"{command.question_id}:followup:{followups_used}",
+                    "followups_used": followups_used,
+                    "attempt_index": command.attempt_index,
+                },
+            )
+            return
+
+        if command.type != OrchestratorCommandType.COMPLETE_QUESTION:
+            raise RuntimeError(f"unsupported live orchestration command {command.type.value}")
+
+        completion_reason = command.completion_reason or "answered"
+        await self._emitter.emit(
+            EventType.QUESTION_COMPLETED,
+            {
+                "question_id": command.question_id,
+                "completion_reason": completion_reason,
+                "attempt_index": command.attempt_index,
+            },
+            actor=EventActor.AGENT,
+        )
+        next_command = self._orchestrator.mark_question_completed(
+            command.question_id or "",
+            completion_reason,
+        )
+        if next_command.type == OrchestratorCommandType.ASK_QUESTION:
+            await self._execute_question_command(next_command)
+        elif next_command.type == OrchestratorCommandType.CLOSE_SESSION:
+            await self._close_session(next_command)
+
+    async def _execute_question_command(
+        self,
+        command: OrchestratorCommand,
+        *,
+        first: bool = False,
+    ) -> None:
+        question = _current_question(self._plan, command)
+        await self._speak_question_control(
+            EventType.QUESTION_ASKED,
+            command=command,
+            utterance_kind="question",
+            prompt=question.prompt,
+            instructions=FIRST_REPLY_INSTRUCTIONS
+            if first
+            else f"Ask only this planned question: {question.prompt}",
+            extra_payload={
+                "question_index": command.question_index,
+                "category": question.category.value,
+            },
+        )
+        self._orchestrator.mark_question_asked(question.id)
+
+    async def _speak_question_control(
+        self,
+        event_type: EventType,
+        *,
+        command: OrchestratorCommand,
+        utterance_kind: str,
+        prompt: str,
+        instructions: str,
+        extra_payload: dict[str, object] | None = None,
+    ) -> None:
+        utterance_id = (
+            f"{command.question_id}:live-openai:{utterance_kind}:"
+            f"{command.attempt_index or command.question_index or 0}"
+        )
+        await self._emitter.emit(
+            EventType.AGENT_SPEECH_STARTED,
+            {
+                "question_id": command.question_id,
+                "utterance_id": utterance_id,
+                "utterance_kind": utterance_kind,
+            },
+            actor=EventActor.AGENT,
+        )
+        await self._emitter.emit(
+            event_type,
+            {
+                "question_id": command.question_id,
+                "prompt": prompt,
+                **(extra_payload or {}),
+            },
+            actor=EventActor.AGENT,
+        )
+        reply = getattr(self._session, "generate_reply")(
+            instructions=instructions,
+            allow_interruptions=True,
+        )
+        wait_for_playout = getattr(reply, "wait_for_playout", None)
+        if callable(wait_for_playout):
+            await wait_for_playout()
+
+    async def _close_session(self, command: OrchestratorCommand) -> None:
+        self._terminal = True
+        closing = "Merci, l'entretien est termine. Le recruteur recevra un resume structure."
+        await self._emitter.emit(
+            EventType.SESSION_CLOSING,
+            {
+                "completed_questions": command.completed_questions or 0,
+                "total_questions": command.total_questions or len(self._plan.questions),
+                "closing": closing,
+            },
+            actor=EventActor.AGENT,
+        )
+        self._orchestrator.mark_session_closed()
+        reply = getattr(self._session, "generate_reply")(
+            instructions=closing,
+            allow_interruptions=False,
+        )
+        wait_for_playout = getattr(reply, "wait_for_playout", None)
+        if callable(wait_for_playout):
+            await wait_for_playout()
+        await self._emitter.emit(
+            EventType.SESSION_COMPLETED,
+            {
+                "completed_reason": command.terminal_reason
+                or "all_questions_completed",
+                "completed_questions": command.completed_questions or 0,
+                "total_questions": command.total_questions or len(self._plan.questions),
+            },
+            actor=EventActor.AGENT,
+        )
+        self._closed.set()
 
 
 class OpenAILiveKitWorker:
@@ -383,8 +734,16 @@ class OpenAILiveKitWorker:
                 ),
             )
             self._agent_session = session
+            controller = LiveInterviewOrchestrationController(
+                plan=self._agent_config.interview_plan,
+                emitter=emitter,
+                session=session,
+            )
             bridge = LiveKitAgentEventBridge(
                 emitter=emitter,
+                candidate_transcript_handler=controller.handle_candidate_transcript,
+                question_id_provider=lambda: controller.current_question_id,
+                emit_state_events=False,
             )
             bridge.register(session)
 
@@ -422,51 +781,14 @@ class OpenAILiveKitWorker:
                 actor=EventActor.AGENT,
             )
 
-            first_question = self._agent_config.interview_plan.questions[0]
-            question_started_at = datetime.now(timezone.utc)
-            await emitter.emit(
-                EventType.AGENT_SPEECH_STARTED,
-                {
-                    "question_id": first_question.id,
-                    "utterance_id": f"{first_question.id}:live-openai:question:1",
-                    "utterance_kind": "question",
-                },
-                actor=EventActor.AGENT,
-                occurred_at=question_started_at,
-            )
-            await emitter.emit(
-                EventType.QUESTION_ASKED,
-                {
-                    "question_id": first_question.id,
-                    "question_index": 0,
-                    "prompt": first_question.prompt,
-                    "category": first_question.category.value,
-                    "transcript_turn": {
-                        "turn_id": f"{self._agent_config.session.id}:interviewer:planned:1",
-                        "session_id": self._agent_config.session.id,
-                        "question_id": first_question.id,
-                        "speaker": "interviewer",
-                        "text": first_question.prompt,
-                        "is_final": True,
-                        "started_at": question_started_at.isoformat(),
-                        "ended_at": datetime.now(timezone.utc).isoformat(),
-                    },
-                },
-                actor=EventActor.AGENT,
-            )
-
-            greeting = session.generate_reply(
-                instructions=FIRST_REPLY_INSTRUCTIONS,
-                allow_interruptions=True,
-            )
-            await greeting.wait_for_playout()
+            await controller.start()
             silence_prompt_task = asyncio.create_task(
                 _soft_prompt_after_initial_silence(
-                    session=session,
-                    emitter=emitter,
                     bridge=bridge,
-                    question_id=first_question.id,
                     threshold_seconds=self._worker_config.soft_prompt_after_seconds,
+                    on_initial_silence=controller.handle_initial_silence,
+                    emitter=emitter,
+                    question_id=self._agent_config.interview_plan.questions[0].id,
                 )
             )
 
@@ -474,11 +796,17 @@ class OpenAILiveKitWorker:
                 if self._worker_config.max_duration_seconds:
                     with contextlib.suppress(asyncio.TimeoutError):
                         await asyncio.wait_for(
-                            _wait_until_room_disconnected(room),
+                            _wait_until_room_disconnected_or_interview_closed(
+                                room,
+                                controller,
+                            ),
                             timeout=self._worker_config.max_duration_seconds,
                         )
                 else:
-                    await _wait_until_room_disconnected(room)
+                    await _wait_until_room_disconnected_or_interview_closed(
+                        room,
+                        controller,
+                    )
             finally:
                 silence_prompt_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
@@ -610,13 +938,81 @@ def _format_interview_style(style: InterviewStyle) -> str:
     return "\n".join(lines)
 
 
+def _current_question(plan: InterviewPlan, command: OrchestratorCommand):
+    if command.question is not None:
+        return command.question
+    for question in plan.questions:
+        if question.id == command.question_id:
+            return question
+    raise RuntimeError(f"unknown orchestrator question {command.question_id}")
+
+
+def _candidate_turn_from_live_transcript(
+    *,
+    question_id: str,
+    transcript: str,
+    occurred_at: datetime,
+) -> CandidateTurn:
+    normalized = transcript.strip().lower()
+    repeat_requested = any(
+        marker in normalized
+        for marker in ["repeter", "répéter", "repeat", "reformuler", "rephrase"]
+    )
+    wait_requested = any(
+        marker in normalized
+        for marker in ["une seconde", "un instant", "attendez", "moment", "wait"]
+    )
+    skip_requested = any(
+        marker in normalized
+        for marker in ["je passe", "passer", "skip", "next question"]
+    )
+    is_complete = bool(transcript.strip()) and not (
+        repeat_requested or wait_requested or skip_requested
+    )
+    return CandidateTurn(
+        question_id=question_id,
+        transcript=transcript,
+        is_complete=is_complete,
+        repeat_requested=repeat_requested,
+        wait_requested=wait_requested,
+        skip_requested=skip_requested,
+        started_at=occurred_at,
+        ended_at=occurred_at,
+    )
+
+
+def _candidate_turn_completion_reason(turn: CandidateTurn) -> str:
+    if turn.skip_requested:
+        return "skipped"
+    if turn.repeat_requested or turn.wait_requested or not turn.is_complete:
+        return "incomplete"
+    return "answered"
+
+
+def _reason_codes(classification: AnswerClassification) -> list[str]:
+    if classification == AnswerClassification.VAGUE:
+        return ["too_generic"]
+    if classification == AnswerClassification.INCOMPLETE:
+        return ["incomplete_answer"]
+    if classification == AnswerClassification.SILENT:
+        return ["candidate_silent"]
+    if classification == AnswerClassification.SKIPPED:
+        return ["candidate_requested_skip"]
+    if classification == AnswerClassification.REPEAT_REQUESTED:
+        return ["candidate_requested_repeat"]
+    if classification == AnswerClassification.WAIT_REQUESTED:
+        return ["candidate_requested_time"]
+    return []
+
+
 async def _soft_prompt_after_initial_silence(
     *,
-    session: object,
-    emitter: PreludeEventEmitter,
     bridge: LiveKitAgentEventBridge,
-    question_id: str,
     threshold_seconds: float,
+    on_initial_silence: Callable[[], Awaitable[None]] | None = None,
+    session: object | None = None,
+    emitter: PreludeEventEmitter | None = None,
+    question_id: str | None = None,
 ) -> None:
     await asyncio.sleep(threshold_seconds)
     await bridge.drain()
@@ -628,6 +1024,24 @@ async def _soft_prompt_after_initial_silence(
         return
 
     threshold_ms = int(threshold_seconds * 1000)
+    if on_initial_silence is not None and emitter is not None and question_id is not None:
+        await emitter.emit(
+            EventType.SILENCE_TIMEOUT_STARTED,
+            {
+                "question_id": question_id,
+                "tier": "soft_prompt",
+                "threshold_ms": threshold_ms,
+            },
+            actor=EventActor.SYSTEM,
+        )
+
+    if on_initial_silence is not None:
+        await on_initial_silence()
+        return
+
+    if session is None or emitter is None or question_id is None:
+        raise RuntimeError("legacy silence prompt requires session, emitter, and question_id")
+
     await emitter.emit(
         EventType.SILENCE_TIMEOUT_STARTED,
         {
@@ -656,7 +1070,7 @@ def _turn_detection(realtime: object, value: str) -> object:
     if value == "server_vad":
         return module.ServerVad(
             type="server_vad",
-            create_response=True,
+            create_response=False,
             interrupt_response=True,
             silence_duration_ms=700,
             prefix_padding_ms=300,
@@ -664,7 +1078,7 @@ def _turn_detection(realtime: object, value: str) -> object:
 
     return module.SemanticVad(
         type="semantic_vad",
-        create_response=True,
+        create_response=False,
         eagerness="auto",
         interrupt_response=True,
     )
@@ -695,6 +1109,30 @@ async def _wait_for_candidate_ready(
 async def _wait_until_room_disconnected(room: object) -> None:
     while getattr(room, "isconnected")():
         await asyncio.sleep(0.5)
+
+
+async def _wait_until_room_disconnected_or_interview_closed(
+    room: object,
+    controller: LiveInterviewOrchestrationController,
+) -> None:
+    room_task = asyncio.create_task(_wait_until_room_disconnected(room))
+    controller_task = asyncio.create_task(controller.wait_closed())
+    pending: set[asyncio.Task[None]] = set()
+    try:
+        done, pending = await asyncio.wait(
+            {room_task, controller_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in done:
+            task.result()
+    finally:
+        for task in pending:
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.gather(*pending)
+
+    if controller_task.done() and getattr(room, "isconnected")():
+        await room.disconnect()
 
 
 def _created_at(event: object) -> datetime:

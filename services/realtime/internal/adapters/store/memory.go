@@ -80,6 +80,8 @@ func (s *MemoryStore) AppendEvent(_ context.Context, event domain.Event) (applic
 	sessionEvents := s.events[event.SessionID]
 	if strings.TrimSpace(event.CandidateID) == "" {
 		event.CandidateID = session.CandidateID
+	} else if event.CandidateID != session.CandidateID {
+		return application.AppendEventResult{}, application.ErrInvalidEvent
 	}
 	if existing, exists := sessionEvents[event.ID]; exists {
 		if sameEvent(existing, event) {

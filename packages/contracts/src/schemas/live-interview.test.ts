@@ -4,7 +4,8 @@ import {
   liveInterviewEventSchema,
   liveInterviewPlanSchema,
   liveInterviewSessionSchema,
-  liveInterviewWorkerAgentConfigSchema
+  liveInterviewWireEventSchema,
+  liveInterviewWorkerAgentConfigSchema,
 } from "./live-interview";
 
 describe("liveInterviewPlanSchema", () => {
@@ -18,12 +19,13 @@ describe("liveInterviewPlanSchema", () => {
       questions: [
         {
           id: "q_01",
-          prompt: "Pouvez-vous presenter votre experience client la plus proche ?",
+          prompt:
+            "Pouvez-vous presenter votre experience client la plus proche ?",
           category: "experience",
           expectedSignal: "Experience concrete en relation client",
-          maxFollowups: 1
-        }
-      ]
+          maxFollowups: 1,
+        },
+      ],
     });
 
     expect(result.success).toBe(true);
@@ -39,9 +41,9 @@ describe("liveInterviewPlanSchema", () => {
         {
           id: "q_01",
           prompt: "Pourquoi ce poste vous interesse aujourd'hui ?",
-          maxFollowups: 2
-        }
-      ]
+          maxFollowups: 2,
+        },
+      ],
     });
 
     expect(result.success).toBe(false);
@@ -62,8 +64,90 @@ describe("liveInterviewEventSchema", () => {
       payload: {
         questionId: "q_01",
         questionIndex: 0,
-        prompt: "Pouvez-vous presenter votre parcours en quelques phrases ?"
-      }
+        prompt: "Pouvez-vous presenter votre parcours en quelques phrases ?",
+        transcriptTurn: {
+          turnId: "turn_interviewer_01",
+          sessionId: "session_01",
+          questionId: "q_01",
+          speaker: "interviewer",
+          text: "Pouvez-vous presenter votre parcours en quelques phrases ?",
+          isFinal: true,
+          startedAt: "2026-06-17T10:30:00.000Z",
+          endedAt: "2026-06-17T10:30:02.000Z",
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+  });
+
+  it("normalizes a snake_case wire event from the realtime API", () => {
+    const result = liveInterviewWireEventSchema.safeParse({
+      event_id: "evt_01",
+      session_id: "session_01",
+      candidate_id: "candidate_01",
+      type: "question_asked",
+      actor: "agent",
+      sequence_number: 3,
+      idempotency_key: "session_01:question_asked:q_01:1",
+      occurred_at: "2026-06-17T10:30:00.000Z",
+      payload: {
+        question_id: "q_01",
+        question_index: 0,
+        prompt: "Pouvez-vous presenter votre parcours en quelques phrases ?",
+        transcript_turn: {
+          turn_id: "turn_interviewer_01",
+          session_id: "session_01",
+          question_id: "q_01",
+          speaker: "interviewer",
+          text: "Pouvez-vous presenter votre parcours en quelques phrases ?",
+          is_final: true,
+          started_at: "2026-06-17T10:30:00.000Z",
+          ended_at: "2026-06-17T10:30:02.000Z",
+        },
+      },
+      provider_metadata: {
+        provider_event_id: "raw_provider_evt_01",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.data.eventId).toBe("evt_01");
+    expect(result.data.sequenceNumber).toBe(3);
+    expect(result.data.type).toBe("question_asked");
+    if (result.data.type !== "question_asked") {
+      return;
+    }
+    expect(result.data.payload.transcriptTurn?.speaker).toBe("interviewer");
+    expect(result.data.providerMetadata.provider_event_id).toBe(
+      "raw_provider_evt_01",
+    );
+  });
+
+  it("accepts a normalized answer_evaluated event", () => {
+    const result = liveInterviewEventSchema.safeParse({
+      eventId: "evt_answer_eval",
+      sessionId: "session_01",
+      candidateId: "candidate_01",
+      type: "answer_evaluated",
+      actor: "system",
+      sequenceNumber: 6,
+      idempotencyKey: "session_01:answer_evaluated:q_01:1",
+      occurredAt: "2026-06-17T10:30:08.000Z",
+      payload: {
+        questionId: "q_01",
+        questionIndex: 0,
+        turnIds: ["turn_123"],
+        attemptIndex: 1,
+        classification: "vague",
+        reasonCodes: ["too_generic"],
+        policyAction: "ask_followup",
+        confidence: 0.78,
+        evaluatorVersion: "answer-eval-v1",
+      },
     });
 
     expect(result.success).toBe(true);
@@ -82,8 +166,8 @@ describe("liveInterviewEventSchema", () => {
       payload: {
         questionId: "q_01",
         questionIndex: 0,
-        prompt: "This payload belongs to question_asked."
-      }
+        prompt: "This payload belongs to question_asked.",
+      },
     });
 
     expect(result.success).toBe(false);
@@ -102,8 +186,8 @@ describe("liveInterviewEventSchema", () => {
       payload: {
         questionId: "q_01",
         prompt: "Pouvez-vous presenter votre parcours en quelques phrases ?",
-        reason: "candidate_requested_repeat"
-      }
+        reason: "candidate_requested_repeat",
+      },
     });
     const reprompted = liveInterviewEventSchema.safeParse({
       eventId: "evt_reprompt",
@@ -117,8 +201,8 @@ describe("liveInterviewEventSchema", () => {
       payload: {
         questionId: "q_01",
         prompt: "Pouvez-vous preciser en une ou deux phrases ?",
-        repromptsUsed: 1
-      }
+        repromptsUsed: 1,
+      },
     });
     const closing = liveInterviewEventSchema.safeParse({
       eventId: "evt_closing",
@@ -131,8 +215,9 @@ describe("liveInterviewEventSchema", () => {
       occurredAt: "2026-06-17T10:34:00.000Z",
       payload: {
         completedQuestions: 3,
-        closing: "Merci, l'entretien est termine."
-      }
+        totalQuestions: 3,
+        closing: "Merci, l'entretien est termine.",
+      },
     });
 
     expect(repeated.success).toBe(true);
@@ -146,7 +231,7 @@ describe("liveInterviewEventSchema", () => {
       candidateId: "candidate_01",
       actor: "system",
       idempotencyKey: "session_01:turn-taking",
-      occurredAt: "2026-06-17T10:30:00.000Z"
+      occurredAt: "2026-06-17T10:30:00.000Z",
     };
     const events = [
       {
@@ -158,8 +243,8 @@ describe("liveInterviewEventSchema", () => {
         payload: {
           questionId: "q_01",
           utteranceId: "q_01:question:0",
-          utteranceKind: "question"
-        }
+          utteranceKind: "question",
+        },
       },
       {
         ...eventBase,
@@ -171,8 +256,8 @@ describe("liveInterviewEventSchema", () => {
           questionId: "q_01",
           utteranceId: "q_01:question:0",
           utteranceKind: "question",
-          audioDurationMs: 2400
-        }
+          audioDurationMs: 2400,
+        },
       },
       {
         ...eventBase,
@@ -180,7 +265,7 @@ describe("liveInterviewEventSchema", () => {
         type: "candidate_speech_started",
         actor: "candidate",
         sequenceNumber: 3,
-        payload: { questionId: "q_01", confidence: 0.94 }
+        payload: { questionId: "q_01", confidence: 0.94 },
       },
       {
         ...eventBase,
@@ -190,8 +275,8 @@ describe("liveInterviewEventSchema", () => {
         payload: {
           questionId: "q_01",
           semanticComplete: true,
-          stableSilenceMs: 320
-        }
+          stableSilenceMs: 320,
+        },
       },
       {
         ...eventBase,
@@ -202,8 +287,8 @@ describe("liveInterviewEventSchema", () => {
         payload: {
           utteranceId: "q_01:question:0",
           overlapMs: 340,
-          candidateSpeechMs: 340
-        }
+          candidateSpeechMs: 340,
+        },
       },
       {
         ...eventBase,
@@ -213,8 +298,8 @@ describe("liveInterviewEventSchema", () => {
         payload: {
           utteranceId: "q_01:question:0",
           cancelLatencyMs: 120,
-          truncatedAtMs: 340
-        }
+          truncatedAtMs: 340,
+        },
       },
       {
         ...eventBase,
@@ -224,8 +309,8 @@ describe("liveInterviewEventSchema", () => {
         payload: {
           utteranceId: "q_01:question:0",
           cancelLatencyMs: 120,
-          cancelAgentAudio: true
-        }
+          cancelAgentAudio: true,
+        },
       },
       {
         ...eventBase,
@@ -234,8 +319,8 @@ describe("liveInterviewEventSchema", () => {
         sequenceNumber: 8,
         payload: {
           reason: "backchannel",
-          observedSpeechMs: 180
-        }
+          observedSpeechMs: 180,
+        },
       },
       {
         ...eventBase,
@@ -244,8 +329,8 @@ describe("liveInterviewEventSchema", () => {
         sequenceNumber: 9,
         payload: {
           reason: "backchannel",
-          observedSpeechMs: 180
-        }
+          observedSpeechMs: 180,
+        },
       },
       {
         ...eventBase,
@@ -256,8 +341,8 @@ describe("liveInterviewEventSchema", () => {
           questionId: "q_01",
           thresholdMs: 10000,
           silentForMs: 12000,
-          tier: "soft_prompt"
-        }
+          tier: "soft_prompt",
+        },
       },
       {
         ...eventBase,
@@ -267,8 +352,8 @@ describe("liveInterviewEventSchema", () => {
         sequenceNumber: 11,
         payload: {
           questionId: "q_01",
-          reason: "candidate_requested_time"
-        }
+          reason: "candidate_requested_time",
+        },
       },
       {
         ...eventBase,
@@ -276,11 +361,15 @@ describe("liveInterviewEventSchema", () => {
         type: "candidate_speech_stopped",
         actor: "candidate",
         sequenceNumber: 12,
-        payload: { questionId: "q_01", speechDurationMs: 2100 }
-      }
+        payload: { questionId: "q_01", speechDurationMs: 2100 },
+      },
     ];
 
-    expect(events.every((event) => liveInterviewEventSchema.safeParse(event).success)).toBe(true);
+    expect(
+      events.every(
+        (event) => liveInterviewEventSchema.safeParse(event).success,
+      ),
+    ).toBe(true);
   });
 
   it("rejects sequence zero to match the Go event contract", () => {
@@ -293,10 +382,30 @@ describe("liveInterviewEventSchema", () => {
       sequenceNumber: 0,
       idempotencyKey: "session_01:zero",
       occurredAt: "2026-06-17T10:30:00.000Z",
-      payload: { questionId: "q_01" }
+      payload: { questionId: "q_01" },
     });
 
     expect(result.success).toBe(false);
+  });
+
+  it("accepts terminal completion counters for metrics", () => {
+    const result = liveInterviewEventSchema.safeParse({
+      eventId: "evt_completed",
+      sessionId: "session_01",
+      candidateId: "candidate_01",
+      type: "session_completed",
+      actor: "agent",
+      sequenceNumber: 14,
+      idempotencyKey: "session_01:completed",
+      occurredAt: "2026-06-17T10:35:00.000Z",
+      payload: {
+        completedReason: "all_questions_completed",
+        completedQuestions: 3,
+        totalQuestions: 3,
+      },
+    });
+
+    expect(result.success).toBe(true);
   });
 });
 
@@ -311,14 +420,14 @@ describe("liveInterviewWorkerAgentConfigSchema", () => {
         livekit_room_name: "prelude-session-01",
         allowed_modalities: ["audio", "video"],
         created_at: "2026-06-17T10:00:00.000Z",
-        updated_at: "2026-06-17T10:00:00.000Z"
+        updated_at: "2026-06-17T10:00:00.000Z",
       },
       livekit_join: {
         room_name: "prelude-session-01",
         url: "wss://mock-livekit.prelude.local",
         token: "mock_lk_session_01_agent-session_01",
         participant: "agent-session_01",
-        expires_at: "2026-06-17T10:15:00.000Z"
+        expires_at: "2026-06-17T10:15:00.000Z",
       },
       interview_plan: {
         id: "plan_01",
@@ -328,14 +437,14 @@ describe("liveInterviewWorkerAgentConfigSchema", () => {
           {
             id: "q1",
             prompt: "Pouvez-vous vous presenter brievement ?",
-            category: "motivation"
-          }
+            category: "motivation",
+          },
         ],
         allow_video: true,
         allow_audio_only: true,
-        max_followups_per_question: 1
+        max_followups_per_question: 1,
       },
-      provider: "mock"
+      provider: "mock",
     });
 
     expect(result.success).toBe(true);
@@ -351,7 +460,7 @@ describe("liveInterviewSessionSchema", () => {
       status: "agent_joining",
       livekitRoomName: "prelude-session-01",
       createdAt: "2026-06-17T10:00:00.000Z",
-      updatedAt: "2026-06-17T10:01:00.000Z"
+      updatedAt: "2026-06-17T10:01:00.000Z",
     });
 
     expect(result.success).toBe(true);
