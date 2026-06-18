@@ -20,6 +20,7 @@ type RoomStatus =
   | "preparing"
   | "permission_required"
   | "connecting"
+  | "interviewer_joining"
   | "connected"
   | "reconnecting"
   | "failed"
@@ -47,6 +48,7 @@ const statusCopy: Record<RoomStatus, string> = {
   preparing: "Preparing",
   permission_required: "Permission required",
   connecting: "Connecting",
+  interviewer_joining: "Interviewer joining",
   connected: "Live",
   reconnecting: "Reconnecting",
   failed: "Failed",
@@ -97,10 +99,10 @@ export function LiveInterviewRoom({ token }: { token: string }) {
         session: nextSession,
         stream,
         onReconnecting: () => setStatus("reconnecting"),
-        onConnected: () => setStatus("connected"),
+        onConnected: () => setStatus("interviewer_joining"),
+        onReady: () => setStatus("connected"),
         onDisconnected: () => setStatus("completed")
       });
-      setStatus("connected");
     } catch (cause) {
       setStatus("failed");
       setError(toCandidateError(cause));
@@ -119,6 +121,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
     status === "preparing" ||
     status === "permission_required" ||
     status === "connecting" ||
+    status === "interviewer_joining" ||
     status === "reconnecting";
   const isConnected = status === "connected" || status === "reconnecting";
 
@@ -277,36 +280,94 @@ async function connectRoom({
   stream,
   onConnected,
   onDisconnected,
+  onReady,
   onReconnecting
 }: {
   session: LiveInterviewSession;
   stream: MediaStream;
   onConnected: () => void;
   onDisconnected: () => void;
+  onReady: () => void;
   onReconnecting: () => void;
 }): Promise<ConnectedRoom> {
   if (session.livekit.isMock) {
     onConnected();
+    onReady();
     return {
       disconnect: onDisconnected
     };
   }
 
-  const { Room, RoomEvent } = await import("livekit-client");
+  const { Room, RoomEvent, Track } = await import("livekit-client");
   const room = new Room();
+  const remoteAudioElements: HTMLMediaElement[] = [];
   room.on(RoomEvent.Reconnecting, onReconnecting);
   room.on(RoomEvent.Reconnected, onConnected);
   room.on(RoomEvent.Disconnected, onDisconnected);
+  room.on(RoomEvent.TrackSubscribed, (track) => {
+    if (track.kind !== Track.Kind.Audio) {
+      return;
+    }
 
-  await room.connect(session.livekit.url, session.livekit.token);
-  await Promise.all(
-    stream.getTracks().map((track) => room.localParticipant.publishTrack(track))
-  );
-  onConnected();
+    const element = track.attach();
+    element.autoplay = true;
+    element.controls = false;
+    remoteAudioElements.push(element);
+    document.body.appendChild(element);
+    void element.play().catch(() => undefined);
+  });
+  room.on(RoomEvent.TrackUnsubscribed, (track) => {
+    track.detach().forEach((element) => {
+      element.remove();
+      const index = remoteAudioElements.indexOf(element);
+      if (index >= 0) {
+        remoteAudioElements.splice(index, 1);
+      }
+    });
+  });
+
+  try {
+    await room.connect(session.livekit.url, session.livekit.token);
+    await Promise.all(
+      stream.getTracks().map((track) => room.localParticipant.publishTrack(track))
+    );
+    onConnected();
+    await markCandidateJoined(session, stream);
+    onReady();
+  } catch (cause) {
+    remoteAudioElements.forEach((element) => element.remove());
+    room.disconnect();
+    throw cause;
+  }
 
   return {
-    disconnect: () => room.disconnect()
+    disconnect: () => {
+      remoteAudioElements.forEach((element) => element.remove());
+      room.disconnect();
+    }
   };
+}
+
+async function markCandidateJoined(session: LiveInterviewSession, stream: MediaStream) {
+  const response = await fetch(`/api/live-interview-sessions/${session.sessionId}/events`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      type: "candidate_joined",
+      payload: {
+        participant: session.livekit.participant,
+        room_name: session.livekit.roomName,
+        media: {
+          audio: stream.getAudioTracks().some((track) => track.readyState === "live"),
+          video: stream.getVideoTracks().some((track) => track.readyState === "live")
+        }
+      }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error("candidate_ready_unavailable");
+  }
 }
 
 function stopLocalStream(stream: MediaStream | null) {
@@ -320,6 +381,10 @@ function toCandidateError(cause: unknown) {
 
   if (cause instanceof Error && cause.message === "session_unavailable") {
     return "We could not prepare the interview room. Please retry in a moment.";
+  }
+
+  if (cause instanceof Error && cause.message === "candidate_ready_unavailable") {
+    return "We could not notify the interviewer that you are ready. Please retry in a moment.";
   }
 
   return "We could not join the live interview room. Please check your connection and retry.";

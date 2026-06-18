@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from app.domain.models import AgentConfig, InterviewEvent
+from app.domain.models import AgentConfig, EventType, InterviewEvent
 
 
 @dataclass
@@ -66,3 +66,35 @@ class HttpRealtimeApiClient:
             response.raise_for_status()
 
         return AgentConfig.model_validate(response.json())
+
+    async def count_events(self, session_id: str) -> int:
+        session = await self._get_session_payload(session_id)
+        return len(session.get("events") or [])
+
+    async def has_event(self, session_id: str, event_type: EventType) -> bool:
+        session = await self._get_session_payload(session_id)
+        return any(
+            isinstance(event, dict) and event.get("type") == event_type.value
+            for event in session.get("events") or []
+        )
+
+    async def _get_session_payload(self, session_id: str) -> dict[str, object]:
+        headers = {"Accept": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+
+        async with httpx.AsyncClient(
+            timeout=self._timeout_seconds,
+            transport=self._transport,
+        ) as client:
+            response = await client.get(
+                f"{self._base_url}/v1/interview-sessions/{session_id}",
+                headers=headers,
+            )
+            response.raise_for_status()
+
+        payload = response.json()
+        session = payload.get("session")
+        if not isinstance(session, dict):
+            return {}
+        return session

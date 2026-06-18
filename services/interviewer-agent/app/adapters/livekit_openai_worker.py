@@ -25,10 +25,12 @@ class OpenAILiveWorkerConfig:
     reasoning_effort: str
     input_transcription_model: str = "gpt-4o-transcribe"
     max_duration_seconds: float | None = None
+    candidate_ready_timeout_seconds: float = 120.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> OpenAILiveWorkerConfig:
         max_duration = env.get("LIVE_WORKER_MAX_DURATION_SECONDS")
+        candidate_ready_timeout = env.get("LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS")
         return cls(
             model=env["OPENAI_REALTIME_MODEL"],
             voice=env["OPENAI_REALTIME_VOICE"],
@@ -39,6 +41,9 @@ class OpenAILiveWorkerConfig:
                 "gpt-4o-transcribe",
             ),
             max_duration_seconds=float(max_duration) if max_duration else None,
+            candidate_ready_timeout_seconds=float(candidate_ready_timeout)
+            if candidate_ready_timeout
+            else 120.0,
         )
 
 
@@ -50,12 +55,13 @@ class PreludeEventEmitter:
         candidate_id: str | None,
         provider_metadata: dict[str, object],
         emit_event: Callable[[InterviewEvent], Awaitable[None]],
+        initial_sequence: int = 0,
     ) -> None:
         self._session_id = session_id
         self._candidate_id = candidate_id
         self._provider_metadata = provider_metadata
         self._emit_event = emit_event
-        self._sequence = 0
+        self._sequence = initial_sequence
         self._lock = asyncio.Lock()
 
     async def emit(
@@ -244,10 +250,14 @@ class OpenAILiveKitWorker:
         *,
         agent_config: AgentConfig,
         realtime_api_emit_event: Callable[[InterviewEvent], Awaitable[None]],
+        realtime_api_has_event: Callable[[str, EventType], Awaitable[bool]],
+        realtime_api_count_events: Callable[[str], Awaitable[int]],
         worker_config: OpenAILiveWorkerConfig,
     ) -> None:
         self._agent_config = agent_config
         self._emit_event = realtime_api_emit_event
+        self._has_event = realtime_api_has_event
+        self._count_events = realtime_api_count_events
         self._worker_config = worker_config
         self._room = None
         self._agent_session = None
@@ -280,11 +290,18 @@ class OpenAILiveKitWorker:
                     "agent_participant": self._agent_config.livekit_join.participant,
                 },
             }
+            await _wait_for_candidate_ready(
+                session_id=self._agent_config.session.id,
+                has_event=self._has_event,
+                timeout_seconds=self._worker_config.candidate_ready_timeout_seconds,
+            )
+            initial_sequence = await self._count_events(self._agent_config.session.id)
             emitter = PreludeEventEmitter(
                 session_id=self._agent_config.session.id,
                 candidate_id=self._agent_config.session.candidate_id,
                 provider_metadata=provider_metadata,
                 emit_event=self._emit_event,
+                initial_sequence=initial_sequence,
             )
 
             room = rtc.Room()
@@ -489,6 +506,24 @@ def _turn_detection(realtime: object, value: str) -> object:
 
 def _supports_realtime_reasoning(model: str) -> bool:
     return "realtime-2" in model
+
+
+async def _wait_for_candidate_ready(
+    *,
+    session_id: str,
+    has_event: Callable[[str, EventType], Awaitable[bool]],
+    timeout_seconds: float,
+    poll_interval_seconds: float = 0.5,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while True:
+        if await has_event(session_id, EventType.CANDIDATE_JOINED):
+            return
+        if asyncio.get_running_loop().time() >= deadline:
+            raise TimeoutError(
+                f"candidate readiness event was not received for session {session_id}"
+            )
+        await asyncio.sleep(poll_interval_seconds)
 
 
 async def _wait_until_room_disconnected(room: object) -> None:
