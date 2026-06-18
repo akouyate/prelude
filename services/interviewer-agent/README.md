@@ -206,6 +206,11 @@ The target loads `.env`, requires `REALTIME_API_URL`, fetches:
 GET /v1/interview-sessions/{session_id}/agent-config
 ```
 
+The returned `interview_plan.interview_style` gives the live interviewer
+structured context for sector, seniority, work environment, role constraints,
+company context, and candidate tone. The worker uses that context before
+falling back to inference from the role title and planned questions.
+
 Then the worker waits for the candidate readiness event, joins the LiveKit room
 as `agent-{session_id}`, starts a LiveKit Agents `AgentSession` with OpenAI
 Realtime, publishes the interviewer audio back into the same room, listens to

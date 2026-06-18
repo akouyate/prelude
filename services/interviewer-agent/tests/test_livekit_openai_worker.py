@@ -8,15 +8,26 @@ from types import SimpleNamespace
 import pytest
 
 from app.adapters.livekit_openai_worker import (
+    FIRST_REPLY_INSTRUCTIONS,
     LiveKitAgentEventBridge,
     OpenAILiveWorkerConfig,
     PreludeEventEmitter,
     build_live_interviewer_instructions,
+    _spoken_question_prompt,
     _wait_for_candidate_ready,
     _supports_realtime_reasoning,
     _soft_prompt_after_initial_silence,
 )
-from app.domain.models import EventActor, EventType, InterviewEvent, create_demo_plan
+from app.domain.models import (
+    EventActor,
+    EventType,
+    InterviewEvent,
+    InterviewPlan,
+    InterviewQuestion,
+    InterviewStyle,
+    QuestionCategory,
+    create_demo_plan,
+)
 
 
 class FakeAgentSession:
@@ -315,6 +326,123 @@ def test_live_interviewer_instructions_keep_first_screening_scope() -> None:
     assert "Ask one question at a time" in instructions
     assert "Never score or comment on face, accent, tone, emotion" in instructions
     assert "Product Manager B2B SaaS" in instructions
+
+
+def test_live_interviewer_instructions_onboard_without_product_narration() -> None:
+    instructions = build_live_interviewer_instructions(create_demo_plan())
+
+    assert "Candidate onboarding:" in instructions
+    assert "one brief orientation sentence" in instructions
+    assert "short first-screening conversation" in instructions
+    assert "consistent interview" in instructions
+    assert "Do not turn the introduction into product narration" in instructions
+    assert "Do not repeat the onboarding if the candidate interrupts" in instructions
+
+
+def test_live_interviewer_instructions_adapt_to_operational_roles() -> None:
+    plan = InterviewPlan(
+        id="plan-restaurant-server",
+        role_title="Serveur en restauration",
+        interview_style=InterviewStyle(
+            sector="restauration",
+            seniority="entry level",
+            work_environment="frontline shift work",
+            role_constraints=[
+                "late shifts",
+                "standing work",
+                "direct customer interaction",
+            ],
+            candidate_tone="simple, direct, and reassuring",
+        ),
+        questions=[
+            InterviewQuestion(
+                id="q1",
+                prompt="Pouvez-vous me parler de votre experience en service ?",
+                category=QuestionCategory.EXPERIENCE,
+            ),
+            InterviewQuestion(
+                id="q2",
+                prompt="Quelles sont vos disponibilites pour les prochains mois ?",
+                category=QuestionCategory.LOGISTICS,
+            ),
+        ],
+    )
+
+    instructions = build_live_interviewer_instructions(plan)
+
+    assert "Structured interview style:" in instructions
+    assert "- Sector: restauration" in instructions
+    assert "- Work environment: frontline shift work" in instructions
+    assert "late shifts; standing work; direct customer interaction" in instructions
+    assert "- Candidate tone: simple, direct, and reassuring" in instructions
+    assert "Use the structured interview style first" in instructions
+    assert (
+        "frontline, operational, shift-based, hospitality, logistics, restaurant"
+        in instructions
+    )
+    assert "plain and concrete language" in instructions
+    assert "experience, availability" in instructions
+    assert (
+        "mobility, customer interaction, work rhythm, safety, and team fit"
+        in instructions
+    )
+    assert "Never force a corporate interview style" in instructions
+
+
+def test_live_interviewer_instructions_have_style_fallback() -> None:
+    plan = InterviewPlan(
+        id="plan-minimal",
+        role_title="Support Agent",
+        questions=[
+            InterviewQuestion(
+                id="q1",
+                prompt="Tell me about your support experience.",
+            )
+        ],
+    )
+
+    instructions = build_live_interviewer_instructions(plan)
+
+    assert (
+        "- No structured style context provided. Infer from the role and questions."
+        in instructions
+    )
+
+
+def test_live_interviewer_instructions_use_listening_without_fake_empathy() -> None:
+    instructions = build_live_interviewer_instructions(create_demo_plan())
+
+    assert "Candidate comfort:" in instructions
+    assert "fixed canned comfort phrases" in instructions
+    assert "Do not pretend to feel emotions" in instructions
+    assert 'Avoid generic reassurance such as "don\'t worry" or "rassurez-vous"' in instructions
+    assert "Listening and pacing:" in instructions
+    assert "Do not interrupt" in instructions
+    assert "Avoid paraphrasing every answer" in instructions
+    assert "If an answer is complete, move to the next planned question" in instructions
+    assert "ask at most one concise follow-up" in instructions
+
+
+def test_live_interviewer_instructions_avoid_restarting_greeting() -> None:
+    instructions = build_live_interviewer_instructions(create_demo_plan())
+
+    assert "do not restart the greeting or onboarding" in FIRST_REPLY_INSTRUCTIONS
+    assert "resume the current planned question" in FIRST_REPLY_INSTRUCTIONS
+    assert "Greet once at the beginning only" in instructions
+    assert "do not add another greeting" in instructions
+
+
+def test_live_interviewer_instructions_strip_prompt_initial_greeting_for_speech() -> None:
+    instructions = build_live_interviewer_instructions(create_demo_plan())
+
+    assert _spoken_question_prompt(
+        "Bonjour, pouvez-vous vous presenter brievement ?"
+    ) == "pouvez-vous vous presenter brievement ?"
+    assert _spoken_question_prompt("Hello! Tell me about yourself.") == (
+        "Tell me about yourself."
+    )
+    assert "1. [motivation] pouvez-vous vous presenter brievement" in instructions
+    assert "1. [motivation] Bonjour, pouvez-vous" not in instructions
 
 
 def test_realtime_reasoning_is_only_enabled_for_supported_models() -> None:

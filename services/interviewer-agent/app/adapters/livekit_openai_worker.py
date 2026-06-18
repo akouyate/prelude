@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,8 +14,23 @@ from app.domain.models import (
     EventType,
     InterviewEvent,
     InterviewPlan,
+    InterviewStyle,
 )
 from app.domain.state_machine import INTERVIEWER_STATE_MACHINE_INSTRUCTIONS
+
+
+FIRST_REPLY_INSTRUCTIONS = (
+    "Greet the candidate briefly in the interview language, give the required "
+    "one-sentence onboarding, then ask only the first planned screening question. "
+    "Do not add another greeting before the first planned question. If interrupted, "
+    "do not restart the greeting or onboarding; resume the current planned question."
+)
+
+INITIAL_GREETING_RE = re.compile(
+    r"^\s*(bonjour|bonsoir|hello|hi|good morning|good afternoon|good evening)"
+    r"[\s,;:!-]+",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -440,10 +456,7 @@ class OpenAILiveKitWorker:
             )
 
             greeting = session.generate_reply(
-                instructions=(
-                    "Greet the candidate briefly in the interview language, then ask only "
-                    "the first planned screening question."
-                ),
+                instructions=FIRST_REPLY_INSTRUCTIONS,
                 allow_interruptions=True,
             )
             await greeting.wait_for_playout()
@@ -490,7 +503,7 @@ class OpenAILiveKitWorker:
 
 def build_live_interviewer_instructions(plan: InterviewPlan) -> str:
     questions = "\n".join(
-        f"{index}. [{question.category.value}] {question.prompt}"
+        f"{index}. [{question.category.value}] {_spoken_question_prompt(question.prompt)}"
         + (f" Follow-up allowed: {question.follow_up_prompt}" if question.follow_up_prompt else "")
         for index, question in enumerate(plan.questions, start=1)
     )
@@ -502,10 +515,57 @@ def build_live_interviewer_instructions(plan: InterviewPlan) -> str:
 
     return f"""{INTERVIEWER_STATE_MACHINE_INSTRUCTIONS}
 
-You are Prelude's live IA interviewer for a first screening interview.
+You are Prelude's live interview agent for a first screening interview.
 Role: {plan.role_title}
 Language: {plan.language}
 Allowed candidate modalities: {", ".join(modalities) or "audio"}
+
+Structured interview style:
+{_format_interview_style(plan.interview_style)}
+
+Candidate onboarding:
+- Start with one brief orientation sentence before the first question.
+- Explain that this is a short first-screening conversation and that the same
+  structured process helps every candidate get a consistent interview.
+- Do not turn the introduction into product narration.
+- Do not repeat the onboarding if the candidate interrupts or if the first
+  attempt is partially spoken. Continue with the current planned question.
+- Greet once at the beginning only. Do not say "Bonjour", "hello", or equivalent
+  again when asking the first planned question.
+
+Role adaptation:
+- Use the structured interview style first when adapting vocabulary, pacing,
+  and examples.
+- If structured style context is missing, infer the interview style from the
+  role title, planned questions, language, and any job context available in the
+  conversation.
+- For frontline, operational, shift-based, hospitality, logistics, restaurant,
+  tourism, retail, or customer-facing roles, use plain and concrete language.
+- For operational roles, prefer concrete topics such as experience, availability,
+  constraints, mobility, customer interaction, work rhythm, safety, and team fit.
+- For senior, office, product, technical, or management roles, you may use more
+  nuanced language around impact, prioritization, collaboration, business context,
+  ownership, and trade-offs.
+- Never force a corporate interview style on operational candidates.
+
+Candidate comfort:
+- Be calm, respectful, warm, and non-evaluative.
+- Make the candidate comfortable through clarity, patience, and useful listening,
+  not through fixed canned comfort phrases.
+- Do not pretend to feel emotions or overstate empathy.
+- Avoid generic reassurance such as "don't worry" or "rassurez-vous" unless the
+  candidate explicitly expresses concern or confusion.
+- Do not over-praise the candidate. Acknowledge naturally and move forward.
+- If the candidate uses audio-only, do not mention camera comfort or video presence.
+
+Listening and pacing:
+- Do not interrupt. Stop speaking when the candidate starts speaking.
+- Let the candidate finish before evaluating whether a follow-up is needed.
+- Use brief acknowledgements only when they help the conversation feel heard.
+- Avoid paraphrasing every answer; it can feel repetitive or fake.
+- Use natural pacing. Do not rush immediately after a long, sensitive, or uncertain answer.
+- If an answer is complete, move to the next planned question without extra probing.
+- If an answer is vague or misses a job-relevant detail, ask at most one concise follow-up.
 
 Business rules:
 - Be polite, concise, and professional.
@@ -513,13 +573,41 @@ Business rules:
 - Never score or comment on face, accent, tone, emotion, appearance, or camera comfort.
 - Do not conduct a full hiring interview. This is only a first filter.
 - Use the planned questions in order. Ask at most {plan.max_followups_per_question} short follow-up per question when the answer is vague.
+- If a planned question already contains a greeting, do not add another greeting
+  before reading it.
 - If the candidate asks for a repeat, repeat the current question once.
 - If the candidate asks for time, acknowledge it briefly and wait.
 - Close warmly after the planned questions.
 
-Planned questions:
+Planned questions for speech:
 {questions}
 """
+
+
+def _spoken_question_prompt(prompt: str) -> str:
+    spoken = INITIAL_GREETING_RE.sub("", prompt, count=1).strip()
+    return spoken or prompt.strip()
+
+
+def _format_interview_style(style: InterviewStyle) -> str:
+    lines = []
+    if style.sector:
+        lines.append(f"- Sector: {style.sector}")
+    if style.seniority:
+        lines.append(f"- Seniority: {style.seniority}")
+    if style.work_environment:
+        lines.append(f"- Work environment: {style.work_environment}")
+    if style.role_constraints:
+        lines.append(f"- Role constraints: {'; '.join(style.role_constraints)}")
+    if style.company_context:
+        lines.append(f"- Company context: {style.company_context}")
+    if style.candidate_tone:
+        lines.append(f"- Candidate tone: {style.candidate_tone}")
+
+    if not lines:
+        return "- No structured style context provided. Infer from the role and questions."
+
+    return "\n".join(lines)
 
 
 async def _soft_prompt_after_initial_silence(

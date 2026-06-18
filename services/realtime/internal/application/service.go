@@ -97,6 +97,7 @@ type InterviewPlan struct {
 	AllowVideo              bool                `json:"allow_video"`
 	AllowAudioOnly          bool                `json:"allow_audio_only"`
 	MaxFollowupsPerQuestion int                 `json:"max_followups_per_question"`
+	InterviewStyle          InterviewStyle      `json:"interview_style"`
 }
 
 type InterviewQuestion struct {
@@ -104,6 +105,15 @@ type InterviewQuestion struct {
 	Prompt         string `json:"prompt"`
 	Category       string `json:"category"`
 	FollowUpPrompt string `json:"follow_up_prompt,omitempty"`
+}
+
+type InterviewStyle struct {
+	Sector          string   `json:"sector,omitempty"`
+	Seniority       string   `json:"seniority,omitempty"`
+	WorkEnvironment string   `json:"work_environment,omitempty"`
+	RoleConstraints []string `json:"role_constraints,omitempty"`
+	CompanyContext  string   `json:"company_context,omitempty"`
+	CandidateTone   string   `json:"candidate_tone,omitempty"`
 }
 
 type AgentConfigOutput struct {
@@ -429,6 +439,18 @@ func demoInterviewPlan(planID string) InterviewPlan {
 		AllowVideo:              true,
 		AllowAudioOnly:          true,
 		MaxFollowupsPerQuestion: 1,
+		InterviewStyle: InterviewStyle{
+			Sector:          "B2B SaaS",
+			Seniority:       "mid to senior",
+			WorkEnvironment: "office or hybrid customer-facing product work",
+			RoleConstraints: []string{
+				"coordinate with product and customer-facing teams",
+				"handle roadmap trade-offs under customer pressure",
+				"communicate clearly with SMB stakeholders",
+			},
+			CompanyContext: "Prelude is screening candidates for a structured first interview before recruiter review.",
+			CandidateTone:  "professional, concise, and concrete",
+		},
 		Questions: []InterviewQuestion{
 			{
 				ID:             "q1",

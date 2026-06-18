@@ -34,6 +34,14 @@ async def test_http_realtime_client_loads_agent_config() -> None:
                     "id": "plan-test",
                     "role_title": "Product Manager B2B SaaS",
                     "language": "fr",
+                    "interview_style": {
+                        "sector": "B2B SaaS",
+                        "seniority": "senior",
+                        "work_environment": "hybrid customer-facing team",
+                        "role_constraints": ["coordinate with product"],
+                        "company_context": "Short first screen before recruiter review.",
+                        "candidate_tone": "professional and concrete",
+                    },
                     "allow_video": True,
                     "allow_audio_only": True,
                     "max_followups_per_question": 1,
@@ -58,6 +66,10 @@ async def test_http_realtime_client_loads_agent_config() -> None:
 
     assert config.session.id == "session-test"
     assert config.livekit_join.participant == "agent-session-test"
+    assert config.interview_plan.interview_style.sector == "B2B SaaS"
+    assert config.interview_plan.interview_style.role_constraints == [
+        "coordinate with product"
+    ]
     assert config.interview_plan.questions[0].id == "q1"
     assert config.provider == "mock"
 
