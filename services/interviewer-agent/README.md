@@ -206,8 +206,18 @@ The target loads `.env`, requires `REALTIME_API_URL`, fetches:
 GET /v1/interview-sessions/{session_id}/agent-config
 ```
 
-Then the worker joins the LiveKit room as `agent-{session_id}`, opens an OpenAI
-Realtime handshake, and persists normalized Prelude events back to the Go API.
+Then the worker joins the LiveKit room as `agent-{session_id}`, starts a
+LiveKit Agents `AgentSession` with OpenAI Realtime, publishes the interviewer
+audio back into the same room, listens to candidate microphone audio, and
+persists normalized Prelude events and transcript turns back to the Go API.
+
+For a bounded real-provider smoke:
+
+```bash
+make live-openai-worker \
+  SESSION_ID={session_id} \
+  LIVE_WORKER_MAX_DURATION_SECONDS=15
+```
 
 For a local room/join smoke without calling OpenAI:
 
@@ -233,11 +243,10 @@ pytest
 
 ## Next wiring steps
 
-1. Wire the benchmark provider adapters to real LiveKit worker sessions.
-2. Replace mocked LiveKit tokens with real LiveKit room/token minting.
-3. Map provider turn-taking signals into `TurnTakingPolicy` instead of letting
+1. Drive question-level state from LiveKit/OpenAI conversation callbacks instead
+   of relying on prompt instructions alone.
+2. Map provider turn-taking signals into `TurnTakingPolicy` instead of letting
    provider callbacks advance interview state directly.
-4. Add provider latency and cost metrics around every provider call.
-5. Persist provider metadata in the event payloads without leaking secrets.
-6. Run the same scenario set against OpenAI Realtime and ElevenLabs before
+3. Add provider latency and cost metrics around every provider call.
+4. Run the same scenario set against OpenAI Realtime and ElevenLabs before
    choosing the commercial POC provider.

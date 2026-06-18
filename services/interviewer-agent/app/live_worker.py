@@ -6,11 +6,8 @@ import os
 from typing import Mapping
 
 from app.adapters.livekit_room import LiveKitRoomAdapter
+from app.adapters.livekit_openai_worker import OpenAILiveKitWorker, OpenAILiveWorkerConfig
 from app.adapters.mock_openai_realtime import MockOpenAIRealtimeAdapter
-from app.adapters.openai_realtime_probe import (
-    OpenAIRealtimeConfig,
-    OpenAIRealtimeSessionProbe,
-)
 from app.adapters.realtime_api import HttpRealtimeApiClient
 from app.application.session_runner import InterviewSessionRunner
 
@@ -56,6 +53,14 @@ async def run_live_worker(
 
     realtime_api = HttpRealtimeApiClient(realtime_api_url, api_key=api_key)
     config = await realtime_api.get_agent_config(session_id)
+
+    if not skip_openai_handshake:
+        return await OpenAILiveKitWorker(
+            agent_config=config,
+            realtime_api_emit_event=realtime_api.emit_event,
+            worker_config=OpenAILiveWorkerConfig.from_env(worker_env),
+        ).run()
+
     provider_metadata: dict[str, object] = {
         "live_worker": {
             "mode": "openai_realtime",
@@ -63,12 +68,6 @@ async def run_live_worker(
             "room_name": config.livekit_join.room_name,
         }
     }
-
-    if not skip_openai_handshake:
-        openai_metadata = await OpenAIRealtimeSessionProbe(
-            OpenAIRealtimeConfig.from_env(worker_env)
-        ).connect()
-        provider_metadata["openai_realtime"] = openai_metadata
 
     runner = InterviewSessionRunner(
         plan=config.interview_plan,
