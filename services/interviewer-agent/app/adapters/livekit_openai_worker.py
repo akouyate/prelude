@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -15,6 +16,20 @@ from app.domain.models import (
     InterviewPlan,
 )
 from app.domain.state_machine import INTERVIEWER_STATE_MACHINE_INSTRUCTIONS
+
+
+FIRST_REPLY_INSTRUCTIONS = (
+    "Greet the candidate briefly in the interview language, give the required "
+    "one-sentence onboarding, then ask only the first planned screening question. "
+    "Do not add another greeting before the first planned question. If interrupted, "
+    "do not restart the greeting or onboarding; resume the current planned question."
+)
+
+INITIAL_GREETING_RE = re.compile(
+    r"^\s*(bonjour|bonsoir|hello|hi|good morning|good afternoon|good evening)"
+    r"[\s,;:!-]+",
+    flags=re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -440,10 +455,7 @@ class OpenAILiveKitWorker:
             )
 
             greeting = session.generate_reply(
-                instructions=(
-                    "Greet the candidate briefly in the interview language, give the required "
-                    "one-sentence onboarding, then ask only the first planned screening question."
-                ),
+                instructions=FIRST_REPLY_INSTRUCTIONS,
                 allow_interruptions=True,
             )
             await greeting.wait_for_playout()
@@ -490,7 +502,7 @@ class OpenAILiveKitWorker:
 
 def build_live_interviewer_instructions(plan: InterviewPlan) -> str:
     questions = "\n".join(
-        f"{index}. [{question.category.value}] {question.prompt}"
+        f"{index}. [{question.category.value}] {_spoken_question_prompt(question.prompt)}"
         + (f" Follow-up allowed: {question.follow_up_prompt}" if question.follow_up_prompt else "")
         for index, question in enumerate(plan.questions, start=1)
     )
@@ -512,6 +524,10 @@ Candidate onboarding:
 - Explain that this is a short first-screening conversation and that the same
   structured process helps every candidate get a consistent interview.
 - Do not turn the introduction into product narration.
+- Do not repeat the onboarding if the candidate interrupts or if the first
+  attempt is partially spoken. Continue with the current planned question.
+- Greet once at the beginning only. Do not say "Bonjour", "hello", or equivalent
+  again when asking the first planned question.
 
 Role adaptation:
 - Infer the interview style from the role title, planned questions, language,
@@ -530,6 +546,8 @@ Candidate comfort:
 - Make the candidate comfortable through clarity, patience, and useful listening,
   not through fixed canned comfort phrases.
 - Do not pretend to feel emotions or overstate empathy.
+- Avoid generic reassurance such as "don't worry" or "rassurez-vous" unless the
+  candidate explicitly expresses concern or confusion.
 - Do not over-praise the candidate. Acknowledge naturally and move forward.
 - If the candidate uses audio-only, do not mention camera comfort or video presence.
 
@@ -548,13 +566,20 @@ Business rules:
 - Never score or comment on face, accent, tone, emotion, appearance, or camera comfort.
 - Do not conduct a full hiring interview. This is only a first filter.
 - Use the planned questions in order. Ask at most {plan.max_followups_per_question} short follow-up per question when the answer is vague.
+- If a planned question already contains a greeting, do not add another greeting
+  before reading it.
 - If the candidate asks for a repeat, repeat the current question once.
 - If the candidate asks for time, acknowledge it briefly and wait.
 - Close warmly after the planned questions.
 
-Planned questions:
+Planned questions for speech:
 {questions}
 """
+
+
+def _spoken_question_prompt(prompt: str) -> str:
+    spoken = INITIAL_GREETING_RE.sub("", prompt, count=1).strip()
+    return spoken or prompt.strip()
 
 
 async def _soft_prompt_after_initial_silence(

@@ -59,8 +59,20 @@ experience, active listening, and conversational-agent pacing.
 - `uv run --with-requirements requirements.txt python -m compileall app` in
   `services/interviewer-agent`: passed.
 - `uv run --with-requirements requirements.txt python -m pytest -q` in
-  `services/interviewer-agent`: 54 passed.
+  `services/interviewer-agent`: 54 passed before greeting refinement.
+- `uv run --with-requirements requirements.txt python -m pytest
+  tests/test_livekit_openai_worker.py -q` in `services/interviewer-agent`:
+  15 passed after greeting refinement.
 - `git diff --check`: passed.
-- Live audio smoke was not rerun because this change only updates prompt
-  instructions and focused prompt tests; manual candidate feel remains the next
-  subjective validation step.
+- Final `uv run --with-requirements requirements.txt python -m pytest -q` in
+  `services/interviewer-agent`: 56 passed.
+- Automated LiveKit/OpenAI smoke with Playwright fake media:
+  - Session `is_32a09352e0ab16d59fb12d67` exposed repeated onboarding/greeting
+    when the fake mic interrupted the agent.
+  - Session `is_dfe0ce1b88c147edb4e4fbce` confirmed the issue persisted before
+    stripping greetings from speech prompts.
+  - Session `is_280058263374e8521fc719ed` confirmed the live agent produced a
+    cleaner first spoken turn: one greeting, one structured onboarding sentence,
+    then the first question without repeating `Bonjour`.
+- Manual human audio feel remains the next subjective validation step because
+  Playwright fake media can produce noisy candidate transcripts.

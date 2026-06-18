@@ -8,10 +8,12 @@ from types import SimpleNamespace
 import pytest
 
 from app.adapters.livekit_openai_worker import (
+    FIRST_REPLY_INSTRUCTIONS,
     LiveKitAgentEventBridge,
     OpenAILiveWorkerConfig,
     PreludeEventEmitter,
     build_live_interviewer_instructions,
+    _spoken_question_prompt,
     _wait_for_candidate_ready,
     _supports_realtime_reasoning,
     _soft_prompt_after_initial_silence,
@@ -333,6 +335,7 @@ def test_live_interviewer_instructions_onboard_without_product_narration() -> No
     assert "short first-screening conversation" in instructions
     assert "consistent interview" in instructions
     assert "Do not turn the introduction into product narration" in instructions
+    assert "Do not repeat the onboarding if the candidate interrupts" in instructions
 
 
 def test_live_interviewer_instructions_adapt_to_operational_roles() -> None:
@@ -374,11 +377,34 @@ def test_live_interviewer_instructions_use_listening_without_fake_empathy() -> N
     assert "Candidate comfort:" in instructions
     assert "fixed canned comfort phrases" in instructions
     assert "Do not pretend to feel emotions" in instructions
+    assert 'Avoid generic reassurance such as "don\'t worry" or "rassurez-vous"' in instructions
     assert "Listening and pacing:" in instructions
     assert "Do not interrupt" in instructions
     assert "Avoid paraphrasing every answer" in instructions
     assert "If an answer is complete, move to the next planned question" in instructions
     assert "ask at most one concise follow-up" in instructions
+
+
+def test_live_interviewer_instructions_avoid_restarting_greeting() -> None:
+    instructions = build_live_interviewer_instructions(create_demo_plan())
+
+    assert "do not restart the greeting or onboarding" in FIRST_REPLY_INSTRUCTIONS
+    assert "resume the current planned question" in FIRST_REPLY_INSTRUCTIONS
+    assert "Greet once at the beginning only" in instructions
+    assert "do not add another greeting" in instructions
+
+
+def test_live_interviewer_instructions_strip_prompt_initial_greeting_for_speech() -> None:
+    instructions = build_live_interviewer_instructions(create_demo_plan())
+
+    assert _spoken_question_prompt(
+        "Bonjour, pouvez-vous vous presenter brievement ?"
+    ) == "pouvez-vous vous presenter brievement ?"
+    assert _spoken_question_prompt("Hello! Tell me about yourself.") == (
+        "Tell me about yourself."
+    )
+    assert "1. [motivation] pouvez-vous vous presenter brievement" in instructions
+    assert "1. [motivation] Bonjour, pouvez-vous" not in instructions
 
 
 def test_realtime_reasoning_is_only_enabled_for_supported_models() -> None:
