@@ -11,6 +11,8 @@ from uuid import uuid4
 import httpx
 from pydantic import BaseModel, Field
 
+from app.adapters.livekit_room import LiveKitRoomAdapter
+from app.adapters.livekit_tokens import build_livekit_agent_join
 from app.adapters.realtime_api import HttpRealtimeApiClient, InMemoryRealtimeApiClient
 from app.application.ports import RealtimeApiClient
 from app.application.session_runner import InterviewSessionRunner
@@ -161,12 +163,30 @@ class BenchmarkRunner:
         scenario = load_benchmark_scenario(config.scenario)
         session_id = _session_id(config, iteration)
         try:
+            if config.provider == "openai_realtime" and not config.realtime_api_url:
+                raise ProviderBenchmarkBlocked(
+                    "openai_realtime smoke requires --realtime-api-url so the run "
+                    "can create a Go session, persist events, and verify transcript reconstruction."
+                )
             provider = build_benchmark_provider(config.provider, scenario, self._env)
             realtime_factory = _realtime_factory(config, self._http_factory)
             if realtime_factory:
                 session_id = await realtime_factory.create_session(
                     _create_session_payload(config, scenario, iteration)
                 )
+            livekit_join = None
+            livekit_room = None
+            provider_smoke_metadata: dict[str, object] = {}
+            if config.provider == "openai_realtime":
+                livekit_join = build_livekit_agent_join(
+                    session_id=session_id,
+                    room_name=_livekit_room_name(session_id),
+                    env=self._env,
+                )
+                livekit_room = LiveKitRoomAdapter()
+                prepare_smoke = getattr(provider, "prepare_smoke", None)
+                if prepare_smoke:
+                    provider_smoke_metadata = await prepare_smoke()
         except ProviderBenchmarkBlocked as exc:
             return BenchmarkRunResult(
                 provider=config.provider,
@@ -197,8 +217,11 @@ class BenchmarkRunner:
                 "iteration": iteration,
                 "commit_sha": _commit_sha(),
                 "provider_config": _provider_config(config.provider, self._env),
+                **provider_smoke_metadata,
             },
             idempotency_key_prefix=f"{config.benchmark_run_id}:{session_id}",
+            livekit_room=livekit_room,
+            livekit_join=livekit_join,
         )
         try:
             session_result = await runner.run()
@@ -275,6 +298,10 @@ def _create_session_payload(
         "candidate_id": f"benchmark-candidate-{config.benchmark_run_id}-{iteration}",
         "allowed_modalities": _allowed_modalities(scenario.plan),
     }
+
+
+def _livekit_room_name(session_id: str) -> str:
+    return f"prelude-{session_id}"
 
 
 def _allowed_modalities(plan: InterviewPlan) -> list[str]:

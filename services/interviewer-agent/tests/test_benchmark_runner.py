@@ -1,5 +1,6 @@
 import pytest
 
+from app.adapters.openai_realtime import OpenAIRealtimeSmokeProvider
 from app.benchmark.runner import BenchmarkRunConfig, BenchmarkRunner
 from app.benchmark.scenarios import BenchmarkScenarioName
 from app.domain.models import EventType
@@ -104,6 +105,104 @@ async def test_benchmark_runner_blocks_real_provider_when_credentials_are_missin
     assert "OPENAI_API_KEY" in report.runs[0].blocker
     assert report.recommendation.startswith("Provider access is missing")
     assert factory.created == []
+
+
+@pytest.mark.asyncio
+async def test_benchmark_runner_requires_go_persistence_for_openai_smoke() -> None:
+    runner = BenchmarkRunner(
+        env={
+            "OPENAI_API_KEY": "sk-test-secret",
+            "OPENAI_REALTIME_MODEL": "gpt-realtime",
+            "OPENAI_REALTIME_VOICE": "marin",
+            "OPENAI_REALTIME_TURN_DETECTION": "semantic_vad",
+            "OPENAI_REALTIME_REASONING_EFFORT": "low",
+            "LIVEKIT_URL": "wss://livekit.example.test",
+            "LIVEKIT_API_KEY": "lk_key",
+            "LIVEKIT_API_SECRET": "lk_secret",
+        }
+    )
+    config = BenchmarkRunConfig(
+        provider="openai_realtime",
+        scenario=BenchmarkScenarioName.NORMAL,
+        iterations=1,
+        benchmark_run_id="bench-openai",
+    )
+
+    report = await runner.run(config)
+
+    assert report.runs[0].status == "blocked"
+    assert "--realtime-api-url" in report.runs[0].blocker
+    assert "sk-test-secret" not in report.runs[0].blocker
+
+
+@pytest.mark.asyncio
+async def test_benchmark_runner_wires_openai_smoke_to_livekit_and_go(
+    monkeypatch,
+) -> None:
+    class RecordingHttpFactory:
+        async def create_session(self, payload: dict[str, object]) -> str:
+            return "is_openai"
+
+        def build_client(self, session_id: str):
+            return _RecordingApi(session_id)
+
+    class RecordingLiveKitRoom:
+        def __init__(self) -> None:
+            self.joined = None
+            self.disconnected = False
+
+        async def join(self, join) -> None:
+            self.joined = join
+
+        async def disconnect(self) -> None:
+            self.disconnected = True
+
+    async def fake_prepare_smoke(self):
+        return {
+            "openai_realtime": {
+                "smoke_status": "connected",
+                "handshake_event_type": "session.created",
+                "openai_session_id": "sess_test",
+            }
+        }
+
+    room = RecordingLiveKitRoom()
+    monkeypatch.setattr("app.benchmark.runner.LiveKitRoomAdapter", lambda: room)
+    monkeypatch.setattr(OpenAIRealtimeSmokeProvider, "prepare_smoke", fake_prepare_smoke)
+    runner = BenchmarkRunner(
+        env={
+            "OPENAI_API_KEY": "sk-test-secret",
+            "OPENAI_REALTIME_MODEL": "gpt-realtime",
+            "OPENAI_REALTIME_VOICE": "marin",
+            "OPENAI_REALTIME_TURN_DETECTION": "semantic_vad",
+            "OPENAI_REALTIME_REASONING_EFFORT": "low",
+            "LIVEKIT_URL": "wss://livekit.example.test",
+            "LIVEKIT_API_KEY": "lk_key",
+            "LIVEKIT_API_SECRET": "a" * 32,
+        },
+        http_factory=RecordingHttpFactory(),
+    )
+    config = BenchmarkRunConfig(
+        provider="openai_realtime",
+        scenario=BenchmarkScenarioName.NORMAL,
+        iterations=1,
+        benchmark_run_id="bench-openai",
+        realtime_api_url="http://realtime.test",
+    )
+
+    report = await runner.run(config)
+
+    events = runner.events_by_session["is_openai"]
+    assert report.runs[0].status == "completed"
+    assert room.joined.room_name == "prelude-is_openai"
+    assert room.joined.participant == "agent-is_openai"
+    assert not room.joined.token.startswith("mock_lk_")
+    assert room.disconnected is True
+    assert events[0].type == EventType.AGENT_JOINED
+    assert all(
+        event.provider_metadata["openai_realtime"]["smoke_status"] == "connected"
+        for event in events
+    )
 
 
 @pytest.mark.asyncio
