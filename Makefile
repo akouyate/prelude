@@ -4,6 +4,12 @@ COMPOSE ?= docker compose
 POSTGRES_PORT ?= 5432
 DATABASE_URL ?= postgresql://postgres:postgres@localhost:$(POSTGRES_PORT)/prelude?schema=public
 MIGRATION_NAME ?= init
+LOAD_ENV := set -a; [ ! -f .env ] || . ./.env; set +a
+BENCHMARK_PROVIDER ?= mock_openai_realtime
+BENCHMARK_SCENARIO ?= normal
+BENCHMARK_ITERATIONS ?= 3
+BENCHMARK_RUN_ID ?=
+BENCHMARK_PERSIST_REALTIME ?=
 
 .DEFAULT_GOAL := help
 
@@ -46,22 +52,29 @@ db-shell: ## Open a psql shell inside the local Postgres container.
 	$(COMPOSE) exec postgres psql -U postgres -d prelude
 
 db-migrate: ## Run Prisma migrations against local Postgres.
-	DATABASE_URL="$(DATABASE_URL)" pnpm --filter @prelude/db exec prisma migrate dev --schema prisma/schema.prisma --name "$(MIGRATION_NAME)"
+	@$(LOAD_ENV); DATABASE_URL="$${DATABASE_URL:-$(DATABASE_URL)}" pnpm --filter @prelude/db exec prisma migrate dev --schema prisma/schema.prisma --name "$(MIGRATION_NAME)"
 
 db-generate: ## Regenerate the Prisma client.
-	DATABASE_URL="$(DATABASE_URL)" pnpm --filter @prelude/db db:generate
+	@$(LOAD_ENV); DATABASE_URL="$${DATABASE_URL:-$(DATABASE_URL)}" pnpm --filter @prelude/db db:generate
 
 db-studio: ## Open Prisma Studio against local Postgres.
-	DATABASE_URL="$(DATABASE_URL)" pnpm --filter @prelude/db exec prisma studio --schema prisma/schema.prisma
+	@$(LOAD_ENV); DATABASE_URL="$${DATABASE_URL:-$(DATABASE_URL)}" pnpm --filter @prelude/db exec prisma studio --schema prisma/schema.prisma
 
 agent-benchmark: ## Run the Python live IA provider benchmark harness.
-	@cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.benchmark_cli \
-		--provider "$${BENCHMARK_PROVIDER:-mock_openai_realtime}" \
-		--scenario "$${BENCHMARK_SCENARIO:-normal}" \
-		--iterations "$${BENCHMARK_ITERATIONS:-3}" \
-		$${BENCHMARK_RUN_ID:+--benchmark-run-id "$$BENCHMARK_RUN_ID"} \
-		$${REALTIME_API_URL:+--realtime-api-url "$$REALTIME_API_URL"} \
-		$${REALTIME_API_KEY:+--api-key "$$REALTIME_API_KEY"}
+	@$(LOAD_ENV); \
+	realtime_args=""; \
+	if [ "$(BENCHMARK_PERSIST_REALTIME)" = "1" ] && [ -n "$${REALTIME_API_URL:-}" ]; then \
+		realtime_args="--realtime-api-url $$REALTIME_API_URL"; \
+		if [ -n "$${REALTIME_API_KEY:-}" ]; then \
+			realtime_args="$$realtime_args --api-key $$REALTIME_API_KEY"; \
+		fi; \
+	fi; \
+	cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.benchmark_cli \
+		--provider "$(BENCHMARK_PROVIDER)" \
+		--scenario "$(BENCHMARK_SCENARIO)" \
+		--iterations "$(BENCHMARK_ITERATIONS)" \
+		$(if $(BENCHMARK_RUN_ID),--benchmark-run-id "$(BENCHMARK_RUN_ID)") \
+		$$realtime_args
 
 dev: env-up ## Start local infrastructure, then run the app dev stack.
-	pnpm dev
+	@$(LOAD_ENV); pnpm dev
