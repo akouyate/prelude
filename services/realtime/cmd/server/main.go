@@ -37,7 +37,16 @@ func main() {
 		slog.Info("using in-memory session repository")
 	}
 
-	livekitGateway := livekit.NewMockGateway(os.Getenv("LIVEKIT_URL"))
+	livekitGateway, livekitMode, err := livekit.NewGatewayFromEnv(
+		os.Getenv("LIVEKIT_URL"),
+		os.Getenv("LIVEKIT_API_KEY"),
+		os.Getenv("LIVEKIT_API_SECRET"),
+	)
+	if err != nil {
+		slog.Error("failed to configure livekit gateway", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("using livekit gateway", "mode", livekitMode)
 	service := application.NewService(repository, livekitGateway, application.SystemClock{})
 	handler := httpapi.NewServer(service)
 

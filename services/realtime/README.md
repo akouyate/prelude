@@ -10,7 +10,7 @@ and token creation without changing HTTP contracts.
 
 - Health endpoint.
 - Create interview session.
-- Return mocked LiveKit join responses for candidate and agent participants.
+- Return LiveKit join responses for candidate and agent participants.
 - Ingest realtime events idempotently.
 - Persist sessions and append-only events in Postgres when `DATABASE_URL` is set.
 - Fetch a session with its ingested events.
@@ -19,7 +19,7 @@ and token creation without changing HTTP contracts.
 
 Out of scope for this POC:
 
-- Real LiveKit SDK integration.
+- LiveKit room lifecycle management beyond token minting.
 - Authentication and authorization.
 - Billing, recording, and provider calls.
 
@@ -39,7 +39,7 @@ The service follows a lightweight clean architecture:
 - `domain`: session and event entities.
 - `application`: orchestration use cases and ports.
 - `adapters/httpapi`: standard-library HTTP handlers.
-- `adapters/livekit`: mocked LiveKit room/token adapter.
+- `adapters/livekit`: LiveKit room/token adapter with mock fallback.
 - `adapters/store`: in-memory and Postgres repositories.
 
 ## Run
@@ -61,6 +61,20 @@ start the local database from the repository root and run with `DATABASE_URL`:
 make env-up
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/prelude?schema=public" go run ./cmd/server
 ```
+
+By default, LiveKit joins are mocked so local development works offline. To mint
+real candidate and agent LiveKit JWT join tokens, provide all LiveKit variables
+server-side:
+
+```bash
+LIVEKIT_URL="wss://..."
+LIVEKIT_API_KEY="..."
+LIVEKIT_API_SECRET="..."
+go run ./cmd/server
+```
+
+Do not expose `LIVEKIT_API_SECRET` to browser code. Browser clients should only
+receive short-lived join tokens returned by this API.
 
 ## HTTP API
 
