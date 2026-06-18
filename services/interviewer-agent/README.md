@@ -64,6 +64,86 @@ python -m app.cli \
 The first question emits `barge_in_detected`, `barge_in_accepted`, and
 `agent_speech_interrupted` without requiring a real media provider.
 
+## Run provider benchmark scenarios
+
+Issue #19 adds a repeatable benchmark harness for comparing provider behavior
+without changing the production UI. It runs the same interview plan and
+candidate scenario across providers, emits normalized events through the same
+runner, and attaches benchmark metadata to every event.
+
+Local deterministic smoke:
+
+```bash
+python -m app.benchmark_cli \
+  --provider mock_openai_realtime \
+  --scenario normal \
+  --iterations 3 \
+  --benchmark-run-id local-openai-smoke
+```
+
+From the repository root, the same smoke is available through:
+
+```bash
+make agent-benchmark \
+  BENCHMARK_PROVIDER=mock_openai_realtime \
+  BENCHMARK_SCENARIO=normal \
+  BENCHMARK_ITERATIONS=3 \
+  BENCHMARK_RUN_ID=local-openai-smoke
+```
+
+Persist events through the Go Realtime API:
+
+```bash
+python -m app.benchmark_cli \
+  --provider mock_openai_realtime \
+  --scenario repeat \
+  --iterations 3 \
+  --benchmark-run-id local-repeat-smoke \
+  --realtime-api-url http://localhost:8080 \
+  --api-key "$REALTIME_API_KEY" \
+  --output-json benchmark-repeat.json
+```
+
+Supported scenarios:
+
+- `normal`
+- `interrupt`
+- `repeat`
+- `silence`
+- `vague`
+- `noise`
+- `audio_only`
+- `video_enabled`
+
+Supported provider names:
+
+- `mock_openai_realtime`: deterministic local harness validation.
+- `openai_realtime`: credential-gated real-provider path.
+- `elevenlabs`: credential-gated challenger path.
+
+Real provider runs require credentials and a LiveKit-enabled worker session:
+
+```bash
+LIVEKIT_URL="wss://..."
+LIVEKIT_API_KEY="..."
+LIVEKIT_API_SECRET="..."
+OPENAI_API_KEY="..."
+OPENAI_REALTIME_MODEL="gpt-realtime"
+OPENAI_REALTIME_VOICE="marin"
+OPENAI_REALTIME_TURN_DETECTION="semantic_vad"
+OPENAI_REALTIME_REASONING_EFFORT="low"
+
+ELEVENLABS_API_KEY="..."
+ELEVENLABS_AGENT_ID="..."
+ELEVENLABS_VOICE_ID="..."
+ELEVENLABS_CONVERSATION_MODE="speech_engine"
+ELEVENLABS_TURN_EAGERNESS="normal"
+```
+
+The harness fails with an actionable blocker when required provider variables
+are missing. Provider-specific raw IDs and timing details should stay in
+`provider_metadata`; business events must remain provider-neutral.
+
 ## Join a mocked LiveKit room from Go config
 
 Start the Go Realtime API, create a session, then run:
@@ -93,9 +173,11 @@ pytest
 
 ## Next wiring steps
 
-1. Replace `MockOpenAIRealtimeAdapter` with a real OpenAI Realtime adapter.
+1. Wire the benchmark provider adapters to real LiveKit worker sessions.
 2. Replace mocked LiveKit tokens with real LiveKit room/token minting.
 3. Map provider turn-taking signals into `TurnTakingPolicy` instead of letting
    provider callbacks advance interview state directly.
 4. Add provider latency and cost metrics around every provider call.
 5. Persist provider metadata in the event payloads without leaking secrets.
+6. Run the same scenario set against OpenAI Realtime and ElevenLabs before
+   choosing the commercial POC provider.

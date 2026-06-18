@@ -7,7 +7,7 @@ MIGRATION_NAME ?= init
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell db-migrate db-generate db-studio dev
+.PHONY: help env-up env-down env-reset db-logs db-shell db-migrate db-generate db-studio agent-benchmark dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "Prelude local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -53,6 +53,15 @@ db-generate: ## Regenerate the Prisma client.
 
 db-studio: ## Open Prisma Studio against local Postgres.
 	DATABASE_URL="$(DATABASE_URL)" pnpm --filter @prelude/db exec prisma studio --schema prisma/schema.prisma
+
+agent-benchmark: ## Run the Python live IA provider benchmark harness.
+	@cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.benchmark_cli \
+		--provider "$${BENCHMARK_PROVIDER:-mock_openai_realtime}" \
+		--scenario "$${BENCHMARK_SCENARIO:-normal}" \
+		--iterations "$${BENCHMARK_ITERATIONS:-3}" \
+		$${BENCHMARK_RUN_ID:+--benchmark-run-id "$$BENCHMARK_RUN_ID"} \
+		$${REALTIME_API_URL:+--realtime-api-url "$$REALTIME_API_URL"} \
+		$${REALTIME_API_KEY:+--api-key "$$REALTIME_API_KEY"}
 
 dev: env-up ## Start local infrastructure, then run the app dev stack.
 	pnpm dev
