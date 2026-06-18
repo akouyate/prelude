@@ -84,10 +84,12 @@ export const liveInterviewTranscriptTurnSchema = z.object({
 const liveInterviewEventBaseSchema = z.object({
   eventId: z.string().min(1),
   sessionId: z.string().min(1),
+  candidateId: z.string().min(1),
   actor: liveInterviewEventActorSchema,
-  sequence: z.number().int().min(1),
+  sequenceNumber: z.number().int().min(1),
   idempotencyKey: z.string().min(8),
-  occurredAt: z.string().datetime()
+  occurredAt: z.string().datetime(),
+  providerMetadata: z.record(z.string(), z.unknown()).default({})
 });
 
 const optionalQuestionSignalPayloadSchema = z.object({

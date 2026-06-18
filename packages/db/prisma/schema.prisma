@@ -80,3 +80,36 @@ model Answer {
   submission   Submission @relation(fields: [submissionId], references: [id])
   question     Question   @relation(fields: [questionId], references: [id])
 }
+
+model LiveInterviewSession {
+  id                String               @id
+  interviewPlanId   String               @map("interview_plan_id")
+  candidateId       String               @map("candidate_id")
+  status            String
+  livekitRoomName   String               @map("livekit_room_name")
+  allowedModalities Json                 @map("allowed_modalities")
+  createdAt         DateTime             @map("created_at")
+  updatedAt         DateTime             @map("updated_at")
+  events            LiveInterviewEvent[]
+
+  @@map("live_interview_sessions")
+}
+
+model LiveInterviewEvent {
+  id               String               @id @map("event_id")
+  sessionId         String               @map("session_id")
+  candidateId       String               @map("candidate_id")
+  actor             String
+  type              String
+  occurredAt        DateTime             @map("occurred_at")
+  idempotencyKey    String               @map("idempotency_key")
+  sequenceNumber    Int                  @map("sequence_number")
+  payload           Json
+  providerMetadata  Json                 @default("{}") @map("provider_metadata")
+  session           LiveInterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, idempotencyKey])
+  @@unique([sessionId, sequenceNumber])
+  @@index([sessionId, occurredAt, id])
+  @@map("live_interview_events")
+}

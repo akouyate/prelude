@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class QuestionCategory(StrEnum):
@@ -78,14 +78,18 @@ class EventType(StrEnum):
 
 
 class InterviewEvent(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     event_id: str = Field(default_factory=lambda: f"evt_{uuid4().hex}")
     type: EventType
     actor: EventActor = EventActor.AGENT
     session_id: str
-    sequence: int
+    candidate_id: str | None = None
+    sequence: int = Field(alias="sequence_number")
     idempotency_key: str = Field(default_factory=lambda: str(uuid4()))
     occurred_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     payload: dict[str, Any] = Field(default_factory=dict)
+    provider_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentSession(BaseModel):

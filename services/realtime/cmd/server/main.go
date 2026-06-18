@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
@@ -18,7 +19,24 @@ func main() {
 		port = "8080"
 	}
 
-	repository := store.NewMemoryStore()
+	repository := application.SessionRepository(store.NewMemoryStore())
+	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
+		postgresStore, err := store.NewPostgresStore(context.Background(), databaseURL)
+		if err != nil {
+			slog.Error("failed to connect postgres store", "error", err)
+			os.Exit(1)
+		}
+		defer func() {
+			if err := postgresStore.Close(); err != nil {
+				slog.Warn("failed to close postgres store", "error", err)
+			}
+		}()
+		repository = postgresStore
+		slog.Info("using postgres session repository")
+	} else {
+		slog.Info("using in-memory session repository")
+	}
+
 	livekitGateway := livekit.NewMockGateway(os.Getenv("LIVEKIT_URL"))
 	service := application.NewService(repository, livekitGateway, application.SystemClock{})
 	handler := httpapi.NewServer(service)

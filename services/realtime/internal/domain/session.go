@@ -77,14 +77,36 @@ type Session struct {
 }
 
 type Event struct {
-	ID             string          `json:"event_id"`
-	SessionID      string          `json:"session_id"`
-	Type           EventType       `json:"type"`
-	Actor          EventActor      `json:"actor"`
-	Sequence       int             `json:"sequence"`
-	IdempotencyKey string          `json:"idempotency_key"`
-	OccurredAt     time.Time       `json:"occurred_at"`
-	Payload        json.RawMessage `json:"payload"`
+	ID               string          `json:"event_id"`
+	SessionID        string          `json:"session_id"`
+	CandidateID      string          `json:"candidate_id"`
+	Type             EventType       `json:"type"`
+	Actor            EventActor      `json:"actor"`
+	Sequence         int             `json:"sequence_number"`
+	IdempotencyKey   string          `json:"idempotency_key"`
+	OccurredAt       time.Time       `json:"occurred_at"`
+	Payload          json.RawMessage `json:"payload"`
+	ProviderMetadata json.RawMessage `json:"provider_metadata,omitempty"`
+}
+
+type TranscriptSpeaker string
+
+const (
+	TranscriptSpeakerCandidate   TranscriptSpeaker = "candidate"
+	TranscriptSpeakerInterviewer TranscriptSpeaker = "interviewer"
+	TranscriptSpeakerSystem      TranscriptSpeaker = "system"
+)
+
+type TranscriptTurn struct {
+	TurnID     string            `json:"turn_id"`
+	SessionID  string            `json:"session_id"`
+	QuestionID string            `json:"question_id,omitempty"`
+	Speaker    TranscriptSpeaker `json:"speaker"`
+	Text       string            `json:"text"`
+	IsFinal    bool              `json:"is_final"`
+	StartedAt  time.Time         `json:"started_at"`
+	EndedAt    *time.Time        `json:"ended_at,omitempty"`
+	Confidence *float64          `json:"confidence,omitempty"`
 }
 
 func ValidStatusForEvent(eventType EventType) (SessionStatus, bool) {

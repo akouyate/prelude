@@ -56,11 +56,13 @@ func TestServerCreateGetAndIngestEvent(t *testing.T) {
 	eventRequest := httptest.NewRequest(http.MethodPost, "/v1/interview-sessions/"+createBody.Session.ID+"/events", bytes.NewBufferString(`{
 		"event_id": "evt_123",
 		"session_id": "`+createBody.Session.ID+`",
+		"candidate_id": "candidate_123",
 		"type": "session_started",
 		"actor": "agent",
-		"sequence": 1,
+		"sequence_number": 1,
 		"idempotency_key": "evt_123:idempotency",
-		"payload": {"source": "agent"}
+		"payload": {"source": "agent"},
+		"provider_metadata": {"provider_event_id": "provider_evt_123"}
 	}`))
 	eventRequest.Header.Set("content-type", "application/json")
 	server.ServeHTTP(eventResponse, eventRequest)
@@ -78,6 +80,12 @@ func TestServerCreateGetAndIngestEvent(t *testing.T) {
 	}
 	if !bytes.Contains(getResponse.Body.Bytes(), []byte(`"status":"in_progress"`)) {
 		t.Fatalf("expected in_progress session, got %s", getResponse.Body.String())
+	}
+	if !bytes.Contains(getResponse.Body.Bytes(), []byte(`"candidate_id":"candidate_123"`)) {
+		t.Fatalf("expected persisted candidate_id on event, got %s", getResponse.Body.String())
+	}
+	if !bytes.Contains(getResponse.Body.Bytes(), []byte(`"provider_metadata":{"provider_event_id":"provider_evt_123"}`)) {
+		t.Fatalf("expected separated provider metadata, got %s", getResponse.Body.String())
 	}
 }
 
@@ -147,6 +155,82 @@ func TestServerRejectsMismatchedBodySessionID(t *testing.T) {
 	}
 	if !bytes.Contains(response.Body.Bytes(), []byte(`"code":"session_mismatch"`)) {
 		t.Fatalf("expected session_mismatch error, got %s", response.Body.String())
+	}
+}
+
+func TestServerReturnsTranscriptFromFinalizedTurns(t *testing.T) {
+	server := newTestServer()
+
+	createResponse := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/interview-sessions", bytes.NewBufferString(`{
+		"interview_plan_id": "plan_123",
+		"candidate_id": "candidate_123"
+	}`))
+	createRequest.Header.Set("content-type", "application/json")
+	server.ServeHTTP(createResponse, createRequest)
+
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createResponse.Code, createResponse.Body.String())
+	}
+
+	var createBody struct {
+		Session struct {
+			ID string `json:"id"`
+		} `json:"session"`
+	}
+	if err := json.Unmarshal(createResponse.Body.Bytes(), &createBody); err != nil {
+		t.Fatalf("failed to decode create response: %v", err)
+	}
+
+	for _, body := range []string{
+		`{
+			"event_id": "evt_started",
+			"type": "session_started",
+			"actor": "agent",
+			"sequence_number": 1,
+			"idempotency_key": "evt_started:idempotency",
+			"payload": {"source": "agent"}
+		}`,
+		`{
+			"event_id": "evt_turn",
+			"type": "candidate_turn_finalized",
+			"actor": "candidate",
+			"sequence_number": 2,
+			"idempotency_key": "evt_turn:idempotency",
+			"payload": {
+				"question_id": "q1",
+				"completion_reason": "answered",
+				"transcript_turn": {
+					"turn_id": "turn_1",
+					"session_id": "` + createBody.Session.ID + `",
+					"question_id": "q1",
+					"speaker": "candidate",
+					"text": "Voici ma reponse courte.",
+					"is_final": true,
+					"started_at": "2026-06-17T10:00:05Z",
+					"ended_at": "2026-06-17T10:00:08Z"
+				}
+			}
+		}`,
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/v1/interview-sessions/"+createBody.Session.ID+"/events", bytes.NewBufferString(body))
+		request.Header.Set("content-type", "application/json")
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("expected event status 202, got %d: %s", response.Code, response.Body.String())
+		}
+	}
+
+	transcriptResponse := httptest.NewRecorder()
+	transcriptRequest := httptest.NewRequest(http.MethodGet, "/v1/interview-sessions/"+createBody.Session.ID+"/transcript", nil)
+	server.ServeHTTP(transcriptResponse, transcriptRequest)
+
+	if transcriptResponse.Code != http.StatusOK {
+		t.Fatalf("expected transcript status 200, got %d: %s", transcriptResponse.Code, transcriptResponse.Body.String())
+	}
+	if !bytes.Contains(transcriptResponse.Body.Bytes(), []byte(`"text":"Voici ma reponse courte."`)) {
+		t.Fatalf("expected transcript turn text, got %s", transcriptResponse.Body.String())
 	}
 }
 

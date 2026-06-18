@@ -193,14 +193,16 @@ func (s *Service) GetAgentConfig(ctx context.Context, sessionID string) (AgentCo
 }
 
 type IngestEventInput struct {
-	SessionID      string
-	EventID        string
-	Type           domain.EventType
-	Actor          domain.EventActor
-	Sequence       int
-	IdempotencyKey string
-	OccurredAt     time.Time
-	Payload        json.RawMessage
+	SessionID        string
+	CandidateID      string
+	EventID          string
+	Type             domain.EventType
+	Actor            domain.EventActor
+	Sequence         int
+	IdempotencyKey   string
+	OccurredAt       time.Time
+	Payload          json.RawMessage
+	ProviderMetadata json.RawMessage
 }
 
 type IngestEventOutput struct {
@@ -239,19 +241,24 @@ func (s *Service) IngestEvent(ctx context.Context, input IngestEventInput) (Inge
 	if !json.Valid(input.Payload) {
 		return IngestEventOutput{}, fmt.Errorf("%w: payload must be valid json", ErrInvalidInput)
 	}
+	if len(input.ProviderMetadata) > 0 && !json.Valid(input.ProviderMetadata) {
+		return IngestEventOutput{}, fmt.Errorf("%w: provider_metadata must be valid json", ErrInvalidInput)
+	}
 	if input.OccurredAt.IsZero() {
 		input.OccurredAt = s.clock.Now()
 	}
 
 	event := domain.Event{
-		ID:             input.EventID,
-		SessionID:      input.SessionID,
-		Type:           input.Type,
-		Actor:          input.Actor,
-		Sequence:       input.Sequence,
-		IdempotencyKey: input.IdempotencyKey,
-		OccurredAt:     input.OccurredAt.UTC(),
-		Payload:        input.Payload,
+		ID:               input.EventID,
+		SessionID:        input.SessionID,
+		CandidateID:      strings.TrimSpace(input.CandidateID),
+		Type:             input.Type,
+		Actor:            input.Actor,
+		Sequence:         input.Sequence,
+		IdempotencyKey:   input.IdempotencyKey,
+		OccurredAt:       input.OccurredAt.UTC(),
+		Payload:          input.Payload,
+		ProviderMetadata: input.ProviderMetadata,
 	}
 
 	result, err := s.repository.AppendEvent(ctx, event)
@@ -262,6 +269,28 @@ func (s *Service) IngestEvent(ctx context.Context, input IngestEventInput) (Inge
 	return IngestEventOutput{Event: result.Event, Duplicate: result.Duplicate}, nil
 }
 
+func (s *Service) GetTranscript(ctx context.Context, sessionID string) ([]domain.TranscriptTurn, error) {
+	session, err := s.GetSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	turns := make([]domain.TranscriptTurn, 0)
+	for _, event := range session.Events {
+		if event.Type != domain.EventCandidateTurnFinalized {
+			continue
+		}
+
+		turn, ok := transcriptTurnFromEvent(event)
+		if !ok {
+			continue
+		}
+		turns = append(turns, turn)
+	}
+
+	return turns, nil
+}
+
 func knownEventActor(actor domain.EventActor) bool {
 	switch actor {
 	case domain.EventActorAgent, domain.EventActorCandidate, domain.EventActorSystem:
@@ -269,6 +298,94 @@ func knownEventActor(actor domain.EventActor) bool {
 	default:
 		return false
 	}
+}
+
+type transcriptPayload struct {
+	TranscriptTurn      *transcriptTurnPayload `json:"transcript_turn"`
+	TranscriptTurnCamel *transcriptTurnPayload `json:"transcriptTurn"`
+}
+
+type transcriptTurnPayload struct {
+	TurnID          string   `json:"turn_id"`
+	TurnIDCamel     string   `json:"turnId"`
+	SessionID       string   `json:"session_id"`
+	SessionIDCamel  string   `json:"sessionId"`
+	QuestionID      string   `json:"question_id"`
+	QuestionIDCamel string   `json:"questionId"`
+	Speaker         string   `json:"speaker"`
+	Text            string   `json:"text"`
+	IsFinal         *bool    `json:"is_final"`
+	IsFinalCamel    *bool    `json:"isFinal"`
+	StartedAt       string   `json:"started_at"`
+	StartedAtCamel  string   `json:"startedAt"`
+	EndedAt         string   `json:"ended_at"`
+	EndedAtCamel    string   `json:"endedAt"`
+	Confidence      *float64 `json:"confidence"`
+}
+
+func transcriptTurnFromEvent(event domain.Event) (domain.TranscriptTurn, bool) {
+	var payload transcriptPayload
+	if err := json.Unmarshal(event.Payload, &payload); err != nil {
+		return domain.TranscriptTurn{}, false
+	}
+
+	raw := payload.TranscriptTurn
+	if raw == nil {
+		raw = payload.TranscriptTurnCamel
+	}
+	if raw == nil {
+		return domain.TranscriptTurn{}, false
+	}
+
+	startedAt := event.OccurredAt
+	if value := firstNonEmpty(raw.StartedAt, raw.StartedAtCamel); value != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+			startedAt = parsed.UTC()
+		}
+	}
+
+	var endedAt *time.Time
+	if value := firstNonEmpty(raw.EndedAt, raw.EndedAtCamel); value != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, value); err == nil {
+			normalized := parsed.UTC()
+			endedAt = &normalized
+		}
+	}
+
+	isFinal := true
+	if raw.IsFinal != nil {
+		isFinal = *raw.IsFinal
+	}
+	if raw.IsFinalCamel != nil {
+		isFinal = *raw.IsFinalCamel
+	}
+
+	speaker := domain.TranscriptSpeaker(raw.Speaker)
+	if speaker == "" {
+		speaker = domain.TranscriptSpeakerCandidate
+	}
+
+	return domain.TranscriptTurn{
+		TurnID:     firstNonEmpty(raw.TurnID, raw.TurnIDCamel, event.ID),
+		SessionID:  firstNonEmpty(raw.SessionID, raw.SessionIDCamel, event.SessionID),
+		QuestionID: firstNonEmpty(raw.QuestionID, raw.QuestionIDCamel),
+		Speaker:    speaker,
+		Text:       strings.TrimSpace(raw.Text),
+		IsFinal:    isFinal,
+		StartedAt:  startedAt,
+		EndedAt:    endedAt,
+		Confidence: raw.Confidence,
+	}, strings.TrimSpace(raw.Text) != ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+
+	return ""
 }
 
 func knownEventType(eventType domain.EventType) bool {

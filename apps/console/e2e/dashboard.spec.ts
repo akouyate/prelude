@@ -6,6 +6,14 @@ test("dashboard placeholder loads", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Start with the role" })).toBeVisible();
 });
 
+test("mock login continues to the interview setup", async ({ page }) => {
+  await page.goto("/login");
+  await page.getByLabel("Email").fill("recruiter@prelude.ai");
+  await page.getByRole("button", { name: "Continue" }).click();
+
+  await expect(page.getByRole("heading", { name: "Start with the role" })).toBeVisible();
+});
+
 test("mock interview agent generates an attachment-aware draft", async ({ page }) => {
   await page.goto("/");
 
