@@ -53,9 +53,10 @@ describe("liveInterviewEventSchema", () => {
     const result = liveInterviewEventSchema.safeParse({
       eventId: "evt_01",
       sessionId: "session_01",
+      candidateId: "candidate_01",
       type: "question_asked",
       actor: "agent",
-      sequence: 3,
+      sequenceNumber: 3,
       idempotencyKey: "session_01:question_asked:q_01:1",
       occurredAt: "2026-06-17T10:30:00.000Z",
       payload: {
@@ -72,9 +73,10 @@ describe("liveInterviewEventSchema", () => {
     const result = liveInterviewEventSchema.safeParse({
       eventId: "evt_01",
       sessionId: "session_01",
+      candidateId: "candidate_01",
       type: "session_failed",
       actor: "agent",
-      sequence: 7,
+      sequenceNumber: 7,
       idempotencyKey: "session_01:failed:provider_timeout",
       occurredAt: "2026-06-17T10:30:00.000Z",
       payload: {
@@ -91,9 +93,10 @@ describe("liveInterviewEventSchema", () => {
     const repeated = liveInterviewEventSchema.safeParse({
       eventId: "evt_repeat",
       sessionId: "session_01",
+      candidateId: "candidate_01",
       type: "question_repeated",
       actor: "agent",
-      sequence: 4,
+      sequenceNumber: 4,
       idempotencyKey: "session_01:repeat:q_01",
       occurredAt: "2026-06-17T10:30:00.000Z",
       payload: {
@@ -105,9 +108,10 @@ describe("liveInterviewEventSchema", () => {
     const reprompted = liveInterviewEventSchema.safeParse({
       eventId: "evt_reprompt",
       sessionId: "session_01",
+      candidateId: "candidate_01",
       type: "soft_reprompted",
       actor: "agent",
-      sequence: 6,
+      sequenceNumber: 6,
       idempotencyKey: "session_01:reprompt:q_01",
       occurredAt: "2026-06-17T10:30:10.000Z",
       payload: {
@@ -119,9 +123,10 @@ describe("liveInterviewEventSchema", () => {
     const closing = liveInterviewEventSchema.safeParse({
       eventId: "evt_closing",
       sessionId: "session_01",
+      candidateId: "candidate_01",
       type: "session_closing",
       actor: "agent",
-      sequence: 12,
+      sequenceNumber: 12,
       idempotencyKey: "session_01:closing",
       occurredAt: "2026-06-17T10:34:00.000Z",
       payload: {
@@ -138,6 +143,7 @@ describe("liveInterviewEventSchema", () => {
   it("accepts turn-taking guardrail events", () => {
     const eventBase = {
       sessionId: "session_01",
+      candidateId: "candidate_01",
       actor: "system",
       idempotencyKey: "session_01:turn-taking",
       occurredAt: "2026-06-17T10:30:00.000Z"
@@ -148,7 +154,7 @@ describe("liveInterviewEventSchema", () => {
         eventId: "evt_agent_speech_started",
         type: "agent_speech_started",
         actor: "agent",
-        sequence: 1,
+        sequenceNumber: 1,
         payload: {
           questionId: "q_01",
           utteranceId: "q_01:question:0",
@@ -160,7 +166,7 @@ describe("liveInterviewEventSchema", () => {
         eventId: "evt_agent_speech_completed",
         type: "agent_speech_completed",
         actor: "agent",
-        sequence: 2,
+        sequenceNumber: 2,
         payload: {
           questionId: "q_01",
           utteranceId: "q_01:question:0",
@@ -173,14 +179,14 @@ describe("liveInterviewEventSchema", () => {
         eventId: "evt_candidate_speech_started",
         type: "candidate_speech_started",
         actor: "candidate",
-        sequence: 3,
+        sequenceNumber: 3,
         payload: { questionId: "q_01", confidence: 0.94 }
       },
       {
         ...eventBase,
         eventId: "evt_candidate_turn_detected",
         type: "candidate_turn_detected",
-        sequence: 4,
+        sequenceNumber: 4,
         payload: {
           questionId: "q_01",
           semanticComplete: true,
@@ -192,7 +198,7 @@ describe("liveInterviewEventSchema", () => {
         eventId: "evt_barge_in_detected",
         type: "barge_in_detected",
         actor: "candidate",
-        sequence: 5,
+        sequenceNumber: 5,
         payload: {
           utteranceId: "q_01:question:0",
           overlapMs: 340,
@@ -203,7 +209,7 @@ describe("liveInterviewEventSchema", () => {
         ...eventBase,
         eventId: "evt_barge_in_accepted",
         type: "barge_in_accepted",
-        sequence: 6,
+        sequenceNumber: 6,
         payload: {
           utteranceId: "q_01:question:0",
           cancelLatencyMs: 120,
@@ -214,7 +220,7 @@ describe("liveInterviewEventSchema", () => {
         ...eventBase,
         eventId: "evt_agent_speech_interrupted",
         type: "agent_speech_interrupted",
-        sequence: 7,
+        sequenceNumber: 7,
         payload: {
           utteranceId: "q_01:question:0",
           cancelLatencyMs: 120,
@@ -225,7 +231,7 @@ describe("liveInterviewEventSchema", () => {
         ...eventBase,
         eventId: "evt_barge_in_rejected",
         type: "barge_in_rejected",
-        sequence: 8,
+        sequenceNumber: 8,
         payload: {
           reason: "backchannel",
           observedSpeechMs: 180
@@ -235,7 +241,7 @@ describe("liveInterviewEventSchema", () => {
         ...eventBase,
         eventId: "evt_backchannel_detected",
         type: "backchannel_detected",
-        sequence: 9,
+        sequenceNumber: 9,
         payload: {
           reason: "backchannel",
           observedSpeechMs: 180
@@ -245,7 +251,7 @@ describe("liveInterviewEventSchema", () => {
         ...eventBase,
         eventId: "evt_silence_timeout",
         type: "silence_timeout_started",
-        sequence: 10,
+        sequenceNumber: 10,
         payload: {
           questionId: "q_01",
           thresholdMs: 10000,
@@ -258,7 +264,7 @@ describe("liveInterviewEventSchema", () => {
         eventId: "evt_wait_requested",
         type: "wait_requested",
         actor: "candidate",
-        sequence: 11,
+        sequenceNumber: 11,
         payload: {
           questionId: "q_01",
           reason: "candidate_requested_time"
@@ -269,7 +275,7 @@ describe("liveInterviewEventSchema", () => {
         eventId: "evt_candidate_speech_stopped",
         type: "candidate_speech_stopped",
         actor: "candidate",
-        sequence: 12,
+        sequenceNumber: 12,
         payload: { questionId: "q_01", speechDurationMs: 2100 }
       }
     ];
@@ -281,9 +287,10 @@ describe("liveInterviewEventSchema", () => {
     const result = liveInterviewEventSchema.safeParse({
       eventId: "evt_zero",
       sessionId: "session_01",
+      candidateId: "candidate_01",
       type: "candidate_speech_started",
       actor: "candidate",
-      sequence: 0,
+      sequenceNumber: 0,
       idempotencyKey: "session_01:zero",
       occurredAt: "2026-06-17T10:30:00.000Z",
       payload: { questionId: "q_01" }

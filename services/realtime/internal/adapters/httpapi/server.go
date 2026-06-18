@@ -33,6 +33,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/interview-sessions", s.handleCreateSession)
 	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}", s.handleGetSession)
 	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}/agent-config", s.handleGetAgentConfig)
+	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}/transcript", s.handleGetTranscript)
 	s.mux.HandleFunc("POST /v1/interview-sessions/{session_id}/events", s.handleIngestEvent)
 }
 
@@ -89,15 +90,28 @@ func (s *Server) handleGetAgentConfig(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, config)
 }
 
+func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
+	transcript, err := s.service.GetTranscript(r.Context(), r.PathValue("session_id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"transcript": transcript})
+}
+
 type ingestEventRequest struct {
-	EventID        string            `json:"event_id"`
-	SessionID      string            `json:"session_id"`
-	Type           domain.EventType  `json:"type"`
-	Actor          domain.EventActor `json:"actor"`
-	Sequence       int               `json:"sequence"`
-	IdempotencyKey string            `json:"idempotency_key"`
-	OccurredAt     string            `json:"occurred_at"`
-	Payload        json.RawMessage   `json:"payload"`
+	EventID          string            `json:"event_id"`
+	SessionID        string            `json:"session_id"`
+	CandidateID      string            `json:"candidate_id"`
+	Type             domain.EventType  `json:"type"`
+	Actor            domain.EventActor `json:"actor"`
+	Sequence         int               `json:"sequence"`
+	SequenceNumber   int               `json:"sequence_number"`
+	IdempotencyKey   string            `json:"idempotency_key"`
+	OccurredAt       string            `json:"occurred_at"`
+	Payload          json.RawMessage   `json:"payload"`
+	ProviderMetadata json.RawMessage   `json:"provider_metadata"`
 }
 
 func (s *Server) handleIngestEvent(w http.ResponseWriter, r *http.Request) {
@@ -120,14 +134,16 @@ func (s *Server) handleIngestEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	output, err := s.service.IngestEvent(r.Context(), application.IngestEventInput{
-		SessionID:      sessionID,
-		EventID:        request.EventID,
-		Type:           request.Type,
-		Actor:          request.Actor,
-		Sequence:       request.Sequence,
-		IdempotencyKey: request.IdempotencyKey,
-		OccurredAt:     occurredAt,
-		Payload:        request.Payload,
+		SessionID:        sessionID,
+		CandidateID:      request.CandidateID,
+		EventID:          request.EventID,
+		Type:             request.Type,
+		Actor:            request.Actor,
+		Sequence:         request.normalizedSequence(),
+		IdempotencyKey:   request.IdempotencyKey,
+		OccurredAt:       occurredAt,
+		Payload:          request.Payload,
+		ProviderMetadata: request.ProviderMetadata,
 	})
 	if err != nil {
 		writeServiceError(w, err)
@@ -139,6 +155,14 @@ func (s *Server) handleIngestEvent(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusOK
 	}
 	writeJSON(w, status, output)
+}
+
+func (r ingestEventRequest) normalizedSequence() int {
+	if r.SequenceNumber > 0 {
+		return r.SequenceNumber
+	}
+
+	return r.Sequence
 }
 
 func readJSON(r *http.Request, target any) error {

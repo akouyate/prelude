@@ -463,3 +463,60 @@ func TestServiceReturnsEventsInSequenceOrder(t *testing.T) {
 		t.Fatalf("expected chronological events, got %s, %s, %s", got.Events[0].ID, got.Events[1].ID, got.Events[2].ID)
 	}
 }
+
+func TestServiceReconstructsTranscriptFromFinalizedTurnEvents(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	_, err = service.IngestEvent(context.Background(), eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted))
+	if err != nil {
+		t.Fatalf("session_started returned error: %v", err)
+	}
+
+	input := eventInput(session.Session.ID, 2, "evt_finalized", domain.EventCandidateTurnFinalized)
+	input.Actor = domain.EventActorCandidate
+	input.Payload = json.RawMessage(`{
+		"question_id": "q1",
+		"completion_reason": "answered",
+		"transcript_turn": {
+			"turn_id": "turn_1",
+			"session_id": "` + session.Session.ID + `",
+			"question_id": "q1",
+			"speaker": "candidate",
+			"text": "Je peux gerer un portefeuille client SMB.",
+			"is_final": true,
+			"started_at": "2026-06-17T10:00:05Z",
+			"ended_at": "2026-06-17T10:00:08Z",
+			"confidence": 0.92
+		}
+	}`)
+	_, err = service.IngestEvent(context.Background(), input)
+	if err != nil {
+		t.Fatalf("candidate_turn_finalized returned error: %v", err)
+	}
+
+	transcript, err := service.GetTranscript(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetTranscript returned error: %v", err)
+	}
+	if len(transcript) != 1 {
+		t.Fatalf("expected 1 transcript turn, got %d", len(transcript))
+	}
+	if transcript[0].TurnID != "turn_1" || transcript[0].QuestionID != "q1" {
+		t.Fatalf("unexpected transcript turn: %#v", transcript[0])
+	}
+	if transcript[0].Text != "Je peux gerer un portefeuille client SMB." {
+		t.Fatalf("unexpected transcript text: %s", transcript[0].Text)
+	}
+	if transcript[0].Confidence == nil || *transcript[0].Confidence != 0.92 {
+		t.Fatalf("expected confidence 0.92, got %#v", transcript[0].Confidence)
+	}
+}

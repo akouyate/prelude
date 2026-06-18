@@ -16,7 +16,7 @@ class InMemoryRealtimeApiClient:
     async def emit_event(self, event: InterviewEvent) -> None:
         self.events.append(event)
         if self.print_events:
-            print(event.model_dump_json())
+            print(event.model_dump_json(by_alias=True, exclude_none=True))
 
 
 class HttpRealtimeApiClient:
@@ -38,7 +38,7 @@ class HttpRealtimeApiClient:
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
 
-        payload = json.loads(event.model_dump_json())
+        payload = json.loads(event.model_dump_json(by_alias=True, exclude_none=True))
         async with httpx.AsyncClient(
             timeout=self._timeout_seconds,
             transport=self._transport,

@@ -45,7 +45,7 @@ async def test_runner_emits_ordered_interview_events() -> None:
     first_payload = json.loads(realtime_api.events[0].model_dump_json())
     assert first_payload["event_id"].startswith("evt_")
     assert first_payload["idempotency_key"]
-    assert first_payload["sequence"] == 1
+    assert realtime_api.events[0].model_dump(by_alias=True)["sequence_number"] == 1
     first_question = next(
         event for event in realtime_api.events if event.type == EventType.QUESTION_ASKED
     )

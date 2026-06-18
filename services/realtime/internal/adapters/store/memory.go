@@ -3,8 +3,11 @@ package store
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"reflect"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/akouyate/prelude/services/realtime/internal/application"
@@ -75,6 +78,9 @@ func (s *MemoryStore) AppendEvent(_ context.Context, event domain.Event) (applic
 	}
 
 	sessionEvents := s.events[event.SessionID]
+	if strings.TrimSpace(event.CandidateID) == "" {
+		event.CandidateID = session.CandidateID
+	}
 	if existing, exists := sessionEvents[event.ID]; exists {
 		if sameEvent(existing, event) {
 			return application.AppendEventResult{Event: existing, Duplicate: true}, nil
@@ -118,5 +124,33 @@ func sameEvent(left domain.Event, right domain.Event) bool {
 		left.Sequence == right.Sequence &&
 		left.IdempotencyKey == right.IdempotencyKey &&
 		left.OccurredAt.Equal(right.OccurredAt) &&
-		bytes.Equal(left.Payload, right.Payload)
+		left.CandidateID == right.CandidateID &&
+		jsonEqual(left.Payload, right.Payload) &&
+		jsonEqual(left.ProviderMetadata, right.ProviderMetadata)
+}
+
+func jsonEqual(left json.RawMessage, right json.RawMessage) bool {
+	if len(left) == 0 {
+		left = json.RawMessage(`{}`)
+	}
+	if len(right) == 0 {
+		right = json.RawMessage(`{}`)
+	}
+	if bytes.Equal(left, right) {
+		return true
+	}
+	if !json.Valid(left) || !json.Valid(right) {
+		return false
+	}
+
+	var leftValue any
+	var rightValue any
+	if err := json.Unmarshal(left, &leftValue); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(right, &rightValue); err != nil {
+		return false
+	}
+
+	return reflect.DeepEqual(leftValue, rightValue)
 }
