@@ -17,6 +17,7 @@ test-results
 .env
 .env.*
 !.env.example
+livekit.toml
 
 # local
 .DS_Store

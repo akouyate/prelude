@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from app.application.ports import LiveKitRoomAdapter, ProviderAdapter, RealtimeApiClient
 from app.domain.models import (
@@ -38,6 +40,8 @@ class InterviewSessionRunner:
         livekit_join: AgentLiveKitJoin | None = None,
         provider_name: str = "mock",
         simulate_first_question_barge_in: bool = False,
+        provider_metadata: dict[str, object] | None = None,
+        idempotency_key_prefix: str | None = None,
     ) -> None:
         self._plan = plan
         self._provider = provider
@@ -47,6 +51,11 @@ class InterviewSessionRunner:
         self._livekit_join = livekit_join
         self._provider_name = provider_name
         self._simulate_first_question_barge_in = simulate_first_question_barge_in
+        self._provider_metadata = {
+            "provider": provider_name,
+            **(provider_metadata or {}),
+        }
+        self._idempotency_key_prefix = idempotency_key_prefix
         self._state_machine = InterviewerStateMachine()
         self._turn_taking = TurnTakingPolicy()
         self._sequence = 0
@@ -361,11 +370,15 @@ class InterviewSessionRunner:
             self._state_machine.apply(event_type, payload)
         self._sequence += 1
         event = InterviewEvent(
+            event_id=self._event_id(event_type),
             type=event_type,
             actor=actor,
             session_id=self._session_id,
             sequence=self._sequence,
+            idempotency_key=self._idempotency_key(event_type),
+            occurred_at=self._occurred_at(),
             payload=payload,
+            provider_metadata=dict(self._provider_metadata),
         )
         await self._realtime_api.emit_event(event)
         self._events_emitted += 1
@@ -425,10 +438,31 @@ class InterviewSessionRunner:
 
         self._sequence += 1
         event = InterviewEvent(
+            event_id=self._event_id(EventType.SESSION_FAILED),
             type=EventType.SESSION_FAILED,
             session_id=self._session_id,
             sequence=self._sequence,
+            idempotency_key=self._idempotency_key(EventType.SESSION_FAILED),
+            occurred_at=self._occurred_at(),
             payload={"error": str(exc), "error_type": exc.__class__.__name__},
+            provider_metadata=dict(self._provider_metadata),
         )
         await self._realtime_api.emit_event(event)
         self._events_emitted += 1
+
+    def _idempotency_key(self, event_type: EventType) -> str:
+        if not self._idempotency_key_prefix:
+            return str(uuid4())
+        return f"{self._idempotency_key_prefix}:{self._sequence}:{event_type.value}"
+
+    def _event_id(self, event_type: EventType) -> str:
+        if not self._idempotency_key_prefix:
+            return f"evt_{uuid4().hex}"
+        return f"evt_{self._idempotency_key_prefix}:{self._sequence}:{event_type.value}"
+
+    def _occurred_at(self) -> datetime:
+        if not self._idempotency_key_prefix:
+            return datetime.now(timezone.utc)
+        return datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(
+            milliseconds=self._sequence
+        )

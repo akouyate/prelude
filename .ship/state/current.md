@@ -2,17 +2,14 @@
 
 ## Objective
 
-Ship issue #18: add the local Docker Postgres environment and Makefile foundation for the realtime event and transcript store.
+Ship issue #19: provider benchmark foundation for the live IA interviewer.
 
 ## Source
 
 - Epic: https://github.com/akouyate/prelude/issues/11
-- Architecture RFC ticket: https://github.com/akouyate/prelude/issues/12
-- Go Realtime API ticket: https://github.com/akouyate/prelude/issues/14
-- Python LiveKit Agent POC ticket: https://github.com/akouyate/prelude/issues/15
-- Candidate LiveKit room ticket: https://github.com/akouyate/prelude/issues/13
-- Interviewer state machine ticket: https://github.com/akouyate/prelude/issues/16
-- Realtime event and transcript store ticket: https://github.com/akouyate/prelude/issues/18
+- Provider benchmark ticket: https://github.com/akouyate/prelude/issues/19
+- Architecture: docs/architecture/live-ia-interviewer.md
+- Turn-taking research: docs/research/live-ia-interviewer-turn-taking.md
 
 ## Phases
 
@@ -27,32 +24,42 @@ Ship issue #18: add the local Docker Postgres environment and Makefile foundatio
 - [x] Review
 - [x] Simplification
 - [x] Final validation
-- [x] Delivery
+- [ ] Delivery
 
 ## Team
 
-- Orchestrator: main Codex thread, owns integration and final validation.
-- Ops/DevOps lane: Docker Compose, Postgres defaults, Makefile ergonomics, and local validation.
+- Orchestrator: main Codex thread, owns integration, tests, docs, PR.
+- Existing agents:
+  - Architecture challenge: Go/Python/LiveKit boundaries and coupling risk.
+  - IA/provider challenge: OpenAI Realtime vs ElevenLabs, prompts, interruptions, costs.
+  - Data/evals challenge: metrics, repeatability, report quality.
+  - Implementation challenge: Python/Go interfaces, CLI, env handling, tests.
 
 ## Architecture Decision
 
-- Keep this pass scoped to local infrastructure for #18, not the durable event schema.
-- Use Docker Compose for local Postgres only; do not introduce production containerization yet.
-- Keep the Makefile as thin wrappers around Docker Compose, pnpm, and Prisma.
-- Keep `.env.example`, Compose defaults, and Makefile `DATABASE_URL` aligned.
-- Prefer boring, explicit defaults: Postgres 16 Alpine image, named local volume, and `pg_isready` healthcheck.
+- Keep #19 scoped to a repeatable benchmark harness and provider-selection evidence.
+- Reuse the existing Python `ProviderAdapter` and `InterviewSessionRunner`.
+- Keep LiveKit as the media/WebRTC plane and Go Realtime API as the event source of truth.
+- Do not commit provider secrets or require real OpenAI/ElevenLabs credentials for tests.
+- Add credential-gated provider adapters that fail with actionable setup errors when keys/access are missing.
+- Add deterministic scenarios so OpenAI and ElevenLabs can be compared with the same plan, candidate behavior, metrics, and metadata.
 
 ## Notes
 
-- Current branch: `codex/ds18-local-postgres-env`.
-- Refinement posted on #18: https://github.com/akouyate/prelude/issues/18#issuecomment-4738682566
-- Added root `docker-compose.yml` with local Postgres.
-- Added root `Makefile` for local infra and Prisma helpers.
-- Updated `README.md` with Docker/Postgres setup commands.
-- Ops/DevOps review integrated: no fixed container name, configurable `POSTGRES_PORT`, and `make env-up` waits for Postgres health.
-- Made `make db-migrate` non-interactive through `MIGRATION_NAME`, so the initial local migration flow does not hang.
-- Made the Postgres Docker volume name explicit and stable: `prelude_postgres_data`.
-- Generated and validated the initial Prisma migration for the existing schema.
-- Validation passed: `make help`, `docker compose config`, `make env-up POSTGRES_PORT=15432`, psql connectivity, `make db-migrate POSTGRES_PORT=15432`, `make db-generate POSTGRES_PORT=15432`, `pnpm --dir packages/db test`, `pnpm --dir packages/db typecheck`, `pnpm --dir packages/db lint`, `pnpm exec turbo run typecheck`, `pnpm lint`, `pnpm test`, `git diff --check`, and `make env-reset`.
-- Port 5432 and 5433 were already allocated on this machine during validation; `POSTGRES_PORT=15432` confirmed the override works.
-- Docker cleanup completed: no running Prelude Compose services and no remaining Prelude Docker volume.
+- Current branch: `codex/ship-19-provider-benchmark`.
+- Implementation plan:
+  1. Add benchmark scenarios, runner, report models, and CLI.
+  2. Enrich emitted events with `benchmark_run_id`, scenario, iteration, provider, and provider metadata.
+  3. Add provider adapter factory with mock, OpenAI Realtime placeholder, and ElevenLabs placeholder.
+  4. Document required provider accounts/env and benchmark commands.
+  5. Add an initial research/report template for comparing providers.
+  6. Validate Python tests and smoke the CLI locally.
+- Added `make agent-benchmark` for root-level local benchmark runs.
+- Validation passed:
+  - `uv run --with-requirements requirements.txt python -m compileall app`
+  - `uv run --with-requirements requirements.txt python -m pytest -q`
+  - `python -m app.benchmark_cli --provider mock_openai_realtime --scenario repeat --iterations 2 ...`
+  - `python -m app.benchmark_cli --provider openai_realtime --scenario normal --iterations 1 ...` with empty env, returning a structured `blocked` report.
+  - `make agent-benchmark BENCHMARK_PROVIDER=mock_openai_realtime BENCHMARK_SCENARIO=normal BENCHMARK_ITERATIONS=1 BENCHMARK_RUN_ID=make-smoke`
+  - `make help`
+  - `git diff --check`
