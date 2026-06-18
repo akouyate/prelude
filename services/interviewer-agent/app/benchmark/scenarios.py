@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 
 from app.domain.models import CandidateTurn, InterviewPlan, create_demo_plan
@@ -38,7 +39,7 @@ def load_benchmark_scenario(name: BenchmarkScenarioName) -> BenchmarkScenario:
     elif name == BenchmarkScenarioName.REPEAT:
         first_question = plan.questions[0].id
         turns[first_question] = [
-            CandidateTurn(
+            _turn(
                 question_id=first_question,
                 transcript="Pouvez-vous repeter la question ?",
                 repeat_requested=True,
@@ -49,27 +50,28 @@ def load_benchmark_scenario(name: BenchmarkScenarioName) -> BenchmarkScenario:
     elif name == BenchmarkScenarioName.SILENCE:
         first_question = plan.questions[0].id
         turns[first_question] = [
-            CandidateTurn(question_id=first_question, transcript="", is_complete=False),
+            _turn(question_id=first_question, transcript="", is_complete=False),
             _normal_turn(first_question),
         ]
         description = "Candidate is initially silent, then recovers after one soft prompt."
     elif name == BenchmarkScenarioName.VAGUE:
         first_question = plan.questions[0].id
         turns[first_question] = [
-            CandidateTurn(
+            _turn(
                 question_id=first_question,
                 transcript="J'ai travaille sur ce sujet, mais c'est assez large.",
             ),
-            CandidateTurn(
+            _turn(
                 question_id=first_question,
                 transcript="Plus precisement, j'ai priorise une roadmap en arbitrant impact client, risque technique et delai.",
+                offset_seconds=2,
             ),
         ]
         description = "Candidate gives a vague answer requiring one controlled follow-up."
     elif name == BenchmarkScenarioName.NOISE:
         first_question = plan.questions[0].id
         turns[first_question] = [
-            CandidateTurn(
+            _turn(
                 question_id=first_question,
                 transcript="[background noise]",
                 is_complete=False,
@@ -96,10 +98,35 @@ def load_benchmark_scenario(name: BenchmarkScenarioName) -> BenchmarkScenario:
 
 
 def _normal_turn(question_id: str) -> CandidateTurn:
-    return CandidateTurn(
-        question_id=question_id,
-        transcript=(
+    return _turn(
+        question_id,
+        (
             "Je peux repondre avec un exemple concret, les contraintes, "
             "la decision prise et le resultat obtenu."
         ),
+    )
+
+
+def _turn(
+    question_id: str,
+    transcript: str,
+    *,
+    offset_seconds: int = 0,
+    is_complete: bool = True,
+    repeat_requested: bool = False,
+    skip_requested: bool = False,
+    wait_requested: bool = False,
+) -> CandidateTurn:
+    started_at = datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(
+        seconds=offset_seconds
+    )
+    return CandidateTurn(
+        question_id=question_id,
+        transcript=transcript,
+        is_complete=is_complete,
+        repeat_requested=repeat_requested,
+        skip_requested=skip_requested,
+        wait_requested=wait_requested,
+        started_at=started_at,
+        ended_at=started_at + timedelta(seconds=1),
     )

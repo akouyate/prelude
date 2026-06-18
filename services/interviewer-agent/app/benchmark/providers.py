@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Mapping
 
 from app.benchmark.scenarios import BenchmarkScenario
@@ -76,6 +77,8 @@ class ScriptedBenchmarkProvider:
         return CandidateTurn(
             question_id=question.id,
             transcript="Je peux completer avec un exemple concret et mes contraintes de disponibilite.",
+            started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            ended_at=datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(seconds=1),
         )
 
     async def should_follow_up(

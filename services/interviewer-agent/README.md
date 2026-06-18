@@ -104,6 +104,11 @@ python -m app.benchmark_cli \
   --output-json benchmark-repeat.json
 ```
 
+When `--realtime-api-url` is provided, the benchmark creates one Go realtime
+session per iteration and then emits events to the generated session id. The
+candidate id is deterministic for the benchmark run:
+`benchmark-candidate-{benchmark_run_id}-{iteration}`.
+
 Supported scenarios:
 
 - `normal`

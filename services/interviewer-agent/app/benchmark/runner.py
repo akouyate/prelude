@@ -5,17 +5,22 @@ import subprocess
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Mapping
+from typing import Mapping, Protocol
 from uuid import uuid4
 
+import httpx
 from pydantic import BaseModel, Field
 
-from app.adapters.realtime_api import InMemoryRealtimeApiClient
+from app.adapters.realtime_api import HttpRealtimeApiClient, InMemoryRealtimeApiClient
 from app.application.ports import RealtimeApiClient
 from app.application.session_runner import InterviewSessionRunner
 from app.benchmark.providers import ProviderBenchmarkBlocked, build_benchmark_provider
-from app.benchmark.scenarios import BenchmarkScenarioName, load_benchmark_scenario
-from app.domain.models import EventType, InterviewEvent
+from app.benchmark.scenarios import (
+    BenchmarkScenario,
+    BenchmarkScenarioName,
+    load_benchmark_scenario,
+)
+from app.domain.models import EventType, InterviewEvent, InterviewPlan
 
 
 class BenchmarkMetrics(BaseModel):
@@ -69,6 +74,48 @@ class RecordingRealtimeApiClient:
         self.events.append(event)
 
 
+class BenchmarkRealtimeFactory(Protocol):
+    async def create_session(self, payload: dict[str, object]) -> str:
+        """Create a Go realtime session and return its generated session id."""
+
+    def build_client(self, session_id: str) -> RealtimeApiClient:
+        """Build an event sink for the given session."""
+
+
+class HttpBenchmarkRealtimeFactory:
+    def __init__(
+        self,
+        base_url: str,
+        *,
+        api_key: str | None = None,
+        timeout_seconds: float = 5.0,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._api_key = api_key
+        self._timeout_seconds = timeout_seconds
+
+    async def create_session(self, payload: dict[str, object]) -> str:
+        headers = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+
+        async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
+            response = await client.post(
+                f"{self._base_url}/v1/interview-sessions",
+                json=payload,
+                headers=headers,
+            )
+            response.raise_for_status()
+
+        session_id = response.json().get("session", {}).get("id")
+        if not isinstance(session_id, str) or not session_id:
+            raise RuntimeError("Go realtime API did not return session.id")
+        return session_id
+
+    def build_client(self, session_id: str) -> RealtimeApiClient:
+        return HttpRealtimeApiClient(self._base_url, api_key=self._api_key)
+
+
 @dataclass(frozen=True)
 class BenchmarkRunConfig:
     provider: str
@@ -81,8 +128,13 @@ class BenchmarkRunConfig:
 
 
 class BenchmarkRunner:
-    def __init__(self, env: Mapping[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        env: Mapping[str, str] | None = None,
+        http_factory: BenchmarkRealtimeFactory | None = None,
+    ) -> None:
         self._env = env if env is not None else os.environ
+        self._http_factory = http_factory
         self.events_by_session: dict[str, list[InterviewEvent]] = {}
 
     async def run(self, config: BenchmarkRunConfig) -> BenchmarkReport:
@@ -106,10 +158,15 @@ class BenchmarkRunner:
         config: BenchmarkRunConfig,
         iteration: int,
     ) -> BenchmarkRunResult:
-        session_id = _session_id(config, iteration)
         scenario = load_benchmark_scenario(config.scenario)
+        session_id = _session_id(config, iteration)
         try:
             provider = build_benchmark_provider(config.provider, scenario, self._env)
+            realtime_factory = _realtime_factory(config, self._http_factory)
+            if realtime_factory:
+                session_id = await realtime_factory.create_session(
+                    _create_session_payload(config, scenario, iteration)
+                )
         except ProviderBenchmarkBlocked as exc:
             return BenchmarkRunResult(
                 provider=config.provider,
@@ -119,8 +176,12 @@ class BenchmarkRunner:
                 status="blocked",
                 blocker=str(exc),
             )
+        except Exception as exc:
+            return _failed_run(config, iteration, session_id, exc)
 
-        realtime_api = RecordingRealtimeApiClient(_build_realtime_client(config))
+        realtime_api = RecordingRealtimeApiClient(
+            _build_realtime_client(config, realtime_factory, session_id)
+        )
         started = time.perf_counter()
         runner = InterviewSessionRunner(
             plan=scenario.plan,
@@ -139,7 +200,28 @@ class BenchmarkRunner:
             },
             idempotency_key_prefix=f"{config.benchmark_run_id}:{session_id}",
         )
-        session_result = await runner.run()
+        try:
+            session_result = await runner.run()
+        except Exception as exc:
+            duration_ms = round((time.perf_counter() - started) * 1000)
+            events = list(realtime_api.events)
+            if events:
+                self.events_by_session[session_id] = events
+            return BenchmarkRunResult(
+                provider=config.provider,
+                scenario=config.scenario,
+                iteration=iteration,
+                session_id=session_id,
+                status="failed",
+                events_emitted=len(events),
+                metrics=_compute_metrics(
+                    events=events,
+                    duration_ms=duration_ms,
+                    fallback_events_emitted=len(events),
+                ),
+                blocker=_safe_error_message(exc),
+            )
+
         duration_ms = round((time.perf_counter() - started) * 1000)
         events = list(realtime_api.events)
         if events:
@@ -161,12 +243,45 @@ class BenchmarkRunner:
         )
 
 
-def _build_realtime_client(config: BenchmarkRunConfig) -> RealtimeApiClient:
-    if config.realtime_api_url:
-        from app.adapters.realtime_api import HttpRealtimeApiClient
-
-        return HttpRealtimeApiClient(config.realtime_api_url, api_key=config.api_key)
+def _build_realtime_client(
+    config: BenchmarkRunConfig,
+    realtime_factory: BenchmarkRealtimeFactory | None,
+    session_id: str,
+) -> RealtimeApiClient:
+    if realtime_factory:
+        return realtime_factory.build_client(session_id)
     return InMemoryRealtimeApiClient(print_events=False)
+
+
+def _realtime_factory(
+    config: BenchmarkRunConfig,
+    injected: BenchmarkRealtimeFactory | None,
+) -> BenchmarkRealtimeFactory | None:
+    if not config.realtime_api_url:
+        return None
+    return injected or HttpBenchmarkRealtimeFactory(
+        config.realtime_api_url,
+        api_key=config.api_key,
+    )
+
+
+def _create_session_payload(
+    config: BenchmarkRunConfig,
+    scenario: BenchmarkScenario,
+    iteration: int,
+) -> dict[str, object]:
+    return {
+        "interview_plan_id": scenario.plan.id,
+        "candidate_id": f"benchmark-candidate-{config.benchmark_run_id}-{iteration}",
+        "allowed_modalities": _allowed_modalities(scenario.plan),
+    }
+
+
+def _allowed_modalities(plan: InterviewPlan) -> list[str]:
+    modalities = ["audio"]
+    if plan.allow_video:
+        modalities.append("video")
+    return modalities
 
 
 def _provider_config(provider: str, env: Mapping[str, str]) -> dict[str, str]:
@@ -234,6 +349,26 @@ def _session_id(config: BenchmarkRunConfig, iteration: int) -> str:
     if config.session_id_prefix:
         return f"{config.session_id_prefix}-{iteration}"
     return f"{config.provider}-{config.scenario.value}-{config.benchmark_run_id}-{iteration}"
+
+
+def _failed_run(
+    config: BenchmarkRunConfig,
+    iteration: int,
+    session_id: str,
+    exc: Exception,
+) -> BenchmarkRunResult:
+    return BenchmarkRunResult(
+        provider=config.provider,
+        scenario=config.scenario,
+        iteration=iteration,
+        session_id=session_id,
+        status="failed",
+        blocker=_safe_error_message(exc),
+    )
+
+
+def _safe_error_message(exc: Exception) -> str:
+    return f"{exc.__class__.__name__}: benchmark iteration failed"
 
 
 def _recommendation_for(runs: list[BenchmarkRunResult]) -> str:

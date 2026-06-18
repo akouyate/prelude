@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from app.application.ports import LiveKitRoomAdapter, ProviderAdapter, RealtimeApiClient
@@ -369,11 +370,13 @@ class InterviewSessionRunner:
             self._state_machine.apply(event_type, payload)
         self._sequence += 1
         event = InterviewEvent(
+            event_id=self._event_id(event_type),
             type=event_type,
             actor=actor,
             session_id=self._session_id,
             sequence=self._sequence,
             idempotency_key=self._idempotency_key(event_type),
+            occurred_at=self._occurred_at(),
             payload=payload,
             provider_metadata=dict(self._provider_metadata),
         )
@@ -435,10 +438,12 @@ class InterviewSessionRunner:
 
         self._sequence += 1
         event = InterviewEvent(
+            event_id=self._event_id(EventType.SESSION_FAILED),
             type=EventType.SESSION_FAILED,
             session_id=self._session_id,
             sequence=self._sequence,
             idempotency_key=self._idempotency_key(EventType.SESSION_FAILED),
+            occurred_at=self._occurred_at(),
             payload={"error": str(exc), "error_type": exc.__class__.__name__},
             provider_metadata=dict(self._provider_metadata),
         )
@@ -449,3 +454,15 @@ class InterviewSessionRunner:
         if not self._idempotency_key_prefix:
             return str(uuid4())
         return f"{self._idempotency_key_prefix}:{self._sequence}:{event_type.value}"
+
+    def _event_id(self, event_type: EventType) -> str:
+        if not self._idempotency_key_prefix:
+            return f"evt_{uuid4().hex}"
+        return f"evt_{self._idempotency_key_prefix}:{self._sequence}:{event_type.value}"
+
+    def _occurred_at(self) -> datetime:
+        if not self._idempotency_key_prefix:
+            return datetime.now(timezone.utc)
+        return datetime(2026, 1, 1, tzinfo=timezone.utc) + timedelta(
+            milliseconds=self._sequence
+        )
