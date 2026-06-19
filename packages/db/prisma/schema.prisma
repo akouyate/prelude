@@ -8,31 +8,80 @@ datasource db {
 }
 
 model Organization {
-  id        String   @id @default(cuid())
-  name      String
-  createdAt DateTime @default(now())
-  jobs      Job[]
+  id                    String                   @id @default(cuid())
+  clerkOrganizationId   String?                  @unique
+  name                  String
+  companySize           String?
+  hiringFocus           String?
+  defaultInterviewMode  String?
+  onboardingCompletedAt DateTime?
+  createdAt             DateTime                 @default(now())
+  jobs                  Job[]
+  jobSourceConnections  JobSourceConnection[]
+  memberships           OrganizationMembership[]
+}
+
+model User {
+  id          String                   @id @default(cuid())
+  clerkUserId String                   @unique
+  email       String                   @unique
+  name        String?
+  createdAt   DateTime                 @default(now())
+  memberships OrganizationMembership[]
+}
+
+model OrganizationMembership {
+  id             String       @id @default(cuid())
+  organizationId String
+  userId         String
+  role           String
+  onboardingRole String?
+  status         String       @default("active")
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  user           User         @relation(fields: [userId], references: [id])
+
+  @@unique([organizationId, userId])
+  @@index([userId])
 }
 
 model Job {
-  id             String          @id @default(cuid())
+  id               String         @id @default(cuid())
+  organizationId   String
+  title            String
+  location         String?
+  description      String         @default("")
+  sourceProvider   String?
+  sourceExternalId String?
+  status           String         @default("draft")
+  createdAt        DateTime       @default(now())
+  organization     Organization   @relation(fields: [organizationId], references: [id])
+  preInterviews    PreInterview[]
+  candidates       Candidate[]
+
+  @@index([organizationId, sourceProvider])
+}
+
+model JobSourceConnection {
+  id             String       @id @default(cuid())
   organizationId String
-  title          String
-  location       String?
-  description    String
-  createdAt      DateTime        @default(now())
-  organization   Organization    @relation(fields: [organizationId], references: [id])
-  preInterviews  PreInterview[]
-  candidates     Candidate[]
+  provider       String
+  status         String
+  externalLabel  String?
+  createdAt      DateTime     @default(now())
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  @@unique([organizationId, provider])
+  @@index([provider])
 }
 
 model PreInterview {
-  id          String          @id @default(cuid())
+  id          String       @id @default(cuid())
   jobId       String
-  status      String          @default("draft")
-  publicToken String          @unique
-  createdAt   DateTime        @default(now())
-  job         Job             @relation(fields: [jobId], references: [id])
+  status      String       @default("draft")
+  publicToken String       @unique
+  createdAt   DateTime     @default(now())
+  job         Job          @relation(fields: [jobId], references: [id])
   questions   Question[]
   submissions Submission[]
 }
@@ -97,16 +146,16 @@ model LiveInterviewSession {
 
 model LiveInterviewEvent {
   id               String               @id @map("event_id")
-  sessionId         String               @map("session_id")
-  candidateId       String               @map("candidate_id")
-  actor             String
-  type              String
-  occurredAt        DateTime             @map("occurred_at")
-  idempotencyKey    String               @map("idempotency_key")
-  sequenceNumber    Int                  @map("sequence_number")
-  payload           Json
-  providerMetadata  Json                 @default("{}") @map("provider_metadata")
-  session           LiveInterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sessionId        String               @map("session_id")
+  candidateId      String               @map("candidate_id")
+  actor            String
+  type             String
+  occurredAt       DateTime             @map("occurred_at")
+  idempotencyKey   String               @map("idempotency_key")
+  sequenceNumber   Int                  @map("sequence_number")
+  payload          Json
+  providerMetadata Json                 @default("{}") @map("provider_metadata")
+  session          LiveInterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([sessionId, idempotencyKey])
   @@unique([sessionId, sequenceNumber])

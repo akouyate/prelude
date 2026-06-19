@@ -7,7 +7,9 @@ const preset = {
       borderRadius: tokens.radius,
       boxShadow: tokens.shadows,
       fontFamily: {
-        sans: [tokens.fontFamily.sans]
+        display: [tokens.fontFamily.display],
+        sans: [tokens.fontFamily.sans],
+        title: [tokens.fontFamily.title]
       },
       screens: tokens.breakpoints
     }

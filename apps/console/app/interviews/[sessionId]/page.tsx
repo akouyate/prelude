@@ -2,10 +2,14 @@ import {
   liveInterviewRecruiterSummaryWireSchema,
   type LiveInterviewRecruiterSummary,
 } from "@prelude/contracts";
-import { Button, EnterpriseShell } from "@prelude/ui";
-import { RefreshCw } from "lucide-react";
+import { EnterpriseShell } from "@prelude/ui";
 
+import { ConsoleAuthControls } from "../../../src/features/auth/console-auth-controls";
+import { mockRecruiterSummary } from "../../../src/features/interview-agent/mock-recruiter-summary";
 import { RecruiterSummaryPanel } from "../../../src/features/interview-agent/recruiter-summary-panel";
+import { isClerkConfigured } from "../../../src/server/auth/clerk-config";
+import { getConsoleAuthContext } from "../../../src/server/auth/console-auth";
+import { requireCompletedOrganizationOnboarding } from "../../../src/server/onboarding/onboarding-guard";
 
 type InterviewDetailPageProps = {
   params: Promise<{
@@ -18,39 +22,35 @@ const realtimeApiUrl =
   process.env.REALTIME_API_URL ??
   "http://127.0.0.1:8080";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function InterviewDetailPage({
   params,
 }: InterviewDetailPageProps) {
+  await requireCompletedOrganizationOnboarding();
+
   const { sessionId } = await params;
-  const result = await fetchRecruiterSummary(sessionId);
+  const [account, result] = await Promise.all([
+    getConsoleAuthContext(),
+    fetchRecruiterSummary(sessionId),
+  ]);
+  const summary = result.summary ?? {
+    ...mockRecruiterSummary,
+    sessionId,
+  };
 
   return (
-    <EnterpriseShell>
-      {result.summary ? (
-        <RecruiterSummaryPanel summary={result.summary} />
-      ) : (
-        <section className="mx-auto flex min-h-[60vh] w-full max-w-2xl flex-col justify-center">
-          <div className="rounded-lg border border-ink-200 bg-white p-6">
-            <div className="text-sm font-medium text-ink-500">
-              Interview recap
-            </div>
-            <h1 className="mt-3 text-2xl font-semibold text-ink-900">
-              Recruiter summary is not ready
-            </h1>
-            <p className="mt-3 text-sm leading-6 text-ink-600">
-              The interview detail page is available, but the realtime service
-              could not return a recruiter summary for this session.
-            </p>
-            <p className="mt-2 text-sm text-ink-500">{result.error}</p>
-            <form action="" className="mt-5">
-              <Button type="submit">
-                <RefreshCw aria-hidden="true" className="h-4 w-4" />
-                Retry
-              </Button>
-            </form>
-          </div>
-        </section>
-      )}
+    <EnterpriseShell
+      account={account}
+      accountActions={<ConsoleAuthControls enabled={isClerkConfigured} />}
+    >
+      {result.error ? (
+        <p className="mx-auto mb-3 w-full max-w-6xl text-xs text-ink-500">
+          Preview data shown because the realtime summary is unavailable.
+        </p>
+      ) : null}
+      <RecruiterSummaryPanel summary={summary} />
     </EnterpriseShell>
   );
 }

@@ -11,26 +11,25 @@ import { Badge, Button, Textarea } from "@prelude/ui";
 import {
   ArrowLeft,
   ArrowRight,
-  Bot,
+  Attachment as Paperclip,
   Brain,
-  Briefcase,
   Check,
+  EditPencil as Pencil,
   Eye,
-  FileText,
   Heart,
-  Link2,
-  MessageCircle,
-  Paperclip,
+  Link as Link2,
+  Message,
+  Page as FileText,
   Pause,
-  Pencil,
   Play,
   Plus,
-  RotateCcw,
+  Refresh as RotateCcw,
   ShieldCheck,
-  Sparkles,
-  Trash2,
-  X
-} from "lucide-react";
+  Sparks as Sparkles,
+  Suitcase as Briefcase,
+  Trash as Trash2,
+  Xmark as X,
+} from "iconoir-react";
 import * as React from "react";
 
 type StepId = "brief" | "calibrate" | "questions" | "evaluation" | "share";
@@ -84,10 +83,14 @@ const responseModes: Array<{ value: ResponseMode; label: string }> = [
   { value: "audio", label: "Audio" }
 ];
 
-const initialJobDescription =
+const defaultJobDescription =
   "We are hiring a Customer Success Manager to onboard SMB customers, reduce churn risk, coordinate with product teams, and turn customer feedback into practical improvements. The role needs clear communication, prioritization, and comfort handling ambiguous customer situations.";
 
-const mockAccountOrganizationName = "Acme";
+type InterviewAgentBuilderProps = {
+  companyName?: string;
+  initialJobDescription?: string;
+  initialJobTitle?: string;
+};
 
 function updateQuestionPrompt(
   question: InterviewQuestionDraft,
@@ -182,10 +185,16 @@ function getResponseModeSummary(modes: ResponseMode[]) {
   return labels.length > 0 ? labels.join(" + ") : "Form";
 }
 
-export function InterviewAgentBuilder() {
+export function InterviewAgentBuilder({
+  companyName = "Acme",
+  initialJobDescription = defaultJobDescription,
+  initialJobTitle = "Customer Success Manager"
+}: InterviewAgentBuilderProps) {
   const [currentStep, setCurrentStep] = React.useState<StepId>("brief");
-  const [jobTitle, setJobTitle] = React.useState("Customer Success Manager");
-  const [jobDescription, setJobDescription] = React.useState(initialJobDescription);
+  const [jobTitle, setJobTitle] = React.useState(initialJobTitle);
+  const [jobDescription, setJobDescription] = React.useState(
+    initialJobDescription
+  );
   const [seniority, setSeniority] = React.useState<InterviewSeniority>("mid");
   const [focus, setFocus] = React.useState<InterviewFocus[]>([
     "role_skills",
@@ -208,7 +217,7 @@ export function InterviewAgentBuilder() {
   const createDraft = React.useCallback(() => {
     const nextDraft = generateMockInterviewDraft({
       jobTitle,
-      companyName: mockAccountOrganizationName,
+      companyName,
       jobDescription,
       seniority,
       focus,
@@ -219,7 +228,7 @@ export function InterviewAgentBuilder() {
     setSelectedQuestionId(undefined);
     setIsPublished(false);
     return nextDraft;
-  }, [attachmentName, focus, jobDescription, jobTitle, seniority]);
+  }, [attachmentName, companyName, focus, jobDescription, jobTitle, seniority]);
 
   const goToStep = React.useCallback((step: StepId) => {
     setCurrentStep(step);
@@ -417,7 +426,7 @@ export function InterviewAgentBuilder() {
 
           {currentStep === "share" && draft ? (
             <ShareStep
-              companyName={mockAccountOrganizationName}
+              companyName={companyName}
               draft={draft}
               isPublished={isPublished}
               modes={modes}
@@ -438,7 +447,7 @@ export function InterviewAgentBuilder() {
 
       {isPreviewOpen && activeQuestion ? (
         <CandidatePreviewDialog
-          companyName={mockAccountOrganizationName}
+          companyName={companyName}
           question={activeQuestion}
           onClose={() => setIsPreviewOpen(false)}
         />
@@ -468,8 +477,8 @@ function SetupProgress({ currentStep }: { currentStep: StepId }) {
                   isComplete
                     ? "border-ink-900 bg-ink-900 text-white"
                     : isCurrent
-                      ? "border-ink-900 bg-white text-ink-900 shadow-[0_0_0_4px_rgb(21_24_29/0.10)]"
-                      : "border-ink-200 bg-white text-ink-500"
+                      ? "border-olive-800 bg-[#f0f1e6] text-olive-900 shadow-[0_0_0_4px_rgb(69_66_60/0.08)]"
+                      : "border-ink-200 bg-white/70 text-ink-500"
                 }`}
               >
                 {isComplete ? <Check aria-hidden="true" className="h-4 w-4" /> : index + 1}
@@ -502,7 +511,7 @@ function MobileProgress({ currentStep }: { currentStep: StepId }) {
       </div>
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink-100">
         <div
-          className="h-full rounded-full bg-ink-900 transition-all"
+          className="h-full rounded-full bg-olive-800 transition-all"
           style={{ width: `${((currentIndex + 1) / steps.length) * 100}%` }}
         />
       </div>
@@ -532,9 +541,9 @@ function AgentMessage({
   };
 
   return (
-    <div className="flex min-w-0 gap-3 rounded-lg bg-white/70 px-4 py-3 shadow-[0_1px_0_rgb(21_24_29/0.06)] ring-1 ring-ink-100 backdrop-blur">
-      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-ink-900 text-white">
-        <Bot aria-hidden="true" className="h-4 w-4" />
+    <div className="flex min-w-0 gap-3 rounded-2xl border border-ink-100 bg-white/72 px-4 py-3 shadow-soft backdrop-blur">
+      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink-900 text-white">
+        <Brain aria-hidden="true" className="h-4 w-4" />
       </div>
       <p className="min-w-0 max-w-3xl text-sm leading-6 text-ink-700">
         {messages[step]}
@@ -562,7 +571,7 @@ function BriefStep({
     <div className="min-w-0 space-y-5">
       <Field label="Role">
         <input
-          className="h-12 w-full min-w-0 rounded-md border border-ink-200 bg-white px-3 text-sm font-normal text-ink-900 outline-none transition focus:border-ink-800 focus:ring-2 focus:ring-ink-200"
+          className="h-12 w-full min-w-0 rounded-xl border border-ink-200 bg-white/80 px-3 text-sm font-normal text-ink-900 outline-none transition focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
           value={jobTitle}
           onChange={(event) => onJobTitleChange(event.target.value)}
         />
@@ -570,13 +579,13 @@ function BriefStep({
 
       <Field label="Job description">
         <Textarea
-          className="min-h-64 w-full min-w-0 max-w-full bg-white text-sm font-normal leading-6"
+          className="min-h-64 w-full min-w-0 max-w-full bg-white/80 text-sm font-normal leading-6 focus:border-olive-800 focus:ring-[#e5e8d6]"
           value={jobDescription}
           onChange={(event) => onJobDescriptionChange(event.target.value)}
         />
       </Field>
 
-      <label className="flex min-w-0 cursor-pointer flex-col items-stretch justify-between gap-3 rounded-lg border border-dashed border-ink-300 bg-white/72 p-4 text-sm text-ink-700 hover:bg-white sm:flex-row sm:items-center sm:p-5">
+      <label className="flex min-w-0 cursor-pointer flex-col items-stretch justify-between gap-3 rounded-2xl border border-dashed border-ink-300 bg-white/62 p-4 text-sm text-ink-700 transition hover:border-olive-800 hover:bg-white sm:flex-row sm:items-center sm:p-5">
         <span className="flex min-w-0 items-center gap-3">
           <Paperclip aria-hidden="true" className="h-4 w-4 shrink-0" />
           <span className="min-w-0 leading-5">
@@ -620,10 +629,10 @@ function CalibrateStep({
           {seniorityOptions.map((option) => (
               <button
                 key={option.value}
-                className={`h-12 rounded-md border bg-white text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ink-300 ${
+                className={`h-12 cursor-pointer rounded-full border bg-white/80 px-4 text-sm font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
                   seniority === option.value
-                  ? "border-ink-900 text-ink-900 shadow-[0_0_0_3px_rgb(21_24_29/0.10)]"
-                  : "border-ink-200 text-ink-700 hover:bg-ink-50"
+                  ? "border-olive-800 bg-[#f0f1e6] text-olive-900 shadow-[0_0_0_3px_rgb(69_66_60/0.08)]"
+                  : "border-ink-200 text-ink-700 hover:border-ink-300 hover:bg-white"
               }`}
               type="button"
               onClick={() => onSeniorityChange(option.value)}
@@ -642,10 +651,10 @@ function CalibrateStep({
               <button
                 key={mode.value}
                 aria-label={`${checked ? "Remove" : "Add"} ${mode.label} response mode`}
-                className={`inline-flex h-10 items-center gap-2 rounded-md border px-3 text-sm font-medium outline-none focus-visible:ring-2 focus-visible:ring-ink-300 ${
+                className={`inline-flex h-10 cursor-pointer items-center gap-2 rounded-full border px-4 text-sm font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
                   checked
-                    ? "border-ink-900 bg-white text-ink-900 shadow-[0_0_0_3px_rgb(21_24_29/0.10)]"
-                    : "border-ink-200 bg-white text-ink-700 hover:bg-ink-50"
+                    ? "border-olive-800 bg-[#f0f1e6] text-olive-900 shadow-[0_0_0_3px_rgb(69_66_60/0.08)]"
+                    : "border-ink-200 bg-white/80 text-ink-700 hover:border-ink-300 hover:bg-white"
                 }`}
                 type="button"
                 onClick={() => toggleMode(mode.value)}
@@ -668,10 +677,10 @@ function CalibrateStep({
               <button
                 key={option.value}
                 aria-label={`${checked ? "Remove" : "Add"} ${option.label} signal`}
-                className={`rounded-lg border bg-white p-4 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-ink-300 ${
+                className={`cursor-pointer rounded-2xl border bg-white/80 p-4 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
                   checked
-                    ? "border-ink-900 shadow-[0_0_0_3px_rgb(21_24_29/0.10)]"
-                    : "border-ink-200 bg-white hover:bg-ink-50"
+                    ? "border-olive-800 bg-[#f0f1e6] shadow-[0_0_0_3px_rgb(69_66_60/0.08)]"
+                    : "border-ink-200 bg-white/80 hover:border-ink-300 hover:bg-white"
                 }`}
                 type="button"
                 onClick={() => toggleFocus(option.value)}
@@ -680,7 +689,7 @@ function CalibrateStep({
                   <span
                     className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border ${
                       checked
-                        ? "border-ink-900 bg-ink-900 text-white"
+                        ? "border-olive-800 bg-olive-800 text-white"
                         : "border-ink-300"
                     }`}
                   >
@@ -714,7 +723,7 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
   if (question.source === "attachment") {
     return {
       icon: <Paperclip aria-hidden="true" className="h-4 w-4" />,
-      iconClass: "bg-[#f4f0ff] text-[#513a8f]",
+      iconClass: "bg-[#f0f1e6] text-olive-800",
       label: "Context"
     };
   }
@@ -722,7 +731,7 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
   if (signal.includes("motivation")) {
     return {
       icon: <Heart aria-hidden="true" className="h-4 w-4" />,
-      iconClass: "bg-[#fff1f2] text-[#9f1239]",
+      iconClass: "bg-coral-50 text-coral-800",
       label: "Motivation"
     };
   }
@@ -730,15 +739,15 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
   if (signal.includes("judgment") || signal.includes("ambiguity")) {
     return {
       icon: <Brain aria-hidden="true" className="h-4 w-4" />,
-      iconClass: "bg-[#eef2ff] text-[#3730a3]",
+      iconClass: "bg-gold-100 text-gold-800",
       label: "Judgment"
     };
   }
 
   if (signal.includes("communication") || signal.includes("clarity")) {
     return {
-      icon: <MessageCircle aria-hidden="true" className="h-4 w-4" />,
-      iconClass: "bg-[#ecfeff] text-[#155e75]",
+      icon: <Message aria-hidden="true" className="h-4 w-4" />,
+      iconClass: "bg-meadow-50 text-meadow-800",
       label: "Communication"
     };
   }
@@ -750,14 +759,14 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
   ) {
     return {
       icon: <Briefcase aria-hidden="true" className="h-4 w-4" />,
-      iconClass: "bg-[#fff7ed] text-[#9a3412]",
+      iconClass: "bg-ink-100 text-ink-800",
       label: "Logistics"
     };
   }
 
   return {
     icon: <Briefcase aria-hidden="true" className="h-4 w-4" />,
-    iconClass: "bg-ink-100 text-ink-800",
+    iconClass: "bg-[#f0f1e6] text-olive-800",
     label: "Experience"
   };
 }
@@ -807,7 +816,7 @@ function QuestionsStep({
         </Button>
       </div>
 
-      <div className="divide-y divide-ink-100 rounded-lg border border-ink-200 bg-white">
+      <div className="divide-y divide-ink-100 overflow-hidden rounded-2xl border border-ink-200 bg-white/76 shadow-soft">
         {draft.questions.map((question, index) => {
           const selected = question.id === selectedQuestionId;
           const editing = question.id === editingQuestionId;
@@ -817,15 +826,15 @@ function QuestionsStep({
           return (
             <article
               key={question.id}
-              className={`p-4 transition ${selected ? "bg-ink-50/60" : "bg-white"}`}
+              className={`p-4 transition ${selected ? "bg-[#f7f7ef]" : "bg-white/70"}`}
             >
               <div className="flex items-start gap-3">
                 <button
                   aria-label={`${playing ? "Pause" : "Play"} question ${index + 1}`}
-                  className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-full border outline-none transition focus-visible:ring-2 focus-visible:ring-ink-300 ${
+                  className={`mt-0.5 flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full border outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
                     playing
                       ? "border-ink-900 bg-ink-900 text-white"
-                      : "border-ink-200 bg-white text-ink-900 hover:border-ink-900"
+                      : "border-ink-200 bg-white/80 text-ink-900 hover:border-ink-900 hover:bg-white"
                   }`}
                   type="button"
                   onClick={() =>
@@ -840,14 +849,14 @@ function QuestionsStep({
                 </button>
 
                 <span
-                  className={`mt-0.5 hidden h-9 w-9 shrink-0 items-center justify-center rounded-md sm:flex ${meta.iconClass}`}
+                  className={`mt-0.5 hidden h-9 w-9 shrink-0 items-center justify-center rounded-full sm:flex ${meta.iconClass}`}
                 >
                   {meta.icon}
                 </span>
 
                 <div className="min-w-0 flex-1">
                   <button
-                    className="block w-full rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ink-300"
+                    className="block w-full cursor-pointer rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6]"
                     type="button"
                     onClick={() => onSelectQuestion(question.id)}
                   >
@@ -855,7 +864,7 @@ function QuestionsStep({
                       <span className="rounded-full bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-700">
                         {String(index + 1).padStart(2, "0")}
                       </span>
-                      <span className="rounded-full bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-700">
+                      <span className="rounded-full bg-[#f0f1e6] px-2 py-0.5 text-xs font-medium text-olive-800">
                         {meta.label}
                       </span>
                     </span>
@@ -868,7 +877,7 @@ function QuestionsStep({
                     <div className="mt-3 space-y-3">
                       <Textarea
                         aria-label={`Question ${index + 1} prompt`}
-                        className="min-h-24 bg-white text-sm leading-6"
+                        className="min-h-24 bg-white/88 text-sm leading-6 focus:border-olive-800 focus:ring-[#e5e8d6]"
                         value={question.prompt}
                         onChange={(event) =>
                           onUpdateQuestion(question.id, event.target.value)
@@ -928,7 +937,7 @@ function QuestionsStep({
         })}
       </div>
 
-      <div className="rounded-lg border border-dashed border-ink-300 bg-white/60 p-4">
+      <div className="rounded-2xl border border-dashed border-ink-300 bg-white/60 p-4 transition hover:border-olive-800">
         {isAddingQuestion ? (
           <div className="space-y-3">
             <div>
@@ -940,7 +949,7 @@ function QuestionsStep({
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
               <input
                 aria-label="Ask IA to add a question about"
-                className="h-10 min-w-0 rounded-md border border-ink-200 bg-white px-3 text-sm outline-none focus:border-ink-800 focus:ring-2 focus:ring-ink-200"
+                className="h-10 min-w-0 rounded-xl border border-ink-200 bg-white/88 px-3 text-sm outline-none focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
                 value={addTopic}
                 placeholder="salary alignment, mobility, language..."
                 onChange={(event) => setAddTopic(event.target.value)}
@@ -953,11 +962,11 @@ function QuestionsStep({
           </div>
         ) : (
           <button
-            className="flex w-full items-center gap-3 rounded-md text-left outline-none focus-visible:ring-2 focus-visible:ring-ink-300"
+            className="flex w-full cursor-pointer items-center gap-3 rounded-full text-left outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6]"
             type="button"
             onClick={() => setIsAddingQuestion(true)}
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-ink-900 text-white">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink-900 text-white">
               <Plus aria-hidden="true" className="h-4 w-4" />
             </span>
             <span>
@@ -985,7 +994,10 @@ function EvaluationStep({ draft }: { draft: InterviewAgentDraft }) {
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {draft.criteria.map((criterion) => (
-            <div key={criterion.id} className="rounded-md border border-ink-200 bg-white p-4">
+            <div
+              key={criterion.id}
+              className="rounded-2xl border border-ink-200 bg-white/76 p-4"
+            >
               <p className="text-sm font-semibold text-ink-900">{criterion.label}</p>
               <p className="mt-1 text-sm leading-5 text-ink-600">
                 {criterion.description}
@@ -1000,10 +1012,10 @@ function EvaluationStep({ draft }: { draft: InterviewAgentDraft }) {
           <ShieldCheck aria-hidden="true" className="h-4 w-4 text-ink-700" />
           Guardrails
         </div>
-        <div className="mt-3 space-y-3 rounded-lg bg-white/72 p-4 ring-1 ring-ink-100">
+        <div className="mt-3 space-y-3 rounded-2xl border border-ink-100 bg-white/72 p-4 shadow-soft">
           {draft.guardrails.map((guardrail) => (
             <div key={guardrail} className="flex gap-3 text-sm leading-6 text-ink-700">
-              <Check aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-ink-700" />
+              <Check aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-olive-800" />
               {guardrail}
             </div>
           ))}
@@ -1038,7 +1050,7 @@ function ShareStep({
         <SummaryMetric label="Organization" value={companyName} />
       </div>
 
-      <div className="rounded-lg border border-ink-200 bg-white/72 p-5">
+      <div className="rounded-2xl border border-ink-200 bg-white/72 p-5 shadow-soft">
         <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
           <Link2 aria-hidden="true" className="h-4 w-4 text-ink-700" />
           Candidate link
@@ -1053,7 +1065,7 @@ function ShareStep({
       </div>
 
       {isPublished ? (
-        <div className="rounded-lg border border-meadow-200 bg-meadow-50 p-4 text-sm font-medium text-meadow-700">
+        <div className="rounded-xl border border-meadow-200 bg-meadow-50 p-4 text-sm font-medium text-meadow-700">
           Mock interview published. The candidate link is ready to share.
         </div>
       ) : null}
@@ -1134,12 +1146,12 @@ function CandidatePreviewDialog({
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 p-4"
       role="dialog"
     >
-      <div className="w-full max-w-sm rounded-lg bg-white p-4 shadow-soft">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-soft">
         <div className="mb-4 flex items-center justify-between">
           <p className="text-sm font-semibold text-ink-900">Candidate preview</p>
           <button
             aria-label="Close candidate preview"
-            className="rounded-md p-2 text-ink-600 outline-none hover:bg-ink-100 focus-visible:ring-2 focus-visible:ring-ink-300"
+            className="cursor-pointer rounded-full p-2 text-ink-600 outline-none hover:bg-ink-100 focus-visible:ring-2 focus-visible:ring-[#e5e8d6]"
             type="button"
             onClick={onClose}
           >
@@ -1154,13 +1166,13 @@ function CandidatePreviewDialog({
           </p>
           <div className="mt-8 grid gap-2">
             <button
-              className="h-11 rounded-md bg-white text-sm font-semibold text-ink-900 outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+              className="h-11 cursor-pointer rounded-full bg-white px-4 text-sm font-semibold text-ink-900 outline-none focus-visible:ring-2 focus-visible:ring-white/70"
               type="button"
             >
               Record audio
             </button>
             <button
-              className="h-11 rounded-md border border-white/18 text-sm font-semibold text-white outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+              className="h-11 cursor-pointer rounded-full border border-white/18 px-4 text-sm font-semibold text-white outline-none focus-visible:ring-2 focus-visible:ring-white/70"
               type="button"
             >
               Write answer
@@ -1189,7 +1201,7 @@ function Field({
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-ink-200 p-4">
+    <div className="rounded-xl border border-ink-200 p-4">
       <p className="text-sm text-ink-500">{label}</p>
       <p className="mt-1 text-xl font-semibold leading-tight text-ink-900">{value}</p>
     </div>

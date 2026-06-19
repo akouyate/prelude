@@ -16,7 +16,7 @@
     "@base-ui-components/react": "^1.0.0-rc.0",
     "@prelude/design-system": "workspace:*",
     "clsx": "^2.1.1",
-    "lucide-react": "^1.20.0",
+    "iconoir-react": "^7.11.1",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
