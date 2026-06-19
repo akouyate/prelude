@@ -516,6 +516,13 @@ LOW_INFORMATION_MARKERS = {
     "rien à dire",
 }
 
+CONTRADICTION_MARKERS = {
+    "mais je n'ai jamais",
+    "mais je nai jamais",
+    "but i have never",
+    "but i never",
+}
+
 CONCRETE_MARKERS = {
     "exemple",
     "resultat",
@@ -707,6 +714,8 @@ def _score_concreteness(normalized_answer: str, answer_tokens: set[str]) -> int:
 def _score_coherence(normalized_answer: str, answer_tokens: set[str]) -> int:
     if _contains_marker(normalized_answer, NONSENSE_MARKERS):
         return 0
+    if _contains_marker(normalized_answer, CONTRADICTION_MARKERS):
+        return 1
     if len(answer_tokens) <= 2:
         return 1
     repeated_tokens = [token for token in answer_tokens if normalized_answer.count(token) >= 4]
@@ -744,6 +753,8 @@ def _score_role_signal(
 def _challenge_reason(matrix: EvaluationMatrix, category: str) -> str | None:
     if matrix.dimension_score(EvaluationDimension.COHERENCE) == 0:
         return "incoherent_or_absurd_answer"
+    if matrix.dimension_score(EvaluationDimension.COHERENCE) == 1:
+        return "answer_needs_clarification"
     if matrix.dimension_score(EvaluationDimension.RELEVANCE) <= 1:
         return "off_topic_or_low_relevance"
     if (

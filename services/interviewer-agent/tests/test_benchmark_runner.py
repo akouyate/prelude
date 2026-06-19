@@ -75,6 +75,45 @@ async def test_benchmark_runner_repeats_the_same_scenario_for_iterations() -> No
         assert run.metrics.repeat_requests == 1
 
 
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        BenchmarkScenarioName.ABSURD_ANSWER,
+        BenchmarkScenarioName.OFF_TOPIC,
+        BenchmarkScenarioName.LOW_INFORMATION,
+        BenchmarkScenarioName.CONTRADICTORY,
+        BenchmarkScenarioName.GENERIC_CLAIM,
+    ],
+)
+@pytest.mark.asyncio
+async def test_benchmark_runner_smoke_scenarios_challenge_weak_answers(
+    scenario: BenchmarkScenarioName,
+) -> None:
+    runner = BenchmarkRunner()
+    config = BenchmarkRunConfig(
+        provider="mock_openai_realtime",
+        scenario=scenario,
+        iterations=1,
+        benchmark_run_id=f"bench-{scenario.value}",
+        session_id_prefix=f"session-{scenario.value}",
+    )
+
+    report = await runner.run(config)
+
+    run = report.runs[0]
+    events = runner.events_by_session[run.session_id]
+    evaluated = [event for event in events if event.type == EventType.ANSWER_EVALUATED]
+    followups = [event for event in events if event.type == EventType.FOLLOWUP_ASKED]
+
+    assert run.metrics.completed_questions == 3
+    assert followups
+    assert any(
+        event.payload["policy_action"] == "ask_followup"
+        and event.payload["evaluation_matrix"]["challenge"]["needed"] is True
+        for event in evaluated
+    )
+
+
 @pytest.mark.asyncio
 async def test_benchmark_runner_blocks_real_provider_when_credentials_are_missing() -> None:
     class RecordingHttpFactory:
