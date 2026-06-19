@@ -128,9 +128,13 @@ Supported provider names:
 - `openai_realtime`: credential-gated real-provider path.
 - `elevenlabs`: credential-gated challenger path.
 
-Real provider runs require credentials and a LiveKit-enabled worker session:
+Real provider runs are blocked by default so automated tests and CI cannot spend
+provider credits accidentally. To run a paid/provider-backed benchmark, pass
+`--allow-live-llm-tests` or set `ALLOW_LIVE_LLM_TESTS=1` in the shell. The run
+also requires credentials and a LiveKit-enabled worker session:
 
 ```bash
+ALLOW_LIVE_LLM_TESTS="1"
 LIVEKIT_URL="wss://..."
 LIVEKIT_API_KEY="..."
 LIVEKIT_API_SECRET="..."
@@ -156,7 +160,20 @@ make agent-benchmark \
   BENCHMARK_SCENARIO=normal \
   BENCHMARK_ITERATIONS=1 \
   BENCHMARK_RUN_ID=openai-livekit-smoke \
-  BENCHMARK_PERSIST_REALTIME=1
+  BENCHMARK_PERSIST_REALTIME=1 \
+  ALLOW_LIVE_LLM_TESTS=1
+```
+
+The equivalent direct CLI command is:
+
+```bash
+python -m app.benchmark_cli \
+  --provider openai_realtime \
+  --scenario normal \
+  --iterations 1 \
+  --benchmark-run-id openai-livekit-smoke \
+  --realtime-api-url http://localhost:8080 \
+  --allow-live-llm-tests
 ```
 
 The OpenAI smoke creates a Go interview session, mints an agent LiveKit token

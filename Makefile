@@ -10,6 +10,7 @@ BENCHMARK_SCENARIO ?= normal
 BENCHMARK_ITERATIONS ?= 3
 BENCHMARK_RUN_ID ?=
 BENCHMARK_PERSIST_REALTIME ?=
+ALLOW_LIVE_LLM_TESTS ?=
 REALTIME_API_URL ?=
 LIVE_SMOKE_REALTIME_API_URL ?= http://127.0.0.1:8080
 SESSION_ID ?=
@@ -70,18 +71,23 @@ db-studio: ## Open Prisma Studio against local Postgres.
 agent-benchmark: ## Run the Python live IA provider benchmark harness.
 	@$(LOAD_ENV); \
 	realtime_args=""; \
+	live_llm_args=""; \
 	if [ "$(BENCHMARK_PERSIST_REALTIME)" = "1" ] && [ -n "$${REALTIME_API_URL:-}" ]; then \
 		realtime_args="--realtime-api-url $$REALTIME_API_URL"; \
 		if [ -n "$${REALTIME_API_KEY:-}" ]; then \
 			realtime_args="$$realtime_args --api-key $$REALTIME_API_KEY"; \
 		fi; \
 	fi; \
+	if [ "$(ALLOW_LIVE_LLM_TESTS)" = "1" ] || [ "$${ALLOW_LIVE_LLM_TESTS:-}" = "1" ]; then \
+		live_llm_args="--allow-live-llm-tests"; \
+	fi; \
 	cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.benchmark_cli \
 		--provider "$(BENCHMARK_PROVIDER)" \
 		--scenario "$(BENCHMARK_SCENARIO)" \
 		--iterations "$(BENCHMARK_ITERATIONS)" \
 		$(if $(BENCHMARK_RUN_ID),--benchmark-run-id "$(BENCHMARK_RUN_ID)") \
-		$$realtime_args
+		$$realtime_args \
+		$$live_llm_args
 
 live-openai-worker: ## Run the Python OpenAI live interviewer worker for SESSION_ID.
 	@test -n "$(SESSION_ID)" || (printf "SESSION_ID is required. Example: make live-openai-worker SESSION_ID=is_xxx\n"; exit 1)

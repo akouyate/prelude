@@ -135,6 +135,7 @@ async def test_benchmark_runner_blocks_real_provider_when_credentials_are_missin
         iterations=1,
         benchmark_run_id="bench-openai",
         realtime_api_url="http://realtime.test",
+        allow_live_llm_tests=True,
     )
 
     report = await runner.run(config)
@@ -143,6 +144,50 @@ async def test_benchmark_runner_blocks_real_provider_when_credentials_are_missin
     assert report.runs[0].status == "blocked"
     assert "OPENAI_API_KEY" in report.runs[0].blocker
     assert report.recommendation.startswith("Provider access is missing")
+    assert factory.created == []
+
+
+@pytest.mark.asyncio
+async def test_benchmark_runner_blocks_real_provider_without_live_llm_opt_in() -> None:
+    class RecordingHttpFactory:
+        def __init__(self) -> None:
+            self.created: list[dict[str, object]] = []
+
+        async def create_session(self, payload: dict[str, object]) -> str:
+            self.created.append(payload)
+            return "go-session-should-not-exist"
+
+        def build_client(self, session_id: str):
+            return _RecordingApi(session_id)
+
+    factory = RecordingHttpFactory()
+    runner = BenchmarkRunner(
+        env={
+            "OPENAI_API_KEY": "sk-test-secret",
+            "OPENAI_REALTIME_MODEL": "gpt-realtime",
+            "OPENAI_REALTIME_VOICE": "marin",
+            "OPENAI_REALTIME_TURN_DETECTION": "semantic_vad",
+            "OPENAI_REALTIME_REASONING_EFFORT": "low",
+            "LIVEKIT_URL": "wss://livekit.example.test",
+            "LIVEKIT_API_KEY": "lk_key",
+            "LIVEKIT_API_SECRET": "lk_secret",
+        },
+        http_factory=factory,
+    )
+    config = BenchmarkRunConfig(
+        provider="openai_realtime",
+        scenario=BenchmarkScenarioName.NORMAL,
+        iterations=1,
+        benchmark_run_id="bench-openai",
+        realtime_api_url="http://realtime.test",
+    )
+
+    report = await runner.run(config)
+
+    assert report.runs[0].status == "blocked"
+    assert "ALLOW_LIVE_LLM_TESTS=1" in report.runs[0].blocker
+    assert "--allow-live-llm-tests" in report.runs[0].blocker
+    assert "sk-test-secret" not in report.runs[0].blocker
     assert factory.created == []
 
 
@@ -165,6 +210,7 @@ async def test_benchmark_runner_requires_go_persistence_for_openai_smoke() -> No
         scenario=BenchmarkScenarioName.NORMAL,
         iterations=1,
         benchmark_run_id="bench-openai",
+        allow_live_llm_tests=True,
     )
 
     report = await runner.run(config)
@@ -227,6 +273,7 @@ async def test_benchmark_runner_wires_openai_smoke_to_livekit_and_go(
         iterations=1,
         benchmark_run_id="bench-openai",
         realtime_api_url="http://realtime.test",
+        allow_live_llm_tests=True,
     )
 
     report = await runner.run(config)

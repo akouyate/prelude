@@ -25,6 +25,10 @@ from app.benchmark.scenarios import (
 from app.domain.models import EventType, InterviewEvent, InterviewPlan
 
 
+ALLOW_LIVE_LLM_TESTS_ENV = "ALLOW_LIVE_LLM_TESTS"
+LIVE_LLM_BENCHMARK_PROVIDERS = frozenset({"openai_realtime", "elevenlabs"})
+
+
 class BenchmarkMetrics(BaseModel):
     total_duration_ms: int
     events_emitted: int
@@ -127,6 +131,7 @@ class BenchmarkRunConfig:
     session_id_prefix: str | None = None
     realtime_api_url: str | None = None
     api_key: str | None = None
+    allow_live_llm_tests: bool = False
 
 
 class BenchmarkRunner:
@@ -163,6 +168,15 @@ class BenchmarkRunner:
         scenario = load_benchmark_scenario(config.scenario)
         session_id = _session_id(config, iteration)
         try:
+            if _is_live_llm_provider(config.provider) and not _live_llm_tests_allowed(
+                config,
+                self._env,
+            ):
+                raise ProviderBenchmarkBlocked(
+                    f"{config.provider} is a paid live LLM benchmark. Set "
+                    f"{ALLOW_LIVE_LLM_TESTS_ENV}=1 or pass --allow-live-llm-tests "
+                    "to run it intentionally."
+                )
             if config.provider == "openai_realtime" and not config.realtime_api_url:
                 raise ProviderBenchmarkBlocked(
                     "openai_realtime smoke requires --realtime-api-url so the run "
@@ -327,6 +341,17 @@ def _provider_config(provider: str, env: Mapping[str, str]) -> dict[str, str]:
             "turn_eagerness": env.get("ELEVENLABS_TURN_EAGERNESS", ""),
         }
     return {"mode": "deterministic_mock"}
+
+
+def _is_live_llm_provider(provider: str) -> bool:
+    return provider in LIVE_LLM_BENCHMARK_PROVIDERS
+
+
+def _live_llm_tests_allowed(
+    config: BenchmarkRunConfig,
+    env: Mapping[str, str],
+) -> bool:
+    return config.allow_live_llm_tests or env.get(ALLOW_LIVE_LLM_TESTS_ENV) == "1"
 
 
 def _commit_sha() -> str:
