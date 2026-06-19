@@ -338,7 +338,8 @@ async def test_live_orchestration_controller_completes_three_question_flow() -> 
     assert events[-1].type == EventType.SESSION_COMPLETED
     assert events[-2].payload["utterance_id"].endswith(":live-openai:closing")
     assert "suite" in events[-2].payload["closing"]
-    assert "au revoir" in events[-2].payload["closing"]
+    assert "premier échange" in events[-2].payload["closing"]
+    assert "très bonne journée" in events[-2].payload["closing"]
     assert events[-1].payload["completed_questions"] == 3
     assert events[-1].payload["total_questions"] == 3
     assert events[-1].payload["closing"] == events[-2].payload["closing"]

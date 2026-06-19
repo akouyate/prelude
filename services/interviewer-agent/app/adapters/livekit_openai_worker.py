@@ -1255,9 +1255,10 @@ def _closing_message(plan: InterviewPlan) -> str:
         )
 
     return (
-        "Merci, l'entretien de préqualification est terminé. "
-        "L'équipe recrutement va pouvoir consulter vos réponses et revenir vers vous "
-        "pour la suite si votre profil correspond au poste. Bonne journée, au revoir."
+        "Merci beaucoup pour vos réponses. On arrive à la fin de ce premier échange. "
+        "Vos réponses vont être partagées avec l'équipe recrutement, qui pourra revenir "
+        "vers vous pour la suite du process si votre profil correspond au poste. "
+        "Merci encore pour votre temps, et je vous souhaite une très bonne journée."
     )
 
 
