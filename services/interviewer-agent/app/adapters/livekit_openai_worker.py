@@ -879,19 +879,29 @@ class LiveInterviewOrchestrationController:
 
     async def _close_session(self, command: OrchestratorCommand) -> None:
         self._terminal = True
-        closing = "Merci, l'entretien est termine. Le recruteur recevra un resume structure."
+        closing = _closing_message(self._plan)
+        closing_utterance_id = f"{self._emitter._session_id}:live-openai:closing"
+        await self._emitter.emit(
+            EventType.AGENT_SPEECH_STARTED,
+            {
+                "utterance_id": closing_utterance_id,
+                "utterance_kind": "closing",
+            },
+            actor=EventActor.AGENT,
+        )
         await self._emitter.emit(
             EventType.SESSION_CLOSING,
             {
                 "completed_questions": command.completed_questions or 0,
                 "total_questions": command.total_questions or len(self._plan.questions),
                 "closing": closing,
+                "utterance_id": closing_utterance_id,
             },
             actor=EventActor.AGENT,
         )
         self._orchestrator.mark_session_closed()
         reply = getattr(self._session, "generate_reply")(
-            instructions=closing,
+            instructions=_closing_instructions(closing),
             allow_interruptions=True,
         )
         wait_for_playout = getattr(reply, "wait_for_playout", None)
@@ -904,6 +914,7 @@ class LiveInterviewOrchestrationController:
                 or "all_questions_completed",
                 "completed_questions": command.completed_questions or 0,
                 "total_questions": command.total_questions or len(self._plan.questions),
+                "closing": closing,
             },
             actor=EventActor.AGENT,
         )
@@ -1232,6 +1243,29 @@ def _current_question(plan: InterviewPlan, command: OrchestratorCommand):
         if question.id == command.question_id:
             return question
     raise RuntimeError(f"unknown orchestrator question {command.question_id}")
+
+
+def _closing_message(plan: InterviewPlan) -> str:
+    if plan.language.startswith("en"):
+        return (
+            "Thank you, the screening interview is now complete. "
+            "The recruiting team will review your answers and follow up about the next "
+            "steps if your profile matches the role. Have a good day. Goodbye."
+        )
+
+    return (
+        "Merci, l'entretien de préqualification est terminé. "
+        "L'équipe recrutement va pouvoir consulter vos réponses et revenir vers vous "
+        "pour la suite si votre profil correspond au poste. Bonne journée, au revoir."
+    )
+
+
+def _closing_instructions(closing: str) -> str:
+    return (
+        "Say exactly this closing message, then stop speaking. "
+        "Do not ask another question and do not add extra commentary: "
+        f"{closing}"
+    )
 
 
 def _candidate_turn_from_live_transcript(

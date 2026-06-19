@@ -319,11 +319,27 @@ async def test_live_orchestration_controller_completes_three_question_flow() -> 
     assert event_types.count(EventType.CANDIDATE_TURN_FINALIZED) == 3
     assert event_types.count(EventType.ANSWER_EVALUATED) == 3
     assert event_types.count(EventType.QUESTION_COMPLETED) == 3
+    assert event_types.count(EventType.AGENT_SPEECH_STARTED) == 4
+    closing_started = [
+        event
+        for event in events
+        if event.type == EventType.AGENT_SPEECH_STARTED
+        and event.payload.get("utterance_kind") == "closing"
+    ]
+    assert len(closing_started) == 1
+    assert closing_started[0].payload["utterance_id"].endswith(":live-openai:closing")
     assert events[-2].type == EventType.SESSION_CLOSING
     assert events[-1].type == EventType.SESSION_COMPLETED
+    assert events[-2].payload["utterance_id"].endswith(":live-openai:closing")
+    assert "suite" in events[-2].payload["closing"]
+    assert "au revoir" in events[-2].payload["closing"]
     assert events[-1].payload["completed_questions"] == 3
     assert events[-1].payload["total_questions"] == 3
+    assert events[-1].payload["closing"] == events[-2].payload["closing"]
     assert len(session.replies) >= 4
+    assert session.replies[-1]["allow_interruptions"] is True
+    assert session.replies[-1]["instructions"].startswith("Say exactly this closing message")
+    assert "Do not ask another question" in session.replies[-1]["instructions"]
 
 
 def test_live_transcript_role_clarification_does_not_complete_answer() -> None:
