@@ -3,17 +3,16 @@
 import * as React from "react";
 import { Button } from "@prelude/ui";
 import {
-  AlertTriangle,
   Camera,
-  CheckCircle2,
-  Loader2,
-  Mic,
+  CheckCircle,
+  Microphone as Mic,
   Pause,
-  PhoneOff,
-  RefreshCcw,
+  PhoneXmark as PhoneOff,
+  Refresh as RefreshCcw,
   ShieldCheck,
-  Video,
-} from "lucide-react";
+  VideoCamera as Video,
+  WarningTriangle as AlertTriangle,
+} from "iconoir-react";
 
 type RoomStatus =
   | "ready"
@@ -187,7 +186,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
       </div>
 
       <div className="mt-8 space-y-4">
-        <div className="rounded-lg bg-white p-4 text-ink-900 shadow-soft">
+        <div className="rounded-2xl bg-white p-4 text-ink-900 shadow-soft">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-sm font-semibold">Live room</p>
@@ -205,7 +204,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           </div>
 
           {status === "ready" ? (
-            <label className="mt-4 flex items-center justify-between rounded-md border border-ink-200 px-3 py-3 text-sm">
+            <label className="mt-4 flex items-center justify-between rounded-xl border border-ink-200 px-3 py-3 text-sm">
               <span>
                 <span className="block font-medium text-ink-900">
                   Enable video
@@ -224,7 +223,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           ) : null}
 
           {localStream ? (
-            <div className="mt-4 overflow-hidden rounded-md bg-ink-900">
+            <div className="mt-4 overflow-hidden rounded-2xl bg-ink-900">
               <video
                 ref={videoRef}
                 aria-label="Local camera preview"
@@ -237,7 +236,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           ) : null}
 
           {error ? (
-            <div className="mt-4 flex gap-2 rounded-md bg-coral-100 p-3 text-sm text-ink-900">
+            <div className="mt-4 flex gap-2 rounded-xl bg-coral-100 p-3 text-sm text-ink-900">
               <AlertTriangle
                 aria-hidden="true"
                 className="mt-0.5 h-4 w-4 shrink-0 text-coral-500"
@@ -247,7 +246,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           ) : null}
 
           {isAudioPlaybackBlocked ? (
-            <div className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-ink-900">
+            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-ink-900">
               <p className="font-medium">Audio paused by your browser</p>
               <p className="mt-1 text-ink-600">
                 Tap once to hear the interviewer on this device.
@@ -282,7 +281,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
                 onClick={startInterview}
               >
                 {isBusy ? (
-                  <Loader2
+                  <RefreshCcw
                     aria-hidden="true"
                     className="h-4 w-4 animate-spin"
                   />
@@ -295,7 +294,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           </div>
         </div>
 
-        <div className="rounded-lg border border-white/10 bg-white/6 p-4 text-sm text-white/72">
+        <div className="rounded-2xl border border-white/10 bg-white/6 p-4 text-sm text-white/72">
           <p className="font-medium text-white">Current question</p>
           <p className="mt-2 leading-6">
             Bonjour, pouvez-vous vous présenter brièvement et expliquer ce qui
@@ -310,7 +309,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
 function StatusPill({ status }: { status: RoomStatus }) {
   const isLive = status === "connected";
   const isReconnecting = status === "reconnecting";
-  const Icon = isLive ? CheckCircle2 : isReconnecting ? RefreshCcw : Mic;
+  const Icon = isLive ? CheckCircle : isReconnecting ? RefreshCcw : Mic;
 
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-ink-100 px-2.5 py-1 text-xs font-medium text-ink-800">
@@ -330,7 +329,7 @@ function Capability({
   label: string;
 }) {
   return (
-    <div className="flex items-center gap-2 rounded-md border border-ink-200 px-3 py-2">
+    <div className="flex items-center gap-2 rounded-xl border border-ink-200 px-3 py-2">
       <Icon aria-hidden={true} className="h-4 w-4 text-ink-700" />
       <span className="font-medium">{label}</span>
       <span className="ml-auto text-xs text-ink-500">

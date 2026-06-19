@@ -3,17 +3,21 @@ import { colors } from "./colors";
 export const tokens = {
   colors,
   fontFamily: {
-    sans: "var(--font-sans), Inter, ui-sans-serif, system-ui, sans-serif"
+    sans: "var(--font-sans), Inter, ui-sans-serif, system-ui, sans-serif",
+    title: "var(--font-title-sans), ui-sans-serif, system-ui, sans-serif",
+    display: "var(--font-display), Georgia, ui-serif, serif"
   },
   radius: {
     xs: "0.25rem",
-    sm: "0.375rem",
-    md: "0.5rem",
-    lg: "0.75rem"
+    sm: "0.5rem",
+    md: "0.75rem",
+    lg: "1rem",
+    xl: "1.25rem",
+    "2xl": "1.5rem"
   },
   shadows: {
-    focus: "0 0 0 3px rgb(47 159 103 / 0.24)",
-    soft: "0 12px 32px rgb(21 24 29 / 0.08)"
+    focus: "0 0 0 3px rgb(104 116 63 / 0.24)",
+    soft: "0 12px 32px rgb(23 23 21 / 0.08)"
   },
   spacing: {
     page: "clamp(1rem, 4vw, 2.5rem)"

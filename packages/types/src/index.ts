@@ -12,5 +12,11 @@ export type {
   PreInterviewQuestion,
   ReviewStatus
 } from "./interview";
+export type {
+  OrganizationMembership,
+  OrganizationRole,
+  OrganizationUserContext,
+  User
+} from "./identity";
 export type { Job } from "./job";
 export type { Organization } from "./organization";
