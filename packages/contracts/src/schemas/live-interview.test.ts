@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   liveInterviewEventSchema,
   liveInterviewPlanSchema,
+  liveInterviewRecruiterSummaryWireSchema,
   liveInterviewSessionSchema,
   liveInterviewWireEventSchema,
   liveInterviewWorkerAgentConfigSchema,
@@ -47,6 +48,108 @@ describe("liveInterviewPlanSchema", () => {
     });
 
     expect(result.success).toBe(false);
+  });
+});
+
+describe("liveInterviewRecruiterSummaryWireSchema", () => {
+  it("normalizes a recruiter summary emitted by the realtime API", () => {
+    const result = liveInterviewRecruiterSummaryWireSchema.safeParse({
+      summary_id: "rs_session_01",
+      session_id: "session_01",
+      candidate_id: "candidate_01",
+      plan_id: "plan_01",
+      role_title: "Product Manager B2B SaaS",
+      status: "complete",
+      generated_at: "2026-06-17T10:40:00.000Z",
+      summary_version: "recruiter-summary-v1",
+      generator: "deterministic_v1",
+      disclaimer:
+        "This summary supports recruiter review and is not an automated hiring decision.",
+      overview:
+        "The candidate answered 2 of 3 planned first-screen questions with usable evidence.",
+      recommendation: {
+        value: "needs_recruiter_review",
+        label: "Needs recruiter review",
+        rationale:
+          "The interview contains usable signals, but the recruiter should validate role fit.",
+      },
+      criteria: [
+        {
+          criterion_id: "q1",
+          label: "Motivation",
+          category: "motivation",
+          status: "satisfied",
+          note: "The candidate gave a concrete motivation answer.",
+          evidence: [
+            {
+              event_id: "evt_turn_1",
+              turn_id: "turn_1",
+              question_id: "q1",
+              speaker: "candidate",
+              quote: "Je veux rejoindre une equipe produit proche des clients.",
+            },
+          ],
+        },
+      ],
+      strengths: [
+        {
+          title: "Customer-facing product motivation",
+          explanation:
+            "The candidate connected motivation to customer-facing product work.",
+          confidence: "medium",
+          evidence: [
+            {
+              event_id: "evt_turn_1",
+              turn_id: "turn_1",
+              question_id: "q1",
+              speaker: "candidate",
+              quote: "Je veux rejoindre une equipe produit proche des clients.",
+            },
+          ],
+        },
+      ],
+      risks: [],
+      question_notes: [
+        {
+          question_id: "q1",
+          prompt: "Bonjour, pouvez-vous vous presenter brievement ?",
+          category: "motivation",
+          answer_status: "satisfied",
+          answer_summary:
+            "The candidate gave a usable answer with role-related context.",
+          evidence: [
+            {
+              event_id: "evt_turn_1",
+              turn_id: "turn_1",
+              question_id: "q1",
+              speaker: "candidate",
+              quote: "Je veux rejoindre une equipe produit proche des clients.",
+            },
+          ],
+        },
+      ],
+      follow_up_questions: [
+        "Can you validate the concrete product scope mentioned by the candidate?",
+      ],
+      logistics_notes: ["No logistics constraint captured."],
+      missing_information: ["Availability needs recruiter validation."],
+      excluded_sensitive_signals: [],
+      audit: {
+        source_event_ids: ["evt_turn_1"],
+        transcript_turn_ids: ["turn_1"],
+        template_version: "recruiter-summary-v1",
+        generated_from_completed_session: true,
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.data.summaryId).toBe("rs_session_01");
+    expect(result.data.criteria[0]?.criterionId).toBe("q1");
+    expect(result.data.questionNotes[0]?.answerStatus).toBe("satisfied");
+    expect(result.data.audit.sourceEventIds).toEqual(["evt_turn_1"]);
   });
 });
 
