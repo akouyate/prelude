@@ -76,3 +76,24 @@ make env-reset
 `make env-reset` removes the local Docker volume and should only be used when you want a clean database. Keep real secrets in `.env`; it is ignored by git.
 
 Use `MIGRATION_NAME=your_migration_name make db-migrate` when adding a new Prisma migration.
+
+## Live Interview Smoke Report
+
+After a live interview smoke, generate a replayability report from the Go realtime API:
+
+```bash
+make live-smoke-report SESSION_ID=is_xxx
+```
+
+By default, the report reads from `http://127.0.0.1:8080`. Override it when the
+realtime API runs elsewhere:
+
+```bash
+make live-smoke-report SESSION_ID=is_xxx REALTIME_API_URL=http://127.0.0.1:18081
+```
+
+The report prints session status, event counts, transcript coverage, readiness
+gate checks, completion metrics, warnings, anomalies, and a `Pass`, `Retry
+needed`, or `Blocker` decision. It exits successfully when the report is
+generated; use `node scripts/live-smoke-report.mjs --strict` later if this needs
+to become a CI gate. The full enterprise dashboard view belongs to issue #21.
