@@ -35,6 +35,8 @@ FIRST_REPLY_INSTRUCTIONS = (
     "do not restart the greeting or onboarding; resume the current planned question."
 )
 
+CLOSING_PLAYOUT_TIMEOUT_SECONDS = 25.0
+
 INITIAL_GREETING_RE = re.compile(
     r"^\s*(bonjour|bonsoir|hello|hi|good morning|good afternoon|good evening)"
     r"[\s,;:!-]+",
@@ -900,14 +902,18 @@ class LiveInterviewOrchestrationController:
             actor=EventActor.AGENT,
         )
         self._orchestrator.mark_session_closed()
-        reply = _say_exact(
+        reply = _generate_exact_reply(
             self._session,
             closing,
             allow_interruptions=True,
         )
         wait_for_playout = getattr(reply, "wait_for_playout", None)
+        closing_playout_status = "not_available"
         if callable(wait_for_playout):
-            await wait_for_playout()
+            closing_playout_status = await _wait_for_playout_with_timeout(
+                wait_for_playout,
+                timeout_seconds=CLOSING_PLAYOUT_TIMEOUT_SECONDS,
+            )
         await self._emitter.emit(
             EventType.SESSION_COMPLETED,
             {
@@ -916,6 +922,7 @@ class LiveInterviewOrchestrationController:
                 "completed_questions": command.completed_questions or 0,
                 "total_questions": command.total_questions or len(self._plan.questions),
                 "closing": closing,
+                "closing_playout_status": closing_playout_status,
             },
             actor=EventActor.AGENT,
         )
@@ -1270,28 +1277,33 @@ def _closing_instructions(closing: str) -> str:
     )
 
 
-def _say_exact(
+def _generate_exact_reply(
     session: object,
     text: str,
     *,
     allow_interruptions: bool,
 ) -> object:
-    say = getattr(session, "say", None)
-    if callable(say):
-        return say(
-            text,
-            allow_interruptions=allow_interruptions,
-            add_to_chat_ctx=True,
-        )
-
     return getattr(session, "generate_reply")(
         user_input=(
-            "Read this exact message aloud verbatim and do not add anything: "
+            "The interview is complete. Read this exact checkout message aloud "
+            "verbatim and do not add anything before or after it: "
             f"{text}"
         ),
         instructions=_closing_instructions(text),
         allow_interruptions=allow_interruptions,
     )
+
+
+async def _wait_for_playout_with_timeout(
+    wait_for_playout: Callable[[], Awaitable[None]],
+    *,
+    timeout_seconds: float,
+) -> str:
+    try:
+        await asyncio.wait_for(wait_for_playout(), timeout=timeout_seconds)
+        return "completed"
+    except TimeoutError:
+        return "timeout"
 
 
 def _candidate_turn_from_live_transcript(

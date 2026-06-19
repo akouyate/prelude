@@ -16,9 +16,10 @@ from app.adapters.livekit_openai_worker import (
     build_live_interviewer_instructions,
     _candidate_turn_from_live_transcript,
     _spoken_question_prompt,
-    _wait_for_candidate_ready,
-    _supports_realtime_reasoning,
     _soft_prompt_after_initial_silence,
+    _supports_realtime_reasoning,
+    _wait_for_candidate_ready,
+    _wait_for_playout_with_timeout,
 )
 from app.domain.orchestrator import AnswerClassification, InterviewOrchestrator
 from app.domain.models import (
@@ -343,10 +344,11 @@ async def test_live_orchestration_controller_completes_three_question_flow() -> 
     assert events[-1].payload["completed_questions"] == 3
     assert events[-1].payload["total_questions"] == 3
     assert events[-1].payload["closing"] == events[-2].payload["closing"]
-    assert len(session.replies) >= 3
-    assert session.spoken[-1]["text"] == events[-2].payload["closing"]
-    assert session.spoken[-1]["allow_interruptions"] is True
-    assert session.spoken[-1]["add_to_chat_ctx"] is True
+    assert events[-1].payload["closing_playout_status"] == "completed"
+    assert len(session.replies) >= 4
+    assert events[-2].payload["closing"] in session.replies[-1]["user_input"]
+    assert session.replies[-1]["instructions"].startswith("Say exactly this closing message")
+    assert session.replies[-1]["allow_interruptions"] is True
 
 
 def test_live_transcript_role_clarification_does_not_complete_answer() -> None:
@@ -519,6 +521,19 @@ async def test_live_orchestration_controller_gives_examples_without_completing_q
     assert repeated.payload["reason"] == "candidate_requested_examples"
     assert "neutral examples" in session.replies[-1]["instructions"]
     assert "Do not move to the next question" in session.replies[-1]["instructions"]
+
+
+@pytest.mark.asyncio
+async def test_wait_for_playout_with_timeout_never_blocks_session_completion() -> None:
+    async def never_finishes() -> None:
+        await asyncio.sleep(1)
+
+    status = await _wait_for_playout_with_timeout(
+        never_finishes,
+        timeout_seconds=0,
+    )
+
+    assert status == "timeout"
 
 
 @pytest.mark.asyncio
