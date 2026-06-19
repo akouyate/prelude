@@ -188,6 +188,10 @@ class InterviewOrchestrator:
         return self._current_question_index
 
     @property
+    def completed_question_ids(self) -> tuple[str, ...]:
+        return tuple(self._completed_question_ids)
+
+    @property
     def terminal_reason(self) -> str | None:
         return self._terminal_reason
 
@@ -269,6 +273,19 @@ class InterviewOrchestrator:
         next_question = self._plan.questions[next_index]
         self._current_question_id = next_question.id
         return self._ask_question_command(next_question, next_index)
+
+    def reopen_question(self, question_id: str) -> OrchestratorCommand:
+        question_index = self._question_index(question_id)
+        question = self._plan.questions[question_index]
+        self._completed_question_ids = [
+            completed_id
+            for completed_id in self._completed_question_ids
+            if completed_id != question_id
+        ]
+        self._current_question_index = question_index
+        self._current_question_id = question_id
+        self._terminal_reason = None
+        return self._ask_question_command(question, question_index)
 
     def mark_session_closed(self) -> None:
         if self._current_question_id is not None:
@@ -455,6 +472,12 @@ class InterviewOrchestrator:
                 f"Expected active question {self._current_question_id}, got {question_id}"
             )
         return self._current_question_id
+
+    def _question_index(self, question_id: str) -> int:
+        for index, question in enumerate(self._plan.questions):
+            if question.id == question_id:
+                return index
+        raise ValueError(f"Unknown question {question_id}")
 
 
 STOPWORDS = {

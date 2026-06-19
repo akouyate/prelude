@@ -5,6 +5,7 @@ import asyncio
 import os
 from typing import Mapping
 
+from app.adapters.answer_inference import build_live_answer_inference_provider
 from app.adapters.livekit_room import LiveKitRoomAdapter
 from app.adapters.livekit_openai_worker import OpenAILiveKitWorker, OpenAILiveWorkerConfig
 from app.adapters.mock_openai_realtime import MockOpenAIRealtimeAdapter
@@ -61,6 +62,7 @@ async def run_live_worker(
             realtime_api_has_event=realtime_api.has_event,
             realtime_api_count_events=realtime_api.count_events,
             worker_config=OpenAILiveWorkerConfig.from_env(worker_env),
+            answer_inference=build_live_answer_inference_provider(worker_env),
         ).run()
 
     provider_metadata: dict[str, object] = {

@@ -378,6 +378,11 @@ def test_live_transcript_role_clarification_does_not_complete_answer() -> None:
             CandidateTurnIntent.TECHNICAL_ISSUE,
             "candidate_reported_technical_issue",
         ),
+        (
+            "Pourquoi tu m'as coupé ? Je n'ai pas pu finir ma première question.",
+            CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED,
+            "candidate_reported_interrupted_previous_answer",
+        ),
     ]
     for transcript, expected_intent, expected_reason in cases:
         turn = _candidate_turn_from_live_transcript(
@@ -518,9 +523,79 @@ async def test_live_orchestration_controller_gives_examples_without_completing_q
     assert EventType.QUESTION_COMPLETED not in event_types
     repeated = next(event for event in events if event.type == EventType.QUESTION_REPEATED)
     assert repeated.payload["candidate_intent"] == "example_request"
-    assert repeated.payload["reason"] == "candidate_requested_examples"
+    assert repeated.payload["reason"] == "candidate_requested_repeat"
+    assert repeated.payload["support_reason"] == "candidate_requested_examples"
     assert "neutral examples" in session.replies[-1]["instructions"]
     assert "Do not move to the next question" in session.replies[-1]["instructions"]
+
+
+@pytest.mark.asyncio
+async def test_live_orchestration_controller_ignores_backchannel_while_agent_speaks() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+    controller._agent_speech_in_progress = True
+    controller._agent_speech_payload = {
+        "question_id": "q1",
+        "utterance_id": "q1:live-openai:question:0",
+    }
+    controller._orchestrator.start()
+
+    await controller.handle_candidate_transcript(
+        "Oui.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+
+    assert [event.type for event in events] == [EventType.BACKCHANNEL_DETECTED]
+    assert events[0].payload["question_id"] == "q1"
+    assert events[0].payload["reason"] == "backchannel"
+
+
+@pytest.mark.asyncio
+async def test_live_orchestration_controller_reopens_previous_intro_when_candidate_was_cut() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+
+    await controller.start()
+    await controller.handle_candidate_transcript(
+        "Oui bonjour alors moi c'est Adrien, j'ai 35 ans.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+    assert controller.current_question_id == "q2"
+
+    await controller.handle_candidate_transcript(
+        "Pourquoi tu m'as coupé ? Je n'ai pas pu finir ma première question.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+
+    assert controller.current_question_id == "q1"
+    repeated = [event for event in events if event.type == EventType.QUESTION_REPEATED]
+    assert repeated
+    assert repeated[-1].payload["question_id"] == "q1"
+    assert repeated[-1].payload["candidate_intent"] == "previous_answer_not_completed"
+    assert repeated[-1].payload["resumed_from_question_id"] == "q2"
+    assert "interrupted" in session.replies[-1]["instructions"]
 
 
 @pytest.mark.asyncio

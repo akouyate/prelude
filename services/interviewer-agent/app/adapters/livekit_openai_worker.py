@@ -19,6 +19,7 @@ from app.domain.models import (
     EventType,
     InterviewEvent,
     InterviewPlan,
+    InterviewQuestion,
     InterviewStyle,
 )
 from app.domain.orchestrator import (
@@ -138,6 +139,30 @@ class CandidateTurnClassifier:
                 is_complete=True,
                 skip_requested=True,
                 reason="candidate_requested_skip",
+            )
+
+        if _contains_any(
+            normalized,
+            [
+                "tu m as coupe",
+                "vous m avez coupe",
+                "pourquoi tu m as coupe",
+                "pourquoi vous m avez coupe",
+                "j ai pas pu finir",
+                "je n ai pas pu finir",
+                "j ai pas eu le temps de finir",
+                "je n ai pas eu le temps de finir",
+                "j ai pas eu le temps de me presenter",
+                "je n ai pas eu le temps de me presenter",
+                "j ai pas fini",
+                "je n ai pas fini",
+                "ma premiere question",
+                "ma première question",
+            ],
+        ):
+            return self._non_answer_repeat(
+                CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED,
+                "candidate_reported_interrupted_previous_answer",
             )
 
         if _contains_any(
@@ -628,6 +653,8 @@ class LiveInterviewOrchestrationController:
         self._lock = asyncio.Lock()
         self._candidate_turns = 0
         self._last_candidate_intent = CandidateTurnIntent.ANSWER_COMPLETE
+        self._agent_speech_in_progress = False
+        self._agent_speech_payload: dict[str, object] | None = None
         self._terminal = False
         self._closed = asyncio.Event()
 
@@ -652,6 +679,10 @@ class LiveInterviewOrchestrationController:
                 return
 
             question_id = self._orchestrator.current_question_id
+            if self._agent_speech_in_progress and _is_backchannel(transcript):
+                await self._emit_backchannel(question_id, transcript, occurred_at)
+                return
+
             turn = _candidate_turn_from_live_transcript(
                 question_id=question_id,
                 transcript=transcript,
@@ -660,6 +691,9 @@ class LiveInterviewOrchestrationController:
             self._candidate_turns += 1
             turn_id = f"{self._emitter._session_id}:candidate:{self._candidate_turns}"
             await self._emit_candidate_turn(turn, turn_id, occurred_at)
+            if turn.candidate_intent == CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED:
+                await self._resume_previous_answer(turn=turn, turn_ids=[turn_id])
+                return
             await self._evaluate_and_execute(turn, [turn_id])
 
     async def handle_initial_silence(self) -> None:
@@ -709,6 +743,78 @@ class LiveInterviewOrchestrationController:
             actor=EventActor.CANDIDATE,
             occurred_at=occurred_at,
         )
+
+    async def _emit_backchannel(
+        self,
+        question_id: str | None,
+        transcript: str,
+        occurred_at: datetime,
+    ) -> None:
+        payload = {
+            "question_id": question_id,
+            "reason": "backchannel",
+            "observed_speech_ms": _estimated_speech_ms(transcript),
+        }
+        if self._agent_speech_payload:
+            payload["utterance_id"] = self._agent_speech_payload.get("utterance_id")
+        await self._emitter.emit(
+            EventType.BACKCHANNEL_DETECTED,
+            payload,
+            actor=EventActor.SYSTEM,
+            occurred_at=occurred_at,
+        )
+
+    async def _resume_previous_answer(
+        self,
+        *,
+        turn: CandidateTurn,
+        turn_ids: list[str],
+    ) -> None:
+        target_question = _question_to_resume(
+            plan=self._plan,
+            completed_question_ids=self._orchestrator.completed_question_ids,
+            current_question_id=self._orchestrator.current_question_id,
+            transcript=turn.transcript,
+        )
+        if target_question is None:
+            await self._evaluate_and_execute(turn, turn_ids)
+            return
+
+        decision = self._orchestrator.evaluate_answer(
+            classification=InterviewOrchestrator.classify_candidate_turn(turn),
+            turn_ids=turn_ids,
+            reason_codes=[
+                f"candidate_intent:{turn.candidate_intent.value}",
+                turn.classifier_reason or "candidate_reported_interrupted_previous_answer",
+                f"resume_question:{target_question.id}",
+            ],
+            confidence=1.0,
+        )
+        await self._emitter.emit(
+            EventType.ANSWER_EVALUATED,
+            decision.answer_evaluation.to_payload(),
+            actor=EventActor.SYSTEM,
+        )
+        command = self._orchestrator.reopen_question(target_question.id)
+        await self._speak_question_control(
+            EventType.QUESTION_REPEATED,
+            command=command,
+            utterance_kind="repeat",
+            prompt=target_question.prompt,
+            instructions=(
+                "The candidate says they were interrupted and did not finish an earlier "
+                "answer. Apologize briefly, invite them to finish, and re-ask only this "
+                f"question: {target_question.prompt}. Do not move to another question."
+            ),
+            extra_payload={
+                "reason": "candidate_requested_repeat",
+                "support_reason": turn.classifier_reason
+                or "candidate_reported_interrupted_previous_answer",
+                "candidate_intent": turn.candidate_intent.value,
+                "resumed_from_question_id": turn.question_id,
+            },
+        )
+        self._orchestrator.mark_question_asked(target_question.id)
 
     async def _evaluate_and_execute(
         self,
@@ -762,7 +868,8 @@ class LiveInterviewOrchestrationController:
                 prompt=repeat_response.prompt,
                 instructions=repeat_response.instructions,
                 extra_payload={
-                    "reason": repeat_response.reason,
+                    "reason": "candidate_requested_repeat",
+                    "support_reason": repeat_response.reason,
                     "candidate_intent": self._last_candidate_intent.value,
                 },
             )
@@ -875,6 +982,12 @@ class LiveInterviewOrchestrationController:
             },
             actor=EventActor.AGENT,
         )
+        self._agent_speech_in_progress = True
+        self._agent_speech_payload = {
+            "question_id": command.question_id,
+            "utterance_id": utterance_id,
+            "utterance_kind": utterance_kind,
+        }
         await self._emitter.emit(
             event_type,
             {
@@ -889,8 +1002,12 @@ class LiveInterviewOrchestrationController:
             allow_interruptions=True,
         )
         wait_for_playout = getattr(reply, "wait_for_playout", None)
-        if callable(wait_for_playout):
-            await wait_for_playout()
+        try:
+            if callable(wait_for_playout):
+                await wait_for_playout()
+        finally:
+            self._agent_speech_in_progress = False
+            self._agent_speech_payload = None
 
     async def _close_session(self, command: OrchestratorCommand) -> None:
         self._terminal = True
@@ -951,12 +1068,14 @@ class OpenAILiveKitWorker:
         realtime_api_has_event: Callable[[str, EventType], Awaitable[bool]],
         realtime_api_count_events: Callable[[str], Awaitable[int]],
         worker_config: OpenAILiveWorkerConfig,
+        answer_inference: AnswerInferenceProvider | None = None,
     ) -> None:
         self._agent_config = agent_config
         self._emit_event = realtime_api_emit_event
         self._has_event = realtime_api_has_event
         self._count_events = realtime_api_count_events
         self._worker_config = worker_config
+        self._answer_inference = answer_inference
         self._room = None
         self._agent_session = None
         self._realtime_model = None
@@ -1049,6 +1168,7 @@ class OpenAILiveKitWorker:
                 plan=self._agent_config.interview_plan,
                 emitter=emitter,
                 session=session,
+                answer_inference=self._answer_inference,
             )
             bridge = LiveKitAgentEventBridge(
                 emitter=emitter,
@@ -1339,12 +1459,84 @@ def _candidate_turn_from_live_transcript(
     )
 
 
+def _is_backchannel(transcript: str) -> bool:
+    normalized = _normalize_candidate_text(transcript)
+    return normalized in {
+        "oui",
+        "ok",
+        "okay",
+        "d accord",
+        "vas y",
+        "allez y",
+        "hum",
+        "mm",
+        "hm",
+        "yes",
+        "yeah",
+    }
+
+
+def _estimated_speech_ms(transcript: str) -> int:
+    words = [word for word in _normalize_candidate_text(transcript).split(" ") if word]
+    return max(250, min(len(words) * 350, 2_000))
+
+
+def _question_to_resume(
+    *,
+    plan: InterviewPlan,
+    completed_question_ids: tuple[str, ...],
+    current_question_id: str | None,
+    transcript: str,
+) -> InterviewQuestion | None:
+    if not completed_question_ids:
+        return None
+
+    normalized = _normalize_candidate_text(transcript)
+    completed_questions = [
+        question for question in plan.questions if question.id in completed_question_ids
+    ]
+    if _contains_any(normalized, ["premiere question", "première question"]):
+        return completed_questions[0]
+
+    if "present" in normalized:
+        for question in completed_questions:
+            if "present" in _normalize_candidate_text(question.prompt):
+                return question
+
+    if current_question_id:
+        current_index = next(
+            (
+                index
+                for index, question in enumerate(plan.questions)
+                if question.id == current_question_id
+            ),
+            None,
+        )
+        if current_index is not None and current_index > 0:
+            previous_question = plan.questions[current_index - 1]
+            if previous_question.id in completed_question_ids:
+                return previous_question
+
+    return completed_questions[-1]
+
+
 def _repeat_response_for_candidate_intent(
     *,
     plan: InterviewPlan,
     question_prompt: str,
     intent: CandidateTurnIntent,
 ) -> CandidateSupportResponse:
+    if intent == CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED:
+        return CandidateSupportResponse(
+            prompt=question_prompt,
+            instructions=(
+                "The candidate says they were interrupted or did not have time to finish. "
+                "Apologize briefly, invite them to finish, then re-ask the relevant "
+                "planned question. Do not move to the next question."
+            ),
+            reason="candidate_requested_repeat",
+        )
+
     if intent == CandidateTurnIntent.CLARIFY_ROLE:
         return CandidateSupportResponse(
             prompt=f"Le poste est {plan.role_title}. {question_prompt}",

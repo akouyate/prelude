@@ -53,6 +53,7 @@ class CandidateTurnIntent(StrEnum):
     WAIT_REQUEST = "wait_request"
     PASS = "pass"
     TECHNICAL_ISSUE = "technical_issue"
+    PREVIOUS_ANSWER_NOT_COMPLETED = "previous_answer_not_completed"
     SILENCE = "silence"
 
 
