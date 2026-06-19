@@ -51,6 +51,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--api-key", default=None, help="Optional bearer token for the Go API.")
     parser.add_argument(
+        "--allow-live-llm-tests",
+        action="store_true",
+        help=(
+            "Allow paid live LLM provider benchmarks. Without this flag or "
+            "ALLOW_LIVE_LLM_TESTS=1, real providers are blocked."
+        ),
+    )
+    parser.add_argument(
         "--output-json",
         default=None,
         help="Optional path where the benchmark report JSON should be written.",
@@ -67,6 +75,7 @@ async def main() -> None:
         "session_id_prefix": args.session_id_prefix,
         "realtime_api_url": args.realtime_api_url,
         "api_key": args.api_key,
+        "allow_live_llm_tests": args.allow_live_llm_tests,
     }
     if args.benchmark_run_id:
         config_kwargs["benchmark_run_id"] = args.benchmark_run_id
