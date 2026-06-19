@@ -468,6 +468,102 @@ export const liveInterviewWorkerAgentConfigSchema = z.object({
   provider: liveInterviewProviderSchema,
 });
 
+export const liveInterviewRecruiterSummaryRecommendationSchema = z.enum([
+  "proceed_to_recruiter_review",
+  "needs_recruiter_review",
+  "insufficient_evidence",
+  "follow_up_required",
+  "potential_fit_pending_validation",
+]);
+
+export const liveInterviewRecruiterSummaryCriterionStatusSchema = z.enum([
+  "satisfied",
+  "unclear",
+  "missing",
+  "not_assessed",
+]);
+
+export const liveInterviewRecruiterSummaryConfidenceSchema = z.enum([
+  "high",
+  "medium",
+  "low",
+]);
+
+const recruiterSummaryEvidenceSchema = z.object({
+  eventId: z.string().min(1),
+  turnId: z.string().min(1).optional(),
+  questionId: z.string().min(1).optional(),
+  speaker: liveInterviewSpeakerSchema,
+  quote: z.string().trim().min(1).max(600),
+});
+
+const recruiterSummarySignalSchema = z.object({
+  title: z.string().trim().min(2).max(160),
+  explanation: z.string().trim().min(8).max(900),
+  confidence: liveInterviewRecruiterSummaryConfidenceSchema,
+  evidence: z.array(recruiterSummaryEvidenceSchema).max(3),
+});
+
+export const liveInterviewRecruiterSummarySchema = z.object({
+  summaryId: z.string().min(1),
+  sessionId: z.string().min(1),
+  candidateId: z.string().min(1),
+  planId: z.string().min(1),
+  roleTitle: z.string().trim().min(2).max(160),
+  status: z.enum(["complete", "incomplete"]),
+  generatedAt: z.string().datetime(),
+  summaryVersion: z.string().min(1).max(120),
+  generator: z.enum(["deterministic_v1", "llm_assisted"]),
+  disclaimer: z.string().trim().min(12).max(500),
+  overview: z.string().trim().min(12).max(1000),
+  recommendation: z.object({
+    value: liveInterviewRecruiterSummaryRecommendationSchema,
+    label: z.string().trim().min(2).max(120),
+    rationale: z.string().trim().min(12).max(800),
+  }),
+  criteria: z
+    .array(
+      z.object({
+        criterionId: z.string().min(1),
+        label: z.string().trim().min(2).max(180),
+        category: liveInterviewQuestionCategorySchema.or(z.string().min(1)),
+        status: liveInterviewRecruiterSummaryCriterionStatusSchema,
+        evidence: z.array(recruiterSummaryEvidenceSchema).max(3),
+        note: z.string().trim().min(4).max(800),
+      }),
+    )
+    .min(1),
+  strengths: z.array(recruiterSummarySignalSchema).max(5),
+  risks: z.array(recruiterSummarySignalSchema).max(5),
+  questionNotes: z
+    .array(
+      z.object({
+        questionId: z.string().min(1),
+        prompt: z.string().trim().min(8).max(800),
+        category: liveInterviewQuestionCategorySchema.or(z.string().min(1)),
+        answerStatus: liveInterviewRecruiterSummaryCriterionStatusSchema,
+        answerSummary: z.string().trim().min(4).max(900),
+        evidence: z.array(recruiterSummaryEvidenceSchema).max(3),
+      }),
+    )
+    .min(1),
+  followUpQuestions: z.array(z.string().trim().min(8).max(500)).max(8),
+  logisticsNotes: z.array(z.string().trim().min(4).max(500)).max(6),
+  missingInformation: z.array(z.string().trim().min(4).max(500)).max(8),
+  excludedSensitiveSignals: z.array(z.string().trim().min(2).max(160)).max(12),
+  audit: z.object({
+    sourceEventIds: z.array(z.string().min(1)),
+    transcriptTurnIds: z.array(z.string().min(1)),
+    templateVersion: z.string().min(1).max(120),
+    generatedFromCompletedSession: z.boolean(),
+  }),
+});
+
+export const liveInterviewRecruiterSummaryWireSchema = z.preprocess(
+  normalizeWireKeys,
+  liveInterviewRecruiterSummarySchema,
+);
+
 export type LiveInterviewProvider = z.infer<typeof liveInterviewProviderSchema>;
 export type LiveInterviewMode = z.infer<typeof liveInterviewModeSchema>;
 export type LiveInterviewSessionStatus = z.infer<
@@ -502,4 +598,7 @@ export type LiveInterviewAgentConfig = z.infer<
 >;
 export type LiveInterviewWorkerAgentConfig = z.infer<
   typeof liveInterviewWorkerAgentConfigSchema
+>;
+export type LiveInterviewRecruiterSummary = z.infer<
+  typeof liveInterviewRecruiterSummarySchema
 >;

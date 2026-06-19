@@ -34,6 +34,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}", s.handleGetSession)
 	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}/agent-config", s.handleGetAgentConfig)
 	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}/transcript", s.handleGetTranscript)
+	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}/summary", s.handleGetRecruiterSummary)
 	s.mux.HandleFunc("POST /v1/interview-sessions/{session_id}/events", s.handleIngestEvent)
 }
 
@@ -98,6 +99,16 @@ func (s *Server) handleGetTranscript(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"transcript": transcript})
+}
+
+func (s *Server) handleGetRecruiterSummary(w http.ResponseWriter, r *http.Request) {
+	summary, err := s.service.GetRecruiterSummary(r.Context(), r.PathValue("session_id"))
+	if err != nil {
+		writeServiceError(w, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"summary": summary})
 }
 
 type ingestEventRequest struct {

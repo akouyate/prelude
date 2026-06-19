@@ -240,6 +240,88 @@ func TestServerReturnsTranscriptFromFinalizedTurns(t *testing.T) {
 	}
 }
 
+func TestServerReturnsRecruiterSummary(t *testing.T) {
+	server := newTestServer()
+
+	createResponse := httptest.NewRecorder()
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/interview-sessions", bytes.NewBufferString(`{
+		"interview_plan_id": "plan_123",
+		"candidate_id": "candidate_123"
+	}`))
+	createRequest.Header.Set("content-type", "application/json")
+	server.ServeHTTP(createResponse, createRequest)
+
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("expected create status 201, got %d: %s", createResponse.Code, createResponse.Body.String())
+	}
+
+	var createBody struct {
+		Session struct {
+			ID string `json:"id"`
+		} `json:"session"`
+	}
+	if err := json.Unmarshal(createResponse.Body.Bytes(), &createBody); err != nil {
+		t.Fatalf("failed to decode create response: %v", err)
+	}
+
+	for _, body := range []string{
+		`{
+			"event_id": "evt_started",
+			"type": "session_started",
+			"actor": "agent",
+			"sequence_number": 1,
+			"idempotency_key": "evt_started:idempotency",
+			"payload": {"source": "agent"}
+		}`,
+		`{
+			"event_id": "evt_turn",
+			"type": "candidate_turn_finalized",
+			"actor": "candidate",
+			"sequence_number": 2,
+			"idempotency_key": "evt_turn:idempotency",
+			"payload": {
+				"question_id": "q1",
+				"completion_reason": "answered",
+				"transcript_turn": {
+					"turn_id": "turn_1",
+					"session_id": "` + createBody.Session.ID + `",
+					"question_id": "q1",
+					"speaker": "candidate",
+					"text": "Je veux travailler sur un produit B2B avec des clients exigeants et des arbitrages clairs.",
+					"is_final": true,
+					"started_at": "2026-06-17T10:00:05Z",
+					"ended_at": "2026-06-17T10:00:08Z"
+				}
+			}
+		}`,
+	} {
+		response := httptest.NewRecorder()
+		request := httptest.NewRequest(http.MethodPost, "/v1/interview-sessions/"+createBody.Session.ID+"/events", bytes.NewBufferString(body))
+		request.Header.Set("content-type", "application/json")
+		server.ServeHTTP(response, request)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("expected event status 202, got %d: %s", response.Code, response.Body.String())
+		}
+	}
+
+	summaryResponse := httptest.NewRecorder()
+	summaryRequest := httptest.NewRequest(http.MethodGet, "/v1/interview-sessions/"+createBody.Session.ID+"/summary", nil)
+	server.ServeHTTP(summaryResponse, summaryRequest)
+
+	if summaryResponse.Code != http.StatusOK {
+		t.Fatalf("expected summary status 200, got %d: %s", summaryResponse.Code, summaryResponse.Body.String())
+	}
+	if !bytes.Contains(summaryResponse.Body.Bytes(), []byte(`"summary_id":"rs_`+createBody.Session.ID+`"`)) {
+		t.Fatalf("expected summary id, got %s", summaryResponse.Body.String())
+	}
+	if !bytes.Contains(summaryResponse.Body.Bytes(), []byte(`"recommendation"`)) {
+		t.Fatalf("expected recommendation, got %s", summaryResponse.Body.String())
+	}
+	if !bytes.Contains(summaryResponse.Body.Bytes(), []byte(`"audit"`)) {
+		t.Fatalf("expected audit metadata, got %s", summaryResponse.Body.String())
+	}
+}
+
 func TestServerAcceptsAnswerEvaluatedEvent(t *testing.T) {
 	server := newTestServer()
 

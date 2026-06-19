@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -1175,5 +1176,145 @@ func TestServiceReconstructsTranscriptFromAnyNormalizedTranscriptEvent(t *testin
 	}
 	if transcript[1].Speaker != domain.TranscriptSpeakerCandidate {
 		t.Fatalf("expected candidate second, got %s", transcript[1].Speaker)
+	}
+}
+
+func TestServiceBuildsRecruiterSummaryFromTranscriptEvents(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 45, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	events := []application.IngestEventInput{
+		eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted),
+		eventInput(session.Session.ID, 2, "evt_q1", domain.EventQuestionAsked),
+		eventInput(session.Session.ID, 3, "evt_turn_q1", domain.EventCandidateTurnFinalized),
+		eventInput(session.Session.ID, 4, "evt_eval_q1", domain.EventAnswerEvaluated),
+		eventInput(session.Session.ID, 5, "evt_q2", domain.EventQuestionAsked),
+		eventInput(session.Session.ID, 6, "evt_turn_q2", domain.EventCandidateTurnFinalized),
+		eventInput(session.Session.ID, 7, "evt_eval_q2", domain.EventAnswerEvaluated),
+		eventInput(session.Session.ID, 8, "evt_completed", domain.EventSessionCompleted),
+	}
+	events[1].Payload = validQuestionAskedPayload(session.Session.ID, "q1", 0)
+	events[2].Actor = domain.EventActorCandidate
+	events[2].Payload = validCandidateTurnFinalizedPayload(
+		session.Session.ID,
+		"q1",
+		"turn_q1",
+		"Je cherche un poste produit proche des clients B2B, avec des arbitrages concrets et une forte collaboration avec les equipes sales et success.",
+	)
+	events[3].Actor = domain.EventActorSystem
+	events[3].Payload = validAnswerEvaluatedPayload("q1", "turn_q1", "complete", "complete_question")
+	events[4].Payload = validQuestionAskedPayload(session.Session.ID, "q2", 1)
+	events[5].Actor = domain.EventActorCandidate
+	events[5].Payload = validCandidateTurnFinalizedPayload(
+		session.Session.ID,
+		"q2",
+		"turn_q2",
+		"Dans mon dernier role, j'ai priorise une integration critique apres avoir compare l'impact client, le cout technique et le risque de churn.",
+	)
+	events[6].Actor = domain.EventActorSystem
+	events[6].Payload = validAnswerEvaluatedPayload("q2", "turn_q2", "complete", "complete_question")
+	events[7].Payload = json.RawMessage(`{
+		"completed_reason": "all_questions_completed",
+		"completed_questions": 2,
+		"total_questions": 3
+	}`)
+
+	for _, event := range events {
+		if _, err := service.IngestEvent(context.Background(), event); err != nil {
+			t.Fatalf("IngestEvent(%s) returned error: %v", event.Type, err)
+		}
+	}
+
+	summary, err := service.GetRecruiterSummary(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetRecruiterSummary returned error: %v", err)
+	}
+
+	if summary.SummaryID != "rs_"+session.Session.ID {
+		t.Fatalf("unexpected summary id %s", summary.SummaryID)
+	}
+	if summary.Status != "complete" {
+		t.Fatalf("expected complete summary, got %s", summary.Status)
+	}
+	if summary.Recommendation.Value != "follow_up_required" {
+		t.Fatalf("expected follow_up_required recommendation, got %s", summary.Recommendation.Value)
+	}
+	if len(summary.Criteria) != 3 {
+		t.Fatalf("expected 3 criteria, got %d", len(summary.Criteria))
+	}
+	if summary.Criteria[0].Status != "satisfied" || summary.Criteria[2].Status != "missing" {
+		t.Fatalf("unexpected criteria statuses: %#v", summary.Criteria)
+	}
+	if len(summary.Strengths) == 0 || len(summary.Strengths[0].Evidence) == 0 {
+		t.Fatalf("expected grounded strength evidence, got %#v", summary.Strengths)
+	}
+	if len(summary.MissingInformation) == 0 {
+		t.Fatal("expected missing information for unanswered logistics")
+	}
+	if !summary.Audit.GeneratedFromCompletedSession {
+		t.Fatal("expected audit to mark completed session")
+	}
+	if len(summary.Audit.SourceEventIDs) != len(events) {
+		t.Fatalf("expected %d source event ids, got %d", len(events), len(summary.Audit.SourceEventIDs))
+	}
+}
+
+func TestServiceRecruiterSummaryExcludesSensitiveCandidateSignals(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 45, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	events := []application.IngestEventInput{
+		eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted),
+		eventInput(session.Session.ID, 2, "evt_q1", domain.EventQuestionAsked),
+		eventInput(session.Session.ID, 3, "evt_turn_sensitive", domain.EventCandidateTurnFinalized),
+	}
+	events[1].Payload = validQuestionAskedPayload(session.Session.ID, "q1", 0)
+	events[2].Actor = domain.EventActorCandidate
+	events[2].Payload = validCandidateTurnFinalizedPayload(
+		session.Session.ID,
+		"q1",
+		"turn_sensitive",
+		"J'ai 54 ans et je peux aussi parler de mon experience produit avec les clients B2B.",
+	)
+
+	for _, event := range events {
+		if _, err := service.IngestEvent(context.Background(), event); err != nil {
+			t.Fatalf("IngestEvent(%s) returned error: %v", event.Type, err)
+		}
+	}
+
+	summary, err := service.GetRecruiterSummary(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetRecruiterSummary returned error: %v", err)
+	}
+
+	if summary.Recommendation.Value != "insufficient_evidence" {
+		t.Fatalf("expected insufficient evidence, got %s", summary.Recommendation.Value)
+	}
+	if len(summary.ExcludedSensitiveSignals) != 1 || summary.ExcludedSensitiveSignals[0] != "age" {
+		t.Fatalf("expected age exclusion, got %#v", summary.ExcludedSensitiveSignals)
+	}
+	for _, criterion := range summary.Criteria {
+		for _, evidence := range criterion.Evidence {
+			if strings.Contains(evidence.Quote, "54 ans") {
+				t.Fatalf("sensitive quote leaked into evidence: %#v", evidence)
+			}
+		}
 	}
 }
