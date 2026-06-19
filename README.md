@@ -92,8 +92,11 @@ realtime API runs elsewhere:
 make live-smoke-report SESSION_ID=is_xxx REALTIME_API_URL=http://127.0.0.1:18081
 ```
 
-The report prints session status, event counts, transcript coverage, readiness
-gate checks, completion metrics, warnings, anomalies, and a `Pass`, `Retry
-needed`, or `Blocker` decision. It exits successfully when the report is
-generated; use `node scripts/live-smoke-report.mjs --strict` later if this needs
-to become a CI gate. The full enterprise dashboard view belongs to issue #21.
+The readiness gate expects both `candidate_joined` and `candidate_media_ready`.
+`candidate_media_ready` is emitted only after the browser has published the local
+microphone/camera tracks. The report prints session status, event counts,
+transcript coverage, readiness gate checks, completion metrics, warnings,
+anomalies, and a `Pass`, `Retry needed`, or `Blocker` decision. It exits
+successfully when the report is generated; use
+`node scripts/live-smoke-report.mjs --strict` later if this needs to become a CI
+gate. The full enterprise dashboard view belongs to issue #21.

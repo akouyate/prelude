@@ -405,6 +405,55 @@ func TestServiceIngestEventTransitionsSessionState(t *testing.T) {
 	}
 }
 
+func TestServiceAcceptsCandidateMediaReadinessBeforeAgentJoin(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID:   "plan_123",
+		CandidateID:       "candidate_123",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio, domain.ModalityVideo},
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	joined := eventInput(session.Session.ID, 1, "evt_candidate_joined", domain.EventCandidateJoined)
+	joined.Actor = domain.EventActorCandidate
+	joined.Payload = json.RawMessage(`{
+		"candidate_participant_id": "candidate-session",
+		"room_name": "prelude-session-test",
+		"modes": ["audio", "video"]
+	}`)
+	if _, err := service.IngestEvent(context.Background(), joined); err != nil {
+		t.Fatalf("candidate_joined returned error: %v", err)
+	}
+
+	mediaReady := eventInput(session.Session.ID, 2, "evt_candidate_media_ready", domain.EventCandidateMediaReady)
+	mediaReady.Actor = domain.EventActorCandidate
+	mediaReady.Payload = json.RawMessage(`{
+		"candidate_participant_id": "candidate-session",
+		"room_name": "prelude-session-test",
+		"audio": true,
+		"video": true,
+		"published_tracks": ["microphone", "camera"]
+	}`)
+	if _, err := service.IngestEvent(context.Background(), mediaReady); err != nil {
+		t.Fatalf("candidate_media_ready returned error: %v", err)
+	}
+
+	got, err := service.GetSession(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if got.Status != domain.SessionStatusAgentJoining {
+		t.Fatalf("expected agent_joining, got %s", got.Status)
+	}
+	if len(got.Events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(got.Events))
+	}
+}
+
 func TestServiceRejectsOutOfOrderQuestionEvent(t *testing.T) {
 	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
 	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
@@ -612,6 +661,17 @@ func TestServiceRejectsInvalidMetricBearingPayloads(t *testing.T) {
 			eventType: domain.EventBargeInAccepted,
 			actor:     domain.EventActorSystem,
 			payload:   json.RawMessage(`{"utterance_id":"q1:question:0","cancel_latency_ms":-1}`),
+		},
+		{
+			name:      "media ready without microphone track",
+			eventType: domain.EventCandidateMediaReady,
+			actor:     domain.EventActorCandidate,
+			payload: json.RawMessage(`{
+				"candidate_participant_id": "candidate-session",
+				"audio": true,
+				"video": false,
+				"published_tracks": ["camera"]
+			}`),
 		},
 	}
 

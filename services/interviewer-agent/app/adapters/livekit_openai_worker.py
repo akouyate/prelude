@@ -1096,12 +1096,22 @@ async def _wait_for_candidate_ready(
     poll_interval_seconds: float = 0.5,
 ) -> None:
     deadline = asyncio.get_running_loop().time() + timeout_seconds
+    required_events = {
+        EventType.CANDIDATE_JOINED,
+        EventType.CANDIDATE_MEDIA_READY,
+    }
+    ready_events: set[EventType] = set()
     while True:
-        if await has_event(session_id, EventType.CANDIDATE_JOINED):
+        for event_type in required_events - ready_events:
+            if await has_event(session_id, event_type):
+                ready_events.add(event_type)
+        if ready_events == required_events:
             return
         if asyncio.get_running_loop().time() >= deadline:
+            missing_events = sorted(event.value for event in required_events - ready_events)
             raise TimeoutError(
-                f"candidate readiness event was not received for session {session_id}"
+                "candidate readiness events were not received for session "
+                f"{session_id}: {', '.join(missing_events)}"
             )
         await asyncio.sleep(poll_interval_seconds)
 

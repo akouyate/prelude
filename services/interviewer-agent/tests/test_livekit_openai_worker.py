@@ -455,13 +455,20 @@ async def test_soft_prompt_after_initial_silence_skips_when_candidate_had_activi
 
 
 @pytest.mark.asyncio
-async def test_wait_for_candidate_ready_polls_until_candidate_joined() -> None:
-    attempts = 0
+async def test_wait_for_candidate_ready_polls_until_joined_and_media_ready() -> None:
+    seen_events: list[EventType] = []
+    available_events: set[EventType] = set()
 
     async def has_event(_session_id: str, event_type: EventType) -> bool:
-        nonlocal attempts
-        attempts += 1
-        return event_type == EventType.CANDIDATE_JOINED and attempts == 2
+        seen_events.append(event_type)
+        if event_type == EventType.CANDIDATE_JOINED:
+            available_events.add(EventType.CANDIDATE_JOINED)
+        if (
+            event_type == EventType.CANDIDATE_MEDIA_READY
+            and EventType.CANDIDATE_JOINED in available_events
+        ):
+            available_events.add(EventType.CANDIDATE_MEDIA_READY)
+        return event_type in available_events
 
     await _wait_for_candidate_ready(
         session_id="session-test",
@@ -470,7 +477,8 @@ async def test_wait_for_candidate_ready_polls_until_candidate_joined() -> None:
         poll_interval_seconds=0,
     )
 
-    assert attempts == 2
+    assert EventType.CANDIDATE_JOINED in seen_events
+    assert EventType.CANDIDATE_MEDIA_READY in seen_events
 
 
 def test_live_interviewer_instructions_keep_first_screening_scope() -> None:

@@ -19,6 +19,11 @@ type RouteContext = {
   params: Promise<{ sessionId: string }>;
 };
 
+const supportedCandidateEventTypes = new Set([
+  "candidate_joined",
+  "candidate_media_ready",
+]);
+
 export async function POST(request: Request, context: RouteContext) {
   const { sessionId } = await context.params;
   const body = (await request.json().catch(() => null)) as {
@@ -26,10 +31,11 @@ export async function POST(request: Request, context: RouteContext) {
     payload?: Record<string, unknown>;
   } | null;
 
-  if (body?.type !== "candidate_joined") {
+  const eventType = body?.type;
+  if (!eventType || !supportedCandidateEventTypes.has(eventType)) {
     return NextResponse.json(
       { error: { code: "unsupported_event_type" } },
-      { status: 400 }
+      { status: 400 },
     );
   }
 
@@ -37,29 +43,39 @@ export async function POST(request: Request, context: RouteContext) {
     `${REALTIME_API_URL}/v1/interview-sessions/${sessionId}`,
     {
       headers: { accept: "application/json" },
-      cache: "no-store"
-    }
+      cache: "no-store",
+    },
   ).catch(() => null);
 
   if (!sessionResponse?.ok) {
     return NextResponse.json(
       { error: { code: "session_unavailable" } },
-      { status: 502 }
+      { status: 502 },
     );
   }
 
-  const sessionPayload = (await sessionResponse.json()) as RealtimeSessionPayload;
+  const sessionPayload =
+    (await sessionResponse.json()) as RealtimeSessionPayload;
   const session = sessionPayload.session;
   if (!session) {
     return NextResponse.json(
       { error: { code: "session_unavailable" } },
-      { status: 502 }
+      { status: 502 },
     );
   }
 
   const events = session.events ?? [];
-  if (events.some((event) => event.type === "candidate_joined")) {
+  if (events.some((event) => event.type === eventType)) {
     return NextResponse.json({ duplicate: true });
+  }
+  if (
+    eventType === "candidate_media_ready" &&
+    !events.some((event) => event.type === "candidate_joined")
+  ) {
+    return NextResponse.json(
+      { error: { code: "candidate_not_joined" } },
+      { status: 409 },
+    );
   }
 
   const eventResponse = await fetch(
@@ -68,23 +84,23 @@ export async function POST(request: Request, context: RouteContext) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        event_id: `evt_${sessionId}_candidate_joined`,
+        event_id: `evt_${sessionId}_${eventType}`,
         session_id: sessionId,
         candidate_id: session.candidate_id,
-        type: "candidate_joined",
+        type: eventType,
         actor: "candidate",
         sequence_number: events.length + 1,
-        idempotency_key: `${sessionId}:candidate_joined`,
-        payload: body.payload ?? {}
+        idempotency_key: `${sessionId}:${eventType}`,
+        payload: body.payload ?? {},
       }),
-      cache: "no-store"
-    }
+      cache: "no-store",
+    },
   ).catch(() => null);
 
   if (!eventResponse?.ok) {
     return NextResponse.json(
       { error: { code: "event_ingest_failed" } },
-      { status: 502 }
+      { status: 502 },
     );
   }
 

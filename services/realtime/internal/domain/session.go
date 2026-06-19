@@ -31,6 +31,7 @@ type EventType string
 const (
 	EventSessionStarted         EventType = "session_started"
 	EventCandidateJoined        EventType = "candidate_joined"
+	EventCandidateMediaReady    EventType = "candidate_media_ready"
 	EventAgentJoined            EventType = "agent_joined"
 	EventAgentSpeechStarted     EventType = "agent_speech_started"
 	EventAgentSpeechCompleted   EventType = "agent_speech_completed"
@@ -135,6 +136,8 @@ func CanApplyEvent(status SessionStatus, eventType EventType) bool {
 	switch eventType {
 	case EventCandidateJoined:
 		return status == SessionStatusWaitingCandidate || status == SessionStatusCreated
+	case EventCandidateMediaReady:
+		return status == SessionStatusAgentJoining || status == SessionStatusInProgress
 	case EventAgentJoined:
 		return status == SessionStatusAgentJoining || status == SessionStatusWaitingCandidate
 	case EventSessionStarted:

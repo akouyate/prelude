@@ -12,7 +12,7 @@ import {
   PhoneOff,
   RefreshCcw,
   ShieldCheck,
-  Video
+  Video,
 } from "lucide-react";
 
 type RoomStatus =
@@ -53,18 +53,24 @@ const statusCopy: Record<RoomStatus, string> = {
   connected: "Live",
   reconnecting: "Reconnecting",
   failed: "Failed",
-  completed: "Completed"
+  completed: "Completed",
 };
 
 export function LiveInterviewRoom({ token }: { token: string }) {
   const [status, setStatus] = React.useState<RoomStatus>("ready");
-  const [session, setSession] = React.useState<LiveInterviewSession | null>(null);
+  const [session, setSession] = React.useState<LiveInterviewSession | null>(
+    null,
+  );
   const [error, setError] = React.useState<string | null>(null);
   const [isVideoEnabled, setIsVideoEnabled] = React.useState(true);
-  const [isAudioPlaybackBlocked, setIsAudioPlaybackBlocked] = React.useState(false);
-  const [localStream, setLocalStream] = React.useState<MediaStream | null>(null);
+  const [isAudioPlaybackBlocked, setIsAudioPlaybackBlocked] =
+    React.useState(false);
+  const [localStream, setLocalStream] = React.useState<MediaStream | null>(
+    null,
+  );
   const roomRef = React.useRef<ConnectedRoom | null>(null);
   const localStreamRef = React.useRef<MediaStream | null>(null);
+  const startInFlightRef = React.useRef(false);
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
 
   React.useEffect(() => {
@@ -82,6 +88,13 @@ export function LiveInterviewRoom({ token }: { token: string }) {
   }, []);
 
   const startInterview = React.useCallback(async () => {
+    if (startInFlightRef.current) {
+      return;
+    }
+
+    startInFlightRef.current = true;
+    let grantedStream: MediaStream | null = null;
+
     setError(null);
     setIsAudioPlaybackBlocked(false);
     setStatus("preparing");
@@ -93,8 +106,10 @@ export function LiveInterviewRoom({ token }: { token: string }) {
       setStatus("permission_required");
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: nextSession.allowedModalities.includes("video") && isVideoEnabled
+        video:
+          nextSession.allowedModalities.includes("video") && isVideoEnabled,
       });
+      grantedStream = stream;
       setLocalStream(stream);
 
       setStatus("connecting");
@@ -103,14 +118,28 @@ export function LiveInterviewRoom({ token }: { token: string }) {
         stream,
         onReconnecting: () => setStatus("reconnecting"),
         onConnected: () => setStatus("interviewer_joining"),
-        onReady: () => setStatus("connected"),
+        onReady: () => setStatus("interviewer_joining"),
         onDisconnected: () => setStatus("completed"),
         onAudioPlaybackBlocked: () => setIsAudioPlaybackBlocked(true),
-        onAudioPlaybackReady: () => setIsAudioPlaybackBlocked(false)
+        onAudioPlaybackReady: () => {
+          setIsAudioPlaybackBlocked(false);
+          setStatus((currentStatus) =>
+            currentStatus === "interviewer_joining" ||
+            currentStatus === "reconnecting"
+              ? "connected"
+              : currentStatus,
+          );
+        },
       });
     } catch (cause) {
+      roomRef.current?.disconnect();
+      roomRef.current = null;
+      stopLocalStream(grantedStream);
+      setLocalStream(null);
       setStatus("failed");
       setError(toCandidateError(cause));
+    } finally {
+      startInFlightRef.current = false;
     }
   }, [isVideoEnabled, token]);
 
@@ -135,10 +164,11 @@ export function LiveInterviewRoom({ token }: { token: string }) {
   const isBusy =
     status === "preparing" ||
     status === "permission_required" ||
-    status === "connecting" ||
+    status === "connecting";
+  const isRoomActive =
     status === "interviewer_joining" ||
+    status === "connected" ||
     status === "reconnecting";
-  const isConnected = status === "connected" || status === "reconnecting";
 
   return (
     <section className="flex flex-1 flex-col justify-between">
@@ -162,7 +192,8 @@ export function LiveInterviewRoom({ token }: { token: string }) {
             <div>
               <p className="text-sm font-semibold">Live room</p>
               <p className="mt-1 text-sm text-ink-600">
-                {session?.livekit.roomName ?? "Session will be created when you start."}
+                {session?.livekit.roomName ??
+                  "Session will be created when you start."}
               </p>
             </div>
             <StatusPill status={status} />
@@ -176,8 +207,12 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           {status === "ready" ? (
             <label className="mt-4 flex items-center justify-between rounded-md border border-ink-200 px-3 py-3 text-sm">
               <span>
-                <span className="block font-medium text-ink-900">Enable video</span>
-                <span className="block text-ink-600">Audio stays available either way.</span>
+                <span className="block font-medium text-ink-900">
+                  Enable video
+                </span>
+                <span className="block text-ink-600">
+                  Audio stays available either way.
+                </span>
               </span>
               <input
                 checked={isVideoEnabled}
@@ -203,7 +238,10 @@ export function LiveInterviewRoom({ token }: { token: string }) {
 
           {error ? (
             <div className="mt-4 flex gap-2 rounded-md bg-coral-100 p-3 text-sm text-ink-900">
-              <AlertTriangle aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-coral-500" />
+              <AlertTriangle
+                aria-hidden="true"
+                className="mt-0.5 h-4 w-4 shrink-0 text-coral-500"
+              />
               <p>{error}</p>
             </div>
           ) : null}
@@ -214,7 +252,11 @@ export function LiveInterviewRoom({ token }: { token: string }) {
               <p className="mt-1 text-ink-600">
                 Tap once to hear the interviewer on this device.
               </p>
-              <Button className="mt-3 w-full" onClick={enableAudio} variant="secondary">
+              <Button
+                className="mt-3 w-full"
+                onClick={enableAudio}
+                variant="secondary"
+              >
                 <Mic aria-hidden="true" className="h-4 w-4" />
                 Enable audio
               </Button>
@@ -222,7 +264,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           ) : null}
 
           <div className="mt-5 flex gap-2">
-            {isConnected ? (
+            {isRoomActive ? (
               <>
                 <Button className="flex-1" onClick={endInterview}>
                   <PhoneOff aria-hidden="true" className="h-4 w-4" />
@@ -234,9 +276,16 @@ export function LiveInterviewRoom({ token }: { token: string }) {
                 </Button>
               </>
             ) : (
-              <Button className="w-full" disabled={isBusy} onClick={startInterview}>
+              <Button
+                className="w-full"
+                disabled={isBusy}
+                onClick={startInterview}
+              >
                 {isBusy ? (
-                  <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />
+                  <Loader2
+                    aria-hidden="true"
+                    className="h-4 w-4 animate-spin"
+                  />
                 ) : (
                   <Video aria-hidden="true" className="h-4 w-4" />
                 )}
@@ -274,7 +323,7 @@ function StatusPill({ status }: { status: RoomStatus }) {
 function Capability({
   active,
   icon: Icon,
-  label
+  label,
 }: {
   active: boolean;
   icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
@@ -284,7 +333,9 @@ function Capability({
     <div className="flex items-center gap-2 rounded-md border border-ink-200 px-3 py-2">
       <Icon aria-hidden={true} className="h-4 w-4 text-ink-700" />
       <span className="font-medium">{label}</span>
-      <span className="ml-auto text-xs text-ink-500">{active ? "On" : "Off"}</span>
+      <span className="ml-auto text-xs text-ink-500">
+        {active ? "On" : "Off"}
+      </span>
     </div>
   );
 }
@@ -293,7 +344,7 @@ async function createSession(token: string, videoEnabled: boolean) {
   const response = await fetch("/api/live-interview-sessions", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ candidateToken: token, videoEnabled })
+    body: JSON.stringify({ candidateToken: token, videoEnabled }),
   });
 
   if (!response.ok) {
@@ -311,7 +362,7 @@ async function connectRoom({
   onAudioPlaybackBlocked,
   onAudioPlaybackReady,
   onReady,
-  onReconnecting
+  onReconnecting,
 }: {
   session: LiveInterviewSession;
   stream: MediaStream;
@@ -324,10 +375,13 @@ async function connectRoom({
 }): Promise<ConnectedRoom> {
   if (session.livekit.isMock) {
     onConnected();
+    await markCandidateJoined(session, stream);
+    await markCandidateMediaReady(session, stream);
     onReady();
+    onAudioPlaybackReady();
     return {
       disconnect: onDisconnected,
-      startAudio: async () => undefined
+      startAudio: async () => undefined,
     };
   }
 
@@ -376,12 +430,15 @@ async function connectRoom({
       stream.getTracks().map((track) =>
         room.localParticipant.publishTrack(track, {
           source:
-            track.kind === "audio" ? Track.Source.Microphone : Track.Source.Camera
-        })
-      )
+            track.kind === "audio"
+              ? Track.Source.Microphone
+              : Track.Source.Camera,
+        }),
+      ),
     );
     onConnected();
     await markCandidateJoined(session, stream);
+    await markCandidateMediaReady(session, stream);
     if (!room.canPlaybackAudio) {
       onAudioPlaybackBlocked();
     }
@@ -401,30 +458,86 @@ async function connectRoom({
     disconnect: () => {
       remoteAudioElements.forEach((element) => element.remove());
       room.disconnect();
-    }
+    },
   };
 }
 
-async function markCandidateJoined(session: LiveInterviewSession, stream: MediaStream) {
-  const response = await fetch(`/api/live-interview-sessions/${session.sessionId}/events`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      type: "candidate_joined",
-      payload: {
-        participant: session.livekit.participant,
-        room_name: session.livekit.roomName,
-        media: {
-          audio: stream.getAudioTracks().some((track) => track.readyState === "live"),
-          video: stream.getVideoTracks().some((track) => track.readyState === "live")
-        }
-      }
-    })
-  });
+async function markCandidateJoined(
+  session: LiveInterviewSession,
+  stream: MediaStream,
+) {
+  const response = await fetch(
+    `/api/live-interview-sessions/${session.sessionId}/events`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "candidate_joined",
+        payload: {
+          candidate_participant_id: session.livekit.participant,
+          room_name: session.livekit.roomName,
+          modes: candidateModes(session, stream),
+        },
+      }),
+    },
+  );
 
   if (!response.ok) {
     throw new Error("candidate_ready_unavailable");
   }
+}
+
+async function markCandidateMediaReady(
+  session: LiveInterviewSession,
+  stream: MediaStream,
+) {
+  const media = mediaReadiness(stream);
+  const publishedTracks = [
+    ...(media.audio ? ["microphone"] : []),
+    ...(media.video ? ["camera"] : []),
+  ];
+
+  const response = await fetch(
+    `/api/live-interview-sessions/${session.sessionId}/events`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        type: "candidate_media_ready",
+        payload: {
+          candidate_participant_id: session.livekit.participant,
+          room_name: session.livekit.roomName,
+          audio: media.audio,
+          video: media.video,
+          published_tracks: publishedTracks,
+        },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error("candidate_media_ready_unavailable");
+  }
+}
+
+function candidateModes(session: LiveInterviewSession, stream: MediaStream) {
+  const media = mediaReadiness(stream);
+  return session.allowedModalities.filter((mode) => {
+    if (mode === "audio") {
+      return media.audio;
+    }
+    if (mode === "video") {
+      return media.video;
+    }
+    return true;
+  });
+}
+
+function mediaReadiness(stream: MediaStream) {
+  return {
+    audio: stream.getAudioTracks().some((track) => track.readyState === "live"),
+    video: stream.getVideoTracks().some((track) => track.readyState === "live"),
+  };
 }
 
 function stopLocalStream(stream: MediaStream | null) {
@@ -440,8 +553,18 @@ function toCandidateError(cause: unknown) {
     return "We could not prepare the interview room. Please retry in a moment.";
   }
 
-  if (cause instanceof Error && cause.message === "candidate_ready_unavailable") {
+  if (
+    cause instanceof Error &&
+    cause.message === "candidate_ready_unavailable"
+  ) {
     return "We could not notify the interviewer that you are ready. Please retry in a moment.";
+  }
+
+  if (
+    cause instanceof Error &&
+    cause.message === "candidate_media_ready_unavailable"
+  ) {
+    return "We could not confirm your microphone status. Please retry in a moment.";
   }
 
   return "We could not join the live interview room. Please check your connection and retry.";

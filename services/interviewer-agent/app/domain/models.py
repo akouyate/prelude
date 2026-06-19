@@ -61,6 +61,7 @@ class EventActor(StrEnum):
 
 class EventType(StrEnum):
     CANDIDATE_JOINED = "candidate_joined"
+    CANDIDATE_MEDIA_READY = "candidate_media_ready"
     AGENT_JOINED = "agent_joined"
     SESSION_STARTED = "session_started"
     AGENT_SPEECH_STARTED = "agent_speech_started"
