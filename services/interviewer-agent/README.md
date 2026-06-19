@@ -245,6 +245,14 @@ follow-up, completes the question, asks the next planned question, or closes the
 session. The model remains responsible for speech generation and transcription
 support inside those bounded commands.
 
+Live answer analysis can be LLM-assisted while keeping the deterministic
+orchestrator as the policy owner. When `OPENAI_ANSWER_INFERENCE_ENABLED=1` and
+`OPENAI_API_KEY` is present, the worker calls the configured
+`OPENAI_ANSWER_INFERENCE_MODEL` with a short timeout and records
+`evaluation_matrix.evaluator_mode = "llm_assisted"`. If the LLM call fails or
+times out, the worker falls back to the local heuristic evaluator so the
+interview can continue.
+
 For a bounded real-provider smoke:
 
 ```bash
