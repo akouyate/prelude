@@ -49,6 +49,7 @@ class InterviewSessionRunner:
         simulate_first_question_barge_in: bool = False,
         provider_metadata: dict[str, object] | None = None,
         idempotency_key_prefix: str | None = None,
+        initial_sequence: int = 0,
     ) -> None:
         self._plan = plan
         self._provider = provider
@@ -66,7 +67,7 @@ class InterviewSessionRunner:
         self._orchestrator = InterviewOrchestrator(plan)
         self._state_machine = InterviewerStateMachine()
         self._turn_taking = TurnTakingPolicy()
-        self._sequence = 0
+        self._sequence = initial_sequence
         self._events_emitted = 0
 
     async def run(self) -> SessionResult:

@@ -70,6 +70,7 @@ async def run_live_worker(
             "room_name": config.livekit_join.room_name,
         }
     }
+    initial_sequence = await realtime_api.count_events(session_id)
 
     runner = InterviewSessionRunner(
         plan=config.interview_plan,
@@ -80,6 +81,7 @@ async def run_live_worker(
         livekit_join=config.livekit_join,
         provider_name="openai_realtime",
         provider_metadata=provider_metadata,
+        initial_sequence=initial_sequence,
     )
     result = await runner.run()
     print(

@@ -56,5 +56,10 @@ Ship issue #37: prepare the live room E2E polish for the OpenAI/LiveKit test.
 - `pnpm typecheck` in `packages/contracts`: passed.
 - `go test ./...` in `services/realtime`: 36 passed in 6 packages.
 - `uv run --with-requirements requirements.txt python -m pytest -q` in
-  `services/interviewer-agent`: 70 passed, pytest-asyncio deprecation warnings.
+  `services/interviewer-agent`: 71 passed, pytest-asyncio deprecation warnings.
+- Mock smoke with Go realtime in LiveKit mock mode:
+  `make live-smoke-report SESSION_ID=is_750e14ca51cde78b9287fd2f
+  REALTIME_API_URL=http://127.0.0.1:8080`: Pass, 54 events, sequence
+  contiguous, 11 transcript turns, 3/3 questions completed, readiness gate
+  proven.
 - `git diff --check`: passed.
