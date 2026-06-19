@@ -19,7 +19,7 @@ from app.domain.orchestrator import (
 
 
 DEFAULT_OPENAI_ANSWER_INFERENCE_MODEL = "gpt-4.1-mini"
-DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS = 2.5
+DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS = 4.0
 
 
 class HeuristicAnswerInferenceProvider:
@@ -146,10 +146,20 @@ class FallbackAnswerInferenceProvider:
         except Exception as exc:
             if self._on_fallback:
                 self._on_fallback(exc)
-            return await self._fallback.assess_answer(
+            assessment = await self._fallback.assess_answer(
                 plan=plan,
                 question=question,
                 turn=turn,
+            )
+            reason_codes = [
+                *assessment.reason_codes,
+                f"llm_fallback:{exc.__class__.__name__}",
+            ]
+            return CandidateAnswerAssessment(
+                classification=assessment.classification,
+                reason_codes=reason_codes,
+                confidence=assessment.confidence,
+                evaluation_matrix=assessment.evaluation_matrix,
             )
 
 

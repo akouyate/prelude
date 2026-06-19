@@ -530,6 +530,33 @@ async def test_live_orchestration_controller_gives_examples_without_completing_q
 
 
 @pytest.mark.asyncio
+async def test_live_orchestration_controller_speaks_exact_planned_questions() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+
+    await controller.start()
+
+    assert "pouvez-vous vous presenter brievement" in session.replies[-1]["user_input"]
+    assert "Read this exact interviewer line aloud verbatim" in session.replies[-1][
+        "user_input"
+    ]
+    assert "Do not improvise a different question" in session.replies[-1][
+        "instructions"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_live_orchestration_controller_ignores_backchannel_while_agent_speaks() -> None:
     events: list[InterviewEvent] = []
     emitter = PreludeEventEmitter(
