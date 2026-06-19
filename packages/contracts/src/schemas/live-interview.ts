@@ -51,6 +51,14 @@ export const liveInterviewPolicyActionSchema = z.enum([
   "timebox",
 ]);
 
+export const liveInterviewEvaluationDimensionSchema = z.enum([
+  "clarity",
+  "relevance",
+  "concreteness",
+  "coherence",
+  "role_signal",
+]);
+
 export const liveInterviewQuestionCategorySchema = z.enum([
   "motivation",
   "experience",
@@ -263,6 +271,28 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
       policyAction: liveInterviewPolicyActionSchema,
       confidence: z.number().min(0).max(1),
       evaluatorVersion: z.string().min(1).max(80),
+      evaluationMatrix: z
+        .object({
+          evaluatorMode: z.enum(["heuristic_v1", "llm_assisted"]),
+          overallScore: z.number().int().min(0).max(15),
+          maxScore: z.number().int().min(1).max(15),
+          dimensions: z
+            .array(
+              z.object({
+                name: liveInterviewEvaluationDimensionSchema,
+                score: z.number().int().min(0).max(3),
+                rationale: z.string().trim().min(4).max(240),
+              }),
+            )
+            .min(1)
+            .max(5),
+          challenge: z.object({
+            needed: z.boolean(),
+            reason: z.string().trim().min(2).max(120).nullable().optional(),
+            prompt: z.string().trim().min(8).max(500).nullable().optional(),
+          }),
+        })
+        .optional(),
     }),
   }),
   liveInterviewEventBaseSchema.extend({
@@ -582,6 +612,9 @@ export type LiveInterviewAnswerClassification = z.infer<
 >;
 export type LiveInterviewPolicyAction = z.infer<
   typeof liveInterviewPolicyActionSchema
+>;
+export type LiveInterviewEvaluationDimension = z.infer<
+  typeof liveInterviewEvaluationDimensionSchema
 >;
 export type LiveInterviewEvent = z.infer<typeof liveInterviewEventSchema>;
 export type LiveInterviewWireEvent = z.infer<

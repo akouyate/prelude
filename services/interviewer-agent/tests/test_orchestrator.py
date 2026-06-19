@@ -3,6 +3,7 @@ import pytest
 from app.domain.models import CandidateTurn, InterviewPlan, InterviewQuestion
 from app.domain.orchestrator import (
     AnswerClassification,
+    EvaluationDimension,
     InterviewOrchestrator,
     OrchestratorCommandType,
     PolicyAction,
@@ -171,6 +172,61 @@ def test_classifies_candidate_turn_without_llm_for_deterministic_signals() -> No
         )
         == AnswerClassification.SILENT
     )
+
+
+def test_matrix_challenges_absurd_answer_instead_of_accepting_text() -> None:
+    plan = three_question_plan()
+    question = plan.questions[0]
+
+    assessment = InterviewOrchestrator.assess_candidate_turn(
+        plan=plan,
+        question=question,
+        turn=CandidateTurn(question_id=question.id, transcript="caca"),
+    )
+
+    assert assessment.classification == AnswerClassification.VAGUE
+    assert assessment.evaluation_matrix is not None
+    assert assessment.evaluation_matrix.challenge_needed is True
+    assert assessment.evaluation_matrix.challenge_reason == "incoherent_or_absurd_answer"
+    assert assessment.evaluation_matrix.dimension_score(EvaluationDimension.COHERENCE) == 0
+
+    orchestrator = InterviewOrchestrator(plan)
+    command = orchestrator.start()
+    orchestrator.mark_question_asked(command.question_id)
+    decision = orchestrator.evaluate_answer(
+        classification=assessment.classification,
+        turn_ids=["turn-caca"],
+        reason_codes=assessment.reason_codes,
+        confidence=assessment.confidence,
+        evaluation_matrix=assessment.evaluation_matrix,
+    )
+
+    assert decision.answer_evaluation.policy_action == PolicyAction.ASK_FOLLOWUP
+    assert decision.commands[0].prompt_override is not None
+    payload = decision.answer_evaluation.to_payload()
+    assert payload["evaluation_matrix"]["challenge"]["needed"] is True
+
+
+def test_matrix_accepts_concrete_relevant_answer() -> None:
+    plan = three_question_plan()
+    question = plan.questions[1]
+
+    assessment = InterviewOrchestrator.assess_candidate_turn(
+        plan=plan,
+        question=question,
+        turn=CandidateTurn(
+            question_id=question.id,
+            transcript=(
+                "J'ai gere un incident client important: j'ai priorise le correctif, "
+                "coordonne l'equipe support et mesure le resultat sur le churn."
+            ),
+        ),
+    )
+
+    assert assessment.classification == AnswerClassification.COMPLETE
+    assert assessment.evaluation_matrix is not None
+    assert assessment.evaluation_matrix.challenge_needed is False
+    assert assessment.evaluation_matrix.overall_score >= 10
 
 
 def test_rejects_answer_when_no_question_is_active() -> None:

@@ -200,7 +200,13 @@ async def test_runner_repeats_question_when_candidate_requests_repeat() -> None:
                     transcript="Pouvez-vous repeter ?",
                     repeat_requested=True,
                 ),
-                CandidateTurn(question_id="q1", transcript="Here is my answer"),
+                CandidateTurn(
+                    question_id="q1",
+                    transcript=(
+                        "I handled a production incident by coordinating support, "
+                        "prioritizing the fix, and measuring the customer impact."
+                    ),
+                ),
             ]
         ),
         realtime_api=realtime_api,
@@ -242,6 +248,47 @@ async def test_runner_soft_reprompts_once_for_incomplete_answer() -> None:
     ]
     assert finalized[0].payload["completion_reason"] == "incomplete"
     assert finalized[-1].payload["completion_reason"] == "answered"
+
+
+@pytest.mark.asyncio
+async def test_runner_challenges_absurd_answer_with_evaluation_matrix() -> None:
+    realtime_api = InMemoryRealtimeApiClient(print_events=False)
+    runner = InterviewSessionRunner(
+        plan=one_question_plan(),
+        provider=ScriptedProvider(
+            [
+                CandidateTurn(question_id="q1", transcript="caca"),
+                CandidateTurn(
+                    question_id="q1",
+                    transcript=(
+                        "J'ai gere un incident client concret: coordination support, "
+                        "priorisation du correctif et mesure du resultat."
+                    ),
+                ),
+            ]
+        ),
+        realtime_api=realtime_api,
+        session_id="session-matrix-challenge",
+    )
+
+    await runner.run()
+
+    evaluated = [
+        event for event in realtime_api.events if event.type == EventType.ANSWER_EVALUATED
+    ]
+    assert evaluated[0].payload["classification"] == "vague"
+    assert evaluated[0].payload["policy_action"] == "ask_followup"
+    assert evaluated[0].payload["evaluation_matrix"]["challenge"]["needed"] is True
+    assert (
+        evaluated[0].payload["evaluation_matrix"]["challenge"]["reason"]
+        == "incoherent_or_absurd_answer"
+    )
+
+    followups = [
+        event for event in realtime_api.events if event.type == EventType.FOLLOWUP_ASKED
+    ]
+    assert len(followups) == 1
+    assert "recentrer" in followups[0].payload["prompt"]
 
 
 @pytest.mark.asyncio
@@ -287,7 +334,13 @@ async def test_runner_wait_keeps_current_question_active_without_followup() -> N
                     transcript="J'ai besoin d'une seconde.",
                     wait_requested=True,
                 ),
-                CandidateTurn(question_id="q1", transcript="Here is my answer"),
+                CandidateTurn(
+                    question_id="q1",
+                    transcript=(
+                        "I handled a production incident by coordinating support, "
+                        "prioritizing the fix, and measuring the customer impact."
+                    ),
+                ),
             ]
         ),
         realtime_api=realtime_api,

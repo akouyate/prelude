@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from app.application.ports import LiveKitRoomAdapter, ProviderAdapter, RealtimeApiClient
+from app.adapters.answer_inference import HeuristicAnswerInferenceProvider
+from app.application.ports import (
+    AnswerInferenceProvider,
+    LiveKitRoomAdapter,
+    ProviderAdapter,
+    RealtimeApiClient,
+)
 from app.domain.models import (
     AgentLiveKitJoin,
     CandidateTurn,
@@ -15,7 +21,6 @@ from app.domain.models import (
     InterviewQuestion,
 )
 from app.domain.orchestrator import (
-    AnswerClassification,
     InterviewOrchestrator,
     OrchestratorCommand,
     OrchestratorCommandType,
@@ -50,6 +55,7 @@ class InterviewSessionRunner:
         provider_metadata: dict[str, object] | None = None,
         idempotency_key_prefix: str | None = None,
         initial_sequence: int = 0,
+        answer_inference: AnswerInferenceProvider | None = None,
     ) -> None:
         self._plan = plan
         self._provider = provider
@@ -67,6 +73,7 @@ class InterviewSessionRunner:
         self._orchestrator = InterviewOrchestrator(plan)
         self._state_machine = InterviewerStateMachine()
         self._turn_taking = TurnTakingPolicy()
+        self._answer_inference = answer_inference or HeuristicAnswerInferenceProvider()
         self._sequence = initial_sequence
         self._events_emitted = 0
 
@@ -253,12 +260,17 @@ class InterviewSessionRunner:
                 actor=EventActor.CANDIDATE,
             )
 
-            classification = await self._classify_answer(question, turn)
+            assessment = await self._answer_inference.assess_answer(
+                question=question,
+                turn=turn,
+                plan=self._plan,
+            )
             decision = self._orchestrator.evaluate_answer(
-                classification=classification,
+                classification=assessment.classification,
                 turn_ids=[turn_id],
-                reason_codes=self._reason_codes(classification),
-                confidence=1.0,
+                reason_codes=assessment.reason_codes,
+                confidence=assessment.confidence,
+                evaluation_matrix=assessment.evaluation_matrix,
             )
             await self._emit(
                 EventType.ANSWER_EVALUATED,
@@ -372,7 +384,7 @@ class InterviewSessionRunner:
             if command.type != OrchestratorCommandType.ASK_FOLLOWUP:
                 raise RuntimeError(f"unsupported orchestrator command {command.type.value}")
 
-            follow_up = await self._provider.ask_follow_up(question)
+            follow_up = command.prompt_override or await self._provider.ask_follow_up(question)
             followups_used = command.followups_used or 1
             followup_utterance_id = f"{question.id}:followup:{followups_used}"
             await self._emit_turn_decision(
@@ -427,41 +439,6 @@ class InterviewSessionRunner:
                 "attempt_index": attempt_index,
             },
         )
-
-    async def _classify_answer(
-        self,
-        question: InterviewQuestion,
-        turn: CandidateTurn,
-    ) -> AnswerClassification:
-        classification = InterviewOrchestrator.classify_candidate_turn(turn)
-        if classification != AnswerClassification.COMPLETE:
-            return classification
-
-        should_follow_up = await self._provider.should_follow_up(
-            question,
-            turn,
-            self._orchestrator.followups_used(question.id),
-            self._plan.max_followups_per_question,
-        )
-        if should_follow_up:
-            return AnswerClassification.VAGUE
-
-        return AnswerClassification.COMPLETE
-
-    def _reason_codes(self, classification: AnswerClassification) -> list[str]:
-        if classification == AnswerClassification.VAGUE:
-            return ["too_generic"]
-        if classification == AnswerClassification.INCOMPLETE:
-            return ["incomplete_answer"]
-        if classification == AnswerClassification.SILENT:
-            return ["candidate_silent"]
-        if classification == AnswerClassification.SKIPPED:
-            return ["candidate_requested_skip"]
-        if classification == AnswerClassification.REPEAT_REQUESTED:
-            return ["candidate_requested_repeat"]
-        if classification == AnswerClassification.WAIT_REQUESTED:
-            return ["candidate_requested_time"]
-        return []
 
     def _completion_reason(self, turn: object) -> str:
         if getattr(turn, "skip_requested", False):

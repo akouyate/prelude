@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+import re
+import unicodedata
 
 from app.domain.models import (
     CandidateTurn,
@@ -11,7 +13,7 @@ from app.domain.models import (
 )
 
 
-EVALUATOR_VERSION = "answer-eval-v1"
+EVALUATOR_VERSION = "answer-eval-matrix-v1"
 
 
 class AnswerClassification(StrEnum):
@@ -34,6 +36,14 @@ class PolicyAction(StrEnum):
     TIMEBOX = "timebox"
 
 
+class EvaluationDimension(StrEnum):
+    CLARITY = "clarity"
+    RELEVANCE = "relevance"
+    CONCRETENESS = "concreteness"
+    COHERENCE = "coherence"
+    ROLE_SIGNAL = "role_signal"
+
+
 class OrchestratorCommandType(StrEnum):
     ASK_QUESTION = "ask_question"
     REPEAT_QUESTION = "repeat_question"
@@ -43,6 +53,64 @@ class OrchestratorCommandType(StrEnum):
     CLOSE_SESSION = "close_session"
     FAIL_SESSION = "fail_session"
     WAIT = "wait"
+
+
+@dataclass(frozen=True)
+class EvaluationMatrixDimension:
+    name: EvaluationDimension
+    score: int
+    rationale: str
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "name": self.name.value,
+            "score": max(0, min(self.score, 3)),
+            "rationale": self.rationale,
+        }
+
+
+@dataclass(frozen=True)
+class EvaluationMatrix:
+    dimensions: list[EvaluationMatrixDimension]
+    challenge_needed: bool
+    challenge_reason: str | None = None
+    challenge_prompt: str | None = None
+    evaluator_mode: str = "heuristic_v1"
+
+    @property
+    def overall_score(self) -> int:
+        return sum(dimension.score for dimension in self.dimensions)
+
+    @property
+    def max_score(self) -> int:
+        return len(self.dimensions) * 3
+
+    def dimension_score(self, dimension: EvaluationDimension) -> int:
+        for item in self.dimensions:
+            if item.name == dimension:
+                return item.score
+        return 0
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "evaluator_mode": self.evaluator_mode,
+            "overall_score": self.overall_score,
+            "max_score": self.max_score,
+            "dimensions": [dimension.to_payload() for dimension in self.dimensions],
+            "challenge": {
+                "needed": self.challenge_needed,
+                "reason": self.challenge_reason,
+                "prompt": self.challenge_prompt,
+            },
+        }
+
+
+@dataclass(frozen=True)
+class CandidateAnswerAssessment:
+    classification: AnswerClassification
+    reason_codes: list[str]
+    confidence: float
+    evaluation_matrix: EvaluationMatrix | None = None
 
 
 @dataclass(frozen=True)
@@ -56,9 +124,10 @@ class AnswerEvaluation:
     policy_action: PolicyAction = PolicyAction.COMPLETE_QUESTION
     confidence: float = 1.0
     evaluator_version: str = EVALUATOR_VERSION
+    evaluation_matrix: EvaluationMatrix | None = None
 
     def to_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "question_id": self.question_id,
             "question_index": self.question_index,
             "turn_ids": self.turn_ids,
@@ -69,6 +138,9 @@ class AnswerEvaluation:
             "confidence": self.confidence,
             "evaluator_version": self.evaluator_version,
         }
+        if self.evaluation_matrix is not None:
+            payload["evaluation_matrix"] = self.evaluation_matrix.to_payload()
+        return payload
 
 
 @dataclass(frozen=True)
@@ -84,6 +156,7 @@ class OrchestratorCommand:
     completed_questions: int | None = None
     total_questions: int | None = None
     terminal_reason: str | None = None
+    prompt_override: str | None = None
 
 
 @dataclass(frozen=True)
@@ -140,6 +213,7 @@ class InterviewOrchestrator:
         turn_ids: list[str],
         reason_codes: list[str] | None = None,
         confidence: float = 1.0,
+        evaluation_matrix: EvaluationMatrix | None = None,
     ) -> OrchestratorDecision:
         question_id = self._require_active_question()
         question_index = self._current_question_index
@@ -154,6 +228,7 @@ class InterviewOrchestrator:
             question_index=question_index,
             classification=classification,
             attempt_index=attempt_index,
+            evaluation_matrix=evaluation_matrix,
         )
         evaluation = AnswerEvaluation(
             question_id=question_id,
@@ -164,6 +239,7 @@ class InterviewOrchestrator:
             reason_codes=reason_codes or [],
             policy_action=policy_action,
             confidence=max(0.0, min(confidence, 1.0)),
+            evaluation_matrix=evaluation_matrix,
         )
         return OrchestratorDecision(answer_evaluation=evaluation, commands=[command])
 
@@ -222,6 +298,52 @@ class InterviewOrchestrator:
             return AnswerClassification.INCOMPLETE
         return AnswerClassification.COMPLETE
 
+    @staticmethod
+    def assess_candidate_turn(
+        *,
+        question: InterviewQuestion,
+        turn: CandidateTurn,
+        plan: InterviewPlan,
+    ) -> CandidateAnswerAssessment:
+        deterministic = InterviewOrchestrator.classify_candidate_turn(turn)
+        if deterministic != AnswerClassification.COMPLETE:
+            return CandidateAnswerAssessment(
+                classification=deterministic,
+                reason_codes=_base_reason_codes(deterministic, turn),
+                confidence=1.0,
+            )
+
+        matrix = build_evaluation_matrix(question=question, turn=turn, plan=plan)
+        reason_codes = _base_reason_codes(deterministic, turn)
+        for dimension in matrix.dimensions:
+            if dimension.score < 2:
+                reason_codes.append(f"low_{dimension.name.value}")
+
+        if matrix.challenge_needed:
+            reason_codes.append(matrix.challenge_reason or "answer_needs_challenge")
+            return CandidateAnswerAssessment(
+                classification=AnswerClassification.VAGUE,
+                reason_codes=_dedupe(reason_codes),
+                confidence=_matrix_confidence(matrix),
+                evaluation_matrix=matrix,
+            )
+
+        if matrix.overall_score < 8:
+            reason_codes.append("insufficient_answer_quality")
+            return CandidateAnswerAssessment(
+                classification=AnswerClassification.INCOMPLETE,
+                reason_codes=_dedupe(reason_codes),
+                confidence=_matrix_confidence(matrix),
+                evaluation_matrix=matrix,
+            )
+
+        return CandidateAnswerAssessment(
+            classification=AnswerClassification.COMPLETE,
+            reason_codes=_dedupe(reason_codes),
+            confidence=_matrix_confidence(matrix),
+            evaluation_matrix=matrix,
+        )
+
     def _policy_command(
         self,
         *,
@@ -229,6 +351,7 @@ class InterviewOrchestrator:
         question_index: int,
         classification: AnswerClassification,
         attempt_index: int,
+        evaluation_matrix: EvaluationMatrix | None,
     ) -> tuple[PolicyAction, OrchestratorCommand]:
         if classification == AnswerClassification.REPEAT_REQUESTED:
             return PolicyAction.REPEAT_QUESTION, OrchestratorCommand(
@@ -264,6 +387,12 @@ class InterviewOrchestrator:
                 question_index=question_index,
                 followups_used=followups_used,
                 attempt_index=attempt_index,
+                prompt_override=(
+                    evaluation_matrix.challenge_prompt
+                    if evaluation_matrix is not None
+                    and evaluation_matrix.challenge_needed
+                    else None
+                ),
             )
 
         if classification in {
@@ -326,3 +455,393 @@ class InterviewOrchestrator:
                 f"Expected active question {self._current_question_id}, got {question_id}"
             )
         return self._current_question_id
+
+
+STOPWORDS = {
+    "a",
+    "au",
+    "aux",
+    "avec",
+    "ce",
+    "ces",
+    "cette",
+    "de",
+    "des",
+    "du",
+    "en",
+    "et",
+    "for",
+    "i",
+    "il",
+    "in",
+    "is",
+    "je",
+    "la",
+    "le",
+    "les",
+    "me",
+    "mon",
+    "nous",
+    "of",
+    "on",
+    "or",
+    "pour",
+    "que",
+    "qui",
+    "the",
+    "to",
+    "un",
+    "une",
+    "vous",
+}
+
+NONSENSE_MARKERS = {
+    "asdf",
+    "blah",
+    "bla bla",
+    "caca",
+    "poop",
+    "prout",
+    "n'importe quoi",
+    "random",
+}
+
+LOW_INFORMATION_MARKERS = {
+    "aucune idee",
+    "aucune idée",
+    "je ne sais pas",
+    "j'en sais rien",
+    "pas grand chose",
+    "rien a dire",
+    "rien à dire",
+}
+
+CONCRETE_MARKERS = {
+    "exemple",
+    "resultat",
+    "résultat",
+    "impact",
+    "client",
+    "contrainte",
+    "decision",
+    "décision",
+    "priorise",
+    "priorisé",
+    "mesure",
+    "churn",
+    "roadmap",
+    "stakeholder",
+    "equipe",
+    "équipe",
+    "j'ai",
+    "nous avons",
+}
+
+CATEGORY_SIGNAL_TOKENS = {
+    "experience": {
+        "client",
+        "customer",
+        "incident",
+        "support",
+        "priorise",
+        "priorite",
+        "priorité",
+        "coordonne",
+        "coordonné",
+        "resultat",
+        "résultat",
+    },
+    "motivation": {
+        "interesse",
+        "intéresse",
+        "motivation",
+        "poste",
+        "role",
+        "rôle",
+        "equipe",
+        "équipe",
+        "produit",
+    },
+    "logistics": {
+        "disponible",
+        "disponibilite",
+        "disponibilites",
+        "availability",
+        "remote",
+        "hybride",
+        "contrainte",
+    },
+    "role_fit": {
+        "client",
+        "customer",
+        "incident",
+        "support",
+        "priorise",
+        "priorite",
+        "coordonne",
+        "resultat",
+        "impact",
+        "equipe",
+        "team",
+    },
+}
+
+
+def build_evaluation_matrix(
+    *,
+    question: InterviewQuestion,
+    turn: CandidateTurn,
+    plan: InterviewPlan,
+) -> EvaluationMatrix:
+    normalized_answer = _normalize_text(turn.transcript)
+    answer_tokens = _keywords(normalized_answer)
+    question_tokens = _keywords(question.prompt)
+    role_tokens = _keywords(plan.role_title)
+    constraint_tokens = _keywords(" ".join(plan.interview_style.role_constraints))
+    overlap = answer_tokens & (question_tokens | role_tokens | constraint_tokens)
+
+    clarity = _score_clarity(normalized_answer, answer_tokens)
+    relevance = _score_relevance(
+        normalized_answer=normalized_answer,
+        answer_tokens=answer_tokens,
+        overlap=overlap,
+        question=question,
+    )
+    concreteness = _score_concreteness(normalized_answer, answer_tokens)
+    coherence = _score_coherence(normalized_answer, answer_tokens)
+    role_signal = _score_role_signal(
+        answer_tokens=answer_tokens,
+        role_tokens=role_tokens,
+        constraint_tokens=constraint_tokens,
+        category=question.category.value,
+    )
+
+    dimensions = [
+        EvaluationMatrixDimension(
+            EvaluationDimension.CLARITY,
+            clarity,
+            _rationale("clarity", clarity),
+        ),
+        EvaluationMatrixDimension(
+            EvaluationDimension.RELEVANCE,
+            relevance,
+            _rationale("relevance", relevance),
+        ),
+        EvaluationMatrixDimension(
+            EvaluationDimension.CONCRETENESS,
+            concreteness,
+            _rationale("concreteness", concreteness),
+        ),
+        EvaluationMatrixDimension(
+            EvaluationDimension.COHERENCE,
+            coherence,
+            _rationale("coherence", coherence),
+        ),
+        EvaluationMatrixDimension(
+            EvaluationDimension.ROLE_SIGNAL,
+            role_signal,
+            _rationale("role signal", role_signal),
+        ),
+    ]
+    preliminary = EvaluationMatrix(dimensions=dimensions, challenge_needed=False)
+    challenge_reason = _challenge_reason(preliminary, question.category.value)
+    return EvaluationMatrix(
+        dimensions=dimensions,
+        challenge_needed=challenge_reason is not None,
+        challenge_reason=challenge_reason,
+        challenge_prompt=(
+            _challenge_prompt(question, challenge_reason)
+            if challenge_reason is not None
+            else None
+        ),
+    )
+
+
+def _score_clarity(normalized_answer: str, answer_tokens: set[str]) -> int:
+    if not normalized_answer:
+        return 0
+    if len(answer_tokens) <= 2:
+        return 1
+    if len(answer_tokens) <= 6:
+        return 2
+    return 3
+
+
+def _score_relevance(
+    *,
+    normalized_answer: str,
+    answer_tokens: set[str],
+    overlap: set[str],
+    question: InterviewQuestion,
+) -> int:
+    if _contains_marker(normalized_answer, NONSENSE_MARKERS):
+        return 0
+    if _contains_marker(normalized_answer, LOW_INFORMATION_MARKERS):
+        return 1
+    if len(overlap) >= 2:
+        return 3
+    if len(overlap) == 1:
+        return 2
+    category_tokens = CATEGORY_SIGNAL_TOKENS.get(question.category.value, set())
+    if len(answer_tokens & category_tokens) >= 2:
+        return 3
+    if len(answer_tokens & category_tokens) == 1:
+        return 2
+    if question.category.value in answer_tokens:
+        return 2
+    return 1 if len(answer_tokens) >= 5 else 0
+
+
+def _score_concreteness(normalized_answer: str, answer_tokens: set[str]) -> int:
+    marker_hits = sum(1 for marker in CONCRETE_MARKERS if marker in normalized_answer)
+    has_number = bool(re.search(r"\d", normalized_answer))
+    if marker_hits >= 2 or (marker_hits >= 1 and has_number):
+        return 3
+    if marker_hits == 1 or has_number:
+        return 2
+    if len(answer_tokens) >= 10:
+        return 1
+    return 0
+
+
+def _score_coherence(normalized_answer: str, answer_tokens: set[str]) -> int:
+    if _contains_marker(normalized_answer, NONSENSE_MARKERS):
+        return 0
+    if len(answer_tokens) <= 2:
+        return 1
+    repeated_tokens = [token for token in answer_tokens if normalized_answer.count(token) >= 4]
+    if repeated_tokens:
+        return 1
+    if _contains_marker(normalized_answer, LOW_INFORMATION_MARKERS):
+        return 2
+    return 3
+
+
+def _score_role_signal(
+    *,
+    answer_tokens: set[str],
+    role_tokens: set[str],
+    constraint_tokens: set[str],
+    category: str,
+) -> int:
+    signal_tokens = answer_tokens & (role_tokens | constraint_tokens)
+    if len(signal_tokens) >= 2:
+        return 3
+    if len(signal_tokens) == 1:
+        return 2
+    if category in {"logistics", "availability"} and {
+        "disponibilite",
+        "disponibilites",
+        "disponible",
+        "availability",
+        "remote",
+        "hybride",
+    } & answer_tokens:
+        return 3
+    return 1 if len(answer_tokens) >= 8 else 0
+
+
+def _challenge_reason(matrix: EvaluationMatrix, category: str) -> str | None:
+    if matrix.dimension_score(EvaluationDimension.COHERENCE) == 0:
+        return "incoherent_or_absurd_answer"
+    if matrix.dimension_score(EvaluationDimension.RELEVANCE) <= 1:
+        return "off_topic_or_low_relevance"
+    if (
+        category not in {"logistics", "availability"}
+        and matrix.dimension_score(EvaluationDimension.CONCRETENESS) <= 1
+    ):
+        return "missing_concrete_example"
+    if (
+        matrix.dimension_score(EvaluationDimension.ROLE_SIGNAL) <= 1
+        and matrix.overall_score < 10
+    ):
+        return "weak_role_signal"
+    return None
+
+
+def _challenge_prompt(question: InterviewQuestion, reason: str) -> str:
+    if reason == "incoherent_or_absurd_answer":
+        return (
+            "Je vais vous recentrer sur la question : votre reponse ne me permet pas "
+            "d'evaluer le signal attendu. Pouvez-vous repondre avec un exemple concret ?"
+        )
+    if reason == "off_topic_or_low_relevance":
+        return (
+            "Je veux etre sur de bien evaluer ce point. Pouvez-vous repondre "
+            f"directement a la question : {question.prompt}"
+        )
+    if reason == "missing_concrete_example":
+        return (
+            "Pouvez-vous me donner un exemple concret, avec le contexte, votre action "
+            "et le resultat obtenu ?"
+        )
+    return (
+        "Pouvez-vous relier votre reponse au poste et donner un element concret "
+        "que le recruteur pourra verifier ?"
+    )
+
+
+def _rationale(label: str, score: int) -> str:
+    if score == 3:
+        return f"Strong {label} signal."
+    if score == 2:
+        return f"Usable but partial {label} signal."
+    if score == 1:
+        return f"Weak {label} signal."
+    return f"No usable {label} signal."
+
+
+def _matrix_confidence(matrix: EvaluationMatrix) -> float:
+    return round(max(0.15, min(0.95, matrix.overall_score / matrix.max_score)), 2)
+
+
+def _base_reason_codes(
+    classification: AnswerClassification,
+    turn: CandidateTurn | None = None,
+) -> list[str]:
+    reason_codes: list[str] = []
+    if turn is not None:
+        reason_codes.append(f"candidate_intent:{turn.candidate_intent.value}")
+        if turn.classifier_reason:
+            reason_codes.append(turn.classifier_reason)
+    if classification == AnswerClassification.VAGUE:
+        reason_codes.append("too_generic")
+    elif classification == AnswerClassification.INCOMPLETE:
+        reason_codes.append("incomplete_answer")
+    elif classification == AnswerClassification.SILENT:
+        reason_codes.append("candidate_silent")
+    elif classification == AnswerClassification.SKIPPED:
+        reason_codes.append("candidate_requested_skip")
+    elif classification == AnswerClassification.REPEAT_REQUESTED:
+        reason_codes.append("candidate_requested_repeat")
+    elif classification == AnswerClassification.WAIT_REQUESTED:
+        reason_codes.append("candidate_requested_time")
+    return _dedupe(reason_codes)
+
+
+def _keywords(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9']{3,}", _normalize_text(text))
+        if token not in STOPWORDS
+    }
+
+
+def _normalize_text(text: str) -> str:
+    normalized = unicodedata.normalize("NFKD", text.lower())
+    without_accents = "".join(
+        char for char in normalized if not unicodedata.combining(char)
+    )
+    return re.sub(r"\s+", " ", without_accents).strip()
+
+
+def _contains_marker(text: str, markers: set[str]) -> bool:
+    return any(marker in text for marker in markers)
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    unique: list[str] = []
+    for value in values:
+        if value and value not in unique:
+            unique.append(value)
+    return unique

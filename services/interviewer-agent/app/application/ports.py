@@ -10,6 +10,7 @@ from app.domain.models import (
     InterviewPlan,
     InterviewQuestion,
 )
+from app.domain.orchestrator import CandidateAnswerAssessment
 
 
 class ProviderAdapter(Protocol):
@@ -54,3 +55,14 @@ class LiveKitRoomAdapter(Protocol):
 
     async def disconnect(self) -> None:
         """Leave the LiveKit room and release media resources."""
+
+
+class AnswerInferenceProvider(Protocol):
+    async def assess_answer(
+        self,
+        *,
+        plan: InterviewPlan,
+        question: InterviewQuestion,
+        turn: CandidateTurn,
+    ) -> CandidateAnswerAssessment:
+        """Score a candidate answer and return the live interviewer decision inputs."""

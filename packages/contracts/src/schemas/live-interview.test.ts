@@ -289,6 +289,62 @@ describe("liveInterviewEventSchema", () => {
     expect(result.success).toBe(true);
   });
 
+  it("normalizes answer_evaluated events with a live evaluation matrix", () => {
+    const result = liveInterviewWireEventSchema.safeParse({
+      event_id: "evt_answer_eval",
+      session_id: "session_01",
+      candidate_id: "candidate_01",
+      type: "answer_evaluated",
+      actor: "system",
+      sequence_number: 6,
+      idempotency_key: "session_01:answer_evaluated:q_01:1",
+      occurred_at: "2026-06-17T10:30:08.000Z",
+      payload: {
+        question_id: "q_01",
+        question_index: 0,
+        turn_ids: ["turn_123"],
+        attempt_index: 1,
+        classification: "vague",
+        reason_codes: ["incoherent_or_absurd_answer"],
+        policy_action: "ask_followup",
+        confidence: 0.35,
+        evaluator_version: "answer-eval-matrix-v1",
+        evaluation_matrix: {
+          evaluator_mode: "heuristic_v1",
+          overall_score: 3,
+          max_score: 15,
+          dimensions: [
+            {
+              name: "coherence",
+              score: 0,
+              rationale: "No usable coherence signal.",
+            },
+            {
+              name: "relevance",
+              score: 0,
+              rationale: "No usable relevance signal.",
+            },
+          ],
+          challenge: {
+            needed: true,
+            reason: "incoherent_or_absurd_answer",
+            prompt: "Pouvez-vous repondre avec un exemple concret ?",
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.data.type).toBe("answer_evaluated");
+    if (result.data.type !== "answer_evaluated") {
+      return;
+    }
+    expect(result.data.payload.evaluationMatrix?.challenge.needed).toBe(true);
+  });
+
   it("rejects mismatched discriminated event payloads", () => {
     const result = liveInterviewEventSchema.safeParse({
       eventId: "evt_01",
