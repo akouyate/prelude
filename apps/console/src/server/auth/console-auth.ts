@@ -1,19 +1,10 @@
 import "server-only";
 
 import { auth, currentUser } from "@clerk/nextjs/server";
-import type { OrganizationRole, OrganizationUserContext } from "@prelude/types";
+import type { OrganizationUserContext } from "@prelude/types";
 
 import { isClerkConfigured } from "./clerk-config";
-
-const roleMap: Record<string, OrganizationRole> = {
-  "org:admin": "admin",
-  "org:member": "recruiter",
-  admin: "admin",
-  member: "recruiter",
-  owner: "owner",
-  recruiter: "recruiter",
-  viewer: "viewer",
-};
+import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
 const mockConsoleContext: OrganizationUserContext = {
   organizationId: "org_demo",
@@ -30,7 +21,15 @@ export async function getConsoleAuthContext(): Promise<OrganizationUserContext> 
       throw new Error("Clerk is not configured for the console application.");
     }
 
-    return mockConsoleContext;
+    const scope = await getCompletedOrganizationScope();
+
+    return {
+      ...mockConsoleContext,
+      organizationId: scope.organizationId,
+      organizationName: scope.organizationName,
+      userId: scope.userId,
+      role: scope.role,
+    };
   }
 
   const authState = await auth();
@@ -40,25 +39,18 @@ export async function getConsoleAuthContext(): Promise<OrganizationUserContext> 
     throw new Error("Authenticated user is required.");
   }
 
-  const user = await currentUser();
+  const [scope, user] = await Promise.all([
+    getCompletedOrganizationScope(),
+    currentUser(),
+  ]);
   const userEmail = user?.primaryEmailAddress?.emailAddress ?? "";
-  const organizationId = authState.orgId ?? "personal";
-  const organizationName = authState.orgSlug ?? authState.orgId ?? "Personal workspace";
 
   return {
-    organizationId,
-    organizationName,
+    organizationId: scope.organizationId,
+    organizationName: scope.organizationName,
     userId,
     userName: user?.fullName ?? user?.firstName ?? userEmail,
     userEmail,
-    role: mapClerkRole(authState.orgRole),
+    role: scope.role,
   };
-}
-
-function mapClerkRole(role: string | null | undefined): OrganizationRole {
-  if (!role) {
-    return "viewer";
-  }
-
-  return roleMap[role] ?? "viewer";
 }

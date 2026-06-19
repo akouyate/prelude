@@ -8,7 +8,7 @@ import {
   Plus,
   Suitcase,
 } from "iconoir-react";
-import { Badge, Card, cn } from "@prelude/ui";
+import { Badge, Card } from "@prelude/ui";
 
 import { getConsoleDashboardData } from "../../src/server/dashboard/dashboard-data";
 import { requireCompletedOrganizationOnboarding } from "../../src/server/onboarding/onboarding-guard";
@@ -20,8 +20,7 @@ export default async function DashboardPage() {
   await requireCompletedOrganizationOnboarding();
 
   const dashboard = await getConsoleDashboardData();
-  const primaryJob = dashboard.jobs[0];
-  const draftCount = dashboard.jobs.filter((job) => job.status === "draft").length;
+  const hasReviewTarget = Boolean(dashboard.primaryReviewHref);
 
   return (
     <main className="relative z-10 mx-auto w-full max-w-6xl px-5 pb-14 pt-8 sm:px-8">
@@ -45,10 +44,10 @@ export default async function DashboardPage() {
               <Plus aria-hidden="true" className="h-4 w-4" />
               New interview
             </Link>
-            {primaryJob ? (
+            {hasReviewTarget ? (
               <Link
                 className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-full border border-ink-200 bg-white/70 px-5 text-sm font-medium text-ink-900 transition hover:border-ink-900 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-                href={`/interviews/demo-session?jobId=${primaryJob.id}`}
+                href={dashboard.primaryReviewHref!}
               >
                 Review latest
                 <ArrowRight aria-hidden="true" className="h-4 w-4" />
@@ -80,17 +79,17 @@ export default async function DashboardPage() {
         <MetricCard
           icon={<Suitcase aria-hidden="true" className="h-5 w-5" />}
           label="Active roles"
-          value={dashboard.jobs.length.toString()}
+          value={dashboard.metrics.activeRoles.toString()}
         />
         <MetricCard
           icon={<Microphone aria-hidden="true" className="h-5 w-5" />}
           label="Draft interviews"
-          value={draftCount.toString()}
+          value={dashboard.metrics.drafts.toString()}
         />
         <MetricCard
           icon={<Community aria-hidden="true" className="h-5 w-5" />}
-          label="Candidate reviews"
-          value="0"
+          label="Needs review"
+          value={dashboard.metrics.needsReview.toString()}
         />
       </section>
 
@@ -98,34 +97,43 @@ export default async function DashboardPage() {
         <div>
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
-              <h2 className="text-xl font-semibold text-ink-950">Roles</h2>
+              <h2 className="text-xl font-semibold text-ink-950">Interviews</h2>
               <p className="mt-1 text-sm text-ink-500">
-                Start from the jobs imported or created during onboarding.
+                Draft, publish, and review first-screening interviews from one list.
               </p>
             </div>
           </div>
 
           <div className="space-y-3">
-            {dashboard.jobs.length > 0 ? (
-              dashboard.jobs.map((job) => (
+            {dashboard.interviews.length > 0 ? (
+              dashboard.interviews.map((interview) => (
                 <Link
-                  key={job.id}
+                  key={interview.id}
                   className="group flex cursor-pointer items-center justify-between gap-5 rounded-2xl border border-ink-100 bg-white/70 p-4 transition hover:border-ink-300 hover:bg-white"
-                  href={`/interviews/demo-session?jobId=${job.id}`}
+                  href={interview.href}
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-base font-semibold text-ink-950">
-                      {job.title}
+                      {interview.title}
                     </span>
                     <span className="mt-1 flex flex-wrap items-center gap-2 text-sm text-ink-500">
-                      <span>{job.location ?? "Location not set"}</span>
+                      <span>{interview.location ?? "Location not set"}</span>
                       <span aria-hidden="true">·</span>
-                      <span>{formatProvider(job.sourceProvider)}</span>
+                      <span>{formatProvider(interview.sourceProvider)}</span>
+                      {interview.candidateCount > 0 ? (
+                        <>
+                          <span aria-hidden="true">·</span>
+                          <span>
+                            {interview.candidateCount} candidate
+                            {interview.candidateCount > 1 ? "s" : ""}
+                          </span>
+                        </>
+                      ) : null}
                     </span>
                   </span>
                   <span className="flex shrink-0 items-center gap-3">
-                    <Badge className={statusBadgeClass(job.status)}>
-                      {formatStatus(job.status)}
+                    <Badge className={statusBadgeClass(interview.state)}>
+                      {formatStatus(interview.state)}
                     </Badge>
                     <ArrowRight
                       aria-hidden="true"
@@ -228,9 +236,21 @@ function formatStatus(status: string) {
 }
 
 function statusBadgeClass(status: string) {
-  return cn(
-    status === "draft"
-      ? "bg-[#f0f1e6] text-olive-800"
-      : "bg-ink-100 text-ink-700",
-  );
+  if (status === "needs_review") {
+    return "bg-coral-50 text-coral-800";
+  }
+
+  if (status === "candidate_started") {
+    return "bg-gold-100 text-gold-800";
+  }
+
+  if (status === "published") {
+    return "bg-ink-900 text-white";
+  }
+
+  if (status === "completed") {
+    return "bg-meadow-50 text-meadow-800";
+  }
+
+  return "bg-[#f0f1e6] text-olive-800";
 }

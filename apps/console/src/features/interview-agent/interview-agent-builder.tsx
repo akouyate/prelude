@@ -30,11 +30,20 @@ import {
   Trash as Trash2,
   Xmark as X,
 } from "iconoir-react";
+import { useRouter } from "next/navigation";
 import * as React from "react";
+
+import {
+  publishInterviewDraft,
+  saveInterviewDraft,
+  type InterviewResponseMode,
+  type PublishInterviewDraftResult,
+  type SaveInterviewDraftResult,
+} from "../../server/interviews/interview-drafts";
 
 type StepId = "brief" | "calibrate" | "questions" | "evaluation" | "share";
 type QuestionAction = "warmer" | "sharper" | "replace" | "logistics";
-type ResponseMode = "audio" | "video" | "text";
+type ResponseMode = InterviewResponseMode;
 
 const steps: Array<{ id: StepId; label: string; title: string }> = [
   { id: "brief", label: "Brief", title: "Start with the role" },
@@ -88,8 +97,22 @@ const defaultJobDescription =
 
 type InterviewAgentBuilderProps = {
   companyName?: string;
+  initialDraft?: PersistedInterviewDraft;
   initialJobDescription?: string;
+  initialJobId?: string;
   initialJobTitle?: string;
+};
+
+type PersistedInterviewDraft = {
+  id: string;
+  jobId: string;
+  roleTitle: string;
+  roleBrief: string;
+  seniority: InterviewSeniority;
+  focus: InterviewFocus[];
+  responseModes: ResponseMode[];
+  sourceAttachmentName?: string;
+  draft: InterviewAgentDraft;
 };
 
 function updateQuestionPrompt(
@@ -187,26 +210,54 @@ function getResponseModeSummary(modes: ResponseMode[]) {
 
 export function InterviewAgentBuilder({
   companyName = "Acme",
+  initialDraft,
   initialJobDescription = defaultJobDescription,
+  initialJobId,
   initialJobTitle = "Customer Success Manager"
 }: InterviewAgentBuilderProps) {
-  const [currentStep, setCurrentStep] = React.useState<StepId>("brief");
-  const [jobTitle, setJobTitle] = React.useState(initialJobTitle);
-  const [jobDescription, setJobDescription] = React.useState(
-    initialJobDescription
+  const router = useRouter();
+  const [currentStep, setCurrentStep] = React.useState<StepId>(
+    initialDraft ? "questions" : "brief"
   );
-  const [seniority, setSeniority] = React.useState<InterviewSeniority>("mid");
+  const [jobId, setJobId] = React.useState(initialDraft?.jobId ?? initialJobId);
+  const [persistedDraftId, setPersistedDraftId] = React.useState(
+    initialDraft?.id
+  );
+  const [jobTitle, setJobTitle] = React.useState(
+    initialDraft?.roleTitle ?? initialJobTitle
+  );
+  const [jobDescription, setJobDescription] = React.useState(
+    initialDraft?.roleBrief ?? initialJobDescription
+  );
+  const [seniority, setSeniority] = React.useState<InterviewSeniority>(
+    initialDraft?.seniority ?? "mid"
+  );
   const [focus, setFocus] = React.useState<InterviewFocus[]>([
-    "role_skills",
-    "situational_judgment",
-    "motivation"
+    ...(initialDraft?.focus.length
+      ? initialDraft.focus
+      : ([
+          "role_skills",
+          "situational_judgment",
+          "motivation"
+        ] satisfies InterviewFocus[]))
   ]);
-  const [modes, setModes] = React.useState<ResponseMode[]>(["text", "audio"]);
-  const [attachmentName, setAttachmentName] = React.useState<string>();
-  const [draft, setDraft] = React.useState<InterviewAgentDraft>();
+  const [modes, setModes] = React.useState<ResponseMode[]>(
+    initialDraft?.responseModes.length ? initialDraft.responseModes : ["text", "audio"]
+  );
+  const [attachmentName, setAttachmentName] = React.useState<string | undefined>(
+    initialDraft?.sourceAttachmentName
+  );
+  const [draft, setDraft] = React.useState<InterviewAgentDraft | undefined>(
+    initialDraft?.draft
+  );
   const [selectedQuestionId, setSelectedQuestionId] = React.useState<string>();
   const [isPreviewOpen, setIsPreviewOpen] = React.useState(false);
-  const [isPublished, setIsPublished] = React.useState(false);
+  const [isSavingDraft, setIsSavingDraft] = React.useState(false);
+  const [isPublishingDraft, setIsPublishingDraft] = React.useState(false);
+  const [saveMessage, setSaveMessage] = React.useState<string>();
+  const [saveError, setSaveError] = React.useState<string>();
+  const [publishedInterview, setPublishedInterview] =
+    React.useState<Extract<PublishInterviewDraftResult, { ok: true }>>();
 
   const currentStepIndex = steps.findIndex((step) => step.id === currentStep);
   const currentStepConfig = steps[currentStepIndex] ?? steps[0]!;
@@ -226,7 +277,9 @@ export function InterviewAgentBuilder({
 
     setDraft(nextDraft);
     setSelectedQuestionId(undefined);
-    setIsPublished(false);
+    setPublishedInterview(undefined);
+    setSaveMessage(undefined);
+    setSaveError(undefined);
     return nextDraft;
   }, [attachmentName, companyName, focus, jobDescription, jobTitle, seniority]);
 
@@ -234,6 +287,113 @@ export function InterviewAgentBuilder({
     setCurrentStep(step);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
+
+  const saveCurrentDraft = React.useCallback(
+    async (
+      draftToSave = draft
+    ): Promise<Extract<SaveInterviewDraftResult, { ok: true }> | null> => {
+      if (!draftToSave) {
+        setSaveError("Generate questions before saving the draft.");
+        return null;
+      }
+
+      setIsSavingDraft(true);
+      setSaveError(undefined);
+
+      let result: SaveInterviewDraftResult;
+
+      try {
+        result = await saveInterviewDraft({
+          criteria: draftToSave.criteria,
+          draftId: persistedDraftId,
+          estimatedMinutes: draftToSave.estimatedMinutes,
+          focus,
+          guardrails: draftToSave.guardrails,
+          jobId,
+          questions: draftToSave.questions,
+          rationale: draftToSave.rationale,
+          responseModes: modes,
+          roleBrief: jobDescription,
+          roleTitle: jobTitle,
+          seniority,
+          sourceAttachmentName: attachmentName,
+        });
+      } catch {
+        setIsSavingDraft(false);
+        setSaveError("The draft could not be saved. Please try again.");
+        return null;
+      }
+
+      setIsSavingDraft(false);
+
+      if (!result.ok) {
+        setSaveError(result.error);
+        return null;
+      }
+
+      setJobId(result.jobId);
+      setPersistedDraftId(result.draftId);
+      setSaveMessage("Draft saved");
+      router.replace(`/interviews/new?draftId=${result.draftId}`, {
+        scroll: false
+      });
+      router.refresh();
+
+      return result;
+    },
+    [
+      attachmentName,
+      draft,
+      focus,
+      jobDescription,
+      jobId,
+      jobTitle,
+      modes,
+      persistedDraftId,
+      router,
+      seniority
+    ]
+  );
+
+  const saveAndShare = React.useCallback(async () => {
+    const saved = await saveCurrentDraft();
+
+    if (saved) {
+      goToStep("share");
+    }
+  }, [goToStep, saveCurrentDraft]);
+
+  const publishCurrentDraft = React.useCallback(async () => {
+    const saved = await saveCurrentDraft();
+
+    if (!saved) {
+      return;
+    }
+
+    setIsPublishingDraft(true);
+    setSaveError(undefined);
+
+    let result: PublishInterviewDraftResult;
+
+    try {
+      result = await publishInterviewDraft(saved.draftId);
+    } catch {
+      setIsPublishingDraft(false);
+      setSaveError("The interview could not be published. Please try again.");
+      return;
+    }
+
+    setIsPublishingDraft(false);
+
+    if (!result.ok) {
+      setSaveError(result.error);
+      return;
+    }
+
+    setPublishedInterview(result);
+    setSaveMessage("Interview published");
+    router.refresh();
+  }, [router, saveCurrentDraft]);
 
   const toggleFocus = React.useCallback((value: InterviewFocus) => {
     setFocus((current) => {
@@ -344,9 +504,9 @@ export function InterviewAgentBuilder({
     }
 
     if (currentStep === "evaluation") {
-      goToStep("share");
+      void saveAndShare();
     }
-  }, [createDraft, currentStep, goToStep]);
+  }, [createDraft, currentStep, goToStep, saveAndShare]);
 
   const back = React.useCallback(() => {
     const previousStep = steps[currentStepIndex - 1]?.id;
@@ -428,17 +588,35 @@ export function InterviewAgentBuilder({
             <ShareStep
               companyName={companyName}
               draft={draft}
-              isPublished={isPublished}
+              isPublishing={isPublishingDraft}
+              isSaving={isSavingDraft}
               modes={modes}
+              publishedInterview={publishedInterview}
+              saveError={saveError}
+              saveMessage={saveMessage}
               onEditDraft={() => goToStep("questions")}
               onPreview={() => setIsPreviewOpen(true)}
-              onPublish={() => setIsPublished(true)}
+              onPublish={publishCurrentDraft}
+              onSave={() => void saveCurrentDraft()}
             />
+          ) : null}
+
+          {saveError && currentStep !== "share" ? (
+            <p className="mt-5 rounded-xl border border-coral-200 bg-coral-50 px-4 py-3 text-sm font-medium text-coral-800">
+              {saveError}
+            </p>
+          ) : null}
+
+          {saveMessage && currentStep !== "share" ? (
+            <p className="mt-5 rounded-xl border border-meadow-200 bg-meadow-50 px-4 py-3 text-sm font-medium text-meadow-800">
+              {saveMessage}
+            </p>
           ) : null}
 
           <WizardFooter
             canGoBack={currentStepIndex > 0}
             currentStep={currentStep}
+            isWorking={isSavingDraft}
             onBack={back}
             onNext={next}
           />
@@ -1028,20 +1206,34 @@ function EvaluationStep({ draft }: { draft: InterviewAgentDraft }) {
 function ShareStep({
   companyName,
   draft,
-  isPublished,
+  isPublishing,
+  isSaving,
   modes,
+  publishedInterview,
+  saveError,
+  saveMessage,
   onEditDraft,
   onPreview,
-  onPublish
+  onPublish,
+  onSave
 }: {
   companyName: string;
   draft: InterviewAgentDraft;
-  isPublished: boolean;
+  isPublishing: boolean;
+  isSaving: boolean;
   modes: ResponseMode[];
+  publishedInterview?: Extract<PublishInterviewDraftResult, { ok: true }>;
+  saveError?: string;
+  saveMessage?: string;
   onEditDraft: () => void;
   onPreview: () => void;
   onPublish: () => void;
+  onSave: () => void;
 }) {
+  const candidateLink = publishedInterview
+    ? `prelude.ai${publishedInterview.candidatePath}`
+    : "Publish to create the candidate link";
+
   return (
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-3">
@@ -1055,18 +1247,28 @@ function ShareStep({
           <Link2 aria-hidden="true" className="h-4 w-4 text-ink-700" />
           Candidate link
         </div>
-        <p className="mt-3 break-all text-lg font-semibold text-ink-900">
-          prelude.ai/i/demo-token
+        <p
+          className={`mt-3 break-all text-lg font-semibold ${
+            publishedInterview ? "text-ink-900" : "text-ink-500"
+          }`}
+        >
+          {candidateLink}
         </p>
         <p className="mt-2 text-sm leading-6 text-ink-600">
-          This is still mocked. In the real flow this link will be created when the
-          interview is published.
+          Drafts stay private. Publishing snapshots the current questions,
+          criteria, and candidate formats into a shareable interview.
         </p>
       </div>
 
-      {isPublished ? (
+      {saveError ? (
+        <div className="rounded-xl border border-coral-200 bg-coral-50 p-4 text-sm font-medium text-coral-800">
+          {saveError}
+        </div>
+      ) : null}
+
+      {saveMessage ? (
         <div className="rounded-xl border border-meadow-200 bg-meadow-50 p-4 text-sm font-medium text-meadow-700">
-          Mock interview published. The candidate link is ready to share.
+          {saveMessage}
         </div>
       ) : null}
 
@@ -1078,7 +1280,20 @@ function ShareStep({
         <Button variant="secondary" onClick={onEditDraft}>
           Edit draft
         </Button>
-        <Button onClick={onPublish}>Publish interview</Button>
+        <Button disabled={isSaving || isPublishing} variant="secondary" onClick={onSave}>
+          {isSaving ? "Saving..." : "Save draft"}
+        </Button>
+        <Button disabled={isSaving || isPublishing} onClick={onPublish}>
+          {isPublishing ? "Publishing..." : "Publish interview"}
+        </Button>
+        {publishedInterview ? (
+          <a
+            className="inline-flex h-10 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-white/80 px-4 text-sm font-medium text-ink-900 transition hover:border-ink-900 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+            href={publishedInterview.detailPath}
+          >
+            Open detail
+          </a>
+        ) : null}
       </div>
     </div>
   );
@@ -1087,11 +1302,13 @@ function ShareStep({
 function WizardFooter({
   canGoBack,
   currentStep,
+  isWorking,
   onBack,
   onNext
 }: {
   canGoBack: boolean;
   currentStep: StepId;
+  isWorking: boolean;
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -1099,14 +1316,14 @@ function WizardFooter({
     brief: "Continue",
     calibrate: "Create questions",
     questions: "Review evaluation",
-    evaluation: "Prepare to share"
+    evaluation: "Save and share"
   };
 
   return (
     <div className="mt-8 grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
       <Button
         className="w-full sm:w-auto"
-        disabled={!canGoBack}
+        disabled={!canGoBack || isWorking}
         variant="secondary"
         onClick={onBack}
       >
@@ -1117,8 +1334,8 @@ function WizardFooter({
       {currentStep === "share" ? (
         null
       ) : (
-        <Button className="w-full sm:w-auto" onClick={onNext}>
-          {nextLabels[currentStep]}
+        <Button className="w-full sm:w-auto" disabled={isWorking} onClick={onNext}>
+          {isWorking ? "Saving..." : nextLabels[currentStep]}
           {currentStep === "calibrate" ? (
             <Sparkles aria-hidden="true" className="h-4 w-4" />
           ) : (

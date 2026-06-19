@@ -2,17 +2,29 @@ import Link from "next/link";
 import { Xmark } from "iconoir-react";
 
 import { InterviewAgentBuilder } from "../../../../src/features/interview-agent/interview-agent-builder";
-import { getConsoleDashboardData } from "../../../../src/server/dashboard/dashboard-data";
+import { getInterviewBuilderContext } from "../../../../src/server/interviews/interview-loaders";
 import { requireCompletedOrganizationOnboarding } from "../../../../src/server/onboarding/onboarding-guard";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function NewInterviewPage() {
+type NewInterviewPageProps = {
+  searchParams: Promise<{
+    draftId?: string;
+    jobId?: string;
+  }>;
+};
+
+export default async function NewInterviewPage({
+  searchParams,
+}: NewInterviewPageProps) {
   await requireCompletedOrganizationOnboarding();
 
-  const dashboard = await getConsoleDashboardData();
-  const firstJob = dashboard.jobs[0];
+  const params = await searchParams;
+  const context = await getInterviewBuilderContext({
+    draftId: params.draftId,
+    jobId: params.jobId,
+  });
 
   return (
     <>
@@ -24,9 +36,11 @@ export default async function NewInterviewPage() {
         Exit
       </Link>
       <InterviewAgentBuilder
-        companyName={dashboard.organization.name}
-        initialJobDescription={firstJob ? firstJob.description : undefined}
-        initialJobTitle={firstJob?.title}
+        companyName={context.companyName}
+        initialDraft={context.initialDraft}
+        initialJobDescription={context.initialJob?.description}
+        initialJobId={context.initialJob?.id}
+        initialJobTitle={context.initialJob?.title}
       />
     </>
   );
