@@ -86,6 +86,33 @@ func validAnswerEvaluatedPayload(questionID string, turnID string, classificatio
 	}`)
 }
 
+func validMatrixAnswerEvaluatedPayload(questionID string, turnID string) json.RawMessage {
+	return json.RawMessage(`{
+		"question_id": "` + questionID + `",
+		"turn_ids": ["` + turnID + `"],
+		"attempt_index": 1,
+		"classification": "vague",
+		"reason_codes": ["incoherent_or_absurd_answer"],
+		"policy_action": "ask_followup",
+		"confidence": 0.35,
+		"evaluator_version": "answer-eval-matrix-v1",
+		"evaluation_matrix": {
+			"evaluator_mode": "heuristic_v1",
+			"overall_score": 3,
+			"max_score": 15,
+			"dimensions": [
+				{"name": "coherence", "score": 0, "rationale": "No usable coherence signal."},
+				{"name": "relevance", "score": 0, "rationale": "No usable relevance signal."}
+			],
+			"challenge": {
+				"needed": true,
+				"reason": "incoherent_or_absurd_answer",
+				"prompt": "Pouvez-vous repondre avec un exemple concret ?"
+			}
+		}
+	}`)
+}
+
 func validQuestionAskedPayload(sessionID string, questionID string, questionIndex int) json.RawMessage {
 	return json.RawMessage(fmt.Sprintf(`{
 		"question_id": %q,
@@ -1316,5 +1343,59 @@ func TestServiceRecruiterSummaryExcludesSensitiveCandidateSignals(t *testing.T) 
 				t.Fatalf("sensitive quote leaked into evidence: %#v", evidence)
 			}
 		}
+	}
+}
+
+func TestServiceRecruiterSummaryUsesEvaluationMatrixRiskExplanation(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 45, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	events := []application.IngestEventInput{
+		eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted),
+		eventInput(session.Session.ID, 2, "evt_q1", domain.EventQuestionAsked),
+		eventInput(session.Session.ID, 3, "evt_turn_q1", domain.EventCandidateTurnFinalized),
+		eventInput(session.Session.ID, 4, "evt_eval_q1", domain.EventAnswerEvaluated),
+	}
+	events[1].Payload = validQuestionAskedPayload(session.Session.ID, "q1", 0)
+	events[2].Actor = domain.EventActorCandidate
+	events[2].Payload = validCandidateTurnFinalizedPayload(
+		session.Session.ID,
+		"q1",
+		"turn_q1",
+		"caca",
+	)
+	events[3].Actor = domain.EventActorSystem
+	events[3].Payload = validMatrixAnswerEvaluatedPayload("q1", "turn_q1")
+
+	for _, event := range events {
+		if _, err := service.IngestEvent(context.Background(), event); err != nil {
+			t.Fatalf("IngestEvent(%s) returned error: %v", event.Type, err)
+		}
+	}
+
+	summary, err := service.GetRecruiterSummary(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetRecruiterSummary returned error: %v", err)
+	}
+
+	if summary.Criteria[0].Status != "unclear" {
+		t.Fatalf("expected unclear first criterion, got %s", summary.Criteria[0].Status)
+	}
+	if len(summary.Risks) == 0 {
+		t.Fatal("expected matrix-backed risk")
+	}
+	if !strings.Contains(summary.Risks[0].Explanation, "coherence") {
+		t.Fatalf("expected matrix risk explanation, got %s", summary.Risks[0].Explanation)
+	}
+	if !strings.Contains(summary.Criteria[0].Note, "incoherent or absurd answer") {
+		t.Fatalf("expected matrix challenge note, got %s", summary.Criteria[0].Note)
 	}
 }

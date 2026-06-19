@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Mapping
 
+from app.adapters.answer_inference import HeuristicAnswerInferenceProvider
+from app.application.ports import AnswerInferenceProvider
 from app.domain.models import (
     AgentConfig,
     CandidateTurn,
@@ -20,7 +22,6 @@ from app.domain.models import (
     InterviewStyle,
 )
 from app.domain.orchestrator import (
-    AnswerClassification,
     InterviewOrchestrator,
     OrchestratorCommand,
     OrchestratorCommandType,
@@ -617,11 +618,13 @@ class LiveInterviewOrchestrationController:
         plan: InterviewPlan,
         emitter: PreludeEventEmitter,
         session: object,
+        answer_inference: AnswerInferenceProvider | None = None,
     ) -> None:
         self._plan = plan
         self._emitter = emitter
         self._session = session
         self._orchestrator = InterviewOrchestrator(plan)
+        self._answer_inference = answer_inference or HeuristicAnswerInferenceProvider()
         self._lock = asyncio.Lock()
         self._candidate_turns = 0
         self._last_candidate_intent = CandidateTurnIntent.ANSWER_COMPLETE
@@ -713,12 +716,18 @@ class LiveInterviewOrchestrationController:
         turn_ids: list[str],
     ) -> None:
         self._last_candidate_intent = turn.candidate_intent
-        classification = InterviewOrchestrator.classify_candidate_turn(turn)
+        question = _question_by_id(self._plan, turn.question_id)
+        assessment = await self._answer_inference.assess_answer(
+            question=question,
+            turn=turn,
+            plan=self._plan,
+        )
         decision = self._orchestrator.evaluate_answer(
-            classification=classification,
+            classification=assessment.classification,
             turn_ids=turn_ids,
-            reason_codes=_reason_codes(classification, turn),
-            confidence=1.0,
+            reason_codes=assessment.reason_codes,
+            confidence=assessment.confidence,
+            evaluation_matrix=assessment.evaluation_matrix,
         )
         await self._emitter.emit(
             EventType.ANSWER_EVALUATED,
@@ -779,7 +788,11 @@ class LiveInterviewOrchestrationController:
 
         if command.type == OrchestratorCommandType.ASK_FOLLOWUP:
             question = _current_question(self._plan, command)
-            followup = question.follow_up_prompt or "Pouvez-vous donner un exemple concret ?"
+            followup = (
+                command.prompt_override
+                or question.follow_up_prompt
+                or "Pouvez-vous donner un exemple concret ?"
+            )
             followups_used = command.followups_used or 1
             await self._speak_question_control(
                 EventType.FOLLOWUP_ASKED,
@@ -1253,6 +1266,13 @@ def _current_question(plan: InterviewPlan, command: OrchestratorCommand):
     raise RuntimeError(f"unknown orchestrator question {command.question_id}")
 
 
+def _question_by_id(plan: InterviewPlan, question_id: str):
+    for question in plan.questions:
+        if question.id == question_id:
+            return question
+    raise RuntimeError(f"unknown question {question_id}")
+
+
 def _closing_message(plan: InterviewPlan) -> str:
     if plan.language.startswith("en"):
         return (
@@ -1387,36 +1407,6 @@ def _candidate_turn_completion_reason(turn: CandidateTurn) -> str:
     if turn.repeat_requested or turn.wait_requested or not turn.is_complete:
         return "incomplete"
     return "answered"
-
-
-def _reason_codes(
-    classification: AnswerClassification,
-    turn: CandidateTurn | None = None,
-) -> list[str]:
-    reason_codes: list[str] = []
-    if turn is not None:
-        reason_codes.append(f"candidate_intent:{turn.candidate_intent.value}")
-        if turn.classifier_reason:
-            reason_codes.append(turn.classifier_reason)
-    if classification == AnswerClassification.VAGUE:
-        reason_codes.append("too_generic")
-        return reason_codes
-    if classification == AnswerClassification.INCOMPLETE:
-        reason_codes.append("incomplete_answer")
-        return reason_codes
-    if classification == AnswerClassification.SILENT:
-        reason_codes.append("candidate_silent")
-        return reason_codes
-    if classification == AnswerClassification.SKIPPED:
-        reason_codes.append("candidate_requested_skip")
-        return reason_codes
-    if classification == AnswerClassification.REPEAT_REQUESTED:
-        reason_codes.append("candidate_requested_repeat")
-        return reason_codes
-    if classification == AnswerClassification.WAIT_REQUESTED:
-        reason_codes.append("candidate_requested_time")
-        return reason_codes
-    return reason_codes
 
 
 async def _soft_prompt_after_initial_silence(

@@ -83,13 +83,36 @@ type RecruiterSummaryAudit struct {
 }
 
 type answerEvaluation struct {
-	QuestionID        string   `json:"question_id"`
-	QuestionIDCamel   string   `json:"questionId"`
-	TurnIDs           []string `json:"turn_ids"`
-	TurnIDsCamel      []string `json:"turnIds"`
-	Classification    string   `json:"classification"`
-	PolicyAction      string   `json:"policy_action"`
-	PolicyActionCamel string   `json:"policyAction"`
+	QuestionID            string            `json:"question_id"`
+	QuestionIDCamel       string            `json:"questionId"`
+	TurnIDs               []string          `json:"turn_ids"`
+	TurnIDsCamel          []string          `json:"turnIds"`
+	Classification        string            `json:"classification"`
+	PolicyAction          string            `json:"policy_action"`
+	PolicyActionCamel     string            `json:"policyAction"`
+	EvaluationMatrix      *evaluationMatrix `json:"evaluation_matrix"`
+	EvaluationMatrixCamel *evaluationMatrix `json:"evaluationMatrix"`
+}
+
+type evaluationMatrix struct {
+	OverallScore      int                   `json:"overall_score"`
+	OverallScoreCamel int                   `json:"overallScore"`
+	MaxScore          int                   `json:"max_score"`
+	MaxScoreCamel     int                   `json:"maxScore"`
+	Dimensions        []evaluationDimension `json:"dimensions"`
+	Challenge         evaluationChallenge   `json:"challenge"`
+}
+
+type evaluationDimension struct {
+	Name      string `json:"name"`
+	Score     int    `json:"score"`
+	Rationale string `json:"rationale"`
+}
+
+type evaluationChallenge struct {
+	Needed bool   `json:"needed"`
+	Reason string `json:"reason"`
+	Prompt string `json:"prompt"`
 }
 
 type candidateAnswer struct {
@@ -162,7 +185,7 @@ func buildRecruiterSummary(session domain.Session, plan InterviewPlan, generated
 			Category:    question.Category,
 			Status:      status,
 			Evidence:    evidence,
-			Note:        criterionNote(question, status),
+			Note:        criterionNote(question, status, evaluation),
 		})
 
 		questionNotes = append(questionNotes, SummaryQuestionNote{
@@ -170,7 +193,7 @@ func buildRecruiterSummary(session domain.Session, plan InterviewPlan, generated
 			Prompt:        question.Prompt,
 			Category:      question.Category,
 			AnswerStatus:  status,
-			AnswerSummary: answerSummary(question, status, answers),
+			AnswerSummary: answerSummary(question, status, answers, evaluation),
 			Evidence:      evidence,
 		})
 
@@ -187,7 +210,7 @@ func buildRecruiterSummary(session domain.Session, plan InterviewPlan, generated
 		case "unclear":
 			risks = append(risks, SummarySignal{
 				Title:       fmt.Sprintf("%s needs validation", criterionLabel(question)),
-				Explanation: "The candidate answered, but the signal is too thin for a confident first-screen read.",
+				Explanation: matrixRiskExplanation(evaluation),
 				Confidence:  "medium",
 				Evidence:    evidence,
 			})
@@ -290,6 +313,13 @@ func (e answerEvaluation) turnIDs() []string {
 	return e.TurnIDs
 }
 
+func (e answerEvaluation) matrix() *evaluationMatrix {
+	if e.EvaluationMatrixCamel != nil {
+		return e.EvaluationMatrixCamel
+	}
+	return e.EvaluationMatrix
+}
+
 func criterionStatus(answers []candidateAnswer, evaluation answerEvaluation) string {
 	if len(answers) == 0 {
 		return "missing"
@@ -322,26 +352,53 @@ func criterionLabel(question InterviewQuestion) string {
 	}
 }
 
-func criterionNote(question InterviewQuestion, status string) string {
+func criterionNote(question InterviewQuestion, status string, evaluation answerEvaluation) string {
 	switch status {
 	case "satisfied":
 		return fmt.Sprintf("Usable evidence was captured for %s.", strings.ToLower(criterionLabel(question)))
 	case "unclear":
+		if matrix := evaluation.matrix(); matrix != nil && matrix.Challenge.Reason != "" {
+			return fmt.Sprintf("%s was challenged by the live interviewer: %s.", criterionLabel(question), humanizeReason(matrix.Challenge.Reason))
+		}
 		return fmt.Sprintf("%s was partially captured but needs recruiter validation.", criterionLabel(question))
 	default:
 		return fmt.Sprintf("%s was not captured in the interview.", criterionLabel(question))
 	}
 }
 
-func answerSummary(question InterviewQuestion, status string, answers []candidateAnswer) string {
+func answerSummary(question InterviewQuestion, status string, answers []candidateAnswer, evaluation answerEvaluation) string {
 	switch status {
 	case "satisfied":
 		return "The candidate gave a usable answer that can support recruiter review."
 	case "unclear":
+		if matrix := evaluation.matrix(); matrix != nil && matrix.Challenge.Prompt != "" {
+			return "The live interviewer challenged the answer because the evaluation matrix found a weak signal."
+		}
 		return "The candidate responded, but the answer needs clarification before it can support a hiring step."
 	default:
 		return fmt.Sprintf("No candidate answer was captured for: %s", question.Prompt)
 	}
+}
+
+func matrixRiskExplanation(evaluation answerEvaluation) string {
+	matrix := evaluation.matrix()
+	if matrix == nil {
+		return "The candidate answered, but the signal is too thin for a confident first-screen read."
+	}
+	weak := make([]string, 0)
+	for _, dimension := range matrix.Dimensions {
+		if dimension.Score < 2 {
+			weak = append(weak, strings.ReplaceAll(dimension.Name, "_", " "))
+		}
+	}
+	if len(weak) == 0 {
+		return "The live evaluation matrix marked the answer as needing recruiter validation."
+	}
+	return fmt.Sprintf("The live evaluation matrix found weak %s.", strings.Join(weak, ", "))
+}
+
+func humanizeReason(reason string) string {
+	return strings.ReplaceAll(reason, "_", " ")
 }
 
 func evidenceFromAnswers(answers []candidateAnswer, limit int) []SummaryEvidence {
