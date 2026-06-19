@@ -14,11 +14,13 @@ from app.adapters.livekit_openai_worker import (
     OpenAILiveWorkerConfig,
     PreludeEventEmitter,
     build_live_interviewer_instructions,
+    _candidate_turn_from_live_transcript,
     _spoken_question_prompt,
     _wait_for_candidate_ready,
     _supports_realtime_reasoning,
     _soft_prompt_after_initial_silence,
 )
+from app.domain.orchestrator import AnswerClassification, InterviewOrchestrator
 from app.domain.models import (
     EventActor,
     EventType,
@@ -321,6 +323,56 @@ async def test_live_orchestration_controller_completes_three_question_flow() -> 
     assert events[-1].payload["completed_questions"] == 3
     assert events[-1].payload["total_questions"] == 3
     assert len(session.replies) >= 4
+
+
+def test_live_transcript_role_clarification_does_not_complete_answer() -> None:
+    for transcript in [
+        "Alors on parle de quel poste, excusez-moi ?",
+        "C'est quoi le titre du poste, excusez-moi ?",
+    ]:
+        turn = _candidate_turn_from_live_transcript(
+            question_id="q1",
+            transcript=transcript,
+            occurred_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
+        )
+
+        assert turn.repeat_requested is True
+        assert turn.is_complete is False
+        assert (
+            InterviewOrchestrator.classify_candidate_turn(turn)
+            == AnswerClassification.REPEAT_REQUESTED
+        )
+
+
+@pytest.mark.asyncio
+async def test_live_orchestration_controller_repeats_role_context_without_completing_question() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+
+    await controller.start()
+    await controller.handle_candidate_transcript(
+        "Alors on parle de quel poste, excusez-moi ?",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+
+    event_types = [event.type for event in events]
+    assert event_types.count(EventType.ANSWER_EVALUATED) == 1
+    assert event_types.count(EventType.QUESTION_REPEATED) == 1
+    assert EventType.QUESTION_COMPLETED not in event_types
+    repeated = next(event for event in events if event.type == EventType.QUESTION_REPEATED)
+    assert "Product Manager B2B SaaS" in repeated.payload["prompt"]
+    assert "Do not move to the next question" in session.replies[-1]["instructions"]
 
 
 @pytest.mark.asyncio

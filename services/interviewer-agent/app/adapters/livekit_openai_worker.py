@@ -468,12 +468,20 @@ class LiveInterviewOrchestrationController:
             return
 
         if command.type == OrchestratorCommandType.REPEAT_QUESTION:
+            current_question = _current_question(self._plan, command)
+            prompt = (
+                f"Le poste est {self._plan.role_title}. {current_question.prompt}"
+            )
             await self._speak_question_control(
                 EventType.QUESTION_REPEATED,
                 command=command,
                 utterance_kind="repeat",
-                prompt=_current_question(self._plan, command).prompt,
-                instructions="Repeat only the current planned question. Do not add a new question.",
+                prompt=prompt,
+                instructions=(
+                    "Briefly answer that the role is "
+                    f"{self._plan.role_title}, then repeat only the current "
+                    "planned question. Do not move to the next question."
+                ),
                 extra_payload={"reason": "candidate_requested_repeat"},
             )
             return
@@ -613,7 +621,7 @@ class LiveInterviewOrchestrationController:
         self._orchestrator.mark_session_closed()
         reply = getattr(self._session, "generate_reply")(
             instructions=closing,
-            allow_interruptions=False,
+            allow_interruptions=True,
         )
         wait_for_playout = getattr(reply, "wait_for_playout", None)
         if callable(wait_for_playout):
@@ -956,7 +964,23 @@ def _candidate_turn_from_live_transcript(
     normalized = transcript.strip().lower()
     repeat_requested = any(
         marker in normalized
-        for marker in ["repeter", "répéter", "repeat", "reformuler", "rephrase"]
+        for marker in [
+            "repeter",
+            "répéter",
+            "repeat",
+            "reformuler",
+            "rephrase",
+            "quel poste",
+            "quelle poste",
+            "titre du poste",
+            "c'est quoi le poste",
+            "c est quoi le poste",
+            "c'est quoi le titre",
+            "c est quoi le titre",
+            "on parle de quel",
+            "quel rôle",
+            "quel role",
+        ]
     )
     wait_requested = any(
         marker in normalized
