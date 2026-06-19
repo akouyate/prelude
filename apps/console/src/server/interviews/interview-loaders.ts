@@ -42,6 +42,8 @@ export type InterviewDetailData =
         candidatePath: string;
         candidateSessions: CandidateSessionSummary[];
         criteria: InterviewCriterionDraft[];
+        draftId: string | null;
+        estimatedMinutes: number | null;
         guardrails: string[];
         id: string;
         jobTitle: string;
@@ -174,6 +176,8 @@ export async function getInterviewDetail(
           toCandidateSessionSummary(session, liveStatusById),
         ),
         criteria: readCriteria(interview.criteria),
+        draftId: interview.draftId,
+        estimatedMinutes: interview.estimatedMinutes,
         guardrails: readStringArray(interview.guardrails),
         id: interview.id,
         jobTitle: interview.job.title,
