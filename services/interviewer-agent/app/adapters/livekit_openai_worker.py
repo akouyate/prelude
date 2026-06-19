@@ -949,6 +949,9 @@ class LiveInterviewOrchestrationController:
             command=command,
             utterance_kind="question",
             prompt=question.prompt,
+            spoken_text=_first_question_spoken_prompt(self._plan, question.prompt)
+            if first
+            else _spoken_question_prompt(question.prompt),
             instructions=FIRST_REPLY_INSTRUCTIONS
             if first
             else f"Ask only this planned question: {question.prompt}",
@@ -967,6 +970,7 @@ class LiveInterviewOrchestrationController:
         utterance_kind: str,
         prompt: str,
         instructions: str,
+        spoken_text: str | None = None,
         extra_payload: dict[str, object] | None = None,
     ) -> None:
         utterance_id = (
@@ -997,8 +1001,11 @@ class LiveInterviewOrchestrationController:
             },
             actor=EventActor.AGENT,
         )
-        reply = getattr(self._session, "generate_reply")(
-            instructions=instructions,
+        speech_text = spoken_text or prompt
+        reply = _generate_exact_control_reply(
+            self._session,
+            speech_text,
+            context_instructions=instructions,
             allow_interruptions=True,
         )
         wait_for_playout = getattr(reply, "wait_for_playout", None)
@@ -1356,6 +1363,19 @@ def _spoken_question_prompt(prompt: str) -> str:
     return spoken or prompt.strip()
 
 
+def _first_question_spoken_prompt(plan: InterviewPlan, prompt: str) -> str:
+    question = _spoken_question_prompt(prompt)
+    if plan.language.startswith("en"):
+        return (
+            "Hello, this is a short structured screening interview. "
+            f"{question}"
+        )
+    return (
+        "Bonjour, ceci est un entretien de présélection structuré. "
+        f"{question}"
+    )
+
+
 def _format_interview_style(style: InterviewStyle) -> str:
     lines = []
     if style.sector:
@@ -1430,6 +1450,27 @@ def _generate_exact_reply(
             f"{text}"
         ),
         instructions=_closing_instructions(text),
+        allow_interruptions=allow_interruptions,
+    )
+
+
+def _generate_exact_control_reply(
+    session: object,
+    text: str,
+    *,
+    context_instructions: str,
+    allow_interruptions: bool,
+) -> object:
+    return getattr(session, "generate_reply")(
+        user_input=(
+            "Read this exact interviewer line aloud verbatim. Do not add, remove, "
+            f"or rewrite anything: {text}"
+        ),
+        instructions=(
+            "Say exactly the provided interviewer line, then stop speaking. "
+            "Do not improvise a different question. Context only: "
+            f"{context_instructions}"
+        ),
         allow_interruptions=allow_interruptions,
     )
 

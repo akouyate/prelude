@@ -96,6 +96,7 @@ async def test_fallback_answer_inference_uses_heuristic_when_primary_fails() -> 
 
     assert assessment.classification == AnswerClassification.VAGUE
     assert "answer_too_short_or_generic" in assessment.reason_codes
+    assert "llm_fallback:RuntimeError" in assessment.reason_codes
 
 
 @pytest.mark.asyncio
