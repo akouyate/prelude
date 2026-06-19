@@ -1,6 +1,11 @@
 import pytest
 
-from app.domain.models import CandidateTurn, InterviewPlan, InterviewQuestion
+from app.domain.models import (
+    CandidateTurn,
+    InterviewPlan,
+    InterviewQuestion,
+    QuestionCategory,
+)
 from app.domain.orchestrator import (
     AnswerClassification,
     EvaluationDimension,
@@ -16,13 +21,22 @@ def three_question_plan() -> InterviewPlan:
         role_title="Customer Success Manager",
         max_followups_per_question=1,
         questions=[
-            InterviewQuestion(id="q1", prompt="Why are you interested?"),
+            InterviewQuestion(
+                id="q1",
+                prompt="Why are you interested?",
+                category=QuestionCategory.MOTIVATION,
+            ),
             InterviewQuestion(
                 id="q2",
                 prompt="Tell me about a customer situation.",
+                category=QuestionCategory.EXPERIENCE,
                 follow_up_prompt="What did you do next?",
             ),
-            InterviewQuestion(id="q3", prompt="What are your availabilities?"),
+            InterviewQuestion(
+                id="q3",
+                prompt="What are your availabilities?",
+                category=QuestionCategory.LOGISTICS,
+            ),
         ],
     )
 
@@ -207,26 +221,107 @@ def test_matrix_challenges_absurd_answer_instead_of_accepting_text() -> None:
     assert payload["evaluation_matrix"]["challenge"]["needed"] is True
 
 
-def test_matrix_accepts_concrete_relevant_answer() -> None:
+@pytest.mark.parametrize(
+    (
+        "name",
+        "question_id",
+        "transcript",
+        "expected_classification",
+        "expected_challenge_reason",
+    ),
+    [
+        (
+            "absurd_marker",
+            "q1",
+            "caca",
+            AnswerClassification.VAGUE,
+            "incoherent_or_absurd_answer",
+        ),
+        (
+            "keyboard_noise",
+            "q1",
+            "asdf asdf asdf",
+            AnswerClassification.VAGUE,
+            "incoherent_or_absurd_answer",
+        ),
+        (
+            "low_information",
+            "q1",
+            "Je ne sais pas trop.",
+            AnswerClassification.VAGUE,
+            "off_topic_or_low_relevance",
+        ),
+        (
+            "off_topic_weather",
+            "q2",
+            "Il fait beau aujourd'hui et je prefere parler de football.",
+            AnswerClassification.VAGUE,
+            "off_topic_or_low_relevance",
+        ),
+        (
+            "generic_claim_without_evidence",
+            "q2",
+            "Je suis motive et tres bon dans ce que je fais.",
+            AnswerClassification.VAGUE,
+            "off_topic_or_low_relevance",
+        ),
+        (
+            "repeated_keyword_stuffing",
+            "q2",
+            "client client client client client",
+            AnswerClassification.VAGUE,
+            "answer_needs_clarification",
+        ),
+        (
+            "contradictory_answer",
+            "q2",
+            "J'ai priorise la roadmap mais je n'ai jamais priorise de roadmap ni travaille avec des clients.",
+            AnswerClassification.VAGUE,
+            "answer_needs_clarification",
+        ),
+        (
+            "concrete_relevant_experience",
+            "q2",
+            (
+                "J'ai gere un incident client important: j'ai priorise le correctif, "
+                "coordonne l'equipe support et mesure le resultat sur le churn."
+            ),
+            AnswerClassification.COMPLETE,
+            None,
+        ),
+        (
+            "valid_logistics",
+            "q3",
+            "Je suis disponible dans deux semaines et je peux travailler en hybride.",
+            AnswerClassification.COMPLETE,
+            None,
+        ),
+    ],
+)
+def test_matrix_smoke_scenarios(
+    name: str,
+    question_id: str,
+    transcript: str,
+    expected_classification: AnswerClassification,
+    expected_challenge_reason: str | None,
+) -> None:
     plan = three_question_plan()
-    question = plan.questions[1]
+    question = next(question for question in plan.questions if question.id == question_id)
 
     assessment = InterviewOrchestrator.assess_candidate_turn(
         plan=plan,
         question=question,
-        turn=CandidateTurn(
-            question_id=question.id,
-            transcript=(
-                "J'ai gere un incident client important: j'ai priorise le correctif, "
-                "coordonne l'equipe support et mesure le resultat sur le churn."
-            ),
-        ),
+        turn=CandidateTurn(question_id=question.id, transcript=transcript),
     )
 
-    assert assessment.classification == AnswerClassification.COMPLETE
+    assert assessment.classification == expected_classification, name
     assert assessment.evaluation_matrix is not None
-    assert assessment.evaluation_matrix.challenge_needed is False
-    assert assessment.evaluation_matrix.overall_score >= 10
+    if expected_challenge_reason is None:
+        assert assessment.evaluation_matrix.challenge_needed is False, name
+        assert assessment.evaluation_matrix.overall_score >= 10, name
+    else:
+        assert assessment.evaluation_matrix.challenge_needed is True, name
+        assert assessment.evaluation_matrix.challenge_reason == expected_challenge_reason, name
 
 
 def test_rejects_answer_when_no_question_is_active() -> None:
