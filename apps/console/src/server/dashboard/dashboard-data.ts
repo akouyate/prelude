@@ -1,9 +1,15 @@
 import "server-only";
 
-import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@prelude/db";
 
-import { isClerkConfigured } from "../auth/clerk-config";
+import { getCompletedOrganizationScope } from "../organizations/organization-scope";
+
+export type DashboardInterviewState =
+  | "draft"
+  | "published"
+  | "candidate_started"
+  | "completed"
+  | "needs_review";
 
 export type ConsoleDashboardData = {
   organization: {
@@ -13,101 +19,230 @@ export type ConsoleDashboardData = {
     hiringFocus: string | null;
     name: string;
   };
-  jobs: Array<{
+  metrics: {
+    activeRoles: number;
+    candidateStarted: number;
+    completed: number;
+    drafts: number;
+    needsReview: number;
+    published: number;
+  };
+  interviews: Array<{
+    candidateCount: number;
     description: string;
+    href: string;
     id: string;
+    jobId: string;
     location: string | null;
     sourceProvider: string | null;
-    status: string;
+    state: DashboardInterviewState;
     title: string;
+    updatedAt: string;
   }>;
   connectors: Array<{
     provider: string;
     status: string;
   }>;
+  primaryReviewHref: string | null;
 };
 
+const activeCandidateStatuses = new Set([
+  "agent_joining",
+  "created",
+  "in_progress",
+  "paused",
+  "started",
+  "waiting_candidate",
+]);
+
 export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
-  if (!isClerkConfigured) {
-    return mockDashboardData;
-  }
+  const scope = await getCompletedOrganizationScope();
 
-  const authState = await auth();
-
-  if (!authState.userId) {
-    throw new Error("Authenticated user is required.");
-  }
-
-  const membership = await prisma.organizationMembership.findFirst({
-    include: {
-      organization: {
+  const [organization, draftCount, publishedCount, candidateSessions] =
+    await Promise.all([
+      prisma.organization.findUniqueOrThrow({
         include: {
-          jobs: {
-            orderBy: { createdAt: "desc" },
-            take: 5,
-          },
           jobSourceConnections: {
             orderBy: { createdAt: "desc" },
           },
+          jobs: {
+            include: {
+              interviewDrafts: {
+                orderBy: { updatedAt: "desc" },
+                take: 1,
+              },
+              interviews: {
+                include: {
+                  candidateSessions: {
+                    orderBy: { updatedAt: "desc" },
+                  },
+                },
+                orderBy: { updatedAt: "desc" },
+                take: 1,
+              },
+            },
+            orderBy: { createdAt: "desc" },
+            take: 10,
+          },
         },
-      },
-    },
-    orderBy: { createdAt: "asc" },
-    where: {
-      status: "active",
-      user: { clerkUserId: authState.userId },
-      organization: {
-        ...(authState.orgId ? { clerkOrganizationId: authState.orgId } : {}),
-        onboardingCompletedAt: { not: null },
-      },
-    },
+        where: { id: scope.organizationId },
+      }),
+      prisma.interviewDraft.count({
+        where: {
+          organizationId: scope.organizationId,
+          status: "draft",
+        },
+      }),
+      prisma.interview.count({
+        where: {
+          organizationId: scope.organizationId,
+          status: "published",
+        },
+      }),
+      prisma.candidateSession.findMany({
+        orderBy: { updatedAt: "desc" },
+        where: { organizationId: scope.organizationId },
+      }),
+    ]);
+
+  const liveStatusById = await getLiveStatusById(
+    candidateSessions
+      .map((session) => session.realtimeSessionId)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const completed = candidateSessions.filter(
+    (session) => currentCandidateStatus(session, liveStatusById) === "completed",
+  );
+  const active = candidateSessions.filter((session) =>
+    activeCandidateStatuses.has(currentCandidateStatus(session, liveStatusById)),
+  );
+
+  const interviews = organization.jobs.map((job) => {
+    const interview = job.interviews[0];
+    const draft = job.interviewDrafts[0];
+    const state = resolveInterviewState({
+      draftStatus: draft?.status,
+      interviewStatus: interview?.status,
+      sessions: interview?.candidateSessions ?? [],
+      liveStatusById,
+    });
+
+    return {
+      candidateCount: interview?.candidateSessions.length ?? 0,
+      description:
+        interview?.roleBrief ?? draft?.roleBrief ?? job.description ?? "",
+      href: interview
+        ? `/interviews/${interview.id}`
+        : draft
+          ? `/interviews/new?draftId=${draft.id}`
+          : `/interviews/new?jobId=${job.id}`,
+      id: interview?.id ?? draft?.id ?? job.id,
+      jobId: job.id,
+      location: job.location,
+      sourceProvider: job.sourceProvider,
+      state,
+      title: interview?.roleTitle ?? draft?.roleTitle ?? job.title,
+      updatedAt:
+        interview?.updatedAt.toISOString() ??
+        draft?.updatedAt.toISOString() ??
+        job.createdAt.toISOString(),
+    };
   });
 
-  if (!membership) {
-    throw new Error("Completed onboarding is required.");
-  }
+  const latestCompleted = candidateSessions.find(
+    (session) => currentCandidateStatus(session, liveStatusById) === "completed",
+  );
+  const latestInterview = interviews[0];
 
   return {
-    connectors: membership.organization.jobSourceConnections.map((connector) => ({
+    connectors: organization.jobSourceConnections.map((connector) => ({
       provider: connector.provider,
       status: connector.status,
     })),
-    jobs: membership.organization.jobs.map((job) => ({
-      description: job.description,
-      id: job.id,
-      location: job.location,
-      sourceProvider: job.sourceProvider,
-      status: job.status,
-      title: job.title,
-    })),
-    organization: {
-      id: membership.organization.id,
-      companySize: membership.organization.companySize,
-      defaultInterviewMode: membership.organization.defaultInterviewMode,
-      hiringFocus: membership.organization.hiringFocus,
-      name: membership.organization.name,
+    interviews,
+    metrics: {
+      activeRoles: organization.jobs.length,
+      candidateStarted: active.length,
+      completed: completed.length,
+      drafts: draftCount,
+      needsReview: completed.length,
+      published: publishedCount,
     },
+    organization: {
+      id: organization.id,
+      companySize: organization.companySize,
+      defaultInterviewMode: organization.defaultInterviewMode,
+      hiringFocus: organization.hiringFocus,
+      name: organization.name,
+    },
+    primaryReviewHref: latestCompleted?.realtimeSessionId
+      ? `/interviews/${latestCompleted.realtimeSessionId}`
+      : (latestInterview?.href ?? null),
   };
 }
 
-const mockDashboardData: ConsoleDashboardData = {
-  connectors: [{ provider: "manual", status: "manual" }],
-  jobs: [
-    {
-      description:
-        "We are hiring a Customer Success Manager to onboard SMB customers, reduce churn risk, coordinate with product teams, and turn customer feedback into practical improvements.",
-      id: "job_demo",
-      location: "Paris",
-      sourceProvider: "manual",
-      status: "draft",
-      title: "Customer Success Manager",
+function resolveInterviewState({
+  draftStatus,
+  interviewStatus,
+  liveStatusById,
+  sessions,
+}: {
+  draftStatus?: string;
+  interviewStatus?: string;
+  sessions: Array<{
+    realtimeSessionId: string | null;
+    status: string;
+  }>;
+  liveStatusById: Map<string, string>;
+}): DashboardInterviewState {
+  const statuses = sessions.map((session) =>
+    currentCandidateStatus(session, liveStatusById),
+  );
+
+  if (statuses.includes("completed")) {
+    return "needs_review";
+  }
+
+  if (statuses.some((status) => activeCandidateStatuses.has(status))) {
+    return "candidate_started";
+  }
+
+  if (interviewStatus === "published") {
+    return "published";
+  }
+
+  if (draftStatus === "published") {
+    return "published";
+  }
+
+  return "draft";
+}
+
+function currentCandidateStatus(session: {
+  realtimeSessionId?: string | null;
+  status: string;
+}, liveStatusById: Map<string, string>) {
+  return (
+    (session.realtimeSessionId
+      ? liveStatusById.get(session.realtimeSessionId)
+      : undefined) ?? session.status
+  );
+}
+
+async function getLiveStatusById(sessionIds: string[]) {
+  if (sessionIds.length === 0) {
+    return new Map<string, string>();
+  }
+
+  const liveSessions = await prisma.liveInterviewSession.findMany({
+    select: {
+      id: true,
+      status: true,
     },
-  ],
-  organization: {
-    id: "org_demo",
-    companySize: "11-50",
-    defaultInterviewMode: "Voice first",
-    hiringFocus: "Customer-facing",
-    name: "Acme Talent",
-  },
-};
+    where: {
+      id: { in: sessionIds },
+    },
+  });
+
+  return new Map(liveSessions.map((session) => [session.id, session.status]));
+}

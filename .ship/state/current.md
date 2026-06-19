@@ -2,20 +2,24 @@
 
 ## Objective
 
-Ship issue #37: prepare the live room E2E polish for the OpenAI/LiveKit test.
+Replace dashboard mocks with real entities for jobs, interview drafts, published
+interviews, and candidate sessions.
 
-## Source
+## Scope
 
-- Current ticket: https://github.com/akouyate/prelude/issues/37
-- Parent epic: https://github.com/akouyate/prelude/issues/11
-- Depends on: #16, #18, #19, #39, #41
-- Unblocks: #21, #22, #23
+- Persist an interview draft per job instead of linking jobs to a demo session.
+- Make `/interviews/new` save role brief, modes, questions, criteria,
+  guardrails, and `draft` status.
+- Show dashboard states from persisted interviews and candidate sessions:
+  draft, published, candidate started, completed, and needs review.
+- Build the interview detail page from database data first, with realtime summary
+  enrichment only when a live candidate session exists.
 
 ## Phases
 
 - [x] Intake
-- [x] Repository investigation
 - [x] Skill loading
+- [x] Repository investigation
 - [x] Architecture review
 - [x] Plan
 - [x] Team decision
@@ -26,40 +30,38 @@ Ship issue #37: prepare the live room E2E polish for the OpenAI/LiveKit test.
 - [x] Final validation
 - [ ] Delivery
 
-## Team
+## Direction
 
-- Orchestrator: main Codex thread, owns implementation, tests, review, and PR.
-- Specialist review: reuse the existing live-interviewer architecture and eval
-  refinement; request fresh agent review only if implementation tradeoffs become
-  non-local.
-
-## Architecture Direction
-
-- Keep Go realtime as the append-only event/control plane.
-- Split candidate readiness into two durable events:
-  `candidate_joined` for room entry and `candidate_media_ready` after local media
-  publication.
-- Keep the candidate frontend responsible for publishing local tracks and
-  emitting readiness events; do not let the worker infer readiness from page
-  state.
-- Make the OpenAI/LiveKit worker wait for both candidate readiness events before
-  joining the room and starting the first IA turn.
-- Preserve a KISS POC scope: better mobile-safe start behavior, observable
-  readiness, and smoke reporting rather than a new dashboard view.
+- Keep the V1 implementation explicit and small: new persisted interview records
+  rather than overloading the old `PreInterview` POC model.
+- Store generated builder output as structured JSON for now, so product can
+  iterate on question, criteria, and guardrail shape without migration churn.
+- Keep Clerk organization scoping enforced through existing onboarding guards and
+  organization membership lookups.
+- Avoid a heavy dashboard redesign in this slice; replace fake links/states with
+  real persisted data and keep the current clean visual language.
 
 ## Validation
 
-- `pnpm test` in `apps/candidate`: 2 files, 8 tests passed.
-- `pnpm lint` in `apps/candidate`: passed.
-- `pnpm typecheck` in `apps/candidate`: passed.
-- `pnpm test` in `packages/contracts`: 2 files, 15 tests passed.
-- `pnpm typecheck` in `packages/contracts`: passed.
-- `go test ./...` in `services/realtime`: 36 passed in 6 packages.
-- `uv run --with-requirements requirements.txt python -m pytest -q` in
-  `services/interviewer-agent`: 71 passed, pytest-asyncio deprecation warnings.
-- Mock smoke with Go realtime in LiveKit mock mode:
-  `make live-smoke-report SESSION_ID=is_750e14ca51cde78b9287fd2f
-  REALTIME_API_URL=http://127.0.0.1:8080`: Pass, 54 events, sequence
-  contiguous, 11 transcript turns, 3/3 questions completed, readiness gate
-  proven.
+- `pnpm run typecheck`: passed.
+- `pnpm run lint`: passed.
+- `pnpm --dir apps/console build`: passed.
+- `pnpm --dir apps/candidate build`: passed.
+- `pnpm --dir apps/candidate test`: 2 files, 8 tests passed.
 - `git diff --check`: passed.
+- Browser smoke:
+  - `/` loads the persisted recruiter dashboard.
+  - `/interviews/new?jobId=...` generates questions and saves a persisted
+    `InterviewDraft`.
+  - Publishing creates an `Interview` with a real `publicToken` and detail page.
+  - Candidate API with the published token creates a `CandidateSession` linked
+    to the interview.
+  - `/interviews/:id` renders DB questions, criteria, candidate link, and
+    candidate sessions without mock fallback.
+
+## Known Follow-Up
+
+- The Go realtime service still resolves the interview plan through its demo
+  plan factory. Candidate sessions are now linked to the published interview,
+  but making the live interviewer ask the persisted DB questions should be the
+  next backend integration slice.

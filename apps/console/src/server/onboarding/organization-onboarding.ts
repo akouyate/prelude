@@ -172,7 +172,7 @@ export async function completeOrganizationOnboarding(
   return {
     ok: true,
     ...result,
-    redirectTo: `/interviews/demo-session?jobId=${result.jobId}`,
+    redirectTo: `/interviews/new?jobId=${result.jobId}`,
   };
 }
 

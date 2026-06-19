@@ -16,6 +16,9 @@ model Organization {
   defaultInterviewMode  String?
   onboardingCompletedAt DateTime?
   createdAt             DateTime                 @default(now())
+  candidateSessions     CandidateSession[]
+  interviewDrafts       InterviewDraft[]
+  interviews            Interview[]
   jobs                  Job[]
   jobSourceConnections  JobSourceConnection[]
   memberships           OrganizationMembership[]
@@ -46,20 +49,96 @@ model OrganizationMembership {
 }
 
 model Job {
-  id               String         @id @default(cuid())
+  id               String           @id @default(cuid())
   organizationId   String
   title            String
   location         String?
-  description      String         @default("")
+  description      String           @default("")
   sourceProvider   String?
   sourceExternalId String?
-  status           String         @default("draft")
-  createdAt        DateTime       @default(now())
-  organization     Organization   @relation(fields: [organizationId], references: [id])
+  status           String           @default("draft")
+  createdAt        DateTime         @default(now())
+  organization     Organization     @relation(fields: [organizationId], references: [id])
+  interviewDrafts  InterviewDraft[]
+  interviews       Interview[]
   preInterviews    PreInterview[]
   candidates       Candidate[]
 
   @@index([organizationId, sourceProvider])
+}
+
+model InterviewDraft {
+  id                   String       @id @default(cuid())
+  organizationId       String
+  jobId                String
+  status               String       @default("draft")
+  roleTitle            String
+  roleBrief            String       @default("")
+  seniority            String?
+  focus                Json         @default("[]")
+  responseModes        Json         @default("[]")
+  questions            Json         @default("[]")
+  criteria             Json         @default("[]")
+  guardrails           Json         @default("[]")
+  estimatedMinutes     Int?
+  rationale            String?
+  sourceAttachmentName String?
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job                  Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  interview            Interview?
+
+  @@index([organizationId, status, updatedAt])
+  @@index([jobId, status])
+}
+
+model Interview {
+  id                String             @id @default(cuid())
+  organizationId    String
+  jobId             String
+  draftId           String?            @unique
+  publicToken       String             @unique
+  status            String             @default("published")
+  roleTitle         String
+  roleBrief         String             @default("")
+  seniority         String?
+  focus             Json               @default("[]")
+  responseModes     Json               @default("[]")
+  questions         Json               @default("[]")
+  criteria          Json               @default("[]")
+  guardrails        Json               @default("[]")
+  estimatedMinutes  Int?
+  rationale         String?
+  publishedAt       DateTime           @default(now())
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job               Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  draft             InterviewDraft?    @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  candidateSessions CandidateSession[]
+
+  @@index([organizationId, status, updatedAt])
+  @@index([jobId, status])
+}
+
+model CandidateSession {
+  id                String       @id @default(cuid())
+  organizationId    String
+  interviewId       String
+  realtimeSessionId String?      @unique
+  candidateName     String?
+  candidateEmail    String?
+  status            String       @default("created")
+  startedAt         DateTime?
+  completedAt       DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  interview         Interview    @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status, updatedAt])
+  @@index([interviewId, status])
 }
 
 model JobSourceConnection {
@@ -160,5 +239,6 @@ model LiveInterviewEvent {
   @@unique([sessionId, idempotencyKey])
   @@unique([sessionId, sequenceNumber])
   @@index([sessionId, occurredAt, id])
+  @@index([sessionId, type, sequenceNumber], map: "live_interview_events_session_id_type_sequence_number_idx")
   @@map("live_interview_events")
 }

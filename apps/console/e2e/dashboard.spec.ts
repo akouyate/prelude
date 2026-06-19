@@ -1,9 +1,12 @@
 import { expect, test } from "@playwright/test";
 
-test("dashboard placeholder loads", async ({ page }) => {
+test("dashboard loads the recruiter workspace", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("Prelude.ai")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Start with the role" })).toBeVisible();
+
+  await expect(
+    page.getByRole("heading", { name: "Recruiter workspace" })
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "New interview" })).toBeVisible();
 });
 
 test("login explains Clerk configuration when local keys are missing", async ({
@@ -16,8 +19,10 @@ test("login explains Clerk configuration when local keys are missing", async ({
   ).toBeVisible();
 });
 
-test("mock interview agent generates an attachment-aware draft", async ({ page }) => {
-  await page.goto("/");
+test("interview agent saves and publishes an attachment-aware draft", async ({
+  page
+}) => {
+  await page.goto("/interviews/new");
 
   await page.setInputFiles("input[type=file]", {
     name: "scorecard.pdf",
@@ -26,7 +31,9 @@ test("mock interview agent generates an attachment-aware draft", async ({ page }
   });
   await page.getByRole("button", { name: "Continue" }).click();
 
-  await expect(page.getByRole("heading", { name: "Calibrate the interview" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Calibrate the interview" })
+  ).toBeVisible();
   await page.getByRole("button", { name: "Add Communication signal" }).click();
   await page.getByRole("button", { name: "Create questions" }).click();
 
@@ -51,11 +58,16 @@ test("mock interview agent generates an attachment-aware draft", async ({ page }
     page.getByRole("heading", { name: "Set the evaluation standard" })
   ).toBeVisible();
 
-  await page.getByRole("button", { name: "Prepare to share" }).click();
+  await page.getByRole("button", { name: "Save and share" }).click();
   await expect(page.getByRole("heading", { name: "Publish when ready" })).toBeVisible();
-  await expect(page.getByText("prelude.ai/i/demo-token")).toBeVisible();
+  await expect(page.getByText("Draft saved")).toBeVisible();
   await expect(page.getByText("Candidate preview")).toHaveCount(0);
 
   await page.getByRole("button", { name: "Preview candidate experience" }).click();
   await expect(page.getByRole("dialog", { name: "Candidate preview" })).toBeVisible();
+  await page.getByRole("button", { name: "Close candidate preview" }).click();
+
+  await page.getByRole("button", { name: "Publish interview" }).click();
+  await expect(page.getByText("Interview published")).toBeVisible();
+  await expect(page.getByText("prelude.ai/interview/iv_")).toBeVisible();
 });

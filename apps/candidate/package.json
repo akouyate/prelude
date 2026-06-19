@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@prelude/contracts": "workspace:*",
+    "@prelude/db": "workspace:*",
     "@prelude/design-system": "workspace:*",
     "@prelude/types": "workspace:*",
     "@prelude/ui": "workspace:*",

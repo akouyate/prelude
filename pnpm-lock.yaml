@@ -38,6 +38,9 @@ importers:
       '@prelude/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@prelude/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@prelude/design-system':
         specifier: workspace:*
         version: link:../../packages/design-system
