@@ -67,10 +67,16 @@ class FakeReply:
 class FakeLiveSession:
     def __init__(self) -> None:
         self.replies: list[dict[str, object]] = []
+        self.spoken: list[dict[str, object]] = []
         self.last_reply: FakeReply | None = None
 
     def generate_reply(self, **kwargs: object) -> FakeReply:
         self.replies.append(kwargs)
+        self.last_reply = FakeReply()
+        return self.last_reply
+
+    def say(self, text: str, **kwargs: object) -> FakeReply:
+        self.spoken.append({"text": text, **kwargs})
         self.last_reply = FakeReply()
         return self.last_reply
 
@@ -336,10 +342,10 @@ async def test_live_orchestration_controller_completes_three_question_flow() -> 
     assert events[-1].payload["completed_questions"] == 3
     assert events[-1].payload["total_questions"] == 3
     assert events[-1].payload["closing"] == events[-2].payload["closing"]
-    assert len(session.replies) >= 4
-    assert session.replies[-1]["allow_interruptions"] is True
-    assert session.replies[-1]["instructions"].startswith("Say exactly this closing message")
-    assert "Do not ask another question" in session.replies[-1]["instructions"]
+    assert len(session.replies) >= 3
+    assert session.spoken[-1]["text"] == events[-2].payload["closing"]
+    assert session.spoken[-1]["allow_interruptions"] is True
+    assert session.spoken[-1]["add_to_chat_ctx"] is True
 
 
 def test_live_transcript_role_clarification_does_not_complete_answer() -> None:

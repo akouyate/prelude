@@ -900,8 +900,9 @@ class LiveInterviewOrchestrationController:
             actor=EventActor.AGENT,
         )
         self._orchestrator.mark_session_closed()
-        reply = getattr(self._session, "generate_reply")(
-            instructions=_closing_instructions(closing),
+        reply = _say_exact(
+            self._session,
+            closing,
             allow_interruptions=True,
         )
         wait_for_playout = getattr(reply, "wait_for_playout", None)
@@ -1265,6 +1266,30 @@ def _closing_instructions(closing: str) -> str:
         "Say exactly this closing message, then stop speaking. "
         "Do not ask another question and do not add extra commentary: "
         f"{closing}"
+    )
+
+
+def _say_exact(
+    session: object,
+    text: str,
+    *,
+    allow_interruptions: bool,
+) -> object:
+    say = getattr(session, "say", None)
+    if callable(say):
+        return say(
+            text,
+            allow_interruptions=allow_interruptions,
+            add_to_chat_ctx=True,
+        )
+
+    return getattr(session, "generate_reply")(
+        user_input=(
+            "Read this exact message aloud verbatim and do not add anything: "
+            f"{text}"
+        ),
+        instructions=_closing_instructions(text),
+        allow_interruptions=allow_interruptions,
     )
 
 
