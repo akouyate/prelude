@@ -42,6 +42,20 @@ class InterviewPlan(BaseModel):
     interview_style: InterviewStyle = Field(default_factory=InterviewStyle)
 
 
+class CandidateTurnIntent(StrEnum):
+    ANSWER_COMPLETE = "answer_complete"
+    ANSWER_PARTIAL = "answer_partial"
+    CLARIFY_ROLE = "clarify_role"
+    CLARIFY_QUESTION = "clarify_question"
+    REFORMULATE_REQUEST = "reformulate_request"
+    EXAMPLE_REQUEST = "example_request"
+    REPEAT_REQUEST = "repeat_request"
+    WAIT_REQUEST = "wait_request"
+    PASS = "pass"
+    TECHNICAL_ISSUE = "technical_issue"
+    SILENCE = "silence"
+
+
 class CandidateTurn(BaseModel):
     question_id: str
     transcript: str
@@ -49,6 +63,9 @@ class CandidateTurn(BaseModel):
     repeat_requested: bool = False
     skip_requested: bool = False
     wait_requested: bool = False
+    candidate_intent: CandidateTurnIntent = CandidateTurnIntent.ANSWER_COMPLETE
+    is_answer_to_active_question: bool = True
+    classifier_reason: str | None = None
     started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     ended_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

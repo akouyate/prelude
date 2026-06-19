@@ -22,6 +22,7 @@ from app.adapters.livekit_openai_worker import (
 )
 from app.domain.orchestrator import AnswerClassification, InterviewOrchestrator
 from app.domain.models import (
+    CandidateTurnIntent,
     EventActor,
     EventType,
     InterviewEvent,
@@ -326,10 +327,34 @@ async def test_live_orchestration_controller_completes_three_question_flow() -> 
 
 
 def test_live_transcript_role_clarification_does_not_complete_answer() -> None:
-    for transcript in [
-        "Alors on parle de quel poste, excusez-moi ?",
-        "C'est quoi le titre du poste, excusez-moi ?",
-    ]:
+    cases = [
+        (
+            "Alors on parle de quel poste, excusez-moi ?",
+            CandidateTurnIntent.CLARIFY_ROLE,
+            "candidate_requested_role_context",
+        ),
+        (
+            "C'est quoi le titre du poste, excusez-moi ?",
+            CandidateTurnIntent.CLARIFY_ROLE,
+            "candidate_requested_role_context",
+        ),
+        (
+            "Tu peux me donner des exemples ?",
+            CandidateTurnIntent.EXAMPLE_REQUEST,
+            "candidate_requested_examples",
+        ),
+        (
+            "J'ai pas compris la question, est-ce que vous pouvez reformuler ?",
+            CandidateTurnIntent.REFORMULATE_REQUEST,
+            "candidate_requested_reformulation",
+        ),
+        (
+            "Je ne vous entends pas, mon micro coupe.",
+            CandidateTurnIntent.TECHNICAL_ISSUE,
+            "candidate_reported_technical_issue",
+        ),
+    ]
+    for transcript, expected_intent, expected_reason in cases:
         turn = _candidate_turn_from_live_transcript(
             question_id="q1",
             transcript=transcript,
@@ -338,9 +363,69 @@ def test_live_transcript_role_clarification_does_not_complete_answer() -> None:
 
         assert turn.repeat_requested is True
         assert turn.is_complete is False
+        assert turn.candidate_intent == expected_intent
+        assert turn.is_answer_to_active_question is False
+        assert turn.classifier_reason == expected_reason
         assert (
             InterviewOrchestrator.classify_candidate_turn(turn)
             == AnswerClassification.REPEAT_REQUESTED
+        )
+
+
+def test_live_transcript_classifies_wait_partial_and_complete_answers() -> None:
+    wait_turn = _candidate_turn_from_live_transcript(
+        question_id="q1",
+        transcript="Attendez une seconde s'il vous plait.",
+        occurred_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+    partial_turn = _candidate_turn_from_live_transcript(
+        question_id="q1",
+        transcript="Oui.",
+        occurred_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+    answer_turn = _candidate_turn_from_live_transcript(
+        question_id="q1",
+        transcript="J'ai cinq ans d'experience en product management B2B.",
+        occurred_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+
+    assert wait_turn.wait_requested is True
+    assert wait_turn.candidate_intent == CandidateTurnIntent.WAIT_REQUEST
+    assert (
+        InterviewOrchestrator.classify_candidate_turn(wait_turn)
+        == AnswerClassification.WAIT_REQUESTED
+    )
+
+    assert partial_turn.candidate_intent == CandidateTurnIntent.ANSWER_PARTIAL
+    assert partial_turn.is_answer_to_active_question is True
+    assert InterviewOrchestrator.classify_candidate_turn(partial_turn) == AnswerClassification.VAGUE
+
+    assert answer_turn.candidate_intent == CandidateTurnIntent.ANSWER_COMPLETE
+    assert answer_turn.is_complete is True
+    assert (
+        InterviewOrchestrator.classify_candidate_turn(answer_turn)
+        == AnswerClassification.COMPLETE
+    )
+
+
+def test_live_transcript_does_not_confuse_answer_examples_with_example_request() -> None:
+    for transcript in [
+        "Par exemple, j'ai priorise une roadmap apres un incident client.",
+        "J'ai travaille sur des microservices avec l'equipe technique.",
+        "J'ai du passer d'un projet a un autre avec tres peu de contexte.",
+    ]:
+        turn = _candidate_turn_from_live_transcript(
+            question_id="q1",
+            transcript=transcript,
+            occurred_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
+        )
+
+        assert turn.candidate_intent == CandidateTurnIntent.ANSWER_COMPLETE
+        assert turn.is_complete is True
+        assert turn.repeat_requested is False
+        assert (
+            InterviewOrchestrator.classify_candidate_turn(turn)
+            == AnswerClassification.COMPLETE
         )
 
 
@@ -370,8 +455,46 @@ async def test_live_orchestration_controller_repeats_role_context_without_comple
     assert event_types.count(EventType.ANSWER_EVALUATED) == 1
     assert event_types.count(EventType.QUESTION_REPEATED) == 1
     assert EventType.QUESTION_COMPLETED not in event_types
+    finalized = next(event for event in events if event.type == EventType.CANDIDATE_TURN_FINALIZED)
+    assert finalized.payload["candidate_intent"] == "clarify_role"
+    assert finalized.payload["is_answer_to_active_question"] is False
+    assert finalized.payload["classifier_reason"] == "candidate_requested_role_context"
+    evaluated = next(event for event in events if event.type == EventType.ANSWER_EVALUATED)
+    assert "candidate_intent:clarify_role" in evaluated.payload["reason_codes"]
     repeated = next(event for event in events if event.type == EventType.QUESTION_REPEATED)
     assert "Product Manager B2B SaaS" in repeated.payload["prompt"]
+    assert "Do not move to the next question" in session.replies[-1]["instructions"]
+
+
+@pytest.mark.asyncio
+async def test_live_orchestration_controller_gives_examples_without_completing_question() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+
+    await controller.start()
+    await controller.handle_candidate_transcript(
+        "Tu peux me donner des exemples ?",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+
+    event_types = [event.type for event in events]
+    assert event_types.count(EventType.QUESTION_REPEATED) == 1
+    assert EventType.QUESTION_COMPLETED not in event_types
+    repeated = next(event for event in events if event.type == EventType.QUESTION_REPEATED)
+    assert repeated.payload["candidate_intent"] == "example_request"
+    assert repeated.payload["reason"] == "candidate_requested_examples"
+    assert "neutral examples" in session.replies[-1]["instructions"]
     assert "Do not move to the next question" in session.replies[-1]["instructions"]
 
 

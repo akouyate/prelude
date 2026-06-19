@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
+import unicodedata
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from typing import Mapping
 from app.domain.models import (
     AgentConfig,
     CandidateTurn,
+    CandidateTurnIntent,
     EventActor,
     EventType,
     InterviewEvent,
@@ -38,6 +40,269 @@ INITIAL_GREETING_RE = re.compile(
     r"[\s,;:!-]+",
     flags=re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True)
+class CandidateTurnDecision:
+    intent: CandidateTurnIntent
+    is_answer_to_active_question: bool
+    is_complete: bool
+    repeat_requested: bool = False
+    wait_requested: bool = False
+    skip_requested: bool = False
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class CandidateSupportResponse:
+    prompt: str
+    instructions: str
+    reason: str
+
+
+class CandidateTurnClassifier:
+    """Classifies candidate turns before the interview state can advance."""
+
+    def classify(
+        self,
+        *,
+        question_id: str,
+        transcript: str,
+        occurred_at: datetime,
+    ) -> CandidateTurn:
+        decision = self._decision(transcript)
+        return CandidateTurn(
+            question_id=question_id,
+            transcript=transcript,
+            is_complete=decision.is_complete,
+            repeat_requested=decision.repeat_requested,
+            wait_requested=decision.wait_requested,
+            skip_requested=decision.skip_requested,
+            candidate_intent=decision.intent,
+            is_answer_to_active_question=decision.is_answer_to_active_question,
+            classifier_reason=decision.reason,
+            started_at=occurred_at,
+            ended_at=occurred_at,
+        )
+
+    def _decision(self, transcript: str) -> CandidateTurnDecision:
+        normalized = _normalize_candidate_text(transcript)
+        if not normalized:
+            return CandidateTurnDecision(
+                intent=CandidateTurnIntent.SILENCE,
+                is_answer_to_active_question=False,
+                is_complete=False,
+                reason="empty_transcript",
+            )
+
+        if _contains_any(
+            normalized,
+            [
+                "une seconde",
+                "un instant",
+                "attendez",
+                "laissez moi",
+                "laisse moi",
+                "un moment",
+                "petit moment",
+                "donnez moi un moment",
+                "wait",
+                "hold on",
+            ],
+        ):
+            return CandidateTurnDecision(
+                intent=CandidateTurnIntent.WAIT_REQUEST,
+                is_answer_to_active_question=False,
+                is_complete=False,
+                wait_requested=True,
+                reason="candidate_requested_time",
+            )
+
+        if _contains_any(
+            normalized,
+            [
+                "je passe",
+                "je prefere passer",
+                "je préfère passer",
+                "question suivante",
+                "skip",
+                "next question",
+            ],
+        ):
+            return CandidateTurnDecision(
+                intent=CandidateTurnIntent.PASS,
+                is_answer_to_active_question=False,
+                is_complete=True,
+                skip_requested=True,
+                reason="candidate_requested_skip",
+            )
+
+        if _contains_any(
+            normalized,
+            [
+                "je n entends",
+                "j entends pas",
+                "je vous entends pas",
+                "probleme technique",
+                "probleme de son",
+                "probleme de micro",
+                "mon micro",
+                "le micro",
+                "ça coupe",
+                "ca coupe",
+                "i cannot hear",
+                "i can t hear",
+            ],
+        ):
+            return self._non_answer_repeat(
+                CandidateTurnIntent.TECHNICAL_ISSUE,
+                "candidate_reported_technical_issue",
+            )
+
+        if _contains_any(
+            normalized,
+            [
+                "quel poste",
+                "quelle poste",
+                "titre du poste",
+                "c est quoi le poste",
+                "c est quoi le titre",
+                "on parle de quel",
+                "quel role",
+                "quelle role",
+                "which role",
+                "what role",
+                "what job",
+            ],
+        ):
+            return self._non_answer_repeat(
+                CandidateTurnIntent.CLARIFY_ROLE,
+                "candidate_requested_role_context",
+            )
+
+        if _is_example_request(normalized):
+            return self._non_answer_repeat(
+                CandidateTurnIntent.EXAMPLE_REQUEST,
+                "candidate_requested_examples",
+            )
+
+        if _contains_any(
+            normalized,
+            [
+                "reformuler",
+                "rephrase",
+                "autrement",
+                "pas compris la question",
+                "je n ai pas compris",
+                "j ai pas compris",
+                "tu veux dire quoi",
+                "vous voulez dire quoi",
+                "what do you mean",
+            ],
+        ):
+            return self._non_answer_repeat(
+                CandidateTurnIntent.REFORMULATE_REQUEST,
+                "candidate_requested_reformulation",
+            )
+
+        if _contains_any(
+            normalized,
+            [
+                "repeter",
+                "répéter",
+                "repeat",
+                "pas entendu",
+                "j ai pas entendu",
+                "je n ai pas entendu",
+                "encore une fois",
+            ],
+        ):
+            return self._non_answer_repeat(
+                CandidateTurnIntent.REPEAT_REQUEST,
+                "candidate_requested_repeat",
+            )
+
+        if _looks_like_partial_answer(normalized):
+            return CandidateTurnDecision(
+                intent=CandidateTurnIntent.ANSWER_PARTIAL,
+                is_answer_to_active_question=True,
+                is_complete=False,
+                reason="answer_too_short_or_generic",
+            )
+
+        return CandidateTurnDecision(
+            intent=CandidateTurnIntent.ANSWER_COMPLETE,
+            is_answer_to_active_question=True,
+            is_complete=True,
+            reason="candidate_answered_active_question",
+        )
+
+    def _non_answer_repeat(
+        self,
+        intent: CandidateTurnIntent,
+        reason: str,
+    ) -> CandidateTurnDecision:
+        return CandidateTurnDecision(
+            intent=intent,
+            is_answer_to_active_question=False,
+            is_complete=False,
+            repeat_requested=True,
+            reason=reason,
+        )
+
+
+def _normalize_candidate_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value.casefold())
+    without_accents = "".join(
+        character for character in normalized if not unicodedata.combining(character)
+    )
+    without_punctuation = re.sub(r"[^a-z0-9\s]", " ", without_accents)
+    return re.sub(r"\s+", " ", without_punctuation).strip()
+
+
+def _contains_any(value: str, markers: list[str]) -> bool:
+    normalized_markers = [_normalize_candidate_text(marker) for marker in markers]
+    return any(marker in value for marker in normalized_markers)
+
+
+def _looks_like_partial_answer(normalized: str) -> bool:
+    words = normalized.split()
+    if len(words) <= 2 and normalized in {
+        "oui",
+        "non",
+        "un peu",
+        "peut etre",
+        "maybe",
+        "yes",
+        "no",
+    }:
+        return True
+    return normalized in {
+        "je ne sais pas",
+        "je sais pas",
+        "pas vraiment",
+        "not really",
+    }
+
+
+def _is_example_request(normalized: str) -> bool:
+    if "exemple" not in normalized and "example" not in normalized:
+        return False
+    return _contains_any(
+        normalized,
+        [
+            "donne moi un exemple",
+            "donne moi des exemples",
+            "donner un exemple",
+            "donner des exemples",
+            "tu peux me donner",
+            "vous pouvez me donner",
+            "peux tu me donner",
+            "pouvez vous me donner",
+            "can you give",
+            "could you give",
+        ],
+    )
 
 
 @dataclass(frozen=True)
@@ -357,6 +622,7 @@ class LiveInterviewOrchestrationController:
         self._orchestrator = InterviewOrchestrator(plan)
         self._lock = asyncio.Lock()
         self._candidate_turns = 0
+        self._last_candidate_intent = CandidateTurnIntent.ANSWER_COMPLETE
         self._terminal = False
         self._closed = asyncio.Event()
 
@@ -421,6 +687,9 @@ class LiveInterviewOrchestrationController:
             {
                 "question_id": turn.question_id,
                 "completion_reason": _candidate_turn_completion_reason(turn),
+                "candidate_intent": turn.candidate_intent.value,
+                "is_answer_to_active_question": turn.is_answer_to_active_question,
+                "classifier_reason": turn.classifier_reason,
                 "transcript_turn": {
                     "turn_id": turn_id,
                     "session_id": self._emitter._session_id,
@@ -441,11 +710,12 @@ class LiveInterviewOrchestrationController:
         turn: CandidateTurn,
         turn_ids: list[str],
     ) -> None:
+        self._last_candidate_intent = turn.candidate_intent
         classification = InterviewOrchestrator.classify_candidate_turn(turn)
         decision = self._orchestrator.evaluate_answer(
             classification=classification,
             turn_ids=turn_ids,
-            reason_codes=_reason_codes(classification),
+            reason_codes=_reason_codes(classification, turn),
             confidence=1.0,
         )
         await self._emitter.emit(
@@ -469,20 +739,21 @@ class LiveInterviewOrchestrationController:
 
         if command.type == OrchestratorCommandType.REPEAT_QUESTION:
             current_question = _current_question(self._plan, command)
-            prompt = (
-                f"Le poste est {self._plan.role_title}. {current_question.prompt}"
+            repeat_response = _repeat_response_for_candidate_intent(
+                plan=self._plan,
+                question_prompt=current_question.prompt,
+                intent=self._last_candidate_intent,
             )
             await self._speak_question_control(
                 EventType.QUESTION_REPEATED,
                 command=command,
                 utterance_kind="repeat",
-                prompt=prompt,
-                instructions=(
-                    "Briefly answer that the role is "
-                    f"{self._plan.role_title}, then repeat only the current "
-                    "planned question. Do not move to the next question."
-                ),
-                extra_payload={"reason": "candidate_requested_repeat"},
+                prompt=repeat_response.prompt,
+                instructions=repeat_response.instructions,
+                extra_payload={
+                    "reason": repeat_response.reason,
+                    "candidate_intent": self._last_candidate_intent.value,
+                },
             )
             return
 
@@ -911,7 +1182,15 @@ Business rules:
 - Use the planned questions in order. Ask at most {plan.max_followups_per_question} short follow-up per question when the answer is vague.
 - If a planned question already contains a greeting, do not add another greeting
   before reading it.
-- If the candidate asks for a repeat, repeat the current question once.
+- A candidate turn is not an answer just because the candidate spoke. If the
+  candidate asks for the role, a repeat, a reformulation, examples, help
+  understanding the question, or reports a technical issue, treat it as a
+  non-answer support request.
+- For non-answer support requests, answer briefly, stay on the same active
+  planned question, and re-ask that question. Never move to the next question
+  after a support request.
+- If the candidate asks for examples, give one or two neutral answer angles,
+  not a model answer to copy, then re-ask the same question.
 - If the candidate asks for time, acknowledge it briefly and wait.
 - Close warmly after the planned questions.
 
@@ -961,47 +1240,72 @@ def _candidate_turn_from_live_transcript(
     transcript: str,
     occurred_at: datetime,
 ) -> CandidateTurn:
-    normalized = transcript.strip().lower()
-    repeat_requested = any(
-        marker in normalized
-        for marker in [
-            "repeter",
-            "répéter",
-            "repeat",
-            "reformuler",
-            "rephrase",
-            "quel poste",
-            "quelle poste",
-            "titre du poste",
-            "c'est quoi le poste",
-            "c est quoi le poste",
-            "c'est quoi le titre",
-            "c est quoi le titre",
-            "on parle de quel",
-            "quel rôle",
-            "quel role",
-        ]
-    )
-    wait_requested = any(
-        marker in normalized
-        for marker in ["une seconde", "un instant", "attendez", "moment", "wait"]
-    )
-    skip_requested = any(
-        marker in normalized
-        for marker in ["je passe", "passer", "skip", "next question"]
-    )
-    is_complete = bool(transcript.strip()) and not (
-        repeat_requested or wait_requested or skip_requested
-    )
-    return CandidateTurn(
+    return CandidateTurnClassifier().classify(
         question_id=question_id,
         transcript=transcript,
-        is_complete=is_complete,
-        repeat_requested=repeat_requested,
-        wait_requested=wait_requested,
-        skip_requested=skip_requested,
-        started_at=occurred_at,
-        ended_at=occurred_at,
+        occurred_at=occurred_at,
+    )
+
+
+def _repeat_response_for_candidate_intent(
+    *,
+    plan: InterviewPlan,
+    question_prompt: str,
+    intent: CandidateTurnIntent,
+) -> CandidateSupportResponse:
+    if intent == CandidateTurnIntent.CLARIFY_ROLE:
+        return CandidateSupportResponse(
+            prompt=f"Le poste est {plan.role_title}. {question_prompt}",
+            instructions=(
+                f"Briefly clarify that the interview is for {plan.role_title}. "
+                "Use only the known role and structured interview context. Do not invent "
+                "job details. Then re-ask the current planned question. Do not move to "
+                "the next question."
+            ),
+            reason="candidate_requested_role_context",
+        )
+
+    if intent == CandidateTurnIntent.EXAMPLE_REQUEST:
+        return CandidateSupportResponse(
+            prompt=question_prompt,
+            instructions=(
+                "The candidate asked for examples, not to answer the question yet. "
+                "Give one or two neutral examples of answer angles without giving a "
+                "model answer to copy. Keep it concise, then re-ask the same current "
+                "planned question. Do not evaluate the request. Do not move to the next "
+                "question."
+            ),
+            reason="candidate_requested_examples",
+        )
+
+    if intent == CandidateTurnIntent.REFORMULATE_REQUEST:
+        return CandidateSupportResponse(
+            prompt=question_prompt,
+            instructions=(
+                "The candidate asked for a reformulation. Rephrase the same current "
+                "planned question in simpler, concrete language. Do not add a new "
+                "screening question and do not move to the next question."
+            ),
+            reason="candidate_requested_reformulation",
+        )
+
+    if intent == CandidateTurnIntent.TECHNICAL_ISSUE:
+        return CandidateSupportResponse(
+            prompt=question_prompt,
+            instructions=(
+                "The candidate reported an audio or technical issue. Briefly check that "
+                "they can hear you now, then repeat the same current planned question. "
+                "Do not move to the next question."
+            ),
+            reason="candidate_reported_technical_issue",
+        )
+
+    return CandidateSupportResponse(
+        prompt=question_prompt,
+        instructions=(
+            "Repeat only the current planned question. Do not move to the next question."
+        ),
+        reason="candidate_requested_repeat",
     )
 
 
@@ -1013,20 +1317,34 @@ def _candidate_turn_completion_reason(turn: CandidateTurn) -> str:
     return "answered"
 
 
-def _reason_codes(classification: AnswerClassification) -> list[str]:
+def _reason_codes(
+    classification: AnswerClassification,
+    turn: CandidateTurn | None = None,
+) -> list[str]:
+    reason_codes: list[str] = []
+    if turn is not None:
+        reason_codes.append(f"candidate_intent:{turn.candidate_intent.value}")
+        if turn.classifier_reason:
+            reason_codes.append(turn.classifier_reason)
     if classification == AnswerClassification.VAGUE:
-        return ["too_generic"]
+        reason_codes.append("too_generic")
+        return reason_codes
     if classification == AnswerClassification.INCOMPLETE:
-        return ["incomplete_answer"]
+        reason_codes.append("incomplete_answer")
+        return reason_codes
     if classification == AnswerClassification.SILENT:
-        return ["candidate_silent"]
+        reason_codes.append("candidate_silent")
+        return reason_codes
     if classification == AnswerClassification.SKIPPED:
-        return ["candidate_requested_skip"]
+        reason_codes.append("candidate_requested_skip")
+        return reason_codes
     if classification == AnswerClassification.REPEAT_REQUESTED:
-        return ["candidate_requested_repeat"]
+        reason_codes.append("candidate_requested_repeat")
+        return reason_codes
     if classification == AnswerClassification.WAIT_REQUESTED:
-        return ["candidate_requested_time"]
-    return []
+        reason_codes.append("candidate_requested_time")
+        return reason_codes
+    return reason_codes
 
 
 async def _soft_prompt_after_initial_silence(
