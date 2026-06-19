@@ -161,6 +161,20 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
     payload: z.object({
       candidateParticipantId: z.string().min(1),
       modes: z.array(liveInterviewModeSchema).min(1).max(3),
+      roomName: z.string().min(1).optional(),
+    }),
+  }),
+  liveInterviewEventBaseSchema.extend({
+    type: z.literal("candidate_media_ready"),
+    payload: z.object({
+      candidateParticipantId: z.string().min(1),
+      roomName: z.string().min(1).optional(),
+      audio: z.boolean(),
+      video: z.boolean(),
+      publishedTracks: z
+        .array(z.enum(["microphone", "camera"]))
+        .min(1)
+        .max(2),
     }),
   }),
   liveInterviewEventBaseSchema.extend({

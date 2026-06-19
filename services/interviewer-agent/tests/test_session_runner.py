@@ -68,6 +68,25 @@ async def test_runner_emits_ordered_interview_events() -> None:
 
 
 @pytest.mark.asyncio
+async def test_runner_can_continue_after_existing_readiness_events() -> None:
+    realtime_api = InMemoryRealtimeApiClient()
+    runner = InterviewSessionRunner(
+        plan=create_demo_plan(),
+        provider=MockOpenAIRealtimeAdapter(),
+        realtime_api=realtime_api,
+        session_id="session-test",
+        initial_sequence=2,
+    )
+
+    await runner.run()
+
+    assert realtime_api.events[0].sequence == 3
+    assert [event.sequence for event in realtime_api.events] == list(
+        range(3, len(realtime_api.events) + 3)
+    )
+
+
+@pytest.mark.asyncio
 async def test_runner_emits_contract_aligned_session_failed_payload() -> None:
     realtime_api = InMemoryRealtimeApiClient()
     runner = InterviewSessionRunner(

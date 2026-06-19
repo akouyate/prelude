@@ -98,6 +98,21 @@ Payload:
 
 - `candidateParticipantId`
 - `modes`
+- `roomName` optional
+
+### `candidate_media_ready`
+
+Emitted after the candidate browser publishes local media tracks to LiveKit.
+The OpenAI live worker waits for this event before joining and starting the
+first IA turn.
+
+Payload:
+
+- `candidateParticipantId`
+- `roomName` optional
+- `audio`
+- `video`
+- `publishedTracks`
 
 ### `agent_joined`
 

@@ -127,6 +127,39 @@ describe("liveInterviewEventSchema", () => {
     );
   });
 
+  it("normalizes candidate media readiness from the realtime API", () => {
+    const result = liveInterviewWireEventSchema.safeParse({
+      event_id: "evt_media_ready",
+      session_id: "session_01",
+      candidate_id: "candidate_01",
+      type: "candidate_media_ready",
+      actor: "candidate",
+      sequence_number: 2,
+      idempotency_key: "session_01:candidate_media_ready",
+      occurred_at: "2026-06-17T10:30:00.000Z",
+      payload: {
+        candidate_participant_id: "candidate-session_01",
+        room_name: "prelude-session_01",
+        audio: true,
+        video: false,
+        published_tracks: ["microphone"],
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success) {
+      return;
+    }
+    expect(result.data.type).toBe("candidate_media_ready");
+    if (result.data.type !== "candidate_media_ready") {
+      return;
+    }
+    expect(result.data.payload.candidateParticipantId).toBe(
+      "candidate-session_01",
+    );
+    expect(result.data.payload.publishedTracks).toEqual(["microphone"]);
+  });
+
   it("accepts a normalized answer_evaluated event", () => {
     const result = liveInterviewEventSchema.safeParse({
       eventId: "evt_answer_eval",

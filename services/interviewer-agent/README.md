@@ -195,8 +195,9 @@ at join time and connects to the provided room URL.
 
 ## Run the OpenAI live worker from Make
 
-After the candidate app creates a Go realtime session and emits
-`candidate_joined`, run the OpenAI-only worker from the repository root:
+After the candidate app creates a Go realtime session and emits both
+`candidate_joined` and `candidate_media_ready`, run the OpenAI-only worker from
+the repository root:
 
 ```bash
 make live-openai-worker SESSION_ID={session_id}
@@ -242,7 +243,8 @@ Manual desktop/mobile smoke:
 1. Start Go realtime API and the candidate app.
 2. Open `/interview/demo-token` in the browser or on the mobile LAN URL.
 3. Start the live interview and allow microphone access.
-4. Confirm Go has a `candidate_joined` event for the session.
+4. Confirm Go has `candidate_joined` and `candidate_media_ready` events for the
+   session.
 5. Start `make live-openai-worker SESSION_ID={session_id}`.
 6. Confirm the candidate hears interviewer audio and `/transcript` contains the
    interviewer turn, then candidate turns after speech is transcribed.

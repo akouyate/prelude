@@ -407,6 +407,7 @@ func knownEventType(eventType domain.EventType) bool {
 	switch eventType {
 	case domain.EventSessionStarted,
 		domain.EventCandidateJoined,
+		domain.EventCandidateMediaReady,
 		domain.EventAgentJoined,
 		domain.EventAgentSpeechStarted,
 		domain.EventAgentSpeechCompleted,
@@ -441,6 +442,10 @@ type eventPayloadObject map[string]json.RawMessage
 
 func validateEventPayload(eventType domain.EventType, payload json.RawMessage) error {
 	switch eventType {
+	case domain.EventCandidateJoined:
+		return validateCandidateJoinedPayload(eventType, payload)
+	case domain.EventCandidateMediaReady:
+		return validateCandidateMediaReadyPayload(eventType, payload)
 	case domain.EventQuestionAsked:
 		return validateQuestionAskedPayload(eventType, payload)
 	case domain.EventQuestionRepeated:
@@ -476,6 +481,64 @@ func validateEventPayload(eventType domain.EventType, payload json.RawMessage) e
 	default:
 		return nil
 	}
+}
+
+func validateCandidateJoinedPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "candidate_participant_id", "candidate_participant_id", "candidateParticipantId"); err != nil {
+		return err
+	}
+	modes, err := requireStringArrayField(object, eventType, "modes", 1, "modes")
+	if err != nil {
+		return err
+	}
+	for _, mode := range modes {
+		if !knownModality(domain.Modality(mode)) {
+			return fmt.Errorf("%w: unsupported candidate_joined mode %q", ErrInvalidEvent, mode)
+		}
+	}
+	_, _, err = optionalStringField(object, eventType, "room_name", "room_name", "roomName")
+	return err
+}
+
+func validateCandidateMediaReadyPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, err := requireStringField(object, eventType, "candidate_participant_id", "candidate_participant_id", "candidateParticipantId"); err != nil {
+		return err
+	}
+	audioReady, err := requireBoolField(object, eventType, "audio", "audio")
+	if err != nil {
+		return err
+	}
+	videoReady, err := requireBoolField(object, eventType, "video", "video")
+	if err != nil {
+		return err
+	}
+	tracks, err := requireStringArrayField(object, eventType, "published_tracks", 1, "published_tracks", "publishedTracks")
+	if err != nil {
+		return err
+	}
+	seenTracks := map[string]bool{}
+	for _, track := range tracks {
+		if !knownPublishedTrack(track) {
+			return fmt.Errorf("%w: unsupported candidate_media_ready published track %q", ErrInvalidEvent, track)
+		}
+		seenTracks[track] = true
+	}
+	if audioReady && !seenTracks["microphone"] {
+		return fmt.Errorf("%w: candidate_media_ready audio requires microphone track", ErrInvalidEvent)
+	}
+	if videoReady && !seenTracks["camera"] {
+		return fmt.Errorf("%w: candidate_media_ready video requires camera track", ErrInvalidEvent)
+	}
+	_, _, err = optionalStringField(object, eventType, "room_name", "room_name", "roomName")
+	return err
 }
 
 func validateQuestionAskedPayload(eventType domain.EventType, payload json.RawMessage) error {
@@ -1171,6 +1234,15 @@ func knownTranscriptSpeaker(speaker string) bool {
 	case domain.TranscriptSpeakerCandidate,
 		domain.TranscriptSpeakerInterviewer,
 		domain.TranscriptSpeakerSystem:
+		return true
+	default:
+		return false
+	}
+}
+
+func knownPublishedTrack(track string) bool {
+	switch track {
+	case "microphone", "camera":
 		return true
 	default:
 		return false

@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from app.domain.models import CandidateTurn, InterviewPlan, InterviewQuestion
+from app.domain.models import (
+    CandidateTurn,
+    CandidateTurnIntent,
+    InterviewPlan,
+    InterviewQuestion,
+)
 
 
 EVALUATOR_VERSION = "answer-eval-v1"
@@ -211,6 +216,8 @@ class InterviewOrchestrator:
             return AnswerClassification.SKIPPED
         if not turn.transcript.strip():
             return AnswerClassification.SILENT
+        if turn.candidate_intent == CandidateTurnIntent.ANSWER_PARTIAL:
+            return AnswerClassification.VAGUE
         if not turn.is_complete:
             return AnswerClassification.INCOMPLETE
         return AnswerClassification.COMPLETE
