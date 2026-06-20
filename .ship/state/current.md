@@ -3,24 +3,22 @@
 ## Objective
 
 Ship the V1 E2E workflow step by step. Current implementation slice:
-GitHub issue #60, persisted candidate brief generation after a completed live
-interview.
+GitHub issue #61, real-data recruiter dashboard and candidate review.
 
 ## Scope
 
-- `CandidateBrief` is generated from durable `CandidateSession` runtime
-  evidence, scoped by organization.
-- Generation is provider-agnostic through a `CandidateBriefSynthesizer`
-  boundary and uses a local deterministic synthesizer in automated tests and
-  local UI flow.
-- Generation is idempotent through the unique `candidateSessionId` brief record:
-  pending/processing/completed/failed states are written back to the same row.
-- The persisted brief stores schema version, provider/model metadata, summary
-  JSON, limitations, recommendation, and flattened evidence references.
-- Recruiter detail prefers the persisted brief when available and only uses the
-  runtime summary as a fallback before a brief is generated.
-- Completed runtime evidence exposes a console action to generate or retry the
-  persisted recruiter brief.
+- Recruiter dashboard metrics and queues stay organization-scoped and DB-backed.
+- “Needs review” now counts completed sessions still owned by the human review
+  state, instead of every completed session.
+- Dashboard primary review CTA links to the real completed candidate session,
+  using the candidate session id when a realtime id is unavailable.
+- Candidate review detail no longer fetches or displays non-persisted runtime
+  summary content as a fallback.
+- Candidate review detail resolves only real organization-scoped
+  `CandidateSession` records; orphan `LiveInterviewSession` records no longer
+  produce a recruiter review page.
+- The obsolete mock recruiter summary fixture was removed so review pages cannot
+  accidentally fall back to product mock content.
 
 ## Phases
 
@@ -39,14 +37,11 @@ interview.
 
 ## Direction
 
-- #60 completes the first persisted analysis layer required for recruiter
-  review.
-- The current synthesizer is intentionally replaceable; a future OpenAI/Vertex
-  adapter can implement the same `CandidateBriefSynthesizer` contract without
-  changing the recruiter view.
-- Automated tests do not call paid LLM providers.
-- Continue to #61/#62 after merge for real-data dashboard polish and the full
-  E2E smoke/demo script.
+- #61 tightens the recruiter review workflow around persisted product data after
+  #60 introduced `CandidateBrief`.
+- The detail page now shows persisted brief, explicit pending/failed states, and
+  durable runtime evidence only.
+- Continue to #62 after merge for a repeatable local E2E smoke/demo script.
 
 ## Validation
 
@@ -61,8 +56,6 @@ interview.
 
 ## Known Follow-Up
 
-- #61 owns real-data candidate list/detail polish after persisted briefs exist.
 - #62 owns the full E2E smoke/demo script across recruiter creation, candidate
   live interview, evidence, brief, and review.
-- A paid/live LLM brief adapter should remain behind an explicit live/eval
-  command or flag before being used outside local manual testing.
+- #63 owns human notes and review status mutation controls.
