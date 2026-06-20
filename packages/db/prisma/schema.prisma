@@ -127,23 +127,26 @@ model Interview {
 }
 
 model CandidateSession {
-  id                String          @id @default(cuid())
-  organizationId    String
-  jobId             String
-  interviewId       String
-  realtimeSessionId String?         @unique
-  candidateName     String?
-  candidateEmail    String?
-  status            String          @default("created")
-  reviewStatus      String          @default("to_review")
-  startedAt         DateTime?
-  completedAt       DateTime?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-  organization      Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  job               Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  interview         Interview       @relation(fields: [interviewId], references: [id], onDelete: Cascade)
-  candidateBrief    CandidateBrief?
+  id                 String          @id @default(cuid())
+  organizationId     String
+  jobId              String
+  interviewId        String
+  realtimeSessionId  String?         @unique
+  candidateName      String?
+  candidateEmail     String?
+  resumeToken        String?         @unique
+  consentedAt        DateTime?
+  consentCopyVersion String?
+  status             String          @default("created")
+  reviewStatus       String          @default("to_review")
+  startedAt          DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  organization       Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job                Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  interview          Interview       @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  candidateBrief     CandidateBrief?
 
   @@index([organizationId, status, updatedAt])
   @@index([jobId, status])
