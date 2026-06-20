@@ -2,8 +2,9 @@
 
 ## Objective
 
-Ship the V1 E2E workflow step by step. Current implementation slice:
-GitHub issue #57, publish/versioning hardening for interview plans.
+Ship the V1 E2E workflow step by step. Current audit slice:
+core E2E workflow shipped through #57; remaining P0s are commercial/compliance
+wrappers.
 
 ## Scope
 
@@ -34,6 +35,7 @@ GitHub issue #57, publish/versioning hardening for interview plans.
 - Added a tested publication-mode policy for interview drafts.
 - Hardened publish behavior so edits after publication create a new immutable
   interview snapshot instead of mutating the previous candidate link snapshot.
+- Closed #55 and #57 after merge evidence and smoke validation.
 
 ## Phases
 
@@ -57,8 +59,9 @@ GitHub issue #57, publish/versioning hardening for interview plans.
   explicit instead of treating issue cleanup as implicit completion.
 - Default smoke avoids paid LLM calls.
 - Live LLM mode remains opt-in and blocked without explicit acknowledgement.
-- Continue remaining P0 work through the remaining #57 metadata/compliance
-  hardening, then #23/#20/#21.
+- Core workflow P0 implementation slices are closed through #57.
+- Continue remaining P0 work through #23/#20/#21, which are commercial POC,
+  compliance/trust, and recruiter-insights wrapper epics.
 
 ## Validation
 
@@ -77,10 +80,12 @@ GitHub issue #57, publish/versioning hardening for interview plans.
 - `pnpm --dir apps/console lint`: passed.
 - `pnpm --dir apps/console test`: passed.
 - `pnpm --dir apps/console test -- interview-plan-policy`: passed.
+- `make e2e-smoke E2E_SMOKE_RUN_ID=codex57-publish POSTGRES_PORT=55432 DATABASE_URL=...`:
+  passed with decision `Pass`.
 
 ## Remaining Follow-Up
 
-- #57 remains open for job metadata and compliance-copy gating after this
-  publish/versioning slice lands.
 - #23 remains open as the commercial POC go/no-go wrapper.
+- #20 remains open as the compliance and candidate trust wrapper.
+- #21 remains open as the recruiter interview insights dashboard wrapper.
 - #63 owns human notes and review status mutation controls.
