@@ -95,6 +95,11 @@ smoke coverage. To exercise real Clerk screens, run with
 real Clerk auth is enabled. You can either let Clerk fetch the token from
 `CLERK_SECRET_KEY` or provide `CLERK_TESTING_TOKEN` yourself.
 
+`make e2e-smoke` uses the same local mock Clerk identity by default
+(`MOCK_CLERK_USER_ID` / `MOCK_CLERK_ORG_ID`), so the dashboard and interview
+detail URLs printed by the smoke report should open directly in the local
+console.
+
 ## Live Interview Smoke Report
 
 After a live interview smoke, generate a replayability report from the Go realtime API:

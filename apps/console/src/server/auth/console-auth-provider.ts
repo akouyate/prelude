@@ -123,6 +123,6 @@ export function mockUserName() {
   return process.env.MOCK_CLERK_USER_NAME || "Adrien Kouyate";
 }
 
-function mockOrganizationId() {
-  return process.env.MOCK_CLERK_ORG_ID || null;
+export function mockOrganizationId() {
+  return process.env.MOCK_CLERK_ORG_ID || "org_demo";
 }

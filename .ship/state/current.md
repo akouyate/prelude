@@ -3,7 +3,7 @@
 ## Objective
 
 Ship the V1 E2E workflow step by step. Current implementation slice:
-GitHub issue #20, compliance and candidate trust guardrails.
+post-#20 smoke URL usability and E2E workflow hardening.
 
 ## Scope
 
@@ -48,6 +48,10 @@ GitHub issue #20, compliance and candidate trust guardrails.
 - Hardened console auth strategy with `CONSOLE_AUTH_PROVIDER=auto|clerk|mock`.
 - Added `@clerk/testing` Playwright setup for real Clerk E2E while keeping
   product smoke tests on the local mock provider by default.
+- Aligned `make e2e-smoke` with the local mock Clerk identity so URLs printed by
+  the smoke report open directly in the console.
+- Made local mock organization scope idempotent against reruns, parallel page
+  loaders, and historical mock users/organizations.
 
 ## Phases
 
@@ -72,7 +76,7 @@ GitHub issue #20, compliance and candidate trust guardrails.
 - Default smoke avoids paid LLM calls.
 - Live LLM mode remains opt-in and blocked without explicit acknowledgement.
 - Core workflow P0 implementation slices are closed through #57.
-- #20 should close when the compliance/trust guardrail slice merges.
+- #20 is closed after the compliance/trust guardrail slice.
 - #21 remains the final recruiter-insights wrapper epic.
 
 ## Validation
@@ -109,9 +113,13 @@ GitHub issue #20, compliance and candidate trust guardrails.
 - `go test ./...` in `services/realtime`: passed.
 - `pnpm exec prettier --check ...`: passed for changed TS/MD files.
 - `git diff --check`: passed.
+- `make e2e-smoke E2E_SMOKE_RUN_ID=codex-post-20-smoke POSTGRES_PORT=55432 DATABASE_URL=...`:
+  passed with decision `Pass` after smoke URL auth-scope fix.
+- `curl -i http://127.0.0.1:3000/interviews/is_e2e_codex-post-20-smoke`:
+  returned `200 OK`.
+- `pnpm --dir apps/console test:e2e`: passed after the smoke URL auth-scope fix.
 
 ## Remaining Follow-Up
 
-- #20 remains open until this slice is merged.
 - #21 remains open as the recruiter interview insights dashboard wrapper.
 - #63 owns human notes and review status mutation controls.
