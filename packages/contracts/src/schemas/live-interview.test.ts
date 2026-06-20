@@ -134,6 +134,7 @@ describe("liveInterviewRecruiterSummaryWireSchema", () => {
       logistics_notes: ["No logistics constraint captured."],
       missing_information: ["Availability needs recruiter validation."],
       excluded_sensitive_signals: [],
+      compliance_flags: ["human_review_required", "protected_traits_excluded"],
       audit: {
         source_event_ids: ["evt_turn_1"],
         transcript_turn_ids: ["turn_1"],
@@ -149,6 +150,7 @@ describe("liveInterviewRecruiterSummaryWireSchema", () => {
     expect(result.data.summaryId).toBe("rs_session_01");
     expect(result.data.criteria[0]?.criterionId).toBe("q1");
     expect(result.data.questionNotes[0]?.answerStatus).toBe("satisfied");
+    expect(result.data.complianceFlags).toContain("human_review_required");
     expect(result.data.audit.sourceEventIds).toEqual(["evt_turn_1"]);
   });
 });

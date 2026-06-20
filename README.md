@@ -77,9 +77,23 @@ make env-reset
 
 Use `MIGRATION_NAME=your_migration_name make db-migrate` when adding a new Prisma migration.
 
-When Clerk keys are empty in local development, the console uses a local-only
-mock Clerk identity from `MOCK_CLERK_*` variables in `.env.example`. Production
-does not allow this fallback.
+Console auth is controlled by `CONSOLE_AUTH_PROVIDER`:
+
+- `auto` uses real Clerk when keys are configured and falls back to a local mock
+  identity in development when keys are empty.
+- `clerk` requires `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`.
+- `mock` forces the local `MOCK_CLERK_*` identity for smoke tests and demos.
+
+Production never allows the mock provider. For real auth E2E, follow Clerk's
+testing guidance with fixed OTP test identities, short-lived session tokens, or
+Clerk testing tokens instead of the local mock.
+
+Console Playwright tests default to `CONSOLE_AUTH_PROVIDER=mock` for fast product
+smoke coverage. To exercise real Clerk screens, run with
+`CONSOLE_AUTH_PROVIDER=clerk` and dev-instance Clerk keys. The console uses
+`@clerk/testing` to run Clerk's Playwright setup and inject a Testing Token when
+real Clerk auth is enabled. You can either let Clerk fetch the token from
+`CLERK_SECRET_KEY` or provide `CLERK_TESTING_TOKEN` yourself.
 
 ## Live Interview Smoke Report
 
@@ -133,3 +147,5 @@ The step-by-step release workflow and remaining slice risks are documented in
 [`docs/architecture/v1-e2e-release-workflow.md`](docs/architecture/v1-e2e-release-workflow.md).
 The live IA commercial POC checklist is documented in
 [`docs/operations/live-ia-commercial-poc-checklist.md`](docs/operations/live-ia-commercial-poc-checklist.md).
+Compliance and candidate trust guardrails are documented in
+[`docs/operations/compliance-trust-guardrails.md`](docs/operations/compliance-trust-guardrails.md).

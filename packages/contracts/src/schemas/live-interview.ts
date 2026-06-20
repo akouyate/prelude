@@ -519,6 +519,14 @@ export const liveInterviewRecruiterSummaryConfidenceSchema = z.enum([
   "low",
 ]);
 
+export const liveInterviewComplianceFlagSchema = z.enum([
+  "biometric_scoring_disallowed",
+  "human_review_required",
+  "job_related_questions_only",
+  "protected_traits_excluded",
+  "sensitive_signal_review_required",
+]);
+
 const recruiterSummaryEvidenceSchema = z.object({
   eventId: z.string().min(1),
   turnId: z.string().min(1).optional(),
@@ -581,6 +589,10 @@ export const liveInterviewRecruiterSummarySchema = z.object({
   logisticsNotes: z.array(z.string().trim().min(4).max(500)).max(6),
   missingInformation: z.array(z.string().trim().min(4).max(500)).max(8),
   excludedSensitiveSignals: z.array(z.string().trim().min(2).max(160)).max(12),
+  complianceFlags: z
+    .array(liveInterviewComplianceFlagSchema)
+    .max(12)
+    .default([]),
   audit: z.object({
     sourceEventIds: z.array(z.string().min(1)),
     transcriptTurnIds: z.array(z.string().min(1)),

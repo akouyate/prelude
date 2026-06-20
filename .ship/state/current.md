@@ -2,9 +2,8 @@
 
 ## Objective
 
-Ship the V1 E2E workflow step by step. Current audit slice:
-core workflow and commercial POC checklist are closed; remaining P0s are #20
-and #21.
+Ship the V1 E2E workflow step by step. Current implementation slice:
+GitHub issue #20, compliance and candidate trust guardrails.
 
 ## Scope
 
@@ -39,6 +38,16 @@ and #21.
 - Added `docs/operations/live-ia-commercial-poc-checklist.md` with go/no-go
   criteria, demo script, evidence capture, risks, and non-goals.
 - Closed #23 after linking the checklist from #11.
+- Added canonical compliance copy, disallowed topics, human-in-the-loop rule,
+  and compliance flags in `@prelude/core`.
+- Added `complianceFlags` to CandidateBrief and live recruiter summary
+  contracts.
+- Added compliance flags to Go realtime recruiter summaries and local
+  CandidateBrief generation.
+- Added `docs/operations/compliance-trust-guardrails.md`.
+- Hardened console auth strategy with `CONSOLE_AUTH_PROVIDER=auto|clerk|mock`.
+- Added `@clerk/testing` Playwright setup for real Clerk E2E while keeping
+  product smoke tests on the local mock provider by default.
 
 ## Phases
 
@@ -63,8 +72,8 @@ and #21.
 - Default smoke avoids paid LLM calls.
 - Live LLM mode remains opt-in and blocked without explicit acknowledgement.
 - Core workflow P0 implementation slices are closed through #57.
-- #20 and #21 remain the final compliance/trust and recruiter-insights wrapper
-  epics.
+- #20 should close when the compliance/trust guardrail slice merges.
+- #21 remains the final recruiter-insights wrapper epic.
 
 ## Validation
 
@@ -87,9 +96,22 @@ and #21.
   passed with decision `Pass`.
 - `pnpm exec prettier --check README.md docs/architecture/v1-e2e-release-workflow.md docs/operations/live-ia-commercial-poc-checklist.md .ship/state/current.md`:
   passed for #23.
+- `pnpm --dir apps/console test`: passed.
+- `pnpm --dir apps/console typecheck`: passed.
+- `pnpm --dir apps/console lint`: passed.
+- `pnpm --dir apps/console test:e2e`: passed on isolated Playwright server.
+- `pnpm --dir packages/core test`: passed.
+- `pnpm --dir packages/core typecheck`: passed.
+- `pnpm --dir packages/core lint`: passed.
+- `pnpm --dir packages/contracts test`: passed.
+- `pnpm --dir packages/contracts typecheck`: passed.
+- `pnpm --dir packages/contracts lint`: passed.
+- `go test ./...` in `services/realtime`: passed.
+- `pnpm exec prettier --check ...`: passed for changed TS/MD files.
+- `git diff --check`: passed.
 
 ## Remaining Follow-Up
 
-- #20 remains open as the compliance and candidate trust wrapper.
+- #20 remains open until this slice is merged.
 - #21 remains open as the recruiter interview insights dashboard wrapper.
 - #63 owns human notes and review status mutation controls.

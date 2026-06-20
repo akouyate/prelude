@@ -26,6 +26,7 @@
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
+    "@clerk/testing": "^2.1.5",
     "@playwright/test": "^1.61.0",
     "@prelude/config": "workspace:*",
     "@tailwindcss/postcss": "^4.3.1",

@@ -29,9 +29,11 @@ const publishablePlan: PublishableInterviewPlanInput = {
   ],
   guardrails: [
     "Ask every candidate the same questions in the same order.",
+    "Analyze only candidate response content.",
     "Evaluate answers against job-related criteria only.",
     "Do not analyze face, accent, tone, emotion, or protected attributes.",
-    "Keep the final decision with the recruiter.",
+    "Do not make automatic hiring or rejection decisions.",
+    "Keep final review and next-step decisions under human control.",
   ],
   questions: [
     {

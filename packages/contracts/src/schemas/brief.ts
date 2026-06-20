@@ -16,6 +16,14 @@ export const candidateCriterionEvaluationStatusSchema = z.enum([
   "Not assessable",
 ]);
 
+export const complianceFlagSchema = z.enum([
+  "biometric_scoring_disallowed",
+  "human_review_required",
+  "job_related_questions_only",
+  "protected_traits_excluded",
+  "sensitive_signal_review_required",
+]);
+
 export const candidateBriefEvidenceSchema = z.object({
   eventId: z.string().min(1).optional(),
   questionId: z.string().min(1).optional(),
@@ -43,6 +51,7 @@ export const candidateBriefSchema = z.object({
     .default([]),
   criteria: z.array(candidateCriterionEvaluationSchema).max(8).default([]),
   limitations: z.array(z.string().trim().min(3).max(220)).max(8).default([]),
+  complianceFlags: z.array(complianceFlagSchema).max(12).default([]),
   suggestedNextStep: reviewStatusSchema.optional(),
 });
 
