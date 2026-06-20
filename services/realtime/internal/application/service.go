@@ -17,6 +17,7 @@ var (
 	ErrInvalidInput     = errors.New("invalid input")
 	ErrInvalidEvent     = errors.New("invalid event")
 	ErrSessionNotFound  = errors.New("session not found")
+	ErrPlanNotFound     = errors.New("interview plan not found")
 	ErrEventConflict    = errors.New("event id already exists with different content")
 	ErrRepositoryFailed = errors.New("repository failed")
 )
@@ -35,6 +36,10 @@ type SessionRepository interface {
 	CreateSession(ctx context.Context, session domain.Session) error
 	GetSession(ctx context.Context, sessionID string) (domain.Session, error)
 	AppendEvent(ctx context.Context, event domain.Event) (AppendEventResult, error)
+}
+
+type InterviewPlanRepository interface {
+	GetInterviewPlan(ctx context.Context, planID string) (InterviewPlan, error)
 }
 
 type AppendEventResult struct {
@@ -61,9 +66,10 @@ type LiveKitJoin struct {
 }
 
 type Service struct {
-	repository SessionRepository
-	livekit    LiveKitGateway
-	clock      Clock
+	repository     SessionRepository
+	planRepository InterviewPlanRepository
+	livekit        LiveKitGateway
+	clock          Clock
 }
 
 func NewService(repository SessionRepository, livekit LiveKitGateway, clock Clock) *Service {
@@ -71,11 +77,16 @@ func NewService(repository SessionRepository, livekit LiveKitGateway, clock Cloc
 		clock = SystemClock{}
 	}
 
-	return &Service{
+	service := &Service{
 		repository: repository,
 		livekit:    livekit,
 		clock:      clock,
 	}
+	if planRepository, ok := repository.(InterviewPlanRepository); ok {
+		service.planRepository = planRepository
+	}
+
+	return service
 }
 
 type CreateSessionInput struct {
@@ -194,12 +205,31 @@ func (s *Service) GetAgentConfig(ctx context.Context, sessionID string) (AgentCo
 		return AgentConfigOutput{}, err
 	}
 
+	plan, provider, err := s.resolveInterviewPlan(ctx, session.InterviewPlanID)
+	if err != nil {
+		return AgentConfigOutput{}, err
+	}
+
 	return AgentConfigOutput{
 		Session:       session,
 		LiveKitJoin:   join,
-		InterviewPlan: demoInterviewPlan(session.InterviewPlanID),
-		Provider:      "mock",
+		InterviewPlan: plan,
+		Provider:      provider,
 	}, nil
+}
+
+func (s *Service) resolveInterviewPlan(ctx context.Context, planID string) (InterviewPlan, string, error) {
+	planID = strings.TrimSpace(planID)
+	if planID == "" || strings.HasPrefix(planID, "plan-demo-") || s.planRepository == nil {
+		return demoInterviewPlan(planID), "mock", nil
+	}
+
+	plan, err := s.planRepository.GetInterviewPlan(ctx, planID)
+	if err != nil {
+		return InterviewPlan{}, "", err
+	}
+
+	return plan, "repository", nil
 }
 
 type IngestEventInput struct {

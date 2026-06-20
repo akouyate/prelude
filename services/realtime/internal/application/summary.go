@@ -126,7 +126,12 @@ func (s *Service) GetRecruiterSummary(ctx context.Context, sessionID string) (Re
 		return RecruiterSummary{}, err
 	}
 
-	return buildRecruiterSummary(session, demoInterviewPlan(session.InterviewPlanID), s.clock.Now().UTC()), nil
+	plan, _, err := s.resolveInterviewPlan(ctx, session.InterviewPlanID)
+	if err != nil {
+		return RecruiterSummary{}, err
+	}
+
+	return buildRecruiterSummary(session, plan, s.clock.Now().UTC()), nil
 }
 
 func buildRecruiterSummary(session domain.Session, plan InterviewPlan, generatedAt time.Time) RecruiterSummary {

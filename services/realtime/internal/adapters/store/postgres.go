@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/akouyate/prelude/services/realtime/internal/application"
@@ -78,6 +79,55 @@ func (s *PostgresStore) GetSession(ctx context.Context, sessionID string) (domai
 	session.Events = events
 
 	return session, nil
+}
+
+func (s *PostgresStore) GetInterviewPlan(ctx context.Context, planID string) (application.InterviewPlan, error) {
+	var plan application.InterviewPlan
+	var seniority sql.NullString
+	var roleBrief sql.NullString
+	var responseModesBytes []byte
+	var questionsBytes []byte
+	var guardrailsBytes []byte
+
+	err := s.db.QueryRowContext(ctx, `
+		select id, "roleTitle", seniority, "responseModes", questions, guardrails, "roleBrief"
+		from "Interview"
+		where id = $1 and status = 'published'
+	`, planID).Scan(
+		&plan.ID,
+		&plan.RoleTitle,
+		&seniority,
+		&responseModesBytes,
+		&questionsBytes,
+		&guardrailsBytes,
+		&roleBrief,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return application.InterviewPlan{}, application.ErrPlanNotFound
+	}
+	if err != nil {
+		return application.InterviewPlan{}, err
+	}
+
+	responseModes := decodeStringArray(responseModesBytes)
+	questions := decodeInterviewQuestions(questionsBytes)
+	if len(questions) == 0 {
+		return application.InterviewPlan{}, application.ErrPlanNotFound
+	}
+
+	plan.Language = "fr"
+	plan.Questions = questions
+	plan.AllowVideo = containsString(responseModes, "video")
+	plan.AllowAudioOnly = containsString(responseModes, "audio") || len(responseModes) == 0
+	plan.MaxFollowupsPerQuestion = 1
+	plan.InterviewStyle = application.InterviewStyle{
+		Seniority:       seniority.String,
+		CompanyContext:  summarizeRoleBrief(roleBrief.String),
+		CandidateTone:   "professional, concise, and concrete",
+		RoleConstraints: decodeStringArray(guardrailsBytes),
+	}
+
+	return plan, nil
 }
 
 func (s *PostgresStore) AppendEvent(ctx context.Context, event domain.Event) (application.AppendEventResult, error) {
@@ -331,6 +381,114 @@ func decodeModalities(value []byte) []domain.Modality {
 	}
 
 	return raw
+}
+
+type persistedQuestion struct {
+	ID     string `json:"id"`
+	Prompt string `json:"prompt"`
+	Signal string `json:"signal"`
+	Source string `json:"source"`
+}
+
+func decodeInterviewQuestions(value []byte) []application.InterviewQuestion {
+	var raw []persistedQuestion
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return []application.InterviewQuestion{}
+	}
+
+	questions := make([]application.InterviewQuestion, 0, len(raw))
+	for index, question := range raw {
+		prompt := strings.TrimSpace(question.Prompt)
+		if prompt == "" {
+			continue
+		}
+		id := strings.TrimSpace(question.ID)
+		if id == "" {
+			id = "q" + strconv.Itoa(index+1)
+		}
+
+		questions = append(questions, application.InterviewQuestion{
+			ID:             id,
+			Prompt:         prompt,
+			Category:       questionCategory(question),
+			FollowUpPrompt: followUpPrompt(question),
+		})
+	}
+
+	return questions
+}
+
+func decodeStringArray(value []byte) []string {
+	var raw []string
+	if err := json.Unmarshal(value, &raw); err != nil {
+		return []string{}
+	}
+
+	items := make([]string, 0, len(raw))
+	for _, item := range raw {
+		trimmed := strings.TrimSpace(item)
+		if trimmed != "" {
+			items = append(items, trimmed)
+		}
+	}
+
+	return items
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+
+	return false
+}
+
+func questionCategory(question persistedQuestion) string {
+	signal := strings.ToLower(question.Signal + " " + question.Source)
+	switch {
+	case strings.Contains(signal, "motivation"):
+		return "motivation"
+	case strings.Contains(signal, "communication") || strings.Contains(signal, "clarity"):
+		return "communication"
+	case strings.Contains(signal, "judgment") || strings.Contains(signal, "ambiguity"):
+		return "judgment"
+	case strings.Contains(signal, "constraint") ||
+		strings.Contains(signal, "alignment") ||
+		strings.Contains(signal, "location"):
+		return "logistics"
+	default:
+		return "experience"
+	}
+}
+
+func followUpPrompt(question persistedQuestion) string {
+	category := questionCategory(question)
+	switch category {
+	case "motivation":
+		return "What makes this opportunity specifically relevant for your next step?"
+	case "communication":
+		return "Can you make that example more concrete for the recruiter?"
+	case "judgment":
+		return "What trade-off did you consider before choosing that action?"
+	case "logistics":
+		return "Is there any practical constraint the recruiter should know now?"
+	default:
+		return "Can you share the context, your action, and the result?"
+	}
+}
+
+func summarizeRoleBrief(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "Prelude is screening candidates for a structured first interview before recruiter review."
+	}
+	if len(value) <= 220 {
+		return value
+	}
+
+	return strings.TrimSpace(value[:220]) + "..."
 }
 
 func normalizePostgresURL(databaseURL string) string {

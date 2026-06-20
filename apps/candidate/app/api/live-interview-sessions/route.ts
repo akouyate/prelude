@@ -35,6 +35,12 @@ export async function POST(request: Request) {
   }
 
   const publishedInterview = await resolvePublishedInterview(candidateToken);
+  if (!publishedInterview && !isDemoCandidateToken(candidateToken)) {
+    return NextResponse.json(
+      { error: { code: "interview_not_found" } },
+      { status: 404 }
+    );
+  }
   const allowedModalities = publishedInterview
     ? resolveAllowedModalities(publishedInterview.responseModes, body?.videoEnabled)
     : body?.videoEnabled === false
@@ -124,6 +130,10 @@ export async function POST(request: Request) {
       isMock: payload.livekit_join.token.startsWith("mock_lk_")
     }
   });
+}
+
+function isDemoCandidateToken(candidateToken: string) {
+  return process.env.NODE_ENV !== "production" && candidateToken === "demo-token";
 }
 
 async function resolvePublishedInterview(candidateToken: string) {

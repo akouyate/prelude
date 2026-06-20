@@ -34,6 +34,27 @@ func (fakeLiveKit) CreateJoin(_ context.Context, input application.LiveKitJoinIn
 	}, nil
 }
 
+type memoryStoreWithPlans struct {
+	*store.MemoryStore
+	plans map[string]application.InterviewPlan
+}
+
+func newMemoryStoreWithPlans(plans map[string]application.InterviewPlan) *memoryStoreWithPlans {
+	return &memoryStoreWithPlans{
+		MemoryStore: store.NewMemoryStore(),
+		plans:       plans,
+	}
+}
+
+func (s *memoryStoreWithPlans) GetInterviewPlan(_ context.Context, planID string) (application.InterviewPlan, error) {
+	plan, ok := s.plans[planID]
+	if !ok {
+		return application.InterviewPlan{}, application.ErrPlanNotFound
+	}
+
+	return plan, nil
+}
+
 func TestServiceCreateSessionReturnsMockJoin(t *testing.T) {
 	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
 	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
@@ -284,6 +305,100 @@ func TestServiceGetAgentConfigReturnsAgentJoinAndDemoPlan(t *testing.T) {
 	}
 	if len(config.InterviewPlan.InterviewStyle.RoleConstraints) == 0 {
 		t.Fatal("expected role constraints in interview style")
+	}
+}
+
+func TestServiceGetAgentConfigUsesRepositoryPlan(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	plan := application.InterviewPlan{
+		ID:             "interview_real_123",
+		RoleTitle:      "Warehouse Supervisor",
+		Language:       "fr",
+		AllowAudioOnly: true,
+		Questions: []application.InterviewQuestion{
+			{
+				ID:       "availability",
+				Prompt:   "What shift constraints should the recruiter know about?",
+				Category: "logistics",
+			},
+		},
+		InterviewStyle: application.InterviewStyle{
+			Seniority: "mid",
+		},
+	}
+	service := application.NewService(
+		newMemoryStoreWithPlans(map[string]application.InterviewPlan{
+			plan.ID: plan,
+		}),
+		fakeLiveKit{},
+		clock,
+	)
+
+	created, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: plan.ID,
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	config, err := service.GetAgentConfig(context.Background(), created.Session.ID)
+	if err != nil {
+		t.Fatalf("GetAgentConfig returned error: %v", err)
+	}
+
+	if config.Provider != "repository" {
+		t.Fatalf("expected repository provider, got %s", config.Provider)
+	}
+	if config.InterviewPlan.RoleTitle != plan.RoleTitle {
+		t.Fatalf("expected role title %q, got %q", plan.RoleTitle, config.InterviewPlan.RoleTitle)
+	}
+	if got := config.InterviewPlan.Questions[0].Prompt; got != plan.Questions[0].Prompt {
+		t.Fatalf("expected repository question %q, got %q", plan.Questions[0].Prompt, got)
+	}
+}
+
+func TestServiceGetRecruiterSummaryUsesRepositoryPlan(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	plan := application.InterviewPlan{
+		ID:             "interview_real_summary",
+		RoleTitle:      "Hotel Receptionist",
+		Language:       "fr",
+		AllowAudioOnly: true,
+		Questions: []application.InterviewQuestion{
+			{
+				ID:       "guest-conflict",
+				Prompt:   "How would you handle an unhappy guest at check-in?",
+				Category: "judgment",
+			},
+		},
+	}
+	service := application.NewService(
+		newMemoryStoreWithPlans(map[string]application.InterviewPlan{
+			plan.ID: plan,
+		}),
+		fakeLiveKit{},
+		clock,
+	)
+
+	created, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: plan.ID,
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	summary, err := service.GetRecruiterSummary(context.Background(), created.Session.ID)
+	if err != nil {
+		t.Fatalf("GetRecruiterSummary returned error: %v", err)
+	}
+
+	if summary.RoleTitle != plan.RoleTitle {
+		t.Fatalf("expected role title %q, got %q", plan.RoleTitle, summary.RoleTitle)
+	}
+	if summary.QuestionNotes[0].Prompt != plan.Questions[0].Prompt {
+		t.Fatalf("expected summary question %q, got %q", plan.Questions[0].Prompt, summary.QuestionNotes[0].Prompt)
 	}
 }
 
