@@ -1,3 +1,8 @@
+import type {
+  CandidateBriefStatus,
+  RecruiterReviewStatus,
+} from "./domain-spine";
+
 export type CandidateStatus = "to_call" | "to_review" | "archived";
 
 export type Candidate = {
@@ -27,9 +32,11 @@ export type CandidateSubmission = {
 };
 
 export type CandidateBrief = {
-  candidateId: string;
-  summary: string;
+  candidateSessionId: string;
+  status: CandidateBriefStatus;
+  summary?: string;
   strengths: string[];
   risks: string[];
-  suggestedNextStep: CandidateStatus;
+  limitations: string[];
+  suggestedNextStep?: RecruiterReviewStatus;
 };

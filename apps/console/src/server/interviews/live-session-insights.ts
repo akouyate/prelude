@@ -1,9 +1,15 @@
 import "server-only";
 
 import { prisma } from "@prelude/db";
+import {
+  isCandidateBriefStatus,
+  isRecruiterReviewStatus,
+  type CandidateBriefStatus,
+  type RecruiterReviewStatus,
+} from "@prelude/types";
 
-export type LiveAnalysisStatus = "available" | "pending" | "not_ready";
-export type RecruiterReviewStatus = "to_call" | "to_review" | "archived";
+export type LiveAnalysisStatus = "available" | "pending" | "not_ready" | "failed";
+export type { RecruiterReviewStatus };
 
 export type LiveEventStats = {
   answerEvaluationCount: number;
@@ -93,7 +99,12 @@ export function getQuestionCompletionRate({
 export function resolveAnalysisStatus(
   status: string,
   stats?: LiveEventStats,
+  briefStatus?: string | null,
 ): LiveAnalysisStatus {
+  if (isCandidateBriefStatus(briefStatus)) {
+    return resolveBriefAnalysisStatus(briefStatus);
+  }
+
   if (status !== "completed") {
     return "not_ready";
   }
@@ -105,12 +116,32 @@ export function resolveAnalysisStatus(
   return "pending";
 }
 
-export function resolveReviewStatus(status: string): RecruiterReviewStatus {
+export function resolveReviewStatus(
+  status: string | null | undefined,
+): RecruiterReviewStatus {
+  if (isRecruiterReviewStatus(status)) {
+    return status;
+  }
+
   if (status === "failed" || status === "expired") {
     return "archived";
   }
 
   return "to_review";
+}
+
+function resolveBriefAnalysisStatus(
+  status: CandidateBriefStatus,
+): LiveAnalysisStatus {
+  if (status === "completed") {
+    return "available";
+  }
+
+  if (status === "failed") {
+    return "failed";
+  }
+
+  return "pending";
 }
 
 function eventHasTranscriptTurn(payload: unknown) {

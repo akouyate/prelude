@@ -41,9 +41,10 @@ export async function POST(request: Request) {
       ? ["audio"]
       : ["audio", "video"];
   const candidateSession = publishedInterview
-    ? await prisma.candidateSession.create({
+      ? await prisma.candidateSession.create({
         data: {
           interviewId: publishedInterview.id,
+          jobId: publishedInterview.jobId,
           organizationId: publishedInterview.organizationId,
           startedAt: new Date(),
           status: "started"
@@ -133,6 +134,7 @@ async function resolvePublishedInterview(candidateToken: string) {
   return prisma.interview.findFirst({
     select: {
       id: true,
+      jobId: true,
       organizationId: true,
       responseModes: true,
     },

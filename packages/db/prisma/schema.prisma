@@ -16,6 +16,7 @@ model Organization {
   defaultInterviewMode  String?
   onboardingCompletedAt DateTime?
   createdAt             DateTime                 @default(now())
+  candidateBriefs       CandidateBrief[]
   candidateSessions     CandidateSession[]
   interviewDrafts       InterviewDraft[]
   interviews            Interview[]
@@ -49,20 +50,21 @@ model OrganizationMembership {
 }
 
 model Job {
-  id               String           @id @default(cuid())
-  organizationId   String
-  title            String
-  location         String?
-  description      String           @default("")
-  sourceProvider   String?
-  sourceExternalId String?
-  status           String           @default("draft")
-  createdAt        DateTime         @default(now())
-  organization     Organization     @relation(fields: [organizationId], references: [id])
-  interviewDrafts  InterviewDraft[]
-  interviews       Interview[]
-  preInterviews    PreInterview[]
-  candidates       Candidate[]
+  id                String             @id @default(cuid())
+  organizationId    String
+  title             String
+  location          String?
+  description       String             @default("")
+  sourceProvider    String?
+  sourceExternalId  String?
+  status            String             @default("draft")
+  createdAt         DateTime           @default(now())
+  organization      Organization       @relation(fields: [organizationId], references: [id])
+  interviewDrafts   InterviewDraft[]
+  interviews        Interview[]
+  preInterviews     PreInterview[]
+  candidates        Candidate[]
+  candidateSessions CandidateSession[]
 
   @@index([organizationId, sourceProvider])
 }
@@ -123,22 +125,49 @@ model Interview {
 }
 
 model CandidateSession {
-  id                String       @id @default(cuid())
+  id                String          @id @default(cuid())
   organizationId    String
+  jobId             String
   interviewId       String
-  realtimeSessionId String?      @unique
+  realtimeSessionId String?         @unique
   candidateName     String?
   candidateEmail    String?
-  status            String       @default("created")
+  status            String          @default("created")
+  reviewStatus      String          @default("to_review")
   startedAt         DateTime?
   completedAt       DateTime?
-  createdAt         DateTime     @default(now())
-  updatedAt         DateTime     @updatedAt
-  organization      Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  interview         Interview    @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  organization      Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job               Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  interview         Interview       @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  candidateBrief    CandidateBrief?
 
   @@index([organizationId, status, updatedAt])
+  @@index([jobId, status])
   @@index([interviewId, status])
+}
+
+model CandidateBrief {
+  id                 String           @id @default(cuid())
+  organizationId     String
+  candidateSessionId String           @unique
+  status             String           @default("pending")
+  summaryJson        Json             @default("{}")
+  recommendation     String?
+  limitations        Json             @default("[]")
+  evidence           Json             @default("[]")
+  modelProvider      String?
+  modelName          String?
+  schemaVersion      Int              @default(1)
+  generatedAt        DateTime?
+  failedReason       String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  organization       Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  candidateSession   CandidateSession @relation(fields: [candidateSessionId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status, updatedAt])
 }
 
 model JobSourceConnection {

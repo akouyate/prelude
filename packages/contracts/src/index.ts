@@ -48,7 +48,11 @@ export {
   type TranscriptionResponse,
 } from "./schemas/submission";
 export {
+  candidateBriefEvidenceSchema,
   candidateBriefSchema,
+  candidateBriefStatusSchema,
+  candidateCriterionEvaluationSchema,
+  candidateCriterionEvaluationStatusSchema,
   reviewStatusSchema,
   type CandidateBriefDto,
 } from "./schemas/brief";
