@@ -131,3 +131,5 @@ Do not run live LLM smoke in CI.
 
 The step-by-step release workflow and remaining slice risks are documented in
 [`docs/architecture/v1-e2e-release-workflow.md`](docs/architecture/v1-e2e-release-workflow.md).
+The live IA commercial POC checklist is documented in
+[`docs/operations/live-ia-commercial-poc-checklist.md`](docs/operations/live-ia-commercial-poc-checklist.md).
