@@ -5,6 +5,7 @@ import { Button } from "@prelude/ui";
 import {
   Camera,
   CheckCircle,
+  Mail,
   Microphone as Mic,
   Pause,
   PhoneXmark as PhoneOff,
@@ -13,6 +14,8 @@ import {
   VideoCamera as Video,
   WarningTriangle as AlertTriangle,
 } from "iconoir-react";
+
+import type { PublicInterviewContext } from "../../server/public-interviews";
 
 type RoomStatus =
   | "ready"
@@ -27,6 +30,8 @@ type RoomStatus =
 
 type LiveInterviewSession = {
   sessionId: string;
+  productSessionId: string | null;
+  resumeToken: string | null;
   allowedModalities: Array<"audio" | "video" | "form">;
   livekit: {
     roomName: string;
@@ -55,11 +60,20 @@ const statusCopy: Record<RoomStatus, string> = {
   completed: "Completed",
 };
 
-export function LiveInterviewRoom({ token }: { token: string }) {
+export function LiveInterviewRoom({
+  context,
+  token,
+}: {
+  context: PublicInterviewContext;
+  token: string;
+}) {
   const [status, setStatus] = React.useState<RoomStatus>("ready");
   const [session, setSession] = React.useState<LiveInterviewSession | null>(
     null,
   );
+  const [candidateName, setCandidateName] = React.useState("");
+  const [candidateEmail, setCandidateEmail] = React.useState("");
+  const [hasAcceptedConsent, setHasAcceptedConsent] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [isVideoEnabled, setIsVideoEnabled] = React.useState(true);
   const [isAudioPlaybackBlocked, setIsAudioPlaybackBlocked] =
@@ -86,8 +100,23 @@ export function LiveInterviewRoom({ token }: { token: string }) {
     };
   }, []);
 
+  const completeCurrentSession = React.useCallback(
+    (nextSession: LiveInterviewSession | null) => {
+      if (!nextSession?.productSessionId || !nextSession.resumeToken) {
+        return;
+      }
+
+      void completeProductSession(nextSession);
+    },
+    [],
+  );
+
   const startInterview = React.useCallback(async () => {
-    if (startInFlightRef.current) {
+    if (
+      startInFlightRef.current ||
+      context.kind === "not_found" ||
+      !hasAcceptedConsent
+    ) {
       return;
     }
 
@@ -99,7 +128,21 @@ export function LiveInterviewRoom({ token }: { token: string }) {
     setStatus("preparing");
 
     try {
-      const nextSession = await createSession(token, isVideoEnabled);
+      const nextSession = await createSession({
+        candidateEmail,
+        candidateName,
+        consentAccepted: hasAcceptedConsent,
+        resumeToken:
+          window.localStorage.getItem(resumeStorageKey(token)) ?? undefined,
+        token,
+        videoEnabled: isVideoEnabled,
+      });
+      if (nextSession.resumeToken) {
+        window.localStorage.setItem(
+          resumeStorageKey(token),
+          nextSession.resumeToken,
+        );
+      }
       setSession(nextSession);
 
       setStatus("permission_required");
@@ -118,7 +161,10 @@ export function LiveInterviewRoom({ token }: { token: string }) {
         onReconnecting: () => setStatus("reconnecting"),
         onConnected: () => setStatus("interviewer_joining"),
         onReady: () => setStatus("interviewer_joining"),
-        onDisconnected: () => setStatus("completed"),
+        onDisconnected: () => {
+          completeCurrentSession(nextSession);
+          setStatus("completed");
+        },
         onAudioPlaybackBlocked: () => setIsAudioPlaybackBlocked(true),
         onAudioPlaybackReady: () => {
           setIsAudioPlaybackBlocked(false);
@@ -140,16 +186,25 @@ export function LiveInterviewRoom({ token }: { token: string }) {
     } finally {
       startInFlightRef.current = false;
     }
-  }, [isVideoEnabled, token]);
+  }, [
+    candidateEmail,
+    candidateName,
+    completeCurrentSession,
+    context.kind,
+    hasAcceptedConsent,
+    isVideoEnabled,
+    token,
+  ]);
 
   const endInterview = React.useCallback(() => {
+    completeCurrentSession(session);
     roomRef.current?.disconnect();
     roomRef.current = null;
     stopLocalStream(localStream);
     setLocalStream(null);
     setIsAudioPlaybackBlocked(false);
     setStatus("completed");
-  }, [localStream]);
+  }, [completeCurrentSession, localStream, session]);
 
   const enableAudio = React.useCallback(async () => {
     try {
@@ -168,6 +223,12 @@ export function LiveInterviewRoom({ token }: { token: string }) {
     status === "interviewer_joining" ||
     status === "connected" ||
     status === "reconnecting";
+  const interview = context.kind === "not_found" ? null : context.interview;
+  const allowedModes = interview?.responseModes ?? ["audio", "video"];
+
+  if (!interview) {
+    return <UnavailableInterview />;
+  }
 
   return (
     <section className="flex flex-1 flex-col justify-between">
@@ -177,129 +238,282 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           Private live interview
         </div>
         <h1 className="mt-8 text-3xl font-semibold leading-tight">
-          Meet your Prelude AI interviewer.
+          {interview.roleTitle}
         </h1>
         <p className="mt-4 text-base leading-7 text-white/72">
-          Speak naturally. The recruiter reviews your answers, not your face,
-          accent, tone, or emotion.
+          {interview.companyName} uses Prelude for a first screening
+          conversation. The recruiter reviews your answers, not your face,
+          accent, tone, emotion, or protected attributes.
         </p>
       </div>
 
       <div className="mt-8 space-y-4">
-        <div className="rounded-3xl bg-white/94 p-4 text-ink-900 backdrop-blur">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="text-sm font-semibold">Live room</p>
-              <p className="mt-1 text-sm text-ink-600">
-                {session?.livekit.roomName ??
-                  "Session will be created when you start."}
-              </p>
-            </div>
-            <StatusPill status={status} />
-          </div>
-
-          <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
-            <Capability active icon={Mic} label="Microphone" />
-            <Capability active={isVideoEnabled} icon={Camera} label="Camera" />
-          </div>
-
-          {status === "ready" ? (
-            <label className="mt-4 flex items-center justify-between rounded-2xl border border-ink-200 bg-white/72 px-3 py-3 text-sm">
-              <span>
-                <span className="block font-medium text-ink-900">
-                  Enable video
-                </span>
-                <span className="block text-ink-600">
-                  Audio stays available either way.
-                </span>
-              </span>
-              <input
-                checked={isVideoEnabled}
-                className="h-5 w-5 accent-ink-900"
-                onChange={(event) => setIsVideoEnabled(event.target.checked)}
-                type="checkbox"
+        {status === "completed" ? (
+          <CompletionPanel companyName={interview.companyName} />
+        ) : (
+          <>
+            {status === "ready" ? (
+              <PreflightPanel
+                allowedModes={allowedModes}
+                candidateEmail={candidateEmail}
+                candidateName={candidateName}
+                consentAccepted={hasAcceptedConsent}
+                estimatedMinutes={interview.estimatedMinutes}
+                jobTitle={interview.jobTitle}
+                onCandidateEmailChange={setCandidateEmail}
+                onCandidateNameChange={setCandidateName}
+                onConsentChange={setHasAcceptedConsent}
               />
-            </label>
-          ) : null}
+            ) : null}
 
-          {localStream ? (
-            <div className="mt-4 overflow-hidden rounded-3xl bg-ink-900">
-              <video
-                ref={videoRef}
-                aria-label="Local camera preview"
-                autoPlay
-                className="aspect-video w-full object-cover"
-                muted
-                playsInline
-              />
-            </div>
-          ) : null}
+            <div className="rounded-3xl bg-white/94 p-4 text-ink-900 backdrop-blur">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-semibold">Live room</p>
+                  <p className="mt-1 text-sm text-ink-600">
+                    {session?.livekit.roomName ??
+                      "Session will be created when you start."}
+                  </p>
+                </div>
+                <StatusPill status={status} />
+              </div>
 
-          {error ? (
-            <div className="mt-4 flex gap-2 rounded-2xl bg-coral-100 p-3 text-sm text-ink-900">
-              <AlertTriangle
-                aria-hidden="true"
-                className="mt-0.5 h-4 w-4 shrink-0 text-coral-500"
-              />
-              <p>{error}</p>
-            </div>
-          ) : null}
+              <div className="mt-4 grid grid-cols-2 gap-2 text-sm">
+                <Capability
+                  active={allowedModes.includes("audio")}
+                  icon={Mic}
+                  label="Microphone"
+                />
+                <Capability
+                  active={isVideoEnabled && allowedModes.includes("video")}
+                  icon={Camera}
+                  label="Camera"
+                />
+              </div>
 
-          {isAudioPlaybackBlocked ? (
-            <div className="mt-4 rounded-2xl border border-gold-200 bg-gold-50 p-3 text-sm text-ink-900">
-              <p className="font-medium">Audio paused by your browser</p>
-              <p className="mt-1 text-ink-600">
-                Tap once to hear the interviewer on this device.
-              </p>
-              <Button
-                className="mt-3 w-full"
-                onClick={enableAudio}
-                variant="secondary"
-              >
-                <Mic aria-hidden="true" className="h-4 w-4" />
-                Enable audio
-              </Button>
-            </div>
-          ) : null}
-
-          <div className="mt-5 flex gap-2">
-            {isRoomActive ? (
-              <>
-                <Button className="flex-1" onClick={endInterview}>
-                  <PhoneOff aria-hidden="true" className="h-4 w-4" />
-                  End
-                </Button>
-                <Button className="w-12 px-0" disabled variant="secondary">
-                  <Pause aria-hidden="true" className="h-4 w-4" />
-                  <span className="sr-only">Pause</span>
-                </Button>
-              </>
-            ) : (
-              <Button
-                className="w-full"
-                disabled={isBusy}
-                onClick={startInterview}
-              >
-                {isBusy ? (
-                  <RefreshCcw
-                    aria-hidden="true"
-                    className="h-4 w-4 animate-spin"
+              {status === "ready" && allowedModes.includes("video") ? (
+                <label className="mt-4 flex items-center justify-between rounded-2xl border border-ink-200 bg-white/72 px-3 py-3 text-sm">
+                  <span>
+                    <span className="block font-medium text-ink-900">
+                      Enable video
+                    </span>
+                    <span className="block text-ink-600">
+                      Audio stays available either way.
+                    </span>
+                  </span>
+                  <input
+                    checked={isVideoEnabled}
+                    className="h-5 w-5 accent-ink-900"
+                    onChange={(event) =>
+                      setIsVideoEnabled(event.target.checked)
+                    }
+                    type="checkbox"
                   />
-                ) : (
-                  <Video aria-hidden="true" className="h-4 w-4" />
-                )}
-                Start live interview
-              </Button>
-            )}
-          </div>
-        </div>
+                </label>
+              ) : null}
 
-        <div className="rounded-3xl border border-white/10 bg-white/8 p-4 text-sm text-white/72 backdrop-blur">
-          <p className="font-medium text-white">Current question</p>
-          <p className="mt-2 leading-6">
-            Bonjour, pouvez-vous vous présenter brièvement et expliquer ce qui
-            vous intéresse dans ce poste ?
+              {localStream ? (
+                <div className="mt-4 overflow-hidden rounded-3xl bg-ink-900">
+                  <video
+                    ref={videoRef}
+                    aria-label="Local camera preview"
+                    autoPlay
+                    className="aspect-video w-full object-cover"
+                    muted
+                    playsInline
+                  />
+                </div>
+              ) : null}
+
+              {error ? (
+                <div className="mt-4 flex gap-2 rounded-2xl bg-coral-100 p-3 text-sm text-ink-900">
+                  <AlertTriangle
+                    aria-hidden="true"
+                    className="mt-0.5 h-4 w-4 shrink-0 text-coral-500"
+                  />
+                  <p>{error}</p>
+                </div>
+              ) : null}
+
+              {isAudioPlaybackBlocked ? (
+                <div className="mt-4 rounded-2xl border border-gold-200 bg-gold-50 p-3 text-sm text-ink-900">
+                  <p className="font-medium">Audio paused by your browser</p>
+                  <p className="mt-1 text-ink-600">
+                    Tap once to hear the interviewer on this device.
+                  </p>
+                  <Button
+                    className="mt-3 w-full"
+                    onClick={enableAudio}
+                    variant="secondary"
+                  >
+                    <Mic aria-hidden="true" className="h-4 w-4" />
+                    Enable audio
+                  </Button>
+                </div>
+              ) : null}
+
+              <div className="mt-5 flex gap-2">
+                {isRoomActive ? (
+                  <>
+                    <Button className="flex-1" onClick={endInterview}>
+                      <PhoneOff aria-hidden="true" className="h-4 w-4" />
+                      End
+                    </Button>
+                    <Button className="w-12 px-0" disabled variant="secondary">
+                      <Pause aria-hidden="true" className="h-4 w-4" />
+                      <span className="sr-only">Pause</span>
+                    </Button>
+                  </>
+                ) : (
+                  <Button
+                    className="w-full"
+                    disabled={isBusy || !hasAcceptedConsent}
+                    onClick={startInterview}
+                  >
+                    {isBusy ? (
+                      <RefreshCcw
+                        aria-hidden="true"
+                        className="h-4 w-4 animate-spin"
+                      />
+                    ) : (
+                      <Video aria-hidden="true" className="h-4 w-4" />
+                    )}
+                    {hasAcceptedConsent
+                      ? "Start live interview"
+                      : "Accept consent to start"}
+                  </Button>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-3xl border border-white/10 bg-white/8 p-4 text-sm text-white/72 backdrop-blur">
+              <p className="font-medium text-white">What happens next</p>
+              <p className="mt-2 leading-6">
+                The interviewer will ask the published first-screen questions
+                for this role. You can answer naturally; concise examples are
+                enough.
+              </p>
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CompletionPanel({ companyName }: { companyName: string }) {
+  return (
+    <div className="rounded-3xl bg-white/94 p-5 text-ink-900 backdrop-blur">
+      <div className="flex gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-olive-100 text-ink-900">
+          <CheckCircle aria-hidden="true" className="h-5 w-5" />
+        </span>
+        <div>
+          <h2 className="text-2xl font-semibold">Thank you</h2>
+          <p className="mt-3 text-sm leading-6 text-ink-600">
+            Your interview is complete. {companyName} will review your answers
+            and follow up with the next step if there is a match.
           </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PreflightPanel({
+  allowedModes,
+  candidateEmail,
+  candidateName,
+  consentAccepted,
+  estimatedMinutes,
+  jobTitle,
+  onCandidateEmailChange,
+  onCandidateNameChange,
+  onConsentChange,
+}: {
+  allowedModes: string[];
+  candidateEmail: string;
+  candidateName: string;
+  consentAccepted: boolean;
+  estimatedMinutes: number | null;
+  jobTitle: string;
+  onCandidateEmailChange: (value: string) => void;
+  onCandidateNameChange: (value: string) => void;
+  onConsentChange: (value: boolean) => void;
+}) {
+  return (
+    <div className="rounded-3xl bg-white/94 p-4 text-ink-900 backdrop-blur">
+      <div className="flex items-start gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-ink-900 text-white">
+          <Mail aria-hidden="true" className="h-4 w-4" />
+        </span>
+        <div>
+          <p className="text-sm font-semibold">Before you start</p>
+          <p className="mt-1 text-sm leading-6 text-ink-600">
+            {jobTitle}
+            {estimatedMinutes ? ` · about ${estimatedMinutes} minutes` : ""}
+            {" · "}
+            {formatModes(allowedModes)}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <label className="text-sm">
+          <span className="font-medium text-ink-900">Name</span>
+          <input
+            className="mt-1 h-11 w-full rounded-2xl border border-ink-200 bg-white px-3 outline-none focus:border-ink-900 focus:ring-2 focus:ring-olive-200"
+            onChange={(event) => onCandidateNameChange(event.target.value)}
+            placeholder="Your name"
+            value={candidateName}
+          />
+        </label>
+        <label className="text-sm">
+          <span className="font-medium text-ink-900">Email</span>
+          <input
+            className="mt-1 h-11 w-full rounded-2xl border border-ink-200 bg-white px-3 outline-none focus:border-ink-900 focus:ring-2 focus:ring-olive-200"
+            onChange={(event) => onCandidateEmailChange(event.target.value)}
+            placeholder="you@example.com"
+            type="email"
+            value={candidateEmail}
+          />
+        </label>
+      </div>
+
+      <label className="mt-4 flex cursor-pointer gap-3 rounded-2xl border border-ink-200 bg-white/72 p-3 text-sm leading-6">
+        <input
+          checked={consentAccepted}
+          className="mt-1 h-4 w-4 shrink-0 accent-ink-900"
+          onChange={(event) => onConsentChange(event.target.checked)}
+          type="checkbox"
+        />
+        <span>
+          I agree to join this AI-guided screening interview. My answers may be
+          recorded as transcript evidence for recruiter review, and Prelude
+          should not assess protected attributes, appearance, accent, tone, or
+          emotion.
+        </span>
+      </label>
+    </div>
+  );
+}
+
+function UnavailableInterview() {
+  return (
+    <section className="flex flex-1 flex-col justify-center">
+      <div className="rounded-3xl bg-white/94 p-5 text-ink-900 backdrop-blur">
+        <div className="flex gap-3">
+          <AlertTriangle
+            aria-hidden="true"
+            className="mt-1 h-5 w-5 text-coral-600"
+          />
+          <div>
+            <h1 className="text-2xl font-semibold">Interview unavailable</h1>
+            <p className="mt-3 text-sm leading-6 text-ink-600">
+              This link is invalid, unpublished, or no longer available. Ask the
+              recruiter for a fresh interview link.
+            </p>
+          </div>
         </div>
       </div>
     </section>
@@ -339,11 +553,41 @@ function Capability({
   );
 }
 
-async function createSession(token: string, videoEnabled: boolean) {
+function formatModes(modes: string[]) {
+  const labels = modes.map((mode) => {
+    if (mode === "form") {
+      return "form fallback";
+    }
+
+    return mode;
+  });
+
+  return labels.length > 0 ? labels.join(", ") : "audio";
+}
+
+function resumeStorageKey(token: string) {
+  return `prelude:candidate-session:${token}`;
+}
+
+async function createSession(input: {
+  candidateEmail: string;
+  candidateName: string;
+  consentAccepted: boolean;
+  resumeToken?: string;
+  token: string;
+  videoEnabled: boolean;
+}) {
   const response = await fetch("/api/live-interview-sessions", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ candidateToken: token, videoEnabled }),
+    body: JSON.stringify({
+      candidateEmail: input.candidateEmail,
+      candidateName: input.candidateName,
+      candidateToken: input.token,
+      consentAccepted: input.consentAccepted,
+      resumeToken: input.resumeToken,
+      videoEnabled: input.videoEnabled,
+    }),
   });
 
   if (!response.ok) {
@@ -351,6 +595,18 @@ async function createSession(token: string, videoEnabled: boolean) {
   }
 
   return (await response.json()) as LiveInterviewSession;
+}
+
+async function completeProductSession(session: LiveInterviewSession) {
+  if (!session.productSessionId || !session.resumeToken) {
+    return;
+  }
+
+  await fetch(`/api/candidate-sessions/${session.productSessionId}/complete`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ resumeToken: session.resumeToken }),
+  }).catch(() => undefined);
 }
 
 async function connectRoom({
