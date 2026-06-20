@@ -50,7 +50,7 @@ Code candidate redesign reference and plugged into the real candidate API flow.
 - [x] Testing
 - [x] Visual review
 - [x] Final review
-- [ ] Delivery
+- [x] Delivery
 
 ## Validation
 
@@ -64,4 +64,3 @@ Code candidate redesign reference and plugged into the real candidate API flow.
 
 - Decide whether to keep camera as an optional mode in the candidate setup or
   make this first released candidate app strictly audio-only.
-- Commit, push, and open PR.
