@@ -36,4 +36,15 @@ describe("organizationOnboardingStateSchema", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("defaults missing autosave revisions for older clients", () => {
+    const result = saveOrganizationOnboardingProgressInputSchema.parse({
+      currentStep: "company",
+      state: {
+        companyName: "Acme Talent",
+      },
+    });
+
+    expect(result.clientRevision).toBe(0);
+  });
 });

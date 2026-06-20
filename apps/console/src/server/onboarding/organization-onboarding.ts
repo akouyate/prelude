@@ -6,6 +6,7 @@ import {
   organizationOnboardingStateSchema,
   organizationOnboardingStepSchema,
   saveOrganizationOnboardingProgressInputSchema,
+  type OrganizationOnboardingJobSource,
   type OrganizationOnboardingState,
   type OrganizationOnboardingStep,
   type SaveOrganizationOnboardingProgressInput,
@@ -14,7 +15,7 @@ import type { OrganizationRole } from "@prelude/types";
 
 import { isClerkConfigured } from "../auth/clerk-config";
 
-type JobSource = "linkedin" | "indeed" | "manual";
+type JobSource = OrganizationOnboardingJobSource;
 
 type CompleteOrganizationOnboardingInput = {
   companyName: string;
@@ -163,30 +164,10 @@ export async function saveOrganizationOnboardingProgress(
       onboardingRole: parsed.data.state.onboardingRole,
     });
 
-    if (parsed.data.state.jobSource) {
-      await tx.jobSourceConnection.upsert({
-        where: {
-          organizationId_provider: {
-            organizationId: organization.id,
-            provider: parsed.data.state.jobSource,
-          },
-        },
-        update: {
-          externalLabel: connectionLabel(parsed.data.state.jobSource),
-          status:
-            parsed.data.state.jobSource === "manual"
-              ? "manual"
-              : "mock_connected",
-        },
-        create: {
-          externalLabel: connectionLabel(parsed.data.state.jobSource),
-          organizationId: organization.id,
-          provider: parsed.data.state.jobSource,
-          status:
-            parsed.data.state.jobSource === "manual"
-              ? "manual"
-              : "mock_connected",
-        },
+    if (shouldApplyProgressSideEffects(parsed.data, organization)) {
+      await upsertJobSourceConnection(tx, {
+        organizationId: organization.id,
+        source: parsed.data.state.jobSource,
       });
     }
 
@@ -246,23 +227,9 @@ export async function completeOrganizationOnboarding(
       userId: user.id,
     });
 
-    await tx.jobSourceConnection.upsert({
-      where: {
-        organizationId_provider: {
-          organizationId: organization.id,
-          provider: input.jobSource,
-        },
-      },
-      update: {
-        externalLabel: connectionLabel(input.jobSource),
-        status: input.jobSource === "manual" ? "manual" : "mock_connected",
-      },
-      create: {
-        externalLabel: connectionLabel(input.jobSource),
-        organizationId: organization.id,
-        provider: input.jobSource,
-        status: input.jobSource === "manual" ? "manual" : "mock_connected",
-      },
+    await upsertJobSourceConnection(tx, {
+      organizationId: organization.id,
+      source: input.jobSource,
     });
 
     const existingJob = await tx.job.findFirst({
@@ -451,10 +418,23 @@ async function upsertOnboardingOrganization(
   const data = organizationProgressData(input);
 
   if (authContext.clerkOrganizationId) {
-    return tx.organization.upsert({
+    const existingOrganization = await tx.organization.findUnique({
       where: { clerkOrganizationId: authContext.clerkOrganizationId },
-      update: data,
-      create: {
+    });
+
+    if (existingOrganization) {
+      if (shouldSkipProgressUpdate(input, existingOrganization)) {
+        return existingOrganization;
+      }
+
+      return tx.organization.update({
+        where: { id: existingOrganization.id },
+        data,
+      });
+    }
+
+    return tx.organization.create({
+      data: {
         clerkOrganizationId: authContext.clerkOrganizationId,
         ...data,
       },
@@ -471,6 +451,10 @@ async function upsertOnboardingOrganization(
   });
 
   if (existingMembership) {
+    if (shouldSkipProgressUpdate(input, existingMembership.organization)) {
+      return existingMembership.organization;
+    }
+
     return tx.organization.update({
       where: { id: existingMembership.organizationId },
       data,
@@ -490,9 +474,45 @@ function organizationProgressData(
     defaultInterviewMode: input.state.interviewMode || null,
     hiringFocus: input.state.hiringFocus || null,
     name: input.state.companyName || "Untitled workspace",
-    onboardingState: input.state,
+    onboardingState: {
+      ...input.state,
+      progressRevision: input.clientRevision,
+    },
     onboardingStep: input.currentStep,
   };
+}
+
+async function upsertJobSourceConnection(
+  tx: Pick<PrismaClient, "jobSourceConnection">,
+  input: {
+    organizationId: string;
+    source: JobSource | "";
+  },
+) {
+  if (!input.source) {
+    return null;
+  }
+
+  const status = input.source === "manual" ? "manual" : "mock_connected";
+
+  return tx.jobSourceConnection.upsert({
+    where: {
+      organizationId_provider: {
+        organizationId: input.organizationId,
+        provider: input.source,
+      },
+    },
+    update: {
+      externalLabel: connectionLabel(input.source),
+      status,
+    },
+    create: {
+      externalLabel: connectionLabel(input.source),
+      organizationId: input.organizationId,
+      provider: input.source,
+      status,
+    },
+  });
 }
 
 async function findOnboardingOrganizationForUser({
@@ -569,6 +589,47 @@ function shouldPersistOnboardingState(state: OrganizationOnboardingState) {
         state.selectedJobId,
     )
   );
+}
+
+function shouldSkipProgressUpdate(
+  input: SaveOrganizationOnboardingProgressInput,
+  organization: {
+    onboardingCompletedAt: Date | null;
+    onboardingState: unknown;
+  },
+) {
+  if (organization.onboardingCompletedAt) {
+    return true;
+  }
+
+  return input.clientRevision < readPersistedProgressRevision(organization);
+}
+
+function shouldApplyProgressSideEffects(
+  input: SaveOrganizationOnboardingProgressInput,
+  organization: {
+    onboardingCompletedAt: Date | null;
+    onboardingState: unknown;
+  },
+) {
+  if (organization.onboardingCompletedAt) {
+    return false;
+  }
+
+  return input.clientRevision >= readPersistedProgressRevision(organization);
+}
+
+function readPersistedProgressRevision(input: { onboardingState: unknown }) {
+  if (!input.onboardingState || typeof input.onboardingState !== "object") {
+    return 0;
+  }
+
+  const revision = (input.onboardingState as { progressRevision?: unknown })
+    .progressRevision;
+
+  return typeof revision === "number" && Number.isInteger(revision) && revision >= 0
+    ? revision
+    : 0;
 }
 
 function toOnboardingState(
