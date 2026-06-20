@@ -2,6 +2,7 @@ import {
   candidateBriefSchema,
   type CandidateBriefDto,
 } from "@prelude/contracts";
+import { defaultComplianceFlags, recruiterLimitationCopy } from "@prelude/core";
 import { prisma, type Prisma } from "@prelude/db";
 
 import {
@@ -204,6 +205,7 @@ export function buildLocalCandidateBrief(
 
   return candidateBriefSchema.parse({
     candidateSessionId: input.candidateSessionId,
+    complianceFlags: [...defaultComplianceFlags],
     criteria,
     limitations,
     pointsToClarify: [
@@ -317,10 +319,7 @@ function getLimitations(
   evidence: CandidateSessionEvidence,
   candidateTurns: CandidateTranscriptTurn[],
 ) {
-  const limitations: string[] = [
-    "This brief supports human review only and is not an automated hiring decision.",
-    "Do not assess protected attributes, appearance, accent, tone, emotion, personality, or biometrics.",
-  ];
+  const limitations: string[] = [recruiterLimitationCopy];
 
   if (candidateTurns.length === 0) {
     limitations.push("No candidate transcript turns were available.");

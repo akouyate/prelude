@@ -20,8 +20,15 @@ describe("candidate brief generation", () => {
       questionId: "q1",
       transcriptTurnId: "turn_a1",
     });
+    expect(brief.complianceFlags).toEqual(
+      expect.arrayContaining([
+        "human_review_required",
+        "protected_traits_excluded",
+        "biometric_scoring_disallowed",
+      ]),
+    );
     expect(JSON.stringify(brief).toLowerCase()).not.toContain("score");
-    expect(brief.limitations.join(" ")).toContain("protected attributes");
+    expect(brief.limitations.join(" ")).toContain("protected traits");
   });
 
   it("marks criteria not assessable when transcript evidence is missing", () => {

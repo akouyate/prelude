@@ -2,6 +2,7 @@ import type {
   InterviewCriterionDraft,
   InterviewQuestionDraft,
 } from "@prelude/core";
+import { aiGuardrails } from "@prelude/core";
 
 export const interviewPlanPolicy = {
   maxCriteria: 5,
@@ -19,9 +20,7 @@ const allowedModes = new Set<PolicyInterviewResponseMode>([
 ]);
 const requiredGuardrails = [
   "same questions",
-  "job-related",
-  "protected",
-  "final decision",
+  ...aiGuardrails.map((guardrail) => guardrail.toLowerCase()),
 ] as const;
 
 export type PublishableInterviewPlanInput = {
@@ -82,7 +81,7 @@ export function getInterviewPlanPublicationIssues(
   }
 
   for (const required of requiredGuardrails) {
-    if (!guardrailText.includes(required)) {
+    if (!guardrailText.includes(required.toLowerCase())) {
       issues.push("Keep the required compliance guardrails before publishing.");
       break;
     }

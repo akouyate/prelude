@@ -2,6 +2,7 @@ export { createJobInputSchema, type CreateJobInput } from "./schemas/job";
 export {
   createLiveInterviewSessionInputSchema,
   createLiveInterviewSessionResponseSchema,
+  liveInterviewComplianceFlagSchema,
   liveInterviewAgentConfigSchema,
   liveInterviewEventSchema,
   liveInterviewEvaluationDimensionSchema,
@@ -63,6 +64,7 @@ export {
   candidateBriefStatusSchema,
   candidateCriterionEvaluationSchema,
   candidateCriterionEvaluationStatusSchema,
+  complianceFlagSchema,
   reviewStatusSchema,
   type CandidateBriefDto,
 } from "./schemas/brief";

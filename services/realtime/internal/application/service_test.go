@@ -1452,6 +1452,9 @@ func TestServiceRecruiterSummaryExcludesSensitiveCandidateSignals(t *testing.T) 
 	if len(summary.ExcludedSensitiveSignals) != 1 || summary.ExcludedSensitiveSignals[0] != "age" {
 		t.Fatalf("expected age exclusion, got %#v", summary.ExcludedSensitiveSignals)
 	}
+	if !stringSliceContains(summary.ComplianceFlags, "sensitive_signal_review_required") {
+		t.Fatalf("expected sensitive_signal_review_required flag, got %#v", summary.ComplianceFlags)
+	}
 	for _, criterion := range summary.Criteria {
 		for _, evidence := range criterion.Evidence {
 			if strings.Contains(evidence.Quote, "54 ans") {
@@ -1513,4 +1516,13 @@ func TestServiceRecruiterSummaryUsesEvaluationMatrixRiskExplanation(t *testing.T
 	if !strings.Contains(summary.Criteria[0].Note, "incoherent or absurd answer") {
 		t.Fatalf("expected matrix challenge note, got %s", summary.Criteria[0].Note)
 	}
+}
+
+func stringSliceContains(values []string, expected string) bool {
+	for _, value := range values {
+		if value == expected {
+			return true
+		}
+	}
+	return false
 }

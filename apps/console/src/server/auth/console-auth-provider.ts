@@ -4,7 +4,10 @@ import { auth, currentUser } from "@clerk/nextjs/server";
 import type { OrganizationRole } from "@prelude/types";
 
 import { mapClerkOrganizationRole } from "../../domain/organization-access-policy";
-import { isClerkConfigured } from "./clerk-config";
+import {
+  consoleAuthConfigurationError,
+  isConsoleAuthMockEnabled,
+} from "./clerk-config";
 
 export type ConsoleAuthSession = {
   clerkOrganizationId: string | null;
@@ -31,7 +34,11 @@ export type ConsoleAuthResult<T> =
 export async function getConsoleAuthSession(): Promise<
   ConsoleAuthResult<ConsoleAuthSession>
 > {
-  if (!isClerkConfigured) {
+  if (consoleAuthConfigurationError) {
+    return { ok: false, error: consoleAuthConfigurationError };
+  }
+
+  if (isConsoleAuthMockEnabled) {
     return getMockConsoleAuthSession();
   }
 
@@ -93,10 +100,6 @@ export async function getConsoleAuthIdentity(): Promise<
 }
 
 function getMockConsoleAuthSession(): ConsoleAuthResult<ConsoleAuthSession> {
-  if (process.env.NODE_ENV === "production") {
-    return { ok: false, error: "Clerk is not configured." };
-  }
-
   return {
     ok: true,
     value: {

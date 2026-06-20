@@ -5,7 +5,16 @@ export {
   type InterviewDraftInput,
   type InterviewFocus,
   type InterviewQuestionDraft,
-  type InterviewSeniority
+  type InterviewSeniority,
 } from "./domain/interview-agent";
 export { suggestReviewStatus } from "./domain/review";
-export { aiGuardrails } from "./policies/ai";
+export {
+  aiGuardrails,
+  candidateDisclosureCopy,
+  complianceFlagCodes,
+  defaultComplianceFlags,
+  disallowedQuestionTopics,
+  humanInLoopRule,
+  recruiterLimitationCopy,
+  type ComplianceFlagCode,
+} from "./policies/ai";

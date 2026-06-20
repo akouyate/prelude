@@ -92,7 +92,7 @@ importers:
         version: 9.39.4(jiti@2.7.0)
       eslint-config-next:
         specifier: ^16.2.9
-        version: 16.2.9(@typescript-eslint/parser@8.61.1(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3))(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3)
+        version: 16.2.9(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3)
       tailwindcss:
         specifier: ^4.3.1
         version: 4.3.1
@@ -107,7 +107,7 @@ importers:
     dependencies:
       '@clerk/nextjs':
         specifier: ^7.5.6
-        version: 7.5.6(next@16.2.9(@playwright/test@1.61.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+        version: 7.5.6(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.61.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@prelude/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -142,6 +142,9 @@ importers:
         specifier: ^19.2.7
         version: 19.2.7(react@19.2.7)
     devDependencies:
+      '@clerk/testing':
+        specifier: ^2.1.5
+        version: 2.1.5(@playwright/test@1.61.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@playwright/test':
         specifier: ^1.61.0
         version: 1.61.0
@@ -165,7 +168,7 @@ importers:
         version: 9.39.4(jiti@2.7.0)
       eslint-config-next:
         specifier: ^16.2.9
-        version: 16.2.9(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3)
+        version: 16.2.9(@typescript-eslint/parser@8.61.1(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3))(eslint@9.39.4(jiti@2.7.0))(typescript@6.0.3)
       tailwindcss:
         specifier: ^4.3.1
         version: 4.3.1
@@ -475,6 +478,10 @@ packages:
     resolution: {integrity: sha512-Q3ezkBJ7cFc0POEgdfyMnLHzAdPpb8jgTSdqA3Vt39rq/LiwRp4ebS2CHkrnrkews/8cwFhTQ6yNynPcpZFh8Q==}
     engines: {node: '>=20.9.0'}
 
+  '@clerk/backend@3.8.2':
+    resolution: {integrity: sha512-E/o2t3sEyRfB0/YvKd29cHHT/qxdvUwO35AHOFIcCwZ3GxcbfPjyvytsJf+ozwJd+3H89ROy5zcSEPPGnZa/zA==}
+    engines: {node: '>=20.9.0'}
+
   '@clerk/nextjs@7.5.6':
     resolution: {integrity: sha512-QAWiwacB/bBpZcCqOcPc03m8zU5xeAPh2p4j0O+BEUBgJvbiJh4nobYO1AEH9WwLMXkY6JdJ3e5NSDjTFeabjA==}
     engines: {node: '>=20.9.0'}
@@ -500,6 +507,30 @@ packages:
       react:
         optional: true
       react-dom:
+        optional: true
+
+  '@clerk/shared@4.20.0':
+    resolution: {integrity: sha512-5t3YEnjwEwaect59N0Ycb5aDBbVGe3hICmy21X+n00IR1skmSTXPmPk/67bTktgEbGHxot2RGqhQbi2bFQV6AA==}
+    engines: {node: '>=20.9.0'}
+    peerDependencies:
+      react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
+      react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
+    peerDependenciesMeta:
+      react:
+        optional: true
+      react-dom:
+        optional: true
+
+  '@clerk/testing@2.1.5':
+    resolution: {integrity: sha512-NdxK+8obsBxyJrr3wyxyqpyveu5xrrFYkcHb6J7cMiL3O9ougm0143iT2je8l9MbKDDRlckUH1+b4UQTuMatxw==}
+    engines: {node: '>=20.9.0'}
+    peerDependencies:
+      '@playwright/test': ^1
+      cypress: ^13 || ^14
+    peerDependenciesMeta:
+      '@playwright/test':
+        optional: true
+      cypress:
         optional: true
 
   '@csstools/color-helpers@6.0.2':
@@ -1684,6 +1715,10 @@ packages:
 
   dotenv@16.6.1:
     resolution: {integrity: sha512-uBq4egWHTcTt33a72vpSG0z3HnPuIl6NqYcTrKEg2azoEyl2hpW0zqlxysq2pK9HlDIHyHyakeYaYnSAwd8bow==}
+    engines: {node: '>=12'}
+
+  dotenv@17.2.2:
+    resolution: {integrity: sha512-Sf2LSQP+bOlhKWWyhFsn0UsfdK/kCWRv1iuA2gXAwt3dyNabr6QSj00I2V10pidqz69soatm9ZwZvpQMTIOd5Q==}
     engines: {node: '>=12'}
 
   dunder-proto@1.0.1:
@@ -3294,7 +3329,16 @@ snapshots:
       - react
       - react-dom
 
-  '@clerk/nextjs@7.5.6(next@16.2.9(@playwright/test@1.61.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+  '@clerk/backend@3.8.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@clerk/shared': 4.20.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      standardwebhooks: 1.0.0
+      tslib: 2.8.1
+    transitivePeerDependencies:
+      - react
+      - react-dom
+
+  '@clerk/nextjs@7.5.6(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.61.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
       '@clerk/backend': 3.8.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@clerk/react': 6.10.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -3321,6 +3365,27 @@ snapshots:
     optionalDependencies:
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
+
+  '@clerk/shared@4.20.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@tanstack/query-core': 5.101.0
+      dequal: 2.0.3
+      glob-to-regexp: 0.4.1
+      js-cookie: 3.0.7
+    optionalDependencies:
+      react: 19.2.7
+      react-dom: 19.2.7(react@19.2.7)
+
+  '@clerk/testing@2.1.5(@playwright/test@1.61.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
+    dependencies:
+      '@clerk/backend': 3.8.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@clerk/shared': 4.20.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      dotenv: 17.2.2
+    optionalDependencies:
+      '@playwright/test': 1.61.0
+    transitivePeerDependencies:
+      - react
+      - react-dom
 
   '@csstools/color-helpers@6.0.2': {}
 
@@ -4384,6 +4449,8 @@ snapshots:
   dom-accessibility-api@0.6.3: {}
 
   dotenv@16.6.1: {}
+
+  dotenv@17.2.2: {}
 
   dunder-proto@1.0.1:
     dependencies:

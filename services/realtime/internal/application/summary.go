@@ -12,6 +12,13 @@ import (
 
 const recruiterSummaryVersion = "recruiter-summary-v1-deterministic"
 
+var defaultComplianceFlags = []string{
+	"human_review_required",
+	"job_related_questions_only",
+	"protected_traits_excluded",
+	"biometric_scoring_disallowed",
+}
+
 type RecruiterSummary struct {
 	SummaryID                string                `json:"summary_id"`
 	SessionID                string                `json:"session_id"`
@@ -33,6 +40,7 @@ type RecruiterSummary struct {
 	LogisticsNotes           []string              `json:"logistics_notes"`
 	MissingInformation       []string              `json:"missing_information"`
 	ExcludedSensitiveSignals []string              `json:"excluded_sensitive_signals"`
+	ComplianceFlags          []string              `json:"compliance_flags"`
 	Audit                    RecruiterSummaryAudit `json:"audit"`
 }
 
@@ -290,6 +298,7 @@ func buildRecruiterSummary(session domain.Session, plan InterviewPlan, generated
 		LogisticsNotes:           dedupeStrings(logisticsNotes),
 		MissingInformation:       dedupeStrings(missing),
 		ExcludedSensitiveSignals: excludedSensitiveSignals,
+		ComplianceFlags:          complianceFlags(excludedSensitiveSignals),
 		Audit: RecruiterSummaryAudit{
 			SourceEventIDs:                sourceEventIDs,
 			TranscriptTurnIDs:             transcriptTurnIDs,
@@ -297,6 +306,14 @@ func buildRecruiterSummary(session domain.Session, plan InterviewPlan, generated
 			GeneratedFromCompletedSession: session.Status == domain.SessionStatusCompleted,
 		},
 	}
+}
+
+func complianceFlags(excludedSensitiveSignals []string) []string {
+	flags := append([]string{}, defaultComplianceFlags...)
+	if len(excludedSensitiveSignals) > 0 {
+		flags = append(flags, "sensitive_signal_review_required")
+	}
+	return flags
 }
 
 func parseAnswerEvaluation(raw json.RawMessage) (answerEvaluation, bool) {

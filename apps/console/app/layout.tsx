@@ -6,7 +6,7 @@ import { QueryProvider } from "../src/providers/query-provider";
 import {
   afterSignInUrl,
   afterSignUpUrl,
-  isClerkConfigured,
+  isConsoleAuthClerkEnabled,
   signInUrl,
   signUpUrl,
 } from "../src/server/auth/clerk-config";
@@ -34,11 +34,11 @@ const titleSans = Plus_Jakarta_Sans({
 
 export const metadata: Metadata = {
   title: "Prelude.ai Console",
-  description: "Recruiter console for Prelude.ai pre-interviews."
+  description: "Recruiter console for Prelude.ai pre-interviews.",
 };
 
 export default function RootLayout({
-  children
+  children,
 }: Readonly<{ children: React.ReactNode }>) {
   const app = <QueryProvider>{children}</QueryProvider>;
 
@@ -47,7 +47,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${titleSans.variable} ${instrumentSerif.variable}`}
       >
-        {isClerkConfigured ? (
+        {isConsoleAuthClerkEnabled ? (
           <ClerkProvider
             afterSignOutUrl={signInUrl}
             signInFallbackRedirectUrl={afterSignInUrl}

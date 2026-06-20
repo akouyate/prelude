@@ -19,7 +19,7 @@ import {
 } from "iconoir-react";
 
 import { ConsoleAuthControls } from "../../../src/features/auth/console-auth-controls";
-import { isClerkConfigured } from "../../../src/server/auth/clerk-config";
+import { isConsoleAuthClerkEnabled } from "../../../src/server/auth/clerk-config";
 import { getConsoleAuthContext } from "../../../src/server/auth/console-auth";
 import { generateCandidateBriefAction } from "../../../src/server/interviews/candidate-brief-actions";
 import { getInterviewDetail } from "../../../src/server/interviews/interview-loaders";
@@ -53,7 +53,9 @@ export default async function InterviewDetailPage({
   return (
     <EnterpriseShell
       account={account}
-      accountActions={<ConsoleAuthControls enabled={isClerkConfigured} />}
+      accountActions={
+        <ConsoleAuthControls enabled={isConsoleAuthClerkEnabled} />
+      }
       className="bg-[#fbfaf7]"
     >
       {detail.kind === "interview" ? (

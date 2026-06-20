@@ -1,7 +1,10 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
-import { isClerkConfigured } from "./src/server/auth/clerk-config";
+import {
+  consoleAuthConfigurationError,
+  isConsoleAuthClerkEnabled,
+} from "./src/server/auth/clerk-config";
 
 const isPublicRoute = createRouteMatcher([
   "/about(.*)",
@@ -9,15 +12,15 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
 ]);
 
-export default isClerkConfigured
+export default isConsoleAuthClerkEnabled
   ? clerkMiddleware(async (auth, request) => {
       if (!isPublicRoute(request)) {
         await auth.protect();
       }
     })
   : function proxy() {
-      if (process.env.NODE_ENV === "production") {
-        return new NextResponse("Clerk is not configured.", { status: 500 });
+      if (consoleAuthConfigurationError) {
+        return new NextResponse(consoleAuthConfigurationError, { status: 500 });
       }
 
       return NextResponse.next();
