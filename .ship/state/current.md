@@ -2,8 +2,9 @@
 
 ## Objective
 
-Ship the V1 E2E workflow step by step. Current implementation slice:
-GitHub issue #23, commercial POC checklist and demo script.
+Ship the V1 E2E workflow step by step. Current audit slice:
+core workflow and commercial POC checklist are closed; remaining P0s are #20
+and #21.
 
 ## Scope
 
@@ -37,6 +38,7 @@ GitHub issue #23, commercial POC checklist and demo script.
 - Closed #55 and #57 after merge evidence and smoke validation.
 - Added `docs/operations/live-ia-commercial-poc-checklist.md` with go/no-go
   criteria, demo script, evidence capture, risks, and non-goals.
+- Closed #23 after linking the checklist from #11.
 
 ## Phases
 
@@ -61,8 +63,8 @@ GitHub issue #23, commercial POC checklist and demo script.
 - Default smoke avoids paid LLM calls.
 - Live LLM mode remains opt-in and blocked without explicit acknowledgement.
 - Core workflow P0 implementation slices are closed through #57.
-- #23 defines the commercial POC checklist; #20 and #21 remain the final
-  compliance/trust and recruiter-insights wrapper epics.
+- #20 and #21 remain the final compliance/trust and recruiter-insights wrapper
+  epics.
 
 ## Validation
 
@@ -84,11 +86,10 @@ GitHub issue #23, commercial POC checklist and demo script.
 - `make e2e-smoke E2E_SMOKE_RUN_ID=codex57-publish POSTGRES_PORT=55432 DATABASE_URL=...`:
   passed with decision `Pass`.
 - `pnpm exec prettier --check README.md docs/architecture/v1-e2e-release-workflow.md docs/operations/live-ia-commercial-poc-checklist.md .ship/state/current.md`:
-  pending for #23.
+  passed for #23.
 
 ## Remaining Follow-Up
 
-- #23 should be closed after checklist PR merge and evidence comment.
 - #20 remains open as the compliance and candidate trust wrapper.
 - #21 remains open as the recruiter interview insights dashboard wrapper.
 - #63 owns human notes and review status mutation controls.
