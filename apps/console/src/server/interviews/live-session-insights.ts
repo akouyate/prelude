@@ -8,7 +8,13 @@ import {
   type RecruiterReviewStatus,
 } from "@prelude/types";
 
-export type LiveAnalysisStatus = "available" | "pending" | "not_ready" | "failed";
+import { payloadHasTranscriptTurn } from "./live-session-evidence";
+
+export type LiveAnalysisStatus =
+  | "available"
+  | "pending"
+  | "not_ready"
+  | "failed";
 export type { RecruiterReviewStatus };
 
 export type LiveEventStats = {
@@ -54,14 +60,12 @@ export async function getLiveEventStatsBySessionId(sessionIds: string[]) {
   const statsById = new Map<string, LiveEventStats>();
 
   for (const event of events) {
-    const stats =
-      statsById.get(event.sessionId) ??
-      {
-        answerEvaluationCount: 0,
-        eventCount: 0,
-        questionCompletedCount: 0,
-        transcriptTurnCount: 0,
-      };
+    const stats = statsById.get(event.sessionId) ?? {
+      answerEvaluationCount: 0,
+      eventCount: 0,
+      questionCompletedCount: 0,
+      transcriptTurnCount: 0,
+    };
 
     stats.eventCount += 1;
     if (event.type === "answer_evaluated") {
@@ -70,7 +74,7 @@ export async function getLiveEventStatsBySessionId(sessionIds: string[]) {
     if (event.type === "question_completed") {
       stats.questionCompletedCount += 1;
     }
-    if (eventHasTranscriptTurn(event.payload)) {
+    if (payloadHasTranscriptTurn(event.payload)) {
       stats.transcriptTurnCount += 1;
     }
 
@@ -142,13 +146,4 @@ function resolveBriefAnalysisStatus(
   }
 
   return "pending";
-}
-
-function eventHasTranscriptTurn(payload: unknown) {
-  return (
-    typeof payload === "object" &&
-    payload !== null &&
-    "transcriptTurn" in payload &&
-    Boolean(payload.transcriptTurn)
-  );
 }

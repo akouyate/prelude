@@ -3,24 +3,22 @@
 ## Objective
 
 Ship the V1 E2E workflow step by step. Current implementation slice:
-GitHub issue #58, candidate public interview flow.
+GitHub issue #59, live runtime evidence attached to product candidate sessions.
 
 ## Scope
 
-- Public candidate tokens now resolve only to published `Interview` records.
-- Unknown, unpublished, blank, or unavailable links render a clear unavailable
-  state instead of silently falling back to a demo session.
-- Candidate preflight now shows company, role, estimated duration, available
-  response modes, AI screening disclosure, optional name/email fields, and
-  explicit consent before microphone/camera access.
-- Starting or resuming creates/updates a persisted `CandidateSession` linked to
-  `Organization`, `Job`, and `Interview`, with consent metadata and a
-  `resumeToken`.
-- The candidate API sends the product session id to the realtime service as the
-  candidate id and marks the product session failed if realtime preparation
-  fails.
-- Ending the interview shows a clear thank-you state and marks the product
-  `CandidateSession` completed when the resume token matches.
+- `CandidateSession` remains the durable product record for recruiter review.
+- Runtime evidence is resolved from `CandidateSession.realtimeSessionId` to
+  persisted `live_interview_sessions` and append-only `live_interview_events`.
+- Console now reconstructs transcript turns and Q/A groups from persisted
+  provider-neutral events, supporting both snake_case and camelCase payloads.
+- Candidate detail now shows a runtime evidence card with status, runtime
+  status, terminal event, event count, transcript turns, Q/A groups, question
+  completion, and a transcript preview.
+- Evidence status prefers persisted runtime terminal events
+  (`session_completed`, `session_failed`) and runtime status before falling back
+  to product session status, so completion is derived from persisted data rather
+  than browser-local state.
 
 ## Phases
 
@@ -39,31 +37,27 @@ GitHub issue #58, candidate public interview flow.
 
 ## Direction
 
-- #58 completes the candidate public link, consent, identity, allowed modes, and
-  controlled product-session start/resume path.
-- Keep automated tests LLM/realtime-cost safe: Prisma and realtime are mocked in
-  unit/API tests; Playwright uses a DB seed plus mocked realtime/session events.
-- Continue to later slices only after each slice has validation evidence.
+- #59 completes the product-safe evidence bridge needed before #60 can generate
+  persisted AI briefs.
+- Keep provider metadata secondary; transcript and status are reconstructed from
+  normalized business events.
+- Continue to #60 only after this slice is merged and the recruiter detail can
+  display real persisted runtime evidence.
 
 ## Validation
 
-- `pnpm --dir apps/candidate run test`: passed, 3 files / 12 tests.
-- `pnpm --dir apps/candidate run typecheck`: passed.
-- `pnpm --dir apps/candidate run lint`: passed.
-- `pnpm --dir apps/candidate run test:e2e`: passed, 2 mobile Chromium tests.
-- `DATABASE_URL=postgresql://user:pass@localhost:5432/prelude pnpm --dir packages/db exec prisma validate --schema prisma/schema.prisma`: passed.
-- `DATABASE_URL=postgresql://postgres:postgres@localhost:55432/prelude_ship58?schema=public pnpm --filter @prelude/db exec prisma migrate deploy --schema prisma/schema.prisma`: passed on a fresh temporary DB.
-- `DATABASE_URL=postgresql://postgres:postgres@localhost:55432/prelude?schema=public pnpm --filter @prelude/db exec prisma migrate deploy --schema prisma/schema.prisma`: passed for local E2E DB.
+- `pnpm --dir apps/console run test`: passed, 2 files / 7 tests.
+- `pnpm --dir apps/console run typecheck`: passed.
+- `pnpm --dir apps/console run lint`: passed.
 - `pnpm run typecheck`: passed.
 - `pnpm run lint`: passed.
 - `pnpm run test`: passed.
-- `pnpm --dir apps/candidate run build`: passed.
+- `pnpm --dir apps/console run build`: passed.
 - `git diff --check`: passed.
 
 ## Known Follow-Up
 
-- #59 still owns completion/thank-you persistence and candidate lifecycle
-  transitions after the live session ends.
-- #60 still owns persisted `CandidateBrief`; recruiter detail still uses
-  existing summary paths until that slice lands.
-- #61/#62 still own dashboard/workflow polish and final E2E hardening.
+- #60 owns persisted `CandidateBrief` generation from the runtime evidence.
+- #61 owns real-data candidate list/detail polish after briefs exist.
+- #62 owns the full E2E smoke/demo script across recruiter creation, candidate
+  live interview, evidence, brief, and review.
