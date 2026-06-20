@@ -3,22 +3,24 @@
 ## Objective
 
 Ship the V1 E2E workflow step by step. Current implementation slice:
-GitHub issue #59, live runtime evidence attached to product candidate sessions.
+GitHub issue #60, persisted candidate brief generation after a completed live
+interview.
 
 ## Scope
 
-- `CandidateSession` remains the durable product record for recruiter review.
-- Runtime evidence is resolved from `CandidateSession.realtimeSessionId` to
-  persisted `live_interview_sessions` and append-only `live_interview_events`.
-- Console now reconstructs transcript turns and Q/A groups from persisted
-  provider-neutral events, supporting both snake_case and camelCase payloads.
-- Candidate detail now shows a runtime evidence card with status, runtime
-  status, terminal event, event count, transcript turns, Q/A groups, question
-  completion, and a transcript preview.
-- Evidence status prefers persisted runtime terminal events
-  (`session_completed`, `session_failed`) and runtime status before falling back
-  to product session status, so completion is derived from persisted data rather
-  than browser-local state.
+- `CandidateBrief` is generated from durable `CandidateSession` runtime
+  evidence, scoped by organization.
+- Generation is provider-agnostic through a `CandidateBriefSynthesizer`
+  boundary and uses a local deterministic synthesizer in automated tests and
+  local UI flow.
+- Generation is idempotent through the unique `candidateSessionId` brief record:
+  pending/processing/completed/failed states are written back to the same row.
+- The persisted brief stores schema version, provider/model metadata, summary
+  JSON, limitations, recommendation, and flattened evidence references.
+- Recruiter detail prefers the persisted brief when available and only uses the
+  runtime summary as a fallback before a brief is generated.
+- Completed runtime evidence exposes a console action to generate or retry the
+  persisted recruiter brief.
 
 ## Phases
 
@@ -37,16 +39,18 @@ GitHub issue #59, live runtime evidence attached to product candidate sessions.
 
 ## Direction
 
-- #59 completes the product-safe evidence bridge needed before #60 can generate
-  persisted AI briefs.
-- Keep provider metadata secondary; transcript and status are reconstructed from
-  normalized business events.
-- Continue to #60 only after this slice is merged and the recruiter detail can
-  display real persisted runtime evidence.
+- #60 completes the first persisted analysis layer required for recruiter
+  review.
+- The current synthesizer is intentionally replaceable; a future OpenAI/Vertex
+  adapter can implement the same `CandidateBriefSynthesizer` contract without
+  changing the recruiter view.
+- Automated tests do not call paid LLM providers.
+- Continue to #61/#62 after merge for real-data dashboard polish and the full
+  E2E smoke/demo script.
 
 ## Validation
 
-- `pnpm --dir apps/console run test`: passed, 2 files / 7 tests.
+- `pnpm --dir apps/console run test`: passed, 3 files / 9 tests.
 - `pnpm --dir apps/console run typecheck`: passed.
 - `pnpm --dir apps/console run lint`: passed.
 - `pnpm run typecheck`: passed.
@@ -57,7 +61,8 @@ GitHub issue #59, live runtime evidence attached to product candidate sessions.
 
 ## Known Follow-Up
 
-- #60 owns persisted `CandidateBrief` generation from the runtime evidence.
-- #61 owns real-data candidate list/detail polish after briefs exist.
+- #61 owns real-data candidate list/detail polish after persisted briefs exist.
 - #62 owns the full E2E smoke/demo script across recruiter creation, candidate
   live interview, evidence, brief, and review.
+- A paid/live LLM brief adapter should remain behind an explicit live/eval
+  command or flag before being used outside local manual testing.
