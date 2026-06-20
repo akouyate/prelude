@@ -1,4 +1,6 @@
-export type OrganizationRole = "owner" | "admin" | "recruiter" | "viewer";
+import type { OrganizationRole } from "./domain-spine";
+
+export type { OrganizationRole };
 
 export type User = {
   id: string;

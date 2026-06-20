@@ -371,7 +371,7 @@ function CandidateSessionReview({
 }: {
   error?: string;
   session: {
-    analysisStatus: "available" | "pending" | "not_ready";
+    analysisStatus: "available" | "pending" | "not_ready" | "failed";
     candidateLabel: string;
     completedAt: string | null;
     eventCount: number;
@@ -653,6 +653,10 @@ function analysisStatusTone(status: string) {
     return "success";
   }
 
+  if (status === "failed") {
+    return "danger";
+  }
+
   if (status === "pending") {
     return "warning";
   }
@@ -679,6 +683,10 @@ function formatAnalysisStatus(status: string) {
 
   if (status === "pending") {
     return "Analysis pending";
+  }
+
+  if (status === "failed") {
+    return "Analysis failed";
   }
 
   return "Not ready";

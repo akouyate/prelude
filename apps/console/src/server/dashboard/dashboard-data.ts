@@ -11,6 +11,7 @@ import {
   type LiveAnalysisStatus,
   type RecruiterReviewStatus,
 } from "../interviews/live-session-insights";
+import { listCandidateSessionSpinesForOrganization } from "../interviews/candidate-session-spine";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
 export type DashboardInterviewState =
@@ -124,16 +125,8 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
           status: "published",
         },
       }),
-      prisma.candidateSession.findMany({
-        include: {
-          interview: {
-            include: {
-              job: true,
-            },
-          },
-        },
-        orderBy: { updatedAt: "desc" },
-        where: { organizationId: scope.organizationId },
+      listCandidateSessionSpinesForOrganization({
+        organizationId: scope.organizationId,
       }),
     ]);
 
@@ -195,7 +188,11 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
     const questionCount = readJsonArray(session.interview.questions).length;
 
     return {
-      analysisStatus: resolveAnalysisStatus(status, eventStats),
+      analysisStatus: resolveAnalysisStatus(
+        status,
+        eventStats,
+        session.candidateBrief?.status,
+      ),
       candidateLabel:
         session.candidateName ??
         session.candidateEmail ??
@@ -206,11 +203,11 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
       eventCount: eventStats?.eventCount ?? 0,
       href: `/interviews/${session.realtimeSessionId ?? session.id}`,
       id: session.id,
-      jobTitle: session.interview.job.title,
+      jobTitle: session.job.title,
       questionCompletionRate:
         getQuestionCompletionRate({ questionCount, stats: eventStats }),
       realtimeSessionId: session.realtimeSessionId,
-      reviewStatus: resolveReviewStatus(status),
+      reviewStatus: resolveReviewStatus(session.reviewStatus),
       roleTitle: session.interview.roleTitle,
       startedAt: session.startedAt?.toISOString() ?? null,
       status,

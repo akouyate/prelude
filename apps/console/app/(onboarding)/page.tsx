@@ -398,6 +398,10 @@ function formatAnalysisStatus(status: string) {
     return "Analysis pending";
   }
 
+  if (status === "failed") {
+    return "Analysis failed";
+  }
+
   return "Not ready";
 }
 

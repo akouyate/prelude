@@ -2,18 +2,21 @@
 
 ## Objective
 
-Replace dashboard mocks with real entities for jobs, interview drafts, published
-interviews, and candidate sessions.
+Ship GitHub issue #54: define and implement the canonical V1 domain spine that
+connects organization, users, jobs, interview plans, candidate sessions, live
+runtime evidence, candidate briefs, and recruiter review with persisted data.
 
 ## Scope
 
-- Persist an interview draft per job instead of linking jobs to a demo session.
-- Make `/interviews/new` save role brief, modes, questions, criteria,
-  guardrails, and `draft` status.
-- Show dashboard states from persisted interviews and candidate sessions:
-  draft, published, candidate started, completed, and needs review.
-- Build the interview detail page from database data first, with realtime summary
-  enrichment only when a live candidate session exists.
+- Audit the current Prisma schema and server loaders against the target spine:
+  `Organization -> User/Membership -> Job -> InterviewDraft -> Interview ->
+  CandidateSession -> LiveInterviewSession/Event -> CandidateBrief ->
+  RecruiterReview`.
+- Add or normalize missing database relationships that make the spine explicit.
+- Add status enums or centralized validation where practical for the V1 spine.
+- Add org-scoped helper/query surface for candidate-session review data.
+- Document the canonical model, runtime link decisions, deferred items, and
+  product constraints.
 
 ## Phases
 
@@ -32,36 +35,32 @@ interviews, and candidate sessions.
 
 ## Direction
 
-- Keep the V1 implementation explicit and small: new persisted interview records
-  rather than overloading the old `PreInterview` POC model.
-- Store generated builder output as structured JSON for now, so product can
-  iterate on question, criteria, and guardrail shape without migration churn.
-- Keep Clerk organization scoping enforced through existing onboarding guards and
-  organization membership lookups.
-- Avoid a heavy dashboard redesign in this slice; replace fake links/states with
-  real persisted data and keep the current clean visual language.
+- Keep `CandidateSession` as the durable recruiter/candidate product aggregate.
+- Keep `LiveInterviewSession` as runtime evidence linked through the external
+  `realtimeSessionId`; do not reintroduce a cross-service DB foreign key.
+- Make `CandidateBrief` persisted and versionable, but do not build LLM
+  generation in this ticket.
+- Preserve existing demo/dev fallbacks only where they are clearly isolated from
+  production product routes.
 
 ## Validation
 
+- `DATABASE_URL=postgresql://user:pass@localhost:5432/prelude pnpm --dir packages/db exec prisma validate --schema prisma/schema.prisma`: passed.
+- `DATABASE_URL=postgresql://user:pass@localhost:5432/prelude pnpm --dir packages/db run db:generate`: passed.
+- Temporary Postgres database `prelude_ship54` with `prisma migrate deploy`: passed.
 - `pnpm run typecheck`: passed.
 - `pnpm run lint`: passed.
-- `pnpm --dir apps/console build`: passed.
-- `pnpm --dir apps/candidate build`: passed.
-- `pnpm --dir apps/candidate test`: 2 files, 8 tests passed.
+- `pnpm --dir packages/contracts run test`: 2 files, 17 tests passed.
+- `pnpm --dir packages/core run test`: 1 file, 2 tests passed.
+- `pnpm --dir apps/candidate run test`: 2 files, 8 tests passed.
+- `pnpm --dir apps/console run test`: no test files found, pass with no tests.
+- `pnpm --dir apps/console run build`: passed.
+- `pnpm --dir apps/candidate run build`: passed.
 - `git diff --check`: passed.
-- Browser smoke:
-  - `/` loads the persisted recruiter dashboard.
-  - `/interviews/new?jobId=...` generates questions and saves a persisted
-    `InterviewDraft`.
-  - Publishing creates an `Interview` with a real `publicToken` and detail page.
-  - Candidate API with the published token creates a `CandidateSession` linked
-    to the interview.
-  - `/interviews/:id` renders DB questions, criteria, candidate link, and
-    candidate sessions without mock fallback.
 
 ## Known Follow-Up
 
-- The Go realtime service still resolves the interview plan through its demo
-  plan factory. Candidate sessions are now linked to the published interview,
-  but making the live interviewer ask the persisted DB questions should be the
-  next backend integration slice.
+- #58 owns replacing candidate demo-token fallbacks with real published links.
+- #60 owns generating `CandidateBrief` after live completion.
+- #61 owns consuming the persisted brief and transcript in the full recruiter
+  review UX.
