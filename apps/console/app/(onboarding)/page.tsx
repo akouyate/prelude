@@ -289,7 +289,30 @@ export default async function DashboardPage() {
           </div>
         </div>
 
-        <div>
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-xl font-semibold text-ink-950">
+              Workspace setup
+            </h2>
+            <Card className="mt-4 p-4">
+              <dl className="grid gap-3 text-sm">
+                <SetupFact
+                  label="Company size"
+                  value={dashboard.organization.companySize ?? "Not set"}
+                />
+                <SetupFact
+                  label="Hiring focus"
+                  value={dashboard.organization.hiringFocus ?? "Not set"}
+                />
+                <SetupFact
+                  label="Default mode"
+                  value={dashboard.organization.defaultInterviewMode ?? "Not set"}
+                />
+              </dl>
+            </Card>
+          </div>
+
+          <div>
           <h2 className="text-xl font-semibold text-ink-950">Sources</h2>
           <div className="mt-4 space-y-3">
             {dashboard.connectors.map((connector) => (
@@ -310,6 +333,7 @@ export default async function DashboardPage() {
                 </span>
               </Card>
             ))}
+          </div>
           </div>
         </div>
       </section>
@@ -354,6 +378,15 @@ function ReviewFact({ icon, label }: { icon: ReactNode; label: string }) {
       <span className="text-ink-400">{icon}</span>
       <span className="truncate">{label}</span>
     </span>
+  );
+}
+
+function SetupFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-2xl border border-ink-100 bg-white/58 px-3 py-3">
+      <dt className="text-sm text-ink-500">{label}</dt>
+      <dd className="text-right text-sm font-semibold text-ink-950">{value}</dd>
+    </div>
   );
 }
 

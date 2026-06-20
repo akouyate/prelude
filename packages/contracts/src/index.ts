@@ -40,6 +40,16 @@ export {
   type PublicCandidatePayload,
 } from "./schemas/pre-interview";
 export {
+  organizationOnboardingJobSourceSchema,
+  organizationOnboardingStateSchema,
+  organizationOnboardingStepSchema,
+  saveOrganizationOnboardingProgressInputSchema,
+  type OrganizationOnboardingJobSource,
+  type OrganizationOnboardingState,
+  type OrganizationOnboardingStep,
+  type SaveOrganizationOnboardingProgressInput,
+} from "./schemas/onboarding";
+export {
   candidateAnswerModeSchema,
   candidateAnswerSchema,
   candidateSubmissionSchema,
