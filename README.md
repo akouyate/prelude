@@ -77,6 +77,10 @@ make env-reset
 
 Use `MIGRATION_NAME=your_migration_name make db-migrate` when adding a new Prisma migration.
 
+When Clerk keys are empty in local development, the console uses a local-only
+mock Clerk identity from `MOCK_CLERK_*` variables in `.env.example`. Production
+does not allow this fallback.
+
 ## Live Interview Smoke Report
 
 After a live interview smoke, generate a replayability report from the Go realtime API:

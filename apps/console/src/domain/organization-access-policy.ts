@@ -1,5 +1,24 @@
 import type { OrganizationRole } from "@prelude/types";
 
+export type CompletedOrganizationScope = {
+  organizationId: string;
+  organizationName: string;
+  userId: string;
+  role: OrganizationRole;
+};
+
+export type OrganizationScopeMembershipCandidate = {
+  organizationId: string;
+  role: string | null;
+  status: string;
+  userId: string;
+  organization: {
+    clerkOrganizationId: string | null;
+    name: string;
+    onboardingCompletedAt: Date | null;
+  };
+};
+
 const clerkRoleMap: Record<string, OrganizationRole> = {
   "org:admin": "admin",
   "org:member": "recruiter",
@@ -19,4 +38,54 @@ export function mapClerkOrganizationRole(
   }
 
   return clerkRoleMap[role] ?? "viewer";
+}
+
+export function hasAuthenticatedClerkUser(
+  clerkUserId: string | null | undefined,
+): clerkUserId is string {
+  return Boolean(clerkUserId);
+}
+
+export function resolveCompletedOrganizationScope({
+  clerkOrganizationId,
+  clerkUserId,
+  memberships,
+}: {
+  clerkOrganizationId: string | null;
+  clerkUserId: string | null;
+  memberships: OrganizationScopeMembershipCandidate[];
+}): CompletedOrganizationScope | null {
+  if (!hasAuthenticatedClerkUser(clerkUserId)) {
+    return null;
+  }
+
+  const membership = memberships.find((candidate) => {
+    if (candidate.status !== "active") {
+      return false;
+    }
+
+    if (!candidate.organization.onboardingCompletedAt) {
+      return false;
+    }
+
+    if (
+      clerkOrganizationId &&
+      candidate.organization.clerkOrganizationId !== clerkOrganizationId
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (!membership) {
+    return null;
+  }
+
+  return {
+    organizationId: membership.organizationId,
+    organizationName: membership.organization.name,
+    role: mapClerkOrganizationRole(membership.role, "viewer"),
+    userId: membership.userId,
+  };
 }

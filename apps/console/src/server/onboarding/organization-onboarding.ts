@@ -1,6 +1,5 @@
 "use server";
 
-import { auth, currentUser } from "@clerk/nextjs/server";
 import { prisma, type PrismaClient } from "@prelude/db";
 import {
   organizationOnboardingStateSchema,
@@ -13,8 +12,7 @@ import {
 } from "@prelude/contracts";
 import type { OrganizationRole } from "@prelude/types";
 
-import { mapClerkOrganizationRole } from "../../domain/organization-access-policy";
-import { isClerkConfigured } from "../auth/clerk-config";
+import { getConsoleAuthIdentity } from "../auth/console-auth-provider";
 
 type JobSource = OrganizationOnboardingJobSource;
 
@@ -106,7 +104,9 @@ export async function getOrganizationOnboardingProgress(): Promise<OrganizationO
   return {
     ok: true,
     completed: Boolean(persisted.organization.onboardingCompletedAt),
-    currentStep: readPersistedOnboardingStep(persisted.organization.onboardingStep),
+    currentStep: readPersistedOnboardingStep(
+      persisted.organization.onboardingStep,
+    ),
     organizationId: persisted.organization.id,
     state,
   };
@@ -290,42 +290,18 @@ async function getAuthenticatedOnboardingContext(): Promise<
     }
   | { ok: false; error: string }
 > {
-  if (!isClerkConfigured) {
-    if (process.env.NODE_ENV === "production") {
-      return { ok: false, error: "Authentication is not configured." };
-    }
+  const identity = await getConsoleAuthIdentity();
 
-    return {
-      ok: true,
-      clerkOrganizationId: null,
-      role: "owner",
-      userEmail: "recruiter@prelude.ai",
-      userId: "user_demo",
-      userName: "Adrien Kouyate",
-    };
-  }
-
-  const authState = await auth();
-
-  if (!authState.userId) {
-    return { ok: false, error: "Sign in before completing onboarding." };
-  }
-
-  const user = await currentUser();
-  const userEmail = user?.primaryEmailAddress?.emailAddress;
-
-  if (!userEmail) {
-    return { ok: false, error: "Your account needs a primary email address." };
-  }
-
-  return {
-    ok: true,
-    clerkOrganizationId: authState.orgId ?? null,
-    role: mapClerkRole(authState.orgRole),
-    userEmail,
-    userId: authState.userId,
-    userName: user?.fullName ?? user?.firstName ?? userEmail,
-  };
+  return identity.ok
+    ? {
+        ok: true,
+        clerkOrganizationId: identity.value.clerkOrganizationId,
+        role: identity.value.role,
+        userEmail: identity.value.userEmail,
+        userId: identity.value.userId,
+        userName: identity.value.userName,
+      }
+    : identity;
 }
 
 function organizationData(input: CompleteOrganizationOnboardingInput) {
@@ -573,11 +549,11 @@ function shouldPersistOnboardingState(state: OrganizationOnboardingState) {
     state.companyName.trim().length >= 2 ||
     Boolean(
       state.companySize ||
-        state.hiringFocus ||
-        state.jobSource ||
-        state.manualJobTitle ||
-        state.onboardingRole ||
-        state.selectedJobId,
+      state.hiringFocus ||
+      state.jobSource ||
+      state.manualJobTitle ||
+      state.onboardingRole ||
+      state.selectedJobId,
     )
   );
 }
@@ -618,7 +594,9 @@ function readPersistedProgressRevision(input: { onboardingState: unknown }) {
   const revision = (input.onboardingState as { progressRevision?: unknown })
     .progressRevision;
 
-  return typeof revision === "number" && Number.isInteger(revision) && revision >= 0
+  return typeof revision === "number" &&
+    Number.isInteger(revision) &&
+    revision >= 0
     ? revision
     : 0;
 }
@@ -706,10 +684,6 @@ function connectionLabel(source: JobSource) {
   }
 
   return "Manual job entry";
-}
-
-function mapClerkRole(role: string | null | undefined): OrganizationRole {
-  return mapClerkOrganizationRole(role, "owner");
 }
 
 function slugify(value: string) {
