@@ -4,6 +4,7 @@ import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@prelude/db";
 import type { OrganizationRole } from "@prelude/types";
 
+import { mapClerkOrganizationRole } from "../../domain/organization-access-policy";
 import { isClerkConfigured } from "../auth/clerk-config";
 
 export type CompletedOrganizationScope = {
@@ -11,16 +12,6 @@ export type CompletedOrganizationScope = {
   organizationName: string;
   userId: string;
   role: OrganizationRole;
-};
-
-const roleMap: Record<string, OrganizationRole> = {
-  "org:admin": "admin",
-  "org:member": "recruiter",
-  admin: "admin",
-  member: "recruiter",
-  owner: "owner",
-  recruiter: "recruiter",
-  viewer: "viewer",
 };
 
 export async function getCompletedOrganizationScope(): Promise<CompletedOrganizationScope> {
@@ -146,9 +137,5 @@ async function ensureDevelopmentOrganizationScope(): Promise<CompletedOrganizati
 }
 
 function mapRole(role: string | null | undefined): OrganizationRole {
-  if (!role) {
-    return "viewer";
-  }
-
-  return roleMap[role] ?? "viewer";
+  return mapClerkOrganizationRole(role, "viewer");
 }

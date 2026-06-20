@@ -23,6 +23,8 @@ document the dynamic E2E release workflow and audit remaining P0 scope.
 - Added `docs/architecture/v1-e2e-release-workflow.md` to make the orchestrator
   and feature-team release loop explicit.
 - Audited remaining open P0 scope after #60, #61, and #62 merged.
+- Extracted and tested the shared Clerk-to-Prelude organization role mapping
+  used by onboarding and organization-scope resolution.
 
 ## Phases
 
@@ -61,6 +63,9 @@ document the dynamic E2E release workflow and audit remaining P0 scope.
 - `pnpm run test`: passed.
 - `pnpm --dir apps/console run build`: passed.
 - `git diff --check`: passed.
+- `pnpm --dir apps/console test -- organization-access-policy`: passed.
+- `pnpm --dir apps/console typecheck`: passed.
+- `pnpm --dir apps/console lint`: passed.
 
 ## Remaining Follow-Up
 

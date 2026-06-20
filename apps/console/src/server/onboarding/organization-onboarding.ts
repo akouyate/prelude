@@ -13,6 +13,7 @@ import {
 } from "@prelude/contracts";
 import type { OrganizationRole } from "@prelude/types";
 
+import { mapClerkOrganizationRole } from "../../domain/organization-access-policy";
 import { isClerkConfigured } from "../auth/clerk-config";
 
 type JobSource = OrganizationOnboardingJobSource;
@@ -71,16 +72,6 @@ type SaveOrganizationOnboardingProgressResult =
       ok: false;
       error: string;
     };
-
-const roleMap: Record<string, OrganizationRole> = {
-  "org:admin": "admin",
-  "org:member": "recruiter",
-  admin: "admin",
-  member: "recruiter",
-  owner: "owner",
-  recruiter: "recruiter",
-  viewer: "viewer",
-};
 
 type OnboardingTransaction = Pick<
   PrismaClient,
@@ -718,11 +709,7 @@ function connectionLabel(source: JobSource) {
 }
 
 function mapClerkRole(role: string | null | undefined): OrganizationRole {
-  if (!role) {
-    return "owner";
-  }
-
-  return roleMap[role] ?? "viewer";
+  return mapClerkOrganizationRole(role, "owner");
 }
 
 function slugify(value: string) {
