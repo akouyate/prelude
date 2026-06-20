@@ -15,6 +15,7 @@ import { revalidatePath } from "next/cache";
 import {
   getInterviewPlanPublicationIssues,
   interviewPlanPolicy,
+  resolveInterviewDraftPublicationMode,
 } from "../../domain/interview-plan-policy";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
@@ -72,11 +73,7 @@ const allowedFocus = new Set<InterviewFocus>([
   "role_skills",
   "situational_judgment",
 ]);
-const allowedModes = new Set<InterviewResponseMode>([
-  "audio",
-  "text",
-  "video",
-]);
+const allowedModes = new Set<InterviewResponseMode>(["audio", "text", "video"]);
 
 export async function saveInterviewDraft(
   input: SaveInterviewDraftInput,
@@ -202,8 +199,14 @@ export async function publishInterviewDraft(
       };
     }
 
+    const publicationMode = resolveInterviewDraftPublicationMode({
+      draftStatus: draft.status,
+      hasPublishedSnapshot: Boolean(draft.interview),
+    });
     const publicToken =
-      draft.interview?.publicToken ?? (await createPublicToken(tx));
+      publicationMode === "return_existing_snapshot" && draft.interview
+        ? draft.interview.publicToken
+        : await createPublicToken(tx);
 
     const interviewData = {
       criteria: draft.criteria as Prisma.InputJsonValue,
@@ -222,17 +225,23 @@ export async function publishInterviewDraft(
       status: "published",
     };
 
-    const interview = draft.interview
-      ? await tx.interview.update({
-          data: interviewData,
-          where: { id: draft.interview.id },
-        })
-      : await tx.interview.create({
-          data: {
-            ...interviewData,
-            draftId: draft.id,
-          },
-        });
+    if (publicationMode === "return_existing_snapshot" && draft.interview) {
+      return { interview: draft.interview, kind: "published" as const };
+    }
+
+    if (publicationMode === "create_republished_snapshot" && draft.interview) {
+      await tx.interview.update({
+        data: { draftId: null },
+        where: { id: draft.interview.id },
+      });
+    }
+
+    const interview = await tx.interview.create({
+      data: {
+        ...interviewData,
+        draftId: draft.id,
+      },
+    });
 
     await tx.interviewDraft.update({
       data: { status: "published" },
@@ -282,7 +291,9 @@ function normalizeDraftInput(input: SaveInterviewDraftInput):
   );
   const questions = input.questions
     .map(normalizeQuestion)
-    .filter((question): question is InterviewQuestionDraft => Boolean(question));
+    .filter((question): question is InterviewQuestionDraft =>
+      Boolean(question),
+    );
   const criteria = input.criteria
     .map(normalizeCriterion)
     .filter((criterion): criterion is InterviewCriterionDraft =>
@@ -306,7 +317,10 @@ function normalizeDraftInput(input: SaveInterviewDraftInput):
   }
 
   if (criteria.length > interviewPlanPolicy.maxCriteria) {
-    return { ok: false, error: "Keep the evaluation matrix to 5 criteria or fewer." };
+    return {
+      ok: false,
+      error: "Keep the evaluation matrix to 5 criteria or fewer.",
+    };
   }
 
   if (responseModes.length === 0) {
@@ -343,7 +357,10 @@ function normalizeQuestion(
   }
 
   return {
-    durationSeconds: Math.max(30, Math.min(180, question.durationSeconds || 75)),
+    durationSeconds: Math.max(
+      30,
+      Math.min(180, question.durationSeconds || 75),
+    ),
     id: question.id.trim() || slugify(prompt).slice(0, 48),
     prompt,
     signal: question.signal.trim() || "Job-related screening signal",
@@ -407,7 +424,9 @@ function readQuestions(value: unknown): InterviewQuestionDraft[] {
       const input = question as Partial<InterviewQuestionDraft>;
       return normalizeQuestion({
         durationSeconds:
-          typeof input.durationSeconds === "number" ? input.durationSeconds : 75,
+          typeof input.durationSeconds === "number"
+            ? input.durationSeconds
+            : 75,
         id: typeof input.id === "string" ? input.id : "",
         prompt: typeof input.prompt === "string" ? input.prompt : "",
         signal: typeof input.signal === "string" ? input.signal : "",
@@ -419,7 +438,9 @@ function readQuestions(value: unknown): InterviewQuestionDraft[] {
             : "agent",
       });
     })
-    .filter((question): question is InterviewQuestionDraft => Boolean(question));
+    .filter((question): question is InterviewQuestionDraft =>
+      Boolean(question),
+    );
 }
 
 function readCriteria(value: unknown): InterviewCriterionDraft[] {
@@ -453,7 +474,8 @@ function readResponseModes(value: unknown): InterviewResponseMode[] {
 
   return value.filter(
     (mode): mode is InterviewResponseMode =>
-      typeof mode === "string" && allowedModes.has(mode as InterviewResponseMode),
+      typeof mode === "string" &&
+      allowedModes.has(mode as InterviewResponseMode),
   );
 }
 

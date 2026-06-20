@@ -3,7 +3,7 @@
 ## Objective
 
 Ship the V1 E2E workflow step by step. Current implementation slice:
-GitHub issue #55, recruiter auth and organization ownership hardening.
+GitHub issue #57, publish/versioning hardening for interview plans.
 
 ## Scope
 
@@ -31,6 +31,9 @@ GitHub issue #55, recruiter auth and organization ownership hardening.
   through the shared auth provider.
 - Added policy coverage for authenticated, unauthenticated, not-onboarded,
   wrong-organization, and inactive-membership access cases.
+- Added a tested publication-mode policy for interview drafts.
+- Hardened publish behavior so edits after publication create a new immutable
+  interview snapshot instead of mutating the previous candidate link snapshot.
 
 ## Phases
 
@@ -54,7 +57,8 @@ GitHub issue #55, recruiter auth and organization ownership hardening.
   explicit instead of treating issue cleanup as implicit completion.
 - Default smoke avoids paid LLM calls.
 - Live LLM mode remains opt-in and blocked without explicit acknowledgement.
-- Continue remaining P0 work through #57/#23/#20/#21 after #55 lands.
+- Continue remaining P0 work through the remaining #57 metadata/compliance
+  hardening, then #23/#20/#21.
 
 ## Validation
 
@@ -71,11 +75,12 @@ GitHub issue #55, recruiter auth and organization ownership hardening.
 - `pnpm --dir apps/console test -- organization-access-policy`: passed.
 - `pnpm --dir apps/console typecheck`: passed.
 - `pnpm --dir apps/console lint`: passed.
+- `pnpm --dir apps/console test`: passed.
+- `pnpm --dir apps/console test -- interview-plan-policy`: passed.
 
 ## Remaining Follow-Up
 
-- #55 should be closed after this slice is merged and issue evidence is posted.
-- #57 is still open and owns publish/versioning hardening plus job metadata and
-  compliance-copy gating.
+- #57 remains open for job metadata and compliance-copy gating after this
+  publish/versioning slice lands.
 - #23 remains open as the commercial POC go/no-go wrapper.
 - #63 owns human notes and review status mutation controls.

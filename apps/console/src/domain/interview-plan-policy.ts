@@ -33,6 +33,11 @@ export type PublishableInterviewPlanInput = {
   roleTitle: string;
 };
 
+export type InterviewDraftPublicationMode =
+  | "create_initial_snapshot"
+  | "create_republished_snapshot"
+  | "return_existing_snapshot";
+
 export function getInterviewPlanPublicationIssues(
   input: PublishableInterviewPlanInput,
 ) {
@@ -90,4 +95,22 @@ export function isInterviewPlanPublishable(
   input: PublishableInterviewPlanInput,
 ) {
   return getInterviewPlanPublicationIssues(input).length === 0;
+}
+
+export function resolveInterviewDraftPublicationMode({
+  draftStatus,
+  hasPublishedSnapshot,
+}: {
+  draftStatus: string;
+  hasPublishedSnapshot: boolean;
+}): InterviewDraftPublicationMode {
+  if (!hasPublishedSnapshot) {
+    return "create_initial_snapshot";
+  }
+
+  if (draftStatus === "published") {
+    return "return_existing_snapshot";
+  }
+
+  return "create_republished_snapshot";
 }

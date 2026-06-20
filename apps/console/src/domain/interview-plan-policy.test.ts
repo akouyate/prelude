@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   getInterviewPlanPublicationIssues,
   isInterviewPlanPublishable,
+  resolveInterviewDraftPublicationMode,
   type PublishableInterviewPlanInput,
 } from "./interview-plan-policy";
 
@@ -14,12 +15,14 @@ const publishablePlan: PublishableInterviewPlanInput = {
       label: "Relevant evidence",
     },
     {
-      description: "Candidate explains practical next steps in realistic cases.",
+      description:
+        "Candidate explains practical next steps in realistic cases.",
       id: "judgment",
       label: "Practical judgment",
     },
     {
-      description: "Candidate answers are structured enough for recruiter review.",
+      description:
+        "Candidate answers are structured enough for recruiter review.",
       id: "clarity",
       label: "Clarity",
     },
@@ -84,5 +87,32 @@ describe("interview plan publication policy", () => {
     expect(issues).toContain(
       "Keep the required compliance guardrails before publishing.",
     );
+  });
+
+  it("creates the first immutable snapshot when no interview exists", () => {
+    expect(
+      resolveInterviewDraftPublicationMode({
+        draftStatus: "draft",
+        hasPublishedSnapshot: false,
+      }),
+    ).toBe("create_initial_snapshot");
+  });
+
+  it("returns the existing snapshot when the published draft did not change", () => {
+    expect(
+      resolveInterviewDraftPublicationMode({
+        draftStatus: "published",
+        hasPublishedSnapshot: true,
+      }),
+    ).toBe("return_existing_snapshot");
+  });
+
+  it("creates a new snapshot when a previously published draft changed", () => {
+    expect(
+      resolveInterviewDraftPublicationMode({
+        draftStatus: "draft",
+        hasPublishedSnapshot: true,
+      }),
+    ).toBe("create_republished_snapshot");
   });
 });
