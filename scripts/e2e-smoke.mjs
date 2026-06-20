@@ -56,6 +56,8 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
 
   const now = new Date();
   const ids = idsFor(runId);
+  const recruiterEmail =
+    process.env.MOCK_CLERK_USER_EMAIL || "recruiter@prelude.ai";
   const draft = interviewDraft();
   const publicToken = `iv_e2e_${runId}`;
   const resumeToken = `resume_e2e_${runId}`;
@@ -66,11 +68,11 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
     const user = await tx.user.upsert({
       create: {
         clerkUserId: ids.clerkUserId,
-        email: `recruiter+${runId}@prelude.ai`,
+        email: recruiterEmail,
         name: "Prelude E2E Recruiter",
       },
       update: {
-        email: `recruiter+${runId}@prelude.ai`,
+        email: recruiterEmail,
         name: "Prelude E2E Recruiter",
       },
       where: { clerkUserId: ids.clerkUserId },
@@ -159,6 +161,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
       update: {
         description: smokeRoleBrief(),
         location: "Paris, remote-friendly",
+        organizationId: organization.id,
         status: "published",
         title: "Customer Success Manager",
       },
@@ -189,6 +192,8 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         guardrails: draft.guardrails,
         questions: draft.questions,
         rationale: draft.rationale,
+        organizationId: organization.id,
+        jobId: job.id,
         responseModes: ["audio", "text"],
         roleBrief: smokeRoleBrief(),
         roleTitle: "Customer Success Manager",
@@ -222,7 +227,9 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         estimatedMinutes: draft.estimatedMinutes,
         focus: ["communication", "role_skills", "motivation"],
         guardrails: draft.guardrails,
+        draftId: interviewDraftRecord.id,
         jobId: job.id,
+        organizationId: organization.id,
         publicToken,
         questions: draft.questions,
         rationale: draft.rationale,
@@ -258,6 +265,9 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         completedAt: addSeconds(now, 180),
         consentCopyVersion: "candidate-consent-v1",
         consentedAt: addSeconds(now, 10),
+        interviewId: ids.interviewId,
+        jobId: job.id,
+        organizationId: organization.id,
         realtimeSessionId,
         resumeToken,
         reviewStatus: "to_review",
@@ -331,6 +341,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
           ? "openai-live-smoke-requested"
           : "candidate-brief-v1",
         modelProvider: allowLiveLlm ? "openai_guarded_smoke" : "mock_e2e_smoke",
+        organizationId: organization.id,
         recommendation: brief.summary.suggestedNextStep,
         schemaVersion: 1,
         status: "completed",
@@ -786,8 +797,8 @@ async function deleteSmokeData(runId) {
 
 function idsFor(runId) {
   return {
-    clerkOrganizationId: `org_e2e_${runId}`,
-    clerkUserId: `user_e2e_${runId}`,
+    clerkOrganizationId: process.env.MOCK_CLERK_ORG_ID || "org_demo",
+    clerkUserId: process.env.MOCK_CLERK_USER_ID || "user_demo",
     draftId: `idraft_e2e_${runId}`,
     interviewId: `interview_e2e_${runId}`,
     jobId: `job_e2e_${runId}`,

@@ -10,8 +10,8 @@ import {
 } from "../../domain/organization-access-policy";
 import {
   getConsoleAuthSession,
+  type ConsoleAuthSession,
   mockUserEmail,
-  mockUserId,
   mockUserName,
 } from "../auth/console-auth-provider";
 
@@ -27,7 +27,7 @@ export async function getCompletedOrganizationScope(): Promise<CompletedOrganiza
   }
 
   if (authSession.value.source === "mock") {
-    return ensureDevelopmentOrganizationScope();
+    return ensureDevelopmentOrganizationScope(authSession.value);
   }
 
   const memberships = await prisma.organizationMembership.findMany({
@@ -53,19 +53,42 @@ export async function getCompletedOrganizationScope(): Promise<CompletedOrganiza
   return scope;
 }
 
-async function ensureDevelopmentOrganizationScope(): Promise<CompletedOrganizationScope> {
-  const user = await prisma.user.upsert({
-    where: { clerkUserId: mockUserId() },
-    update: {
-      email: mockUserEmail(),
-      name: mockUserName(),
-    },
-    create: {
-      clerkUserId: mockUserId(),
-      email: mockUserEmail(),
-      name: mockUserName(),
-    },
-  });
+async function ensureDevelopmentOrganizationScope(
+  authSession: ConsoleAuthSession,
+): Promise<CompletedOrganizationScope> {
+  const user = await ensureDevelopmentUser(authSession.userId);
+
+  if (authSession.clerkOrganizationId) {
+    const organization = await ensureDevelopmentOrganization(
+      authSession.clerkOrganizationId,
+    );
+    const membership = await prisma.organizationMembership.upsert({
+      where: {
+        organizationId_userId: {
+          organizationId: organization.id,
+          userId: user.id,
+        },
+      },
+      update: {
+        role: authSession.role,
+        status: "active",
+      },
+      create: {
+        onboardingRole: "Founder",
+        organizationId: organization.id,
+        role: authSession.role,
+        status: "active",
+        userId: user.id,
+      },
+    });
+
+    return {
+      organizationId: organization.id,
+      organizationName: organization.name,
+      userId: user.id,
+      role: mapClerkOrganizationRole(membership.role, authSession.role),
+    };
+  }
 
   const existingMembership = await prisma.organizationMembership.findFirst({
     include: { organization: true },
@@ -88,40 +111,9 @@ async function ensureDevelopmentOrganizationScope(): Promise<CompletedOrganizati
     };
   }
 
-  const organization = await prisma.organization.create({
-    data: {
-      companySize: "11-50",
-      defaultInterviewMode: "Voice first",
-      hiringFocus: "Customer-facing",
-      name: "Acme Talent",
-      onboardingCompletedAt: new Date(),
-      memberships: {
-        create: {
-          onboardingRole: "Founder",
-          role: "owner",
-          status: "active",
-          userId: user.id,
-        },
-      },
-      jobs: {
-        create: {
-          description:
-            "We are hiring a Customer Success Manager to onboard SMB customers, reduce churn risk, coordinate with product teams, and turn customer feedback into practical improvements.",
-          location: "Paris",
-          sourceExternalId: "manual:customer-success-manager",
-          sourceProvider: "manual",
-          status: "draft",
-          title: "Customer Success Manager",
-        },
-      },
-      jobSourceConnections: {
-        create: {
-          externalLabel: "Manual job entry",
-          provider: "manual",
-          status: "manual",
-        },
-      },
-    },
+  const organization = await createDevelopmentOrganization({
+    clerkOrganizationId: null,
+    userId: user.id,
   });
 
   return {
@@ -129,5 +121,110 @@ async function ensureDevelopmentOrganizationScope(): Promise<CompletedOrganizati
     organizationName: organization.name,
     userId: user.id,
     role: "owner",
+  };
+}
+
+async function ensureDevelopmentUser(clerkUserId: string) {
+  const email = mockUserEmail();
+  const name = mockUserName();
+  const existingByClerkId = await prisma.user.findUnique({
+    where: { clerkUserId },
+  });
+
+  if (existingByClerkId) {
+    return prisma.user.update({
+      data: { email, name },
+      where: { id: existingByClerkId.id },
+    });
+  }
+
+  const existingByEmail = await prisma.user.findUnique({
+    where: { email },
+  });
+
+  if (existingByEmail) {
+    return prisma.user.update({
+      data: { clerkUserId, name },
+      where: { id: existingByEmail.id },
+    });
+  }
+
+  return prisma.user.create({
+    data: {
+      clerkUserId,
+      email,
+      name,
+    },
+  });
+}
+
+async function ensureDevelopmentOrganization(clerkOrganizationId: string) {
+  return prisma.organization.upsert({
+    where: { clerkOrganizationId },
+    create: developmentOrganizationData({
+      clerkOrganizationId,
+    }),
+    update: {
+      onboardingCompletedAt: new Date(),
+    },
+  });
+}
+
+function createDevelopmentOrganization({
+  clerkOrganizationId,
+  userId,
+}: {
+  clerkOrganizationId: string | null;
+  userId?: string;
+}) {
+  return prisma.organization.create({
+    data: developmentOrganizationData({ clerkOrganizationId, userId }),
+  });
+}
+
+function developmentOrganizationData({
+  clerkOrganizationId,
+  userId,
+}: {
+  clerkOrganizationId: string | null;
+  userId?: string;
+}) {
+  return {
+    clerkOrganizationId,
+    companySize: "11-50",
+    defaultInterviewMode: "Voice first",
+    hiringFocus: "Customer-facing",
+    name: "Acme Talent",
+    onboardingCompletedAt: new Date(),
+    ...(userId
+      ? {
+          memberships: {
+            create: {
+              onboardingRole: "Founder",
+              role: "owner",
+              status: "active",
+              userId,
+            },
+          },
+        }
+      : {}),
+    jobs: {
+      create: {
+        description:
+          "We are hiring a Customer Success Manager to onboard SMB customers, reduce churn risk, coordinate with product teams, and turn customer feedback into practical improvements.",
+        location: "Paris",
+        sourceExternalId: "manual:customer-success-manager",
+        sourceProvider: "manual",
+        status: "draft",
+        title: "Customer Success Manager",
+      },
+    },
+    jobSourceConnections: {
+      create: {
+        externalLabel: "Manual job entry",
+        provider: "manual",
+        status: "manual",
+      },
+    },
   };
 }
