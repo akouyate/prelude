@@ -3,22 +3,23 @@
 ## Objective
 
 Ship the V1 E2E workflow step by step. Current implementation slice:
-GitHub issue #61, real-data recruiter dashboard and candidate review.
+GitHub issue #62, repeatable real-data E2E smoke and demo script.
 
 ## Scope
 
-- Recruiter dashboard metrics and queues stay organization-scoped and DB-backed.
-- “Needs review” now counts completed sessions still owned by the human review
-  state, instead of every completed session.
-- Dashboard primary review CTA links to the real completed candidate session,
-  using the candidate session id when a realtime id is unavailable.
-- Candidate review detail no longer fetches or displays non-persisted runtime
-  summary content as a fallback.
-- Candidate review detail resolves only real organization-scoped
-  `CandidateSession` records; orphan `LiveInterviewSession` records no longer
-  produce a recruiter review page.
-- The obsolete mock recruiter summary fixture was removed so review pages cannot
-  accidentally fall back to product mock content.
+- Added `scripts/e2e-smoke.mjs`, a DB-backed V1 smoke that creates an onboarded
+  organization, recruiter membership, job, published interview, candidate
+  session, runtime session/events, transcript evidence, and persisted
+  `CandidateBrief`.
+- Added `make e2e-smoke`, which starts local Postgres and runs the smoke with
+  mocked LLM output by default.
+- Added `make e2e-smoke-live`, which is gated by `ALLOW_LIVE_LLM_TESTS=1`.
+- The smoke prints run id, organization/job/interview ids, candidate session id,
+  realtime session id, event count, transcript turn count, brief status, and
+  dashboard/detail/candidate URLs.
+- Smoke data is repeatable and resettable by run id without resetting the whole
+  local database.
+- README now documents the V1 E2E smoke command and live-mode guard.
 
 ## Phases
 
@@ -37,17 +38,18 @@ GitHub issue #61, real-data recruiter dashboard and candidate review.
 
 ## Direction
 
-- #61 tightens the recruiter review workflow around persisted product data after
-  #60 introduced `CandidateBrief`.
-- The detail page now shows persisted brief, explicit pending/failed states, and
-  durable runtime evidence only.
-- Continue to #62 after merge for a repeatable local E2E smoke/demo script.
+- #62 gives the team a repeatable local proof of the V1 workflow after #60/#61.
+- Default smoke avoids paid LLM calls.
+- Live LLM mode remains opt-in and blocked without explicit acknowledgement.
+- Continue to final refactor/polish audit after #62 merge.
 
 ## Validation
 
-- `pnpm --dir apps/console run test`: passed, 3 files / 9 tests.
-- `pnpm --dir apps/console run typecheck`: passed.
-- `pnpm --dir apps/console run lint`: passed.
+- `node --check scripts/e2e-smoke.mjs`: passed.
+- `node scripts/e2e-smoke.mjs --help`: passed.
+- `make help`: passed and lists `e2e-smoke` / `e2e-smoke-live`.
+- `make e2e-smoke E2E_SMOKE_RUN_ID=codex62 POSTGRES_PORT=55432 DATABASE_URL=...`: passed with decision `Pass`.
+- `make e2e-smoke-live ...` without `ALLOW_LIVE_LLM_TESTS=1`: blocked as expected.
 - `pnpm run typecheck`: passed.
 - `pnpm run lint`: passed.
 - `pnpm run test`: passed.
@@ -56,6 +58,6 @@ GitHub issue #61, real-data recruiter dashboard and candidate review.
 
 ## Known Follow-Up
 
-- #62 owns the full E2E smoke/demo script across recruiter creation, candidate
-  live interview, evidence, brief, and review.
+- Final refactor/polish audit should inspect the E2E slices together and remove
+  any avoidable duplication or rough UI copy before marking the goal complete.
 - #63 owns human notes and review status mutation controls.

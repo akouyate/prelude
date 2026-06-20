@@ -100,3 +100,27 @@ anomalies, and a `Pass`, `Retry needed`, or `Blocker` decision. It exits
 successfully when the report is generated; use
 `node scripts/live-smoke-report.mjs --strict` later if this needs to become a CI
 gate. The full enterprise dashboard view belongs to issue #21.
+
+## V1 E2E Smoke
+
+Create a repeatable local V1 workflow dataset with real Postgres persistence:
+
+```bash
+make db-migrate
+make e2e-smoke E2E_SMOKE_RUN_ID=local-v1
+```
+
+The smoke command starts local Postgres and expects the local schema to be
+migrated. It creates an onboarded organization, job, published interview,
+candidate session, runtime events, transcript evidence, and a persisted candidate
+brief. It prints the dashboard, interview detail, candidate detail, and public
+candidate URLs. By default it uses mocked LLM output and is safe to repeat
+locally; `E2E_SMOKE_RESET=1` resets only the matching smoke run data.
+
+Paid/live LLM mode is explicit:
+
+```bash
+ALLOW_LIVE_LLM_TESTS=1 make e2e-smoke-live E2E_SMOKE_RUN_ID=local-v1-live
+```
+
+Do not run live LLM smoke in CI.
