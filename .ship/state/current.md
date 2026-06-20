@@ -31,6 +31,15 @@ Code candidate redesign reference and plugged into the real candidate API flow.
   browser. The happy path now creates a product candidate session, bridges
   through the Next API, posts candidate-ready events, and completes the product
   session.
+- Refactored candidate LiveKit/API transport out of the main presentation
+  component into `live-interview-client.ts`, with shared types in
+  `live-interview-types.ts`.
+- Added unit coverage for the extracted candidate client handshake:
+  session creation, mock-room readiness events, product-session completion,
+  media cleanup, resume storage key, and candidate-facing error mapping.
+- Polished the start flow so candidates see the focused connecting state
+  immediately after tapping start, and guarded the start handler against invalid
+  names in addition to the disabled button state.
 - Captured screenshots for desktop and mobile:
   - `/tmp/prelude-candidate-welcome.png`
   - `/tmp/prelude-candidate-setup.png`
@@ -56,8 +65,9 @@ Code candidate redesign reference and plugged into the real candidate API flow.
 
 - `pnpm --dir apps/candidate typecheck`: passed.
 - `pnpm --dir apps/candidate lint`: passed.
-- `pnpm --dir apps/candidate test`: passed, 3 files / 12 tests.
+- `pnpm --dir apps/candidate test`: passed, 4 files / 17 tests.
 - `pnpm --dir apps/candidate test:e2e`: passed, 2 mobile Chromium tests.
+- `pnpm --dir apps/candidate build`: passed.
 - `git diff --check`: passed.
 
 ## Remaining Follow-Up
