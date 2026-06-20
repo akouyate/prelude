@@ -32,6 +32,7 @@ export const organizationOnboardingStateSchema = z.object({
 });
 
 export const saveOrganizationOnboardingProgressInputSchema = z.object({
+  clientRevision: z.number().int().nonnegative().default(0),
   currentStep: organizationOnboardingStepSchema,
   state: organizationOnboardingStateSchema,
 });

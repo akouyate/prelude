@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -18,6 +25,7 @@ import {
   TaskList,
   VideoCamera,
 } from "iconoir-react";
+import type { OrganizationOnboardingJobSource } from "@prelude/contracts";
 import { Button, ChoiceTile, Input, StepProgress, StepShell, cn } from "@prelude/ui";
 
 import {
@@ -37,7 +45,7 @@ type StepId =
   | "mode"
   | "ready";
 
-type JobSource = "linkedin" | "indeed" | "manual";
+type JobSource = OrganizationOnboardingJobSource;
 
 type OnboardingState = {
   companyName: string;
@@ -236,6 +244,7 @@ export default function OrganizationOnboardingPage() {
   const [isSubmitting, startTransition] = useTransition();
   const [isSaving, startSavingTransition] = useTransition();
   const [state, setState] = useState<OnboardingState>(initialState);
+  const saveRevision = useRef(0);
 
   const step = steps[currentStep] ?? "welcome";
   const availableJobs = useMemo(
@@ -266,9 +275,12 @@ export default function OrganizationOnboardingPage() {
 
   const persistProgress = useCallback(
     (stepId: StepId, nextState: OnboardingState) => {
+      const clientRevision = saveRevision.current + 1;
+      saveRevision.current = clientRevision;
       setSaveError(null);
       startSavingTransition(async () => {
         const result = await saveOrganizationOnboardingProgress({
+          clientRevision,
           currentStep: stepId,
           state: toPersistedState(nextState),
         });
