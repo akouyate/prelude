@@ -79,7 +79,7 @@ A slice can be merged when:
 | Candidate brief generation       | #60   | Closed | Persisted `CandidateBrief` generation, merged PR #72                                                         |
 | Recruiter real-data review       | #61   | Closed | Candidate detail/dashboard uses persisted data, merged PR #73                                                |
 | Repeatable E2E smoke             | #62   | Closed | `make e2e-smoke`, merged PR #74                                                                              |
-| Commercial POC checklist         | #23   | Open   | This document plus live smoke docs provide the release map; keep open until go/no-go owner signs off         |
+| Commercial POC checklist         | #23   | Open   | `docs/operations/live-ia-commercial-poc-checklist.md`; keep open until go/no-go owner signs off              |
 
 ## Dynamic Release Flow
 
