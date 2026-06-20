@@ -2,10 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import {
+  type CandidateBriefDto,
   liveInterviewRecruiterSummaryWireSchema,
   type LiveInterviewRecruiterSummary,
 } from "@prelude/contracts";
-import { Card, EnterpriseShell, StatusBadge } from "@prelude/ui";
+import { Button, Card, EnterpriseShell, StatusBadge } from "@prelude/ui";
 import {
   ArrowLeft,
   Calendar,
@@ -25,6 +26,7 @@ import { ConsoleAuthControls } from "../../../src/features/auth/console-auth-con
 import { CandidateReviewTabs } from "../../../src/features/interview-agent/candidate-review-tabs";
 import { isClerkConfigured } from "../../../src/server/auth/clerk-config";
 import { getConsoleAuthContext } from "../../../src/server/auth/console-auth";
+import { generateCandidateBriefAction } from "../../../src/server/interviews/candidate-brief-actions";
 import { getInterviewDetail } from "../../../src/server/interviews/interview-loaders";
 import type { CandidateSessionEvidence } from "../../../src/server/interviews/live-session-evidence";
 import { requireCompletedOrganizationOnboarding } from "../../../src/server/onboarding/onboarding-guard";
@@ -60,6 +62,7 @@ export default async function InterviewDetailPage({
 
   const summaryResult =
     detail.kind === "candidate_session" &&
+    !detail.candidateSession.brief &&
     detail.candidateSession.realtimeSessionId
       ? await fetchRecruiterSummary(detail.candidateSession.realtimeSessionId)
       : null;
@@ -392,10 +395,12 @@ function CandidateSessionReview({
   error?: string;
   session: {
     analysisStatus: "available" | "pending" | "not_ready" | "failed";
+    brief: CandidateBriefDto | null;
     candidateLabel: string;
     completedAt: string | null;
     eventCount: number;
     evidence: CandidateSessionEvidence;
+    id: string;
     interviewId: string;
     jobTitle: string;
     questionCompletionRate: number | null;
@@ -408,9 +413,11 @@ function CandidateSessionReview({
   };
   summary?: LiveInterviewRecruiterSummary;
 }) {
-  const displayedAnalysisStatus = summary
-    ? "available"
-    : session.analysisStatus;
+  const displayedAnalysisStatus = session.brief
+    ? briefAnalysisStatus(session.brief)
+    : summary
+      ? "available"
+      : session.analysisStatus;
   const satisfiedCriteria =
     summary?.criteria.filter((criterion) => criterion.status === "satisfied")
       .length ?? 0;
@@ -448,13 +455,29 @@ function CandidateSessionReview({
             {session.roleTitle} · {session.jobTitle}
           </p>
           <p className="mt-5 max-w-3xl text-base leading-7 text-ink-600">
-            {summary?.overview ??
+            {session.brief?.summary ??
+              summary?.overview ??
               "The candidate session is available, but the recruiter recap is not ready yet."}
           </p>
         </Card>
 
         <Card className="flex flex-col justify-between p-5">
-          {summary ? (
+          {session.brief?.status === "completed" ? (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-olive-900">
+                Persisted brief
+              </p>
+              <h2 className="mt-3 text-2xl font-semibold leading-tight text-ink-950">
+                {formatReviewStatus(
+                  session.brief.suggestedNextStep ?? "to_review",
+                )}
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-ink-600">
+                Generated from persisted transcript evidence. Human review is
+                still required before any hiring decision.
+              </p>
+            </div>
+          ) : summary ? (
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-olive-900">
                 Recommendation
@@ -481,11 +504,19 @@ function CandidateSessionReview({
           <div className="mt-5 grid grid-cols-2 gap-2">
             <MiniFact
               label="Criteria met"
-              value={`${satisfiedCriteria}/${summary?.criteria.length ?? 0}`}
+              value={
+                session.brief
+                  ? `${briefPositiveCriteria(session.brief)}/${session.brief.criteria.length}`
+                  : `${satisfiedCriteria}/${summary?.criteria.length ?? 0}`
+              }
             />
             <MiniFact
               label="To clarify"
-              value={String(criteriaNeedingReview)}
+              value={
+                session.brief
+                  ? String(session.brief.pointsToClarify.length)
+                  : String(criteriaNeedingReview)
+              }
             />
           </div>
         </Card>
@@ -499,9 +530,18 @@ function CandidateSessionReview({
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
         <div className="space-y-4">
+          {session.brief ? <PersistedBriefCard brief={session.brief} /> : null}
+          {session.evidence.status === "completed" &&
+          session.brief?.status !== "completed" ? (
+            <GenerateBriefCard
+              detailPath={`/interviews/${session.realtimeSessionId ?? session.id}`}
+              hasFailed={session.brief?.status === "failed"}
+              sessionId={session.id}
+            />
+          ) : null}
           <RuntimeEvidenceCard evidence={session.evidence} />
 
-          {summary ? (
+          {!session.brief && summary ? (
             <CandidateReviewTabs summary={summary} />
           ) : (
             <Card className="border-dashed bg-white/72 p-6">
@@ -516,8 +556,10 @@ function CandidateSessionReview({
                       : "Analysis is pending"}
                   </span>
                   <span className="mt-2 block text-sm leading-6 text-ink-600">
-                    {error ??
-                      "The AI brief will appear after the completed live interview has persisted transcript turns and answer evaluations."}
+                    {session.brief?.status === "failed"
+                      ? "The persisted brief failed. You can retry generation after checking the runtime evidence."
+                      : (error ??
+                        "The AI brief will appear after the completed live interview has persisted transcript turns and answer evaluations.")}
                   </span>
                   {session.realtimeSessionId ? (
                     <span className="mt-3 block break-all text-xs font-medium text-ink-400">
@@ -531,7 +573,7 @@ function CandidateSessionReview({
           )}
         </div>
 
-        {summary ? (
+        {!session.brief && summary ? (
           <aside className="space-y-4 lg:sticky lg:top-24">
             <CandidateAssistantRail
               candidateLabel={session.candidateLabel}
@@ -541,6 +583,42 @@ function CandidateSessionReview({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function GenerateBriefCard({
+  detailPath,
+  hasFailed,
+  sessionId,
+}: {
+  detailPath: string;
+  hasFailed: boolean;
+  sessionId: string;
+}) {
+  return (
+    <Card className="bg-[#f7f7ef] p-5">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-semibold text-ink-950">
+            <Sparks aria-hidden="true" className="h-4 w-4" />
+            Persist recruiter brief
+          </div>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-ink-600">
+            {hasFailed
+              ? "The previous generation failed. Retry after reviewing the runtime evidence."
+              : "Generate the durable recruiter brief from persisted transcript evidence."}
+          </p>
+        </div>
+        <form action={generateCandidateBriefAction}>
+          <input name="candidateSessionId" type="hidden" value={sessionId} />
+          <input name="detailPath" type="hidden" value={detailPath} />
+          <Button type="submit">
+            <Sparks aria-hidden="true" className="h-4 w-4" />
+            {hasFailed ? "Retry brief" : "Generate brief"}
+          </Button>
+        </form>
+      </div>
+    </Card>
   );
 }
 
@@ -630,6 +708,107 @@ function RuntimeEvidenceCard({
         </div>
       </div>
     </Card>
+  );
+}
+
+function PersistedBriefCard({ brief }: { brief: CandidateBriefDto }) {
+  return (
+    <Card className="p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <StatusBadge tone={analysisStatusTone(briefAnalysisStatus(brief))}>
+          {formatAnalysisStatus(briefAnalysisStatus(brief))}
+        </StatusBadge>
+        <StatusBadge tone="neutral">Persisted brief</StatusBadge>
+      </div>
+
+      <h2 className="mt-4 text-2xl font-semibold text-ink-950">
+        Recruiter brief
+      </h2>
+      {brief.summary ? (
+        <p className="mt-2 text-sm leading-6 text-ink-600">{brief.summary}</p>
+      ) : null}
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        <BriefColumn
+          empty="No strength was extracted from the persisted evidence."
+          title="Observed strengths"
+          values={brief.strengths}
+        />
+        <BriefColumn
+          empty="No clarification point has been generated yet."
+          title="Clarify"
+          values={brief.pointsToClarify}
+        />
+      </div>
+
+      <div className="mt-5 divide-y divide-ink-100 overflow-hidden rounded-3xl border border-ink-100 bg-white/54">
+        {brief.criteria.map((criterion) => (
+          <div key={criterion.criterionId} className="p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="font-semibold text-ink-950">{criterion.label}</p>
+              <StatusBadge tone={briefCriterionTone(criterion.status)}>
+                {criterion.status}
+              </StatusBadge>
+            </div>
+            <p className="mt-2 text-sm leading-6 text-ink-600">
+              {criterion.rationale}
+            </p>
+            {criterion.evidence.length > 0 ? (
+              <ul className="mt-3 space-y-2">
+                {criterion.evidence.map((item) => (
+                  <li
+                    key={`${criterion.criterionId}-${item.transcriptTurnId ?? item.text}`}
+                    className="rounded-2xl border border-ink-100 bg-white/62 p-3 text-sm leading-6 text-ink-600"
+                  >
+                    “{item.text}”
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ))}
+      </div>
+
+      {brief.limitations.length > 0 ? (
+        <div className="mt-5 rounded-3xl border border-ink-100 bg-[#f7f7ef] p-4">
+          <p className="text-sm font-semibold text-ink-950">Limitations</p>
+          <ul className="mt-3 space-y-2">
+            {brief.limitations.map((limitation) => (
+              <li key={limitation} className="text-sm leading-6 text-ink-600">
+                {limitation}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+function BriefColumn({
+  empty,
+  title,
+  values,
+}: {
+  empty: string;
+  title: string;
+  values: string[];
+}) {
+  return (
+    <div className="rounded-3xl border border-ink-100 bg-white/62 p-4">
+      <p className="text-sm font-semibold text-ink-950">{title}</p>
+      {values.length > 0 ? (
+        <ul className="mt-3 space-y-2">
+          {values.map((value) => (
+            <li key={value} className="text-sm leading-6 text-ink-600">
+              {value}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-3 text-sm leading-6 text-ink-500">{empty}</p>
+      )}
+    </div>
   );
 }
 
@@ -781,6 +960,49 @@ function analysisStatusTone(status: string) {
   }
 
   if (status === "pending") {
+    return "warning";
+  }
+
+  return "muted";
+}
+
+function briefAnalysisStatus(
+  brief: CandidateBriefDto,
+): "available" | "failed" | "pending" | "not_ready" {
+  if (brief.status === "completed") {
+    return "available";
+  }
+
+  if (brief.status === "failed") {
+    return "failed";
+  }
+
+  if (brief.status === "processing" || brief.status === "pending") {
+    return "pending";
+  }
+
+  return "not_ready";
+}
+
+function briefPositiveCriteria(brief: CandidateBriefDto) {
+  return brief.criteria.filter(
+    (criterion) =>
+      criterion.status === "Strong" || criterion.status === "Medium",
+  ).length;
+}
+
+function briefCriterionTone(
+  status: CandidateBriefDto["criteria"][number]["status"],
+) {
+  if (status === "Strong") {
+    return "success";
+  }
+
+  if (status === "Medium") {
+    return "olive";
+  }
+
+  if (status === "Weak") {
     return "warning";
   }
 

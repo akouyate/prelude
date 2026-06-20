@@ -1,5 +1,9 @@
 import "server-only";
 
+import {
+  candidateBriefSchema,
+  type CandidateBriefDto,
+} from "@prelude/contracts";
 import { prisma } from "@prelude/db";
 import type {
   InterviewAgentDraft,
@@ -76,6 +80,7 @@ export type InterviewDetailData =
       kind: "candidate_session";
       organizationName: string;
       candidateSession: CandidateSessionSummary & {
+        brief: CandidateBriefDto | null;
         evidence: CandidateSessionEvidence;
         interviewId: string;
         jobTitle: string;
@@ -276,6 +281,7 @@ export async function getInterviewDetail(
           candidateSession.candidateBrief?.status,
         ),
         completedAt: evidence.completedAt ?? summary.completedAt,
+        brief: toCandidateBriefDto(candidateSession.candidateBrief),
         eventCount: evidence.eventCount,
         evidence,
         interviewId: candidateSession.interviewId,
@@ -344,6 +350,7 @@ export async function getInterviewDetail(
       analysisStatus: resolveAnalysisStatus(status, eventStats),
       candidateLabel: `Candidate ${realtimeSession.candidateId.slice(-6)}`,
       completedAt: evidence.completedAt,
+      brief: null,
       eventCount: evidence.eventCount,
       evidence,
       id: realtimeSession.candidateId,
@@ -360,6 +367,32 @@ export async function getInterviewDetail(
     kind: "candidate_session",
     organizationName: organization.name,
   };
+}
+
+function toCandidateBriefDto(
+  brief: {
+    candidateSessionId: string;
+    limitations: unknown;
+    status: string;
+    summaryJson: unknown;
+  } | null,
+): CandidateBriefDto | null {
+  if (!brief) {
+    return null;
+  }
+
+  const parsed = candidateBriefSchema.safeParse(brief.summaryJson);
+  if (parsed.success) {
+    return parsed.data;
+  }
+
+  const fallback = candidateBriefSchema.safeParse({
+    candidateSessionId: brief.candidateSessionId,
+    limitations: readStringArray(brief.limitations),
+    status: brief.status,
+  });
+
+  return fallback.success ? fallback.data : null;
 }
 
 function toCandidateSessionSummary({
