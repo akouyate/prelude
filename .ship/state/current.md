@@ -2,19 +2,21 @@
 
 ## Objective
 
-Ship GitHub issue #56: persist organization onboarding as resumable product
-state.
+Ship the V1 E2E workflow step by step, starting with GitHub issue #57:
+create and publish a real live interview plan, then continue through candidate
+link, evidence, brief, review, smoke, refactor, and polish.
 
 ## Scope
 
-- Persist organization onboarding progress before final completion.
-- Hydrate the onboarding wizard from persisted progress after refresh.
-- Keep `onboardingCompletedAt` reserved for the final valid submit.
-- Store LinkedIn/Indeed/manual source choice as onboarding preference while
-  keeping connectors mocked.
-- Persist organization preferences so the dashboard can read and display them.
-- Use existing repo patterns and libraries: Next server actions, Prisma, Clerk,
-  and Zod contracts.
+- Treat #57 as the first implementation slice because it produces the stable
+  published interview link required by #58-#62.
+- Keep #64 minimum compliance gates inside the relevant P0 slices instead of
+  deferring them: disclosure/consent copy and disallowed-analysis guardrails
+  must be present before publishing or starting a candidate flow.
+- Preserve organization-scoped reads/writes through existing
+  `getCompletedOrganizationScope()` while #55 policy tests remain a follow-up.
+- Keep the release state real-data oriented: `Job` -> `InterviewDraft` ->
+  published `Interview` -> public token.
 
 ## Phases
 
@@ -33,27 +35,34 @@ state.
 
 ## Direction
 
-- Do not introduce a new policy/RBAC library in #56; #55 owns organization
-  ownership and permissions. Zod is enough for onboarding state validation here.
-- Store resumable wizard state as versionable JSON on `Organization`, with a
-  separate `onboardingStep` for the current wizard position.
-- Use upserts for idempotent progress saves and completion.
-- Keep completion redirect on the dashboard per #56 acceptance criteria.
+- #57 should harden the publish contract first: 3-5 questions, 3-5 criteria,
+  allowed response modes, stable snapshot, and compliance guardrails.
+- Keep advanced builder polish out of scope; use the existing focused wizard.
+- Add a pure policy module with unit tests so publication rules are not just UI
+  affordances.
+- Continue to later slices only after each slice has validation evidence.
 
 ## Validation
 
-- `DATABASE_URL=postgresql://user:pass@localhost:5432/prelude pnpm --dir packages/db exec prisma validate --schema prisma/schema.prisma`: passed.
-- Temporary Postgres database `prelude_ship56` with `prisma migrate deploy`: passed.
+- `pnpm --dir apps/console run test`: passed, including
+  `interview-plan-policy.test.ts`.
+- `pnpm --dir apps/console run typecheck`: passed.
+- `pnpm --dir apps/console run lint`: passed.
+- `pnpm --dir apps/candidate run test`: passed, 2 files / 9 tests.
+- `pnpm --dir apps/candidate run typecheck`: passed.
+- `pnpm --dir apps/candidate run lint`: passed.
+- `go test ./...` from `services/realtime`: passed, 42 tests.
 - `pnpm run typecheck`: passed.
 - `pnpm run lint`: passed.
-- `pnpm --dir packages/contracts run test`: 3 files, 19 tests passed.
-- `pnpm --dir apps/console run test`: no test files found, pass with no tests.
+- `pnpm run test`: passed.
 - `pnpm --dir apps/console run build`: passed.
+- `pnpm --dir apps/candidate run build`: passed.
 - `git diff --check`: passed.
 
 ## Known Follow-Up
 
-- #55 still owns canonical Clerk organization ownership and the full permission
-  matrix.
-- #57 owns turning the persisted first job into a publishable live interview
-  plan.
+- #55 still needs explicit policy tests for wrong organization access.
+- #58 still owns candidate identity/consent/resume UX; this slice only blocks
+  unknown tokens from silently starting demo sessions.
+- #60 still owns persisted CandidateBrief; recruiter detail still uses realtime
+  summary until that slice lands.

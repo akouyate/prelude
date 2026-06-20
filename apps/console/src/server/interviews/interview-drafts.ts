@@ -12,6 +12,10 @@ import type {
 } from "@prelude/core";
 import { revalidatePath } from "next/cache";
 
+import {
+  getInterviewPlanPublicationIssues,
+  interviewPlanPolicy,
+} from "../../domain/interview-plan-policy";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
 export type InterviewResponseMode = "audio" | "video" | "text";
@@ -182,6 +186,22 @@ export async function publishInterviewDraft(
       return null;
     }
 
+    const publicationIssues = getInterviewPlanPublicationIssues({
+      criteria: readCriteria(draft.criteria),
+      guardrails: readStringArray(draft.guardrails),
+      questions: readQuestions(draft.questions),
+      responseModes: readResponseModes(draft.responseModes),
+      roleBrief: draft.roleBrief,
+      roleTitle: draft.roleTitle,
+    });
+
+    if (publicationIssues.length > 0) {
+      return {
+        error: publicationIssues[0] ?? "Interview plan is incomplete.",
+        kind: "error" as const,
+      };
+    }
+
     const publicToken =
       draft.interview?.publicToken ?? (await createPublicToken(tx));
 
@@ -219,22 +239,26 @@ export async function publishInterviewDraft(
       where: { id: draft.id },
     });
 
-    return interview;
+    return { interview, kind: "published" as const };
   });
 
   if (!result) {
     return { ok: false, error: "Interview draft not found." };
   }
 
+  if (result.kind === "error") {
+    return { ok: false, error: result.error };
+  }
+
   revalidatePath("/");
-  revalidatePath(`/interviews/${result.id}`);
+  revalidatePath(`/interviews/${result.interview.id}`);
 
   return {
     ok: true,
-    candidatePath: `/interview/${result.publicToken}`,
-    detailPath: `/interviews/${result.id}`,
-    interviewId: result.id,
-    publicToken: result.publicToken,
+    candidatePath: `/interview/${result.interview.publicToken}`,
+    detailPath: `/interviews/${result.interview.id}`,
+    interviewId: result.interview.id,
+    publicToken: result.interview.publicToken,
   };
 }
 
@@ -275,6 +299,14 @@ function normalizeDraftInput(input: SaveInterviewDraftInput):
 
   if (questions.length === 0) {
     return { ok: false, error: "Generate at least one question first." };
+  }
+
+  if (questions.length > interviewPlanPolicy.maxQuestions) {
+    return { ok: false, error: "Keep the interview to 5 questions or fewer." };
+  }
+
+  if (criteria.length > interviewPlanPolicy.maxCriteria) {
+    return { ok: false, error: "Keep the evaluation matrix to 5 criteria or fewer." };
   }
 
   if (responseModes.length === 0) {
@@ -359,6 +391,78 @@ function toDraftPersistenceData(
     sourceAttachmentName: input.sourceAttachmentName,
     status: "draft",
   };
+}
+
+function readQuestions(value: unknown): InterviewQuestionDraft[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((question) => {
+      if (!question || typeof question !== "object") {
+        return null;
+      }
+
+      const input = question as Partial<InterviewQuestionDraft>;
+      return normalizeQuestion({
+        durationSeconds:
+          typeof input.durationSeconds === "number" ? input.durationSeconds : 75,
+        id: typeof input.id === "string" ? input.id : "",
+        prompt: typeof input.prompt === "string" ? input.prompt : "",
+        signal: typeof input.signal === "string" ? input.signal : "",
+        source:
+          input.source === "attachment" ||
+          input.source === "agent" ||
+          input.source === "job_description"
+            ? input.source
+            : "agent",
+      });
+    })
+    .filter((question): question is InterviewQuestionDraft => Boolean(question));
+}
+
+function readCriteria(value: unknown): InterviewCriterionDraft[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((criterion) => {
+      if (!criterion || typeof criterion !== "object") {
+        return null;
+      }
+
+      const input = criterion as Partial<InterviewCriterionDraft>;
+      return normalizeCriterion({
+        description:
+          typeof input.description === "string" ? input.description : "",
+        id: typeof input.id === "string" ? input.id : "",
+        label: typeof input.label === "string" ? input.label : "",
+      });
+    })
+    .filter((criterion): criterion is InterviewCriterionDraft =>
+      Boolean(criterion),
+    );
+}
+
+function readResponseModes(value: unknown): InterviewResponseMode[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(
+    (mode): mode is InterviewResponseMode =>
+      typeof mode === "string" && allowedModes.has(mode as InterviewResponseMode),
+  );
+}
+
+function readStringArray(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is string => typeof item === "string");
 }
 
 async function createPublicToken(

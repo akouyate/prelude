@@ -34,6 +34,10 @@ import { useRouter } from "next/navigation";
 import * as React from "react";
 
 import {
+  getInterviewPlanPublicationIssues,
+  interviewPlanPolicy,
+} from "../../domain/interview-plan-policy";
+import {
   publishInterviewDraft,
   saveInterviewDraft,
   type InterviewResponseMode,
@@ -456,6 +460,10 @@ export function InterviewAgentBuilder({
         return current;
       }
 
+      if (current.questions.length >= interviewPlanPolicy.maxQuestions) {
+        return current;
+      }
+
       const nextQuestion = createAIQuestion(topic, current.questions.length + 1);
       setSelectedQuestionId(nextQuestion.id);
 
@@ -592,6 +600,8 @@ export function InterviewAgentBuilder({
               isSaving={isSavingDraft}
               modes={modes}
               publishedInterview={publishedInterview}
+              roleBrief={jobDescription}
+              roleTitle={jobTitle}
               saveError={saveError}
               saveMessage={saveMessage}
               onEditDraft={() => goToStep("questions")}
@@ -972,6 +982,8 @@ function QuestionsStep({
   const [playingQuestionId, setPlayingQuestionId] = React.useState<string>();
   const [isAddingQuestion, setIsAddingQuestion] = React.useState(false);
   const [addTopic, setAddTopic] = React.useState("");
+  const hasReachedQuestionLimit =
+    draft.questions.length >= interviewPlanPolicy.maxQuestions;
 
   const addWithAI = React.useCallback(
     (topic: string) => {
@@ -1116,7 +1128,13 @@ function QuestionsStep({
       </div>
 
       <div className="rounded-3xl border border-dashed border-ink-200 bg-white/60 p-4 transition hover:border-olive-800">
-        {isAddingQuestion ? (
+        {hasReachedQuestionLimit ? (
+          <div className="flex items-start gap-3 text-sm leading-6 text-ink-600">
+            <Check aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-olive-800" />
+            This interview already has 5 questions, which is the V1 limit for
+            a focused first screen.
+          </div>
+        ) : isAddingQuestion ? (
           <div className="space-y-3">
             <div>
               <p className="text-sm font-semibold text-ink-900">Add a question</p>
@@ -1132,7 +1150,10 @@ function QuestionsStep({
                 placeholder="salary alignment, mobility, language..."
                 onChange={(event) => setAddTopic(event.target.value)}
               />
-              <Button onClick={() => addWithAI(addTopic || "screening fit")}>
+              <Button
+                disabled={hasReachedQuestionLimit}
+                onClick={() => addWithAI(addTopic || "screening fit")}
+              >
                 <Sparkles aria-hidden="true" className="h-4 w-4" />
                 Add with AI
               </Button>
@@ -1210,6 +1231,8 @@ function ShareStep({
   isSaving,
   modes,
   publishedInterview,
+  roleBrief,
+  roleTitle,
   saveError,
   saveMessage,
   onEditDraft,
@@ -1223,6 +1246,8 @@ function ShareStep({
   isSaving: boolean;
   modes: ResponseMode[];
   publishedInterview?: Extract<PublishInterviewDraftResult, { ok: true }>;
+  roleBrief: string;
+  roleTitle: string;
   saveError?: string;
   saveMessage?: string;
   onEditDraft: () => void;
@@ -1233,6 +1258,15 @@ function ShareStep({
   const candidateLink = publishedInterview
     ? `prelude.ai${publishedInterview.candidatePath}`
     : "Publish to create the candidate link";
+  const publicationIssues = getInterviewPlanPublicationIssues({
+    criteria: draft.criteria,
+    guardrails: draft.guardrails,
+    questions: draft.questions,
+    responseModes: modes,
+    roleBrief,
+    roleTitle,
+  });
+  const canPublish = publicationIssues.length === 0;
 
   return (
     <div className="space-y-5">
@@ -1260,6 +1294,30 @@ function ShareStep({
         </p>
       </div>
 
+      <div className="rounded-3xl border border-ink-100 bg-white/72 p-5">
+        <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
+          <ShieldCheck aria-hidden="true" className="h-4 w-4 text-ink-700" />
+          Publication checks
+        </div>
+        {canPublish ? (
+          <p className="mt-3 text-sm leading-6 text-ink-600">
+            The plan has enough questions, evaluation criteria, response modes,
+            and compliance guardrails to publish.
+          </p>
+        ) : (
+          <ul className="mt-3 space-y-2 text-sm leading-6 text-ink-600">
+            {publicationIssues.map((issue) => (
+              <li key={issue} className="flex gap-2">
+                <span aria-hidden="true" className="text-coral-700">
+                  -
+                </span>
+                <span>{issue}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       {saveError ? (
         <div className="rounded-2xl border border-coral-200 bg-coral-50 p-4 text-sm font-medium text-coral-800">
           {saveError}
@@ -1283,7 +1341,7 @@ function ShareStep({
         <Button disabled={isSaving || isPublishing} variant="secondary" onClick={onSave}>
           {isSaving ? "Saving..." : "Save draft"}
         </Button>
-        <Button disabled={isSaving || isPublishing} onClick={onPublish}>
+        <Button disabled={!canPublish || isSaving || isPublishing} onClick={onPublish}>
           {isPublishing ? "Publishing..." : "Publish interview"}
         </Button>
         {publishedInterview ? (

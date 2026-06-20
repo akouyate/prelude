@@ -98,4 +98,25 @@ describe("POST /api/live-interview-sessions", () => {
     expect(body.allowedModalities).toEqual(["audio"]);
     expect(body.livekit.isMock).toBe(true);
   });
+
+  it("rejects unknown candidate tokens without creating a realtime session", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(
+      new Request("http://candidate.test/api/live-interview-sessions", {
+        method: "POST",
+        body: JSON.stringify({
+          candidateToken: "unknown-token",
+          videoEnabled: true
+        })
+      })
+    );
+
+    expect(response.status).toBe(404);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "interview_not_found" }
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
