@@ -1,7 +1,4 @@
-import {
-  clerkMiddleware,
-  createRouteMatcher,
-} from "@clerk/nextjs/server";
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 import { isClerkConfigured } from "./src/server/auth/clerk-config";
@@ -19,6 +16,10 @@ export default isClerkConfigured
       }
     })
   : function proxy() {
+      if (process.env.NODE_ENV === "production") {
+        return new NextResponse("Clerk is not configured.", { status: 500 });
+      }
+
       return NextResponse.next();
     };
 

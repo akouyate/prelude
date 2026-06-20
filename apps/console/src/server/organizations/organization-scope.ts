@@ -1,73 +1,69 @@
 import "server-only";
 
-import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@prelude/db";
-import type { OrganizationRole } from "@prelude/types";
 
-import { mapClerkOrganizationRole } from "../../domain/organization-access-policy";
-import { isClerkConfigured } from "../auth/clerk-config";
-
-export type CompletedOrganizationScope = {
-  organizationId: string;
-  organizationName: string;
-  userId: string;
-  role: OrganizationRole;
-};
+import {
+  hasAuthenticatedClerkUser,
+  mapClerkOrganizationRole,
+  resolveCompletedOrganizationScope,
+  type CompletedOrganizationScope,
+} from "../../domain/organization-access-policy";
+import {
+  getConsoleAuthSession,
+  mockUserEmail,
+  mockUserId,
+  mockUserName,
+} from "../auth/console-auth-provider";
 
 export async function getCompletedOrganizationScope(): Promise<CompletedOrganizationScope> {
-  if (!isClerkConfigured) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error("Clerk is not configured for the console application.");
-    }
+  const authSession = await getConsoleAuthSession();
 
-    return ensureDevelopmentOrganizationScope();
+  if (!authSession.ok) {
+    throw new Error(authSession.error);
   }
 
-  const authState = await auth();
-
-  if (!authState.userId) {
+  if (!hasAuthenticatedClerkUser(authSession.value.userId)) {
     throw new Error("Authenticated user is required.");
   }
 
-  const membership = await prisma.organizationMembership.findFirst({
+  if (authSession.value.source === "mock") {
+    return ensureDevelopmentOrganizationScope();
+  }
+
+  const memberships = await prisma.organizationMembership.findMany({
     include: {
       organization: true,
-      user: true,
     },
     orderBy: { createdAt: "asc" },
     where: {
       status: "active",
-      user: { clerkUserId: authState.userId },
-      organization: {
-        ...(authState.orgId ? { clerkOrganizationId: authState.orgId } : {}),
-        onboardingCompletedAt: { not: null },
-      },
+      user: { clerkUserId: authSession.value.userId },
     },
   });
+  const scope = resolveCompletedOrganizationScope({
+    clerkOrganizationId: authSession.value.clerkOrganizationId,
+    clerkUserId: authSession.value.userId,
+    memberships,
+  });
 
-  if (!membership) {
+  if (!scope) {
     throw new Error("Completed onboarding is required.");
   }
 
-  return {
-    organizationId: membership.organizationId,
-    organizationName: membership.organization.name,
-    userId: membership.userId,
-    role: mapRole(membership.role),
-  };
+  return scope;
 }
 
 async function ensureDevelopmentOrganizationScope(): Promise<CompletedOrganizationScope> {
   const user = await prisma.user.upsert({
-    where: { clerkUserId: "user_demo" },
+    where: { clerkUserId: mockUserId() },
     update: {
-      email: "recruiter@prelude.ai",
-      name: "Adrien Kouyate",
+      email: mockUserEmail(),
+      name: mockUserName(),
     },
     create: {
-      clerkUserId: "user_demo",
-      email: "recruiter@prelude.ai",
-      name: "Adrien Kouyate",
+      clerkUserId: mockUserId(),
+      email: mockUserEmail(),
+      name: mockUserName(),
     },
   });
 
@@ -88,7 +84,7 @@ async function ensureDevelopmentOrganizationScope(): Promise<CompletedOrganizati
       organizationId: existingMembership.organizationId,
       organizationName: existingMembership.organization.name,
       userId: user.id,
-      role: mapRole(existingMembership.role),
+      role: mapClerkOrganizationRole(existingMembership.role, "viewer"),
     };
   }
 
@@ -134,8 +130,4 @@ async function ensureDevelopmentOrganizationScope(): Promise<CompletedOrganizati
     userId: user.id,
     role: "owner",
   };
-}
-
-function mapRole(role: string | null | undefined): OrganizationRole {
-  return mapClerkOrganizationRole(role, "viewer");
 }

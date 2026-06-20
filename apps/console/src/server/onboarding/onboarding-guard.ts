@@ -1,32 +1,35 @@
 import "server-only";
 
-import { auth } from "@clerk/nextjs/server";
 import { prisma } from "@prelude/db";
 import { redirect } from "next/navigation";
 
-import { isClerkConfigured } from "../auth/clerk-config";
+import { getConsoleAuthSession } from "../auth/console-auth-provider";
 
 export async function requireCompletedOrganizationOnboarding() {
-  if (!isClerkConfigured) {
+  const authSession = await getConsoleAuthSession();
+
+  if (!authSession.ok) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(authSession.error);
+    }
+
     return;
   }
 
-  const authState = await auth();
-
-  if (!authState.userId) {
+  if (authSession.value.source === "mock") {
     return;
   }
 
   const completedUser = await prisma.user.findFirst({
     select: { id: true },
     where: {
-      clerkUserId: authState.userId,
+      clerkUserId: authSession.value.userId,
       memberships: {
         some: {
           status: "active",
           organization: {
-            ...(authState.orgId
-              ? { clerkOrganizationId: authState.orgId }
+            ...(authSession.value.clerkOrganizationId
+              ? { clerkOrganizationId: authSession.value.clerkOrganizationId }
               : {}),
             onboardingCompletedAt: { not: null },
           },

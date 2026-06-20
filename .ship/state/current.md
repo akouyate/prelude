@@ -2,8 +2,8 @@
 
 ## Objective
 
-Ship the V1 E2E workflow step by step. Current delivery polish slice:
-document the dynamic E2E release workflow and audit remaining P0 scope.
+Ship the V1 E2E workflow step by step. Current implementation slice:
+GitHub issue #55, recruiter auth and organization ownership hardening.
 
 ## Scope
 
@@ -25,6 +25,12 @@ document the dynamic E2E release workflow and audit remaining P0 scope.
 - Audited remaining open P0 scope after #60, #61, and #62 merged.
 - Extracted and tested the shared Clerk-to-Prelude organization role mapping
   used by onboarding and organization-scope resolution.
+- Added an explicit local-only Clerk mock provider for development/test when
+  Clerk keys are empty.
+- Routed onboarding, organization-scope resolution, and console auth context
+  through the shared auth provider.
+- Added policy coverage for authenticated, unauthenticated, not-onboarded,
+  wrong-organization, and inactive-membership access cases.
 
 ## Phases
 
@@ -48,8 +54,7 @@ document the dynamic E2E release workflow and audit remaining P0 scope.
   explicit instead of treating issue cleanup as implicit completion.
 - Default smoke avoids paid LLM calls.
 - Live LLM mode remains opt-in and blocked without explicit acknowledgement.
-- Continue remaining P0 work through #55/#57/#37/#23 rather than expanding the
-  current smoke slice.
+- Continue remaining P0 work through #57/#23/#20/#21 after #55 lands.
 
 ## Validation
 
@@ -69,11 +74,8 @@ document the dynamic E2E release workflow and audit remaining P0 scope.
 
 ## Remaining Follow-Up
 
-- #55 is still open and needs targeted auth/org-scope tests before it can be
-  considered fully proven.
+- #55 should be closed after this slice is merged and issue evidence is posted.
 - #57 is still open and owns publish/versioning hardening plus job metadata and
   compliance-copy gating.
-- #37 has real OpenAI/LiveKit mobile smoke evidence and merged implementation,
-  but remains open pending final product-owner closure.
 - #23 remains open as the commercial POC go/no-go wrapper.
 - #63 owns human notes and review status mutation controls.
