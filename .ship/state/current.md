@@ -2,8 +2,8 @@
 
 ## Objective
 
-Ship the V1 E2E workflow step by step. Current implementation slice:
-GitHub issue #62, repeatable real-data E2E smoke and demo script.
+Ship the V1 E2E workflow step by step. Current delivery polish slice:
+document the dynamic E2E release workflow and audit remaining P0 scope.
 
 ## Scope
 
@@ -20,6 +20,9 @@ GitHub issue #62, repeatable real-data E2E smoke and demo script.
 - Smoke data is repeatable and resettable by run id without resetting the whole
   local database.
 - README now documents the V1 E2E smoke command and live-mode guard.
+- Added `docs/architecture/v1-e2e-release-workflow.md` to make the orchestrator
+  and feature-team release loop explicit.
+- Audited remaining open P0 scope after #60, #61, and #62 merged.
 
 ## Phases
 
@@ -34,14 +37,17 @@ GitHub issue #62, repeatable real-data E2E smoke and demo script.
 - [x] Review
 - [x] Simplification
 - [x] Final validation
-- [ ] Delivery
+- [x] Delivery
 
 ## Direction
 
 - #62 gives the team a repeatable local proof of the V1 workflow after #60/#61.
+- The release workflow document now makes the remaining open P0 boundaries
+  explicit instead of treating issue cleanup as implicit completion.
 - Default smoke avoids paid LLM calls.
 - Live LLM mode remains opt-in and blocked without explicit acknowledgement.
-- Continue to final refactor/polish audit after #62 merge.
+- Continue remaining P0 work through #55/#57/#37/#23 rather than expanding the
+  current smoke slice.
 
 ## Validation
 
@@ -56,8 +62,13 @@ GitHub issue #62, repeatable real-data E2E smoke and demo script.
 - `pnpm --dir apps/console run build`: passed.
 - `git diff --check`: passed.
 
-## Known Follow-Up
+## Remaining Follow-Up
 
-- Final refactor/polish audit should inspect the E2E slices together and remove
-  any avoidable duplication or rough UI copy before marking the goal complete.
+- #55 is still open and needs targeted auth/org-scope tests before it can be
+  considered fully proven.
+- #57 is still open and owns publish/versioning hardening plus job metadata and
+  compliance-copy gating.
+- #37 has real OpenAI/LiveKit mobile smoke evidence and merged implementation,
+  but remains open pending final product-owner closure.
+- #23 remains open as the commercial POC go/no-go wrapper.
 - #63 owns human notes and review status mutation controls.

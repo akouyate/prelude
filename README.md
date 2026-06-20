@@ -124,3 +124,6 @@ ALLOW_LIVE_LLM_TESTS=1 make e2e-smoke-live E2E_SMOKE_RUN_ID=local-v1-live
 ```
 
 Do not run live LLM smoke in CI.
+
+The step-by-step release workflow and remaining slice risks are documented in
+[`docs/architecture/v1-e2e-release-workflow.md`](docs/architecture/v1-e2e-release-workflow.md).
