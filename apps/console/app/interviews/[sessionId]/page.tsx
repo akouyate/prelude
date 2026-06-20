@@ -1,11 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
-import {
-  type CandidateBriefDto,
-  liveInterviewRecruiterSummaryWireSchema,
-  type LiveInterviewRecruiterSummary,
-} from "@prelude/contracts";
+import { type CandidateBriefDto } from "@prelude/contracts";
 import { Button, Card, EnterpriseShell, StatusBadge } from "@prelude/ui";
 import {
   ArrowLeft,
@@ -23,7 +19,6 @@ import {
 } from "iconoir-react";
 
 import { ConsoleAuthControls } from "../../../src/features/auth/console-auth-controls";
-import { CandidateReviewTabs } from "../../../src/features/interview-agent/candidate-review-tabs";
 import { isClerkConfigured } from "../../../src/server/auth/clerk-config";
 import { getConsoleAuthContext } from "../../../src/server/auth/console-auth";
 import { generateCandidateBriefAction } from "../../../src/server/interviews/candidate-brief-actions";
@@ -36,11 +31,6 @@ type InterviewDetailPageProps = {
     sessionId: string;
   }>;
 };
-
-const realtimeApiUrl =
-  process.env.PRELUDE_REALTIME_API_URL ??
-  process.env.REALTIME_API_URL ??
-  "http://127.0.0.1:8080";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -60,13 +50,6 @@ export default async function InterviewDetailPage({
     notFound();
   }
 
-  const summaryResult =
-    detail.kind === "candidate_session" &&
-    !detail.candidateSession.brief &&
-    detail.candidateSession.realtimeSessionId
-      ? await fetchRecruiterSummary(detail.candidateSession.realtimeSessionId)
-      : null;
-
   return (
     <EnterpriseShell
       account={account}
@@ -76,11 +59,7 @@ export default async function InterviewDetailPage({
       {detail.kind === "interview" ? (
         <InterviewOverview detail={detail} />
       ) : (
-        <CandidateSessionReview
-          error={summaryResult?.summary ? undefined : summaryResult?.error}
-          session={detail.candidateSession}
-          summary={summaryResult?.summary}
-        />
+        <CandidateSessionReview session={detail.candidateSession} />
       )}
     </EnterpriseShell>
   );
@@ -388,11 +367,8 @@ function InterviewOverview({
 }
 
 function CandidateSessionReview({
-  error,
   session,
-  summary,
 }: {
-  error?: string;
   session: {
     analysisStatus: "available" | "pending" | "not_ready" | "failed";
     brief: CandidateBriefDto | null;
@@ -411,19 +387,10 @@ function CandidateSessionReview({
     status: string;
     transcriptTurnCount: number;
   };
-  summary?: LiveInterviewRecruiterSummary;
 }) {
   const displayedAnalysisStatus = session.brief
     ? briefAnalysisStatus(session.brief)
-    : summary
-      ? "available"
-      : session.analysisStatus;
-  const satisfiedCriteria =
-    summary?.criteria.filter((criterion) => criterion.status === "satisfied")
-      .length ?? 0;
-  const criteriaNeedingReview = summary
-    ? summary.criteria.length - satisfiedCriteria
-    : 0;
+    : session.analysisStatus;
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -456,8 +423,7 @@ function CandidateSessionReview({
           </p>
           <p className="mt-5 max-w-3xl text-base leading-7 text-ink-600">
             {session.brief?.summary ??
-              summary?.overview ??
-              "The candidate session is available, but the recruiter recap is not ready yet."}
+              "The candidate session is available. Generate the persisted recruiter brief from runtime evidence when the live interview is complete."}
           </p>
         </Card>
 
@@ -475,18 +441,6 @@ function CandidateSessionReview({
               <p className="mt-3 text-sm leading-6 text-ink-600">
                 Generated from persisted transcript evidence. Human review is
                 still required before any hiring decision.
-              </p>
-            </div>
-          ) : summary ? (
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-olive-900">
-                Recommendation
-              </p>
-              <h2 className="mt-3 text-2xl font-semibold leading-tight text-ink-950">
-                {summary.recommendation.label}
-              </h2>
-              <p className="mt-3 text-sm leading-6 text-ink-600">
-                {summary.recommendation.rationale}
               </p>
             </div>
           ) : (
@@ -507,7 +461,7 @@ function CandidateSessionReview({
               value={
                 session.brief
                   ? `${briefPositiveCriteria(session.brief)}/${session.brief.criteria.length}`
-                  : `${satisfiedCriteria}/${summary?.criteria.length ?? 0}`
+                  : "Not ready"
               }
             />
             <MiniFact
@@ -515,7 +469,7 @@ function CandidateSessionReview({
               value={
                 session.brief
                   ? String(session.brief.pointsToClarify.length)
-                  : String(criteriaNeedingReview)
+                  : "Not ready"
               }
             />
           </div>
@@ -541,9 +495,7 @@ function CandidateSessionReview({
           ) : null}
           <RuntimeEvidenceCard evidence={session.evidence} />
 
-          {!session.brief && summary ? (
-            <CandidateReviewTabs summary={summary} />
-          ) : (
+          {!session.brief ? (
             <Card className="border-dashed bg-white/72 p-6">
               <div className="flex items-start gap-3">
                 <span className="grid h-10 w-10 place-items-center rounded-full bg-[#eef0e3] text-olive-800">
@@ -556,10 +508,9 @@ function CandidateSessionReview({
                       : "Analysis is pending"}
                   </span>
                   <span className="mt-2 block text-sm leading-6 text-ink-600">
-                    {session.brief?.status === "failed"
-                      ? "The persisted brief failed. You can retry generation after checking the runtime evidence."
-                      : (error ??
-                        "The AI brief will appear after the completed live interview has persisted transcript turns and answer evaluations.")}
+                    The persisted recruiter brief will appear after the
+                    completed live interview has persisted transcript turns and
+                    the generation action has run.
                   </span>
                   {session.realtimeSessionId ? (
                     <span className="mt-3 block break-all text-xs font-medium text-ink-400">
@@ -570,17 +521,8 @@ function CandidateSessionReview({
                 </span>
               </div>
             </Card>
-          )}
+          ) : null}
         </div>
-
-        {!session.brief && summary ? (
-          <aside className="space-y-4 lg:sticky lg:top-24">
-            <CandidateAssistantRail
-              candidateLabel={session.candidateLabel}
-              summary={summary}
-            />
-          </aside>
-        ) : null}
       </div>
     </div>
   );
@@ -810,50 +752,6 @@ function BriefColumn({
       )}
     </div>
   );
-}
-
-async function fetchRecruiterSummary(sessionId: string): Promise<
-  | {
-      summary: LiveInterviewRecruiterSummary;
-      error?: never;
-    }
-  | {
-      summary?: never;
-      error: string;
-    }
-> {
-  try {
-    const response = await fetch(
-      `${realtimeApiUrl}/v1/interview-sessions/${sessionId}/summary`,
-      { cache: "no-store" },
-    );
-
-    if (!response.ok) {
-      return {
-        error: `Realtime API returned ${response.status} for session ${sessionId}.`,
-      };
-    }
-
-    const body = (await response.json()) as { summary?: unknown };
-    const parsed = liveInterviewRecruiterSummaryWireSchema.safeParse(
-      body.summary,
-    );
-
-    if (!parsed.success) {
-      return {
-        error: "Realtime API returned an invalid recruiter summary payload.",
-      };
-    }
-
-    return { summary: parsed.data };
-  } catch (error) {
-    return {
-      error:
-        error instanceof Error
-          ? error.message
-          : "Realtime API could not be reached.",
-    };
-  }
 }
 
 function formatStatus(status: string) {
@@ -1179,51 +1077,6 @@ function PulseBar({
         />
       </div>
     </div>
-  );
-}
-
-function CandidateAssistantRail({
-  candidateLabel,
-  summary,
-}: {
-  candidateLabel: string;
-  summary: LiveInterviewRecruiterSummary;
-}) {
-  const suggestions = [
-    `What should I clarify with ${candidateLabel}?`,
-    "Is there enough signal to continue?",
-    summary.followUpQuestions[0] ?? "What question should I ask next?",
-  ];
-
-  return (
-    <Card className="p-5">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm font-semibold text-ink-950">
-          <Sparks aria-hidden="true" className="h-4 w-4" />
-          Ask about candidate
-        </div>
-        <StatusBadge tone="muted">Soon</StatusBadge>
-      </div>
-      <div className="mt-4 rounded-3xl border border-ink-100 bg-white/62 p-3">
-        <p className="text-sm leading-6 text-ink-500">
-          The assistant will answer from the transcript, criteria matrix, and
-          recruiter recap.
-        </p>
-        <div className="mt-3 rounded-full border border-ink-100 bg-ink-50 px-4 py-3 text-sm text-ink-400">
-          Ask a question...
-        </div>
-      </div>
-      <div className="mt-4 space-y-2">
-        {suggestions.map((suggestion) => (
-          <div
-            key={suggestion}
-            className="rounded-2xl border border-ink-100 bg-white/62 px-3 py-2 text-sm leading-5 text-ink-600"
-          >
-            {suggestion}
-          </div>
-        ))}
-      </div>
-    </Card>
   );
 }
 

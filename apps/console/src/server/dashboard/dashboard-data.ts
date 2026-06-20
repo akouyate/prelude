@@ -138,10 +138,16 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
     getLiveEventStatsBySessionId(realtimeSessionIds),
   ]);
   const completed = candidateSessions.filter(
-    (session) => currentCandidateStatus(session, liveStatusById) === "completed",
+    (session) =>
+      currentCandidateStatus(session, liveStatusById) === "completed",
+  );
+  const needsReview = completed.filter(
+    (session) => resolveReviewStatus(session.reviewStatus) === "to_review",
   );
   const active = candidateSessions.filter((session) =>
-    activeCandidateStatuses.has(currentCandidateStatus(session, liveStatusById)),
+    activeCandidateStatuses.has(
+      currentCandidateStatus(session, liveStatusById),
+    ),
   );
 
   const interviews = organization.jobs.map((job) => {
@@ -177,7 +183,8 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
   });
 
   const latestCompleted = candidateSessions.find(
-    (session) => currentCandidateStatus(session, liveStatusById) === "completed",
+    (session) =>
+      currentCandidateStatus(session, liveStatusById) === "completed",
   );
   const latestInterview = interviews[0];
   const reviewQueue = candidateSessions.slice(0, 8).map((session) => {
@@ -204,8 +211,10 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
       href: `/interviews/${session.realtimeSessionId ?? session.id}`,
       id: session.id,
       jobTitle: session.job.title,
-      questionCompletionRate:
-        getQuestionCompletionRate({ questionCount, stats: eventStats }),
+      questionCompletionRate: getQuestionCompletionRate({
+        questionCount,
+        stats: eventStats,
+      }),
       realtimeSessionId: session.realtimeSessionId,
       reviewStatus: resolveReviewStatus(session.reviewStatus),
       roleTitle: session.interview.roleTitle,
@@ -226,7 +235,7 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
       candidateStarted: active.length,
       completed: completed.length,
       drafts: draftCount,
-      needsReview: completed.length,
+      needsReview: needsReview.length,
       published: publishedCount,
     },
     organization: {
@@ -236,8 +245,8 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
       hiringFocus: organization.hiringFocus,
       name: organization.name,
     },
-    primaryReviewHref: latestCompleted?.realtimeSessionId
-      ? `/interviews/${latestCompleted.realtimeSessionId}`
+    primaryReviewHref: latestCompleted
+      ? `/interviews/${latestCompleted.realtimeSessionId ?? latestCompleted.id}`
       : (latestInterview?.href ?? null),
     reviewQueue,
   };
@@ -280,10 +289,13 @@ function resolveInterviewState({
   return "draft";
 }
 
-function currentCandidateStatus(session: {
-  realtimeSessionId?: string | null;
-  status: string;
-}, liveStatusById: Map<string, string>) {
+function currentCandidateStatus(
+  session: {
+    realtimeSessionId?: string | null;
+    status: string;
+  },
+  liveStatusById: Map<string, string>,
+) {
   return (
     (session.realtimeSessionId
       ? liveStatusById.get(session.realtimeSessionId)

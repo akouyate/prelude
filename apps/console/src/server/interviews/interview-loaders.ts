@@ -25,7 +25,6 @@ import {
   type RecruiterReviewStatus,
 } from "./live-session-insights";
 import {
-  buildCandidateSessionEvidence,
   getCandidateSessionEvidence,
   type CandidateSessionEvidence,
 } from "./live-session-evidence";
@@ -296,77 +295,7 @@ export async function getInterviewDetail(
     };
   }
 
-  const realtimeSession = await prisma.liveInterviewSession.findUnique({
-    include: {
-      events: {
-        orderBy: { sequenceNumber: "asc" },
-      },
-    },
-    where: { id: idOrSessionId },
-  });
-
-  if (!realtimeSession) {
-    return null;
-  }
-
-  const realtimeInterview = await prisma.interview.findFirst({
-    include: {
-      job: true,
-    },
-    where: {
-      id: realtimeSession.interviewPlanId,
-      organizationId: scope.organizationId,
-    },
-  });
-
-  if (!realtimeInterview) {
-    return null;
-  }
-
-  const eventStatsBySessionId = await getLiveEventStatsBySessionId([
-    realtimeSession.id,
-  ]);
-  const eventStats = eventStatsBySessionId.get(realtimeSession.id);
-  const questionCount = readQuestions(realtimeInterview.questions).length;
-  const status = realtimeSession.status;
-  const evidence = buildCandidateSessionEvidence({
-    events: realtimeSession.events,
-    productSession: {
-      completedAt: status === "completed" ? realtimeSession.updatedAt : null,
-      realtimeSessionId: realtimeSession.id,
-      status,
-      updatedAt: realtimeSession.updatedAt,
-    },
-    questionCount,
-    runtimeSession: {
-      id: realtimeSession.id,
-      status,
-      updatedAt: realtimeSession.updatedAt,
-    },
-  });
-
-  return {
-    candidateSession: {
-      analysisStatus: resolveAnalysisStatus(status, eventStats),
-      candidateLabel: `Candidate ${realtimeSession.candidateId.slice(-6)}`,
-      completedAt: evidence.completedAt,
-      brief: null,
-      eventCount: evidence.eventCount,
-      evidence,
-      id: realtimeSession.candidateId,
-      interviewId: realtimeInterview.id,
-      jobTitle: realtimeInterview.job.title,
-      questionCompletionRate: evidence.questionCompletionRate,
-      realtimeSessionId: realtimeSession.id,
-      reviewStatus: resolveReviewStatus(status),
-      roleTitle: realtimeInterview.roleTitle,
-      startedAt: realtimeSession.createdAt.toISOString(),
-      status: evidence.status,
-      transcriptTurnCount: evidence.transcriptTurns.length,
-    },
-    kind: "candidate_session",
-    organizationName: organization.name,
-  };
+  return null;
 }
 
 function toCandidateBriefDto(
