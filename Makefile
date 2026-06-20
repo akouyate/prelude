@@ -18,10 +18,14 @@ LIVE_WORKER_SKIP_OPENAI ?=
 LIVE_WORKER_MAX_DURATION_SECONDS ?=
 LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS ?=
 LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS ?=
+E2E_SMOKE_RUN_ID ?=
+E2E_SMOKE_RESET ?= 1
+E2E_SMOKE_CONSOLE_URL ?= http://localhost:3000
+E2E_SMOKE_LIVE_LLM ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell db-migrate db-generate db-studio agent-benchmark live-openai-worker live-smoke-report dev
+.PHONY: help env-up env-down env-reset db-logs db-shell db-migrate db-generate db-studio agent-benchmark live-openai-worker live-smoke-report e2e-smoke e2e-smoke-live dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "Prelude local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -60,13 +64,28 @@ db-shell: ## Open a psql shell inside the local Postgres container.
 	$(COMPOSE) exec postgres psql -U postgres -d prelude
 
 db-migrate: ## Run Prisma migrations against local Postgres.
-	@$(LOAD_ENV); DATABASE_URL="$${DATABASE_URL:-$(DATABASE_URL)}" pnpm --filter @prelude/db exec prisma migrate dev --schema prisma/schema.prisma --name "$(MIGRATION_NAME)"
+	@$(LOAD_ENV); \
+	database_url="$${DATABASE_URL:-$(DATABASE_URL)}"; \
+	if [ "$(origin DATABASE_URL)" = "command line" ] || [ "$(origin DATABASE_URL)" = "environment" ]; then \
+		database_url="$(DATABASE_URL)"; \
+	fi; \
+	DATABASE_URL="$$database_url" pnpm --filter @prelude/db exec prisma migrate dev --schema prisma/schema.prisma --name "$(MIGRATION_NAME)"
 
 db-generate: ## Regenerate the Prisma client.
-	@$(LOAD_ENV); DATABASE_URL="$${DATABASE_URL:-$(DATABASE_URL)}" pnpm --filter @prelude/db db:generate
+	@$(LOAD_ENV); \
+	database_url="$${DATABASE_URL:-$(DATABASE_URL)}"; \
+	if [ "$(origin DATABASE_URL)" = "command line" ] || [ "$(origin DATABASE_URL)" = "environment" ]; then \
+		database_url="$(DATABASE_URL)"; \
+	fi; \
+	DATABASE_URL="$$database_url" pnpm --filter @prelude/db db:generate
 
 db-studio: ## Open Prisma Studio against local Postgres.
-	@$(LOAD_ENV); DATABASE_URL="$${DATABASE_URL:-$(DATABASE_URL)}" pnpm --filter @prelude/db exec prisma studio --schema prisma/schema.prisma
+	@$(LOAD_ENV); \
+	database_url="$${DATABASE_URL:-$(DATABASE_URL)}"; \
+	if [ "$(origin DATABASE_URL)" = "command line" ] || [ "$(origin DATABASE_URL)" = "environment" ]; then \
+		database_url="$(DATABASE_URL)"; \
+	fi; \
+	DATABASE_URL="$$database_url" pnpm --filter @prelude/db exec prisma studio --schema prisma/schema.prisma
 
 agent-benchmark: ## Run the Python live IA provider benchmark harness.
 	@$(LOAD_ENV); \
@@ -128,6 +147,28 @@ live-smoke-report: ## Print a replayability report for a live interview SESSION_
 	node scripts/live-smoke-report.mjs \
 		--session-id "$(SESSION_ID)" \
 		--realtime-api-url "$$realtime_api_url"
+
+e2e-smoke: env-up ## Create a repeatable V1 E2E smoke dataset with mocked LLM by default.
+	@$(LOAD_ENV); \
+	database_url="$${DATABASE_URL:-$(DATABASE_URL)}"; \
+	if [ "$(origin DATABASE_URL)" = "command line" ] || [ "$(origin DATABASE_URL)" = "environment" ]; then \
+		database_url="$(DATABASE_URL)"; \
+	fi; \
+	args="--strict --console-url $(E2E_SMOKE_CONSOLE_URL)"; \
+	if [ -n "$(E2E_SMOKE_RUN_ID)" ]; then \
+		args="$$args --run-id $(E2E_SMOKE_RUN_ID)"; \
+	fi; \
+	if [ "$(E2E_SMOKE_RESET)" = "1" ]; then \
+		args="$$args --reset"; \
+	fi; \
+	if [ "$(E2E_SMOKE_LIVE_LLM)" = "1" ]; then \
+		args="$$args --live-llm"; \
+	fi; \
+	DATABASE_URL="$$database_url" node scripts/e2e-smoke.mjs $$args
+
+e2e-smoke-live: ## Run the E2E smoke in explicit live-LLM mode; requires ALLOW_LIVE_LLM_TESTS=1.
+	@test "$(ALLOW_LIVE_LLM_TESTS)" = "1" || (printf "Set ALLOW_LIVE_LLM_TESTS=1 to acknowledge paid live LLM smoke mode.\n"; exit 1)
+	@$(MAKE) e2e-smoke E2E_SMOKE_LIVE_LLM=1 ALLOW_LIVE_LLM_TESTS=1
 
 dev: env-up ## Start local infrastructure, then run the app dev stack.
 	@$(LOAD_ENV); pnpm dev
