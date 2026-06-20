@@ -2,148 +2,66 @@
 
 ## Objective
 
-Ship the V1 E2E workflow step by step. Current implementation slice: `#21`
-recruiter insights dashboard POC.
+Ship the new UI/UX experience of the candidate webapp, aligned with the Claude
+Code candidate redesign reference and plugged into the real candidate API flow.
 
 ## Scope
 
-- Added `scripts/e2e-smoke.mjs`, a DB-backed V1 smoke that creates an onboarded
-  organization, recruiter membership, job, published interview, candidate
-  session, runtime session/events, transcript evidence, and persisted
-  `CandidateBrief`.
-- Added `make e2e-smoke`, which starts local Postgres and runs the smoke with
-  mocked LLM output by default.
-- Added `make e2e-smoke-live`, which is gated by `ALLOW_LIVE_LLM_TESTS=1`.
-- The smoke prints run id, organization/job/interview ids, candidate session id,
-  realtime session id, event count, transcript turn count, brief status, and
-  dashboard/detail/candidate URLs.
-- Smoke data is repeatable and resettable by run id without resetting the whole
-  local database.
-- README now documents the V1 E2E smoke command and live-mode guard.
-- Added `docs/architecture/v1-e2e-release-workflow.md` to make the orchestrator
-  and feature-team release loop explicit.
-- Audited remaining open P0 scope after #60, #61, and #62 merged.
-- Extracted and tested the shared Clerk-to-Prelude organization role mapping
-  used by onboarding and organization-scope resolution.
-- Added an explicit local-only Clerk mock provider for development/test when
-  Clerk keys are empty.
-- Routed onboarding, organization-scope resolution, and console auth context
-  through the shared auth provider.
-- Added policy coverage for authenticated, unauthenticated, not-onboarded,
-  wrong-organization, and inactive-membership access cases.
-- Added a tested publication-mode policy for interview drafts.
-- Hardened publish behavior so edits after publication create a new immutable
-  interview snapshot instead of mutating the previous candidate link snapshot.
-- Closed #55 and #57 after merge evidence and smoke validation.
-- Added `docs/operations/live-ia-commercial-poc-checklist.md` with go/no-go
-  criteria, demo script, evidence capture, risks, and non-goals.
-- Closed #23 after linking the checklist from #11.
-- Added canonical compliance copy, disallowed topics, human-in-the-loop rule,
-  and compliance flags in `@prelude/core`.
-- Added `complianceFlags` to CandidateBrief and live recruiter summary
-  contracts.
-- Added compliance flags to Go realtime recruiter summaries and local
-  CandidateBrief generation.
-- Added `docs/operations/compliance-trust-guardrails.md`.
-- Hardened console auth strategy with `CONSOLE_AUTH_PROVIDER=auto|clerk|mock`.
-- Added `@clerk/testing` Playwright setup for real Clerk E2E while keeping
-  product smoke tests on the local mock provider by default.
-- Aligned `make e2e-smoke` with the local mock Clerk identity so URLs printed by
-  the smoke report open directly in the console.
-- Made local mock organization scope idempotent against reruns, parallel page
-  loaders, and historical mock users/organizations.
-- Added shared server-side candidate review signals derived from persisted
-  `CandidateBrief` records.
-- Updated dashboard review queue cards to show real persisted evidence,
-  criteria distribution, answer coverage, clarification count, and limitations
-  without global scores or ranking language.
-- Reworked candidate interview detail into a recruiter review surface with
-  underline section navigation, persisted facts, question-by-question answers,
-  AI synthesis, human notes placeholder, limitations, and technical evidence.
-- Added visible non-decision guardrails on the dashboard and candidate detail
-  page.
-- Kept human notes and review status mutation controls out of #21 because #63
-  owns the editable reviewer workflow.
+- Used `/Users/adrienkouyate/Downloads/Candidate web app redesign/Candidate Experience.dc.html`
+  as the UX reference after the user pointed to it.
+- Reworked the candidate interview flow into clear steps:
+  - welcome screen
+  - setup / consent screen
+  - focused live interview screen
+  - completion screen
+- Aligned candidate app typography and shell with the console design direction:
+  Geist body, Plus Jakarta Sans titles, Instrument Serif italic accent,
+  charcoal primary actions, subdued olive accents, light warm surfaces, and no
+  card shadows.
+- Made the live interview voice-first by default, with camera optional when the
+  published interview allows video.
+- Removed candidate-facing LiveKit room IDs and other technical room language.
+- Kept the existing API contract:
+  - `POST /api/live-interview-sessions`
+  - `POST /api/live-interview-sessions/:sessionId/events`
+  - `POST /api/candidate-sessions/:sessionId/complete`
+- Added `apps/candidate/e2e/fake-realtime-server.mjs` so Playwright can exercise
+  the real Next.js candidate API routes without external LiveKit/realtime infra.
+- Updated candidate E2E to stop intercepting candidate app API routes in the
+  browser. The happy path now creates a product candidate session, bridges
+  through the Next API, posts candidate-ready events, and completes the product
+  session.
+- Captured screenshots for desktop and mobile:
+  - `/tmp/prelude-candidate-welcome.png`
+  - `/tmp/prelude-candidate-setup.png`
+  - `/tmp/prelude-candidate-live.png`
+  - `/tmp/prelude-candidate-complete.png`
+  - `/tmp/prelude-candidate-mobile-welcome.png`
+  - `/tmp/prelude-candidate-mobile-setup.png`
+  - `/tmp/prelude-candidate-mobile-live.png`
 
 ## Phases
 
 - [x] Intake
-- [x] Skill loading
 - [x] Repository investigation
-- [x] Architecture review
+- [x] Reference design review
 - [x] Plan
-- [x] Team decision
 - [x] Execution
 - [x] Testing
-- [x] Review
-- [x] Simplification
-- [x] Final validation
-- [x] Delivery
-
-## Direction
-
-- #62 gives the team a repeatable local proof of the V1 workflow after #60/#61.
-- The release workflow document now makes the remaining open P0 boundaries
-  explicit instead of treating issue cleanup as implicit completion.
-- Default smoke avoids paid LLM calls.
-- Live LLM mode remains opt-in and blocked without explicit acknowledgement.
-- Core workflow P0 implementation slices are closed through #57.
-- #20 is closed after the compliance/trust guardrail slice.
-- #21 is covered by this branch as the final recruiter-insights wrapper epic.
-- #63 remains the follow-up for editable human notes and review status mutation
-  controls.
+- [x] Visual review
+- [x] Final review
+- [ ] Delivery
 
 ## Validation
 
-- `node --check scripts/e2e-smoke.mjs`: passed.
-- `node scripts/e2e-smoke.mjs --help`: passed.
-- `make help`: passed and lists `e2e-smoke` / `e2e-smoke-live`.
-- `make e2e-smoke E2E_SMOKE_RUN_ID=codex62 POSTGRES_PORT=55432 DATABASE_URL=...`: passed with decision `Pass`.
-- `make e2e-smoke-live ...` without `ALLOW_LIVE_LLM_TESTS=1`: blocked as expected.
-- `pnpm run typecheck`: passed.
-- `pnpm run lint`: passed.
-- `pnpm run test`: passed.
-- `pnpm --dir apps/console run build`: passed.
+- `pnpm --dir apps/candidate typecheck`: passed.
+- `pnpm --dir apps/candidate lint`: passed.
+- `pnpm --dir apps/candidate test`: passed, 3 files / 12 tests.
+- `pnpm --dir apps/candidate test:e2e`: passed, 2 mobile Chromium tests.
 - `git diff --check`: passed.
-- `pnpm --dir apps/console test -- organization-access-policy`: passed.
-- `pnpm --dir apps/console typecheck`: passed.
-- `pnpm --dir apps/console lint`: passed.
-- `pnpm --dir apps/console test`: passed.
-- `pnpm --dir apps/console test -- interview-plan-policy`: passed.
-- `make e2e-smoke E2E_SMOKE_RUN_ID=codex57-publish POSTGRES_PORT=55432 DATABASE_URL=...`:
-  passed with decision `Pass`.
-- `pnpm exec prettier --check README.md docs/architecture/v1-e2e-release-workflow.md docs/operations/live-ia-commercial-poc-checklist.md .ship/state/current.md`:
-  passed for #23.
-- `pnpm --dir apps/console test`: passed.
-- `pnpm --dir apps/console typecheck`: passed.
-- `pnpm --dir apps/console lint`: passed.
-- `pnpm --dir apps/console test:e2e`: passed on isolated Playwright server.
-- `pnpm --dir packages/core test`: passed.
-- `pnpm --dir packages/core typecheck`: passed.
-- `pnpm --dir packages/core lint`: passed.
-- `pnpm --dir packages/contracts test`: passed.
-- `pnpm --dir packages/contracts typecheck`: passed.
-- `pnpm --dir packages/contracts lint`: passed.
-- `go test ./...` in `services/realtime`: passed.
-- `pnpm exec prettier --check ...`: passed for changed TS/MD files.
-- `git diff --check`: passed.
-- `make e2e-smoke E2E_SMOKE_RUN_ID=codex-post-20-smoke POSTGRES_PORT=55432 DATABASE_URL=...`:
-  passed with decision `Pass` after smoke URL auth-scope fix.
-- `curl -i http://127.0.0.1:3000/interviews/is_e2e_codex-post-20-smoke`:
-  returned `200 OK`.
-- `pnpm --dir apps/console test:e2e`: passed after the smoke URL auth-scope fix.
-- `pnpm --dir apps/console typecheck`: passed for #21.
-- `pnpm --dir apps/console lint`: passed for #21.
-- `pnpm --dir apps/console test`: passed for #21.
-- `pnpm --dir apps/console test:e2e`: passed for #21.
-- `git diff --check`: passed for #21.
-- `make e2e-smoke E2E_SMOKE_RUN_ID=codex-21-insights-final POSTGRES_PORT=55432 DATABASE_URL=...`:
-  passed with decision `Pass`.
-- `curl http://localhost:3000/interviews/is_e2e_codex-21-insights`: returned
-  `200`.
-- Desktop and mobile Playwright screenshots were captured for the persisted
-  candidate detail page.
 
 ## Remaining Follow-Up
 
-- #63 owns human notes and review status mutation controls.
+- Decide whether to keep camera as an optional mode in the candidate setup or
+  make this first released candidate app strictly audio-only.
+- Commit, push, and open PR.
