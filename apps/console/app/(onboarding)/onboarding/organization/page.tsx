@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -20,7 +20,11 @@ import {
 } from "iconoir-react";
 import { Button, ChoiceTile, Input, StepProgress, StepShell, cn } from "@prelude/ui";
 
-import { completeOrganizationOnboarding } from "../../../../src/server/onboarding/organization-onboarding";
+import {
+  completeOrganizationOnboarding,
+  getOrganizationOnboardingProgress,
+  saveOrganizationOnboardingProgress,
+} from "../../../../src/server/onboarding/organization-onboarding";
 
 type StepId =
   | "welcome"
@@ -226,8 +230,11 @@ const initialState: OnboardingState = {
 export default function OrganizationOnboardingPage() {
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(0);
+  const [isLoadingProgress, setIsLoadingProgress] = useState(true);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isSubmitting, startTransition] = useTransition();
+  const [isSaving, startSavingTransition] = useTransition();
   const [state, setState] = useState<OnboardingState>(initialState);
 
   const step = steps[currentStep] ?? "welcome";
@@ -257,15 +264,77 @@ export default function OrganizationOnboardingPage() {
     setState((current) => ({ ...current, [key]: value }));
   }
 
+  const persistProgress = useCallback(
+    (stepId: StepId, nextState: OnboardingState) => {
+      setSaveError(null);
+      startSavingTransition(async () => {
+        const result = await saveOrganizationOnboardingProgress({
+          currentStep: stepId,
+          state: toPersistedState(nextState),
+        });
+
+        if (!result.ok) {
+          setSaveError(result.error);
+        }
+      });
+    },
+    [startSavingTransition],
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+
+    getOrganizationOnboardingProgress().then((result) => {
+      if (!isMounted) {
+        return;
+      }
+
+      if (!result.ok) {
+        setSaveError(result.error);
+        setIsLoadingProgress(false);
+        return;
+      }
+
+      if (result.completed) {
+        router.replace("/");
+        return;
+      }
+
+      setState(toLocalState(result.state));
+      setCurrentStep(stepIndex(result.currentStep));
+      setIsLoadingProgress(false);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
+
+  useEffect(() => {
+    if (isLoadingProgress) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      persistProgress(step, state);
+    }, 600);
+
+    return () => window.clearTimeout(timeout);
+  }, [isLoadingProgress, persistProgress, state, step]);
+
   function goNext() {
     if (!canContinue) {
       return;
     }
-    setCurrentStep((value) => Math.min(value + 1, steps.length - 1));
+    const nextStep = Math.min(currentStep + 1, steps.length - 1);
+    persistProgress(steps[nextStep] ?? "ready", state);
+    setCurrentStep(nextStep);
   }
 
   function goBack() {
-    setCurrentStep((value) => Math.max(value - 1, 0));
+    const previousStep = Math.max(currentStep - 1, 0);
+    persistProgress(steps[previousStep] ?? "welcome", state);
+    setCurrentStep(previousStep);
   }
 
   function completeOnboarding() {
@@ -298,6 +367,25 @@ export default function OrganizationOnboardingPage() {
     });
   }
 
+  if (isLoadingProgress) {
+    return (
+      <StepShell
+        eyebrow="Prelude onboarding"
+        title={
+          <>
+            Preparing your{" "}
+            <span className="font-display italic text-olive-700">workspace</span>.
+          </>
+        }
+        description="We are loading your saved setup progress."
+      >
+        <div className="rounded-3xl border border-ink-100 bg-white/65 p-5 text-sm text-ink-600">
+          Loading workspace setup...
+        </div>
+      </StepShell>
+    );
+  }
+
   return (
     <StepShell
       eyebrow={step === "welcome" ? "Prelude onboarding" : "Workspace setup"}
@@ -306,6 +394,7 @@ export default function OrganizationOnboardingPage() {
           canContinue={canContinue}
           isFirst={currentStep === 0}
           isLast={step === "ready"}
+          isSaving={isSaving}
           onBack={goBack}
           onNext={goNext}
         />
@@ -454,13 +543,18 @@ export default function OrganizationOnboardingPage() {
               {submitError}
             </p>
           ) : null}
+          {saveError ? (
+            <p className="mt-5 rounded-2xl border border-[#f4c7b7] bg-[#fff4f0] px-4 py-3 text-sm text-[#8f2f1a]">
+              {saveError}
+            </p>
+          ) : null}
           <div className="mt-6">
             <Button
               className="w-full sm:w-auto"
               disabled={isSubmitting}
               onClick={completeOnboarding}
             >
-              {isSubmitting ? "Creating..." : "Create interview draft"}
+              {isSubmitting ? "Creating..." : "Finish workspace setup"}
             </Button>
           </div>
         </div>
@@ -673,7 +767,7 @@ function getStepDescription(step: StepId, state: OnboardingState) {
   }
 
   if (step === "ready") {
-    return "We have enough context to create the workspace and draft the first candidate interview.";
+    return "We have enough context to create the workspace and prepare the first role on your dashboard.";
   }
 
   return undefined;
@@ -717,12 +811,14 @@ function WizardFooter({
   canContinue,
   isFirst,
   isLast,
+  isSaving,
   onBack,
   onNext
 }: {
   canContinue: boolean;
   isFirst: boolean;
   isLast: boolean;
+  isSaving: boolean;
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -740,12 +836,47 @@ function WizardFooter({
         <ArrowLeft aria-hidden="true" className="h-4 w-4" />
         Back
       </Button>
-      <Button disabled={!canContinue} onClick={onNext}>
-        Continue
-        <ArrowRight aria-hidden="true" className="h-4 w-4" />
-      </Button>
+      <span className="flex items-center gap-3">
+        {isSaving ? (
+          <span className="text-xs font-medium text-ink-400">Saving...</span>
+        ) : null}
+        <Button disabled={!canContinue} onClick={onNext}>
+          Continue
+          <ArrowRight aria-hidden="true" className="h-4 w-4" />
+        </Button>
+      </span>
     </div>
   );
+}
+
+function stepIndex(step: StepId) {
+  return Math.max(0, steps.indexOf(step));
+}
+
+function toLocalState(state: ReturnType<typeof toPersistedState>): OnboardingState {
+  return {
+    companyName: state.companyName,
+    companySize: state.companySize,
+    hiringFocus: state.hiringFocus,
+    interviewMode: state.interviewMode,
+    jobSource: state.jobSource,
+    manualJobTitle: state.manualJobTitle,
+    role: state.onboardingRole,
+    selectedJobId: state.selectedJobId,
+  };
+}
+
+function toPersistedState(state: OnboardingState) {
+  return {
+    companyName: state.companyName,
+    companySize: state.companySize,
+    hiringFocus: state.hiringFocus,
+    interviewMode: state.interviewMode,
+    jobSource: state.jobSource,
+    manualJobTitle: state.manualJobTitle,
+    onboardingRole: state.role,
+    selectedJobId: state.selectedJobId,
+  };
 }
 
 function WelcomeStep() {

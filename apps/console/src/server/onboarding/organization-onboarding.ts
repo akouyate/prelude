@@ -2,6 +2,14 @@
 
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { prisma, type PrismaClient } from "@prelude/db";
+import {
+  organizationOnboardingStateSchema,
+  organizationOnboardingStepSchema,
+  saveOrganizationOnboardingProgressInputSchema,
+  type OrganizationOnboardingState,
+  type OrganizationOnboardingStep,
+  type SaveOrganizationOnboardingProgressInput,
+} from "@prelude/contracts";
 import type { OrganizationRole } from "@prelude/types";
 
 import { isClerkConfigured } from "../auth/clerk-config";
@@ -38,6 +46,31 @@ type CompleteOrganizationOnboardingResult =
 
 type ValidationResult = { ok: true } | { ok: false; error: string };
 
+type OrganizationOnboardingProgressResult =
+  | {
+      ok: true;
+      completed: boolean;
+      currentStep: OrganizationOnboardingStep;
+      organizationId: string | null;
+      state: OrganizationOnboardingState;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+type SaveOrganizationOnboardingProgressResult =
+  | {
+      ok: true;
+      currentStep: OrganizationOnboardingStep;
+      organizationId: string | null;
+      state: OrganizationOnboardingState;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
 const roleMap: Record<string, OrganizationRole> = {
   "org:admin": "admin",
   "org:member": "recruiter",
@@ -50,8 +83,123 @@ const roleMap: Record<string, OrganizationRole> = {
 
 type OnboardingTransaction = Pick<
   PrismaClient,
-  "organization" | "organizationMembership"
+  "jobSourceConnection" | "organization" | "organizationMembership"
 >;
+
+const defaultOnboardingState = organizationOnboardingStateSchema.parse({});
+
+export async function getOrganizationOnboardingProgress(): Promise<OrganizationOnboardingProgressResult> {
+  const authContext = await getAuthenticatedOnboardingContext();
+
+  if (!authContext.ok) {
+    return authContext;
+  }
+
+  const persisted = await findOnboardingOrganizationForUser({
+    clerkOrganizationId: authContext.clerkOrganizationId,
+    clerkUserId: authContext.userId,
+  });
+
+  if (!persisted) {
+    return {
+      ok: true,
+      completed: false,
+      currentStep: "welcome",
+      organizationId: null,
+      state: organizationOnboardingStateSchema.parse({}),
+    };
+  }
+
+  const state = readPersistedOnboardingState(persisted.organization);
+  return {
+    ok: true,
+    completed: Boolean(persisted.organization.onboardingCompletedAt),
+    currentStep: readPersistedOnboardingStep(persisted.organization.onboardingStep),
+    organizationId: persisted.organization.id,
+    state,
+  };
+}
+
+export async function saveOrganizationOnboardingProgress(
+  input: SaveOrganizationOnboardingProgressInput,
+): Promise<SaveOrganizationOnboardingProgressResult> {
+  const parsed = saveOrganizationOnboardingProgressInputSchema.safeParse(input);
+
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: "Onboarding progress is invalid.",
+    };
+  }
+
+  const authContext = await getAuthenticatedOnboardingContext();
+
+  if (!authContext.ok) {
+    return authContext;
+  }
+
+  if (!shouldPersistOnboardingState(parsed.data.state)) {
+    return {
+      ok: true,
+      currentStep: parsed.data.currentStep,
+      organizationId: null,
+      state: parsed.data.state,
+    };
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const user = await upsertOnboardingUser(tx, authContext);
+    const organization = await upsertOnboardingOrganization(
+      tx,
+      user.id,
+      authContext,
+      parsed.data,
+    );
+
+    await upsertOnboardingMembership(tx, {
+      authContext,
+      organizationId: organization.id,
+      userId: user.id,
+      onboardingRole: parsed.data.state.onboardingRole,
+    });
+
+    if (parsed.data.state.jobSource) {
+      await tx.jobSourceConnection.upsert({
+        where: {
+          organizationId_provider: {
+            organizationId: organization.id,
+            provider: parsed.data.state.jobSource,
+          },
+        },
+        update: {
+          externalLabel: connectionLabel(parsed.data.state.jobSource),
+          status:
+            parsed.data.state.jobSource === "manual"
+              ? "manual"
+              : "mock_connected",
+        },
+        create: {
+          externalLabel: connectionLabel(parsed.data.state.jobSource),
+          organizationId: organization.id,
+          provider: parsed.data.state.jobSource,
+          status:
+            parsed.data.state.jobSource === "manual"
+              ? "manual"
+              : "mock_connected",
+        },
+      });
+    }
+
+    return organization;
+  });
+
+  return {
+    ok: true,
+    currentStep: readPersistedOnboardingStep(result.onboardingStep),
+    organizationId: result.id,
+    state: readPersistedOnboardingState(result),
+  };
+}
 
 export async function completeOrganizationOnboarding(
   input: CompleteOrganizationOnboardingInput,
@@ -78,18 +226,7 @@ export async function completeOrganizationOnboarding(
   }
 
   const result = await prisma.$transaction(async (tx) => {
-    const user = await tx.user.upsert({
-      where: { clerkUserId: authContext.userId },
-      update: {
-        email: authContext.userEmail,
-        name: authContext.userName,
-      },
-      create: {
-        clerkUserId: authContext.userId,
-        email: authContext.userEmail,
-        name: authContext.userName,
-      },
-    });
+    const user = await upsertOnboardingUser(tx, authContext);
 
     const organization = authContext.clerkOrganizationId
       ? await tx.organization.upsert({
@@ -102,25 +239,11 @@ export async function completeOrganizationOnboarding(
         })
       : await upsertPersonalOnboardingOrganization(tx, user.id, input);
 
-    await tx.organizationMembership.upsert({
-      where: {
-        organizationId_userId: {
-          organizationId: organization.id,
-          userId: user.id,
-        },
-      },
-      update: {
-        onboardingRole: input.onboardingRole,
-        role: authContext.role,
-        status: "active",
-      },
-      create: {
-        organizationId: organization.id,
-        onboardingRole: input.onboardingRole,
-        role: authContext.role,
-        status: "active",
-        userId: user.id,
-      },
+    await upsertOnboardingMembership(tx, {
+      authContext,
+      organizationId: organization.id,
+      onboardingRole: input.onboardingRole,
+      userId: user.id,
     });
 
     await tx.jobSourceConnection.upsert({
@@ -172,7 +295,7 @@ export async function completeOrganizationOnboarding(
   return {
     ok: true,
     ...result,
-    redirectTo: `/interviews/new?jobId=${result.jobId}`,
+    redirectTo: "/",
   };
 }
 
@@ -248,13 +371,219 @@ async function getAuthenticatedOnboardingContext(): Promise<
 }
 
 function organizationData(input: CompleteOrganizationOnboardingInput) {
+  const state = toOnboardingState(input);
+
   return {
     companySize: input.companySize,
     defaultInterviewMode: input.interviewMode,
     hiringFocus: input.hiringFocus,
     name: input.companyName.trim(),
     onboardingCompletedAt: new Date(),
+    onboardingState: state,
+    onboardingStep: "ready",
   };
+}
+
+async function upsertOnboardingUser(
+  tx: Pick<PrismaClient, "user">,
+  authContext: Extract<
+    Awaited<ReturnType<typeof getAuthenticatedOnboardingContext>>,
+    { ok: true }
+  >,
+) {
+  return tx.user.upsert({
+    where: { clerkUserId: authContext.userId },
+    update: {
+      email: authContext.userEmail,
+      name: authContext.userName,
+    },
+    create: {
+      clerkUserId: authContext.userId,
+      email: authContext.userEmail,
+      name: authContext.userName,
+    },
+  });
+}
+
+async function upsertOnboardingMembership(
+  tx: Pick<PrismaClient, "organizationMembership">,
+  input: {
+    authContext: Extract<
+      Awaited<ReturnType<typeof getAuthenticatedOnboardingContext>>,
+      { ok: true }
+    >;
+    organizationId: string;
+    onboardingRole: string;
+    userId: string;
+  },
+) {
+  return tx.organizationMembership.upsert({
+    where: {
+      organizationId_userId: {
+        organizationId: input.organizationId,
+        userId: input.userId,
+      },
+    },
+    update: {
+      onboardingRole: input.onboardingRole || null,
+      role: input.authContext.role,
+      status: "active",
+    },
+    create: {
+      organizationId: input.organizationId,
+      onboardingRole: input.onboardingRole || null,
+      role: input.authContext.role,
+      status: "active",
+      userId: input.userId,
+    },
+  });
+}
+
+async function upsertOnboardingOrganization(
+  tx: OnboardingTransaction,
+  userId: string,
+  authContext: Extract<
+    Awaited<ReturnType<typeof getAuthenticatedOnboardingContext>>,
+    { ok: true }
+  >,
+  input: SaveOrganizationOnboardingProgressInput,
+) {
+  const data = organizationProgressData(input);
+
+  if (authContext.clerkOrganizationId) {
+    return tx.organization.upsert({
+      where: { clerkOrganizationId: authContext.clerkOrganizationId },
+      update: data,
+      create: {
+        clerkOrganizationId: authContext.clerkOrganizationId,
+        ...data,
+      },
+    });
+  }
+
+  const existingMembership = await tx.organizationMembership.findFirst({
+    include: { organization: true },
+    orderBy: { createdAt: "asc" },
+    where: {
+      status: "active",
+      userId,
+    },
+  });
+
+  if (existingMembership) {
+    return tx.organization.update({
+      where: { id: existingMembership.organizationId },
+      data,
+    });
+  }
+
+  return tx.organization.create({
+    data,
+  });
+}
+
+function organizationProgressData(
+  input: SaveOrganizationOnboardingProgressInput,
+) {
+  return {
+    companySize: input.state.companySize || null,
+    defaultInterviewMode: input.state.interviewMode || null,
+    hiringFocus: input.state.hiringFocus || null,
+    name: input.state.companyName || "Untitled workspace",
+    onboardingState: input.state,
+    onboardingStep: input.currentStep,
+  };
+}
+
+async function findOnboardingOrganizationForUser({
+  clerkOrganizationId,
+  clerkUserId,
+}: {
+  clerkOrganizationId: string | null;
+  clerkUserId: string;
+}) {
+  return prisma.organizationMembership.findFirst({
+    include: {
+      organization: true,
+    },
+    orderBy: { createdAt: "asc" },
+    where: {
+      status: "active",
+      user: {
+        clerkUserId,
+      },
+      ...(clerkOrganizationId
+        ? {
+            organization: {
+              clerkOrganizationId,
+            },
+          }
+        : {}),
+    },
+  });
+}
+
+function readPersistedOnboardingState(input: {
+  companySize: string | null;
+  defaultInterviewMode: string | null;
+  hiringFocus: string | null;
+  name: string;
+  onboardingState: unknown;
+}) {
+  const parsed = organizationOnboardingStateSchema.safeParse(
+    input.onboardingState,
+  );
+  const state = parsed.success ? parsed.data : defaultOnboardingState;
+
+  return organizationOnboardingStateSchema.parse({
+    ...state,
+    companyName:
+      state.companyName ||
+      (input.name === "Untitled workspace" ? "" : input.name),
+    companySize: state.companySize || input.companySize || "",
+    hiringFocus: state.hiringFocus || input.hiringFocus || "",
+    interviewMode:
+      state.interviewMode ||
+      input.defaultInterviewMode ||
+      defaultOnboardingState.interviewMode,
+  });
+}
+
+function readPersistedOnboardingStep(
+  step: string | null | undefined,
+): OrganizationOnboardingStep {
+  const parsed = organizationOnboardingStepSchema.safeParse(step);
+
+  return parsed.success ? parsed.data : "welcome";
+}
+
+function shouldPersistOnboardingState(state: OrganizationOnboardingState) {
+  return (
+    state.companyName.trim().length >= 2 ||
+    Boolean(
+      state.companySize ||
+        state.hiringFocus ||
+        state.jobSource ||
+        state.manualJobTitle ||
+        state.onboardingRole ||
+        state.selectedJobId,
+    )
+  );
+}
+
+function toOnboardingState(
+  input: CompleteOrganizationOnboardingInput,
+): OrganizationOnboardingState {
+  return organizationOnboardingStateSchema.parse({
+    companyName: input.companyName,
+    companySize: input.companySize,
+    hiringFocus: input.hiringFocus,
+    interviewMode: input.interviewMode,
+    jobSource: input.jobSource,
+    manualJobTitle: input.manualJobTitle ?? "",
+    onboardingRole: input.onboardingRole,
+    selectedJobId: input.selectedJob?.id ?? "",
+  });
 }
 
 async function upsertPersonalOnboardingOrganization(
