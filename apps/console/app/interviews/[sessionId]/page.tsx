@@ -1,20 +1,28 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import {
   liveInterviewRecruiterSummaryWireSchema,
   type LiveInterviewRecruiterSummary,
 } from "@prelude/contracts";
-import { Badge, Card, EnterpriseShell } from "@prelude/ui";
+import { Card, EnterpriseShell, StatusBadge } from "@prelude/ui";
 import {
   ArrowLeft,
+  Calendar,
+  ClipboardCheck,
+  Clock,
   Community,
+  EditPencil,
   Link as LinkIcon,
   Microphone,
   ShieldCheck,
+  Sparks,
+  UserBadgeCheck as UserRoundCheck,
+  WarningTriangle,
 } from "iconoir-react";
 
 import { ConsoleAuthControls } from "../../../src/features/auth/console-auth-controls";
-import { RecruiterSummaryPanel } from "../../../src/features/interview-agent/recruiter-summary-panel";
+import { CandidateReviewTabs } from "../../../src/features/interview-agent/candidate-review-tabs";
 import { isClerkConfigured } from "../../../src/server/auth/clerk-config";
 import { getConsoleAuthContext } from "../../../src/server/auth/console-auth";
 import { getInterviewDetail } from "../../../src/server/interviews/interview-loaders";
@@ -63,12 +71,15 @@ export default async function InterviewDetailPage({
     >
       {detail.kind === "interview" ? (
         <InterviewOverview detail={detail} />
-      ) : summaryResult?.summary ? (
-        <RecruiterSummaryPanel summary={summaryResult.summary} />
       ) : (
-        <CandidateSessionPending
-          error={summaryResult?.error}
+        <CandidateSessionReview
+          error={
+            summaryResult?.summary
+              ? undefined
+              : summaryResult?.error
+          }
           session={detail.candidateSession}
+          summary={summaryResult?.summary}
         />
       )}
     </EnterpriseShell>
@@ -83,6 +94,10 @@ function InterviewOverview({
   };
 }) {
   const { interview } = detail;
+  const sessionStats = getSessionStats(interview.candidateSessions);
+  const candidateLinkLabel = `prelude.ai${interview.candidatePath}`;
+  const estimatedMinutes = getEstimatedMinutes(interview);
+  const latestSession = interview.candidateSessions[0];
 
   return (
     <div className="mx-auto max-w-6xl">
@@ -94,66 +109,227 @@ function InterviewOverview({
         Dashboard
       </Link>
 
-      <section className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]">
-        <div>
-          <Badge className={statusBadgeClass(interview.status)}>
-            {formatStatus(interview.status)}
-          </Badge>
-          <h1 className="mt-4 text-4xl font-semibold tracking-normal text-ink-950">
+      <section className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-stretch">
+        <Card className="p-6 sm:p-7">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge tone={statusTone(interview.status)}>
+              {formatStatus(interview.status)}
+            </StatusBadge>
+            <StatusBadge tone="neutral">
+              {interview.questions.length} questions
+            </StatusBadge>
+            <StatusBadge tone="neutral">
+              {formatModeSummary(interview.responseModes)}
+            </StatusBadge>
+          </div>
+          <h1 className="mt-5 max-w-4xl text-4xl font-semibold tracking-normal text-ink-950 sm:text-5xl">
             {interview.roleTitle}
           </h1>
           <p className="mt-4 max-w-3xl text-base leading-7 text-ink-600">
             {interview.roleBrief || "No role brief has been added yet."}
           </p>
-        </div>
 
-        <Card className="p-5">
-          <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-            <LinkIcon aria-hidden="true" className="h-4 w-4" />
-            Candidate link
+          <dl className="mt-7 grid gap-3 sm:grid-cols-3">
+            <DetailFact label="Job" value={interview.jobTitle} />
+            <DetailFact label="Duration" value={`${estimatedMinutes} min`} />
+            <DetailFact label="Updated" value={formatShortDate(interview.updatedAt)} />
+          </dl>
+
+          <div className="mt-7 flex flex-wrap gap-2">
+            {interview.draftId ? (
+              <Link
+                className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-full bg-ink-900 px-4 text-sm font-medium text-white transition hover:bg-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6]"
+                href={`/interviews/new?draftId=${interview.draftId}`}
+              >
+                <EditPencil aria-hidden="true" className="h-4 w-4" />
+                Edit interview
+              </Link>
+            ) : null}
+            <Link
+              className="inline-flex h-11 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-white/80 px-4 text-sm font-medium text-ink-900 transition hover:border-ink-900 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6]"
+              href="/interviews/new"
+            >
+              New interview
+            </Link>
           </div>
-          <p className="mt-3 break-all text-base font-semibold text-ink-950">
-            prelude.ai{interview.candidatePath}
-          </p>
-          <p className="mt-2 text-sm leading-6 text-ink-500">
-            Snapshot published from the saved draft. Candidate sessions will
-            appear here once started.
-          </p>
+        </Card>
+
+        <Card className="flex flex-col justify-between p-5">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
+              <LinkIcon aria-hidden="true" className="h-4 w-4" />
+              Candidate entry point
+            </div>
+            <p className="mt-3 break-all rounded-2xl border border-ink-100 bg-white/72 px-3 py-3 text-sm font-semibold text-ink-950">
+              {candidateLinkLabel}
+            </p>
+            <p className="mt-3 text-sm leading-6 text-ink-500">
+              Share this link. Every started interview appears in the review
+              queue below.
+            </p>
+          </div>
+          <div className="mt-5 rounded-3xl bg-[#f7f7ef] p-4">
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-olive-900">
+              Latest activity
+            </p>
+            <p className="mt-2 text-sm font-semibold text-ink-950">
+              {latestSession
+                ? latestSession.candidateLabel
+                : "No candidate yet"}
+            </p>
+            <p className="mt-1 text-sm text-ink-500">
+              {latestSession
+                ? `${formatStatus(latestSession.status)} · ${formatShortDate(
+                    latestSession.completedAt ?? latestSession.startedAt,
+                  )}`
+                : "Waiting for the first interview start."}
+            </p>
+          </div>
         </Card>
       </section>
 
-      <section className="mt-8 grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
-        <Card className="p-5">
-          <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-            <Microphone aria-hidden="true" className="h-4 w-4" />
-            Questions
-          </div>
-          <div className="mt-4 divide-y divide-ink-100">
-            {interview.questions.map((question, index) => (
-              <div key={question.id} className="py-4 first:pt-0 last:pb-0">
-                <p className="text-xs font-semibold text-ink-400">
-                  {String(index + 1).padStart(2, "0")}
-                </p>
-                <p className="mt-1 text-sm font-semibold leading-6 text-ink-950">
-                  {question.prompt}
-                </p>
-                <p className="mt-1 text-sm leading-5 text-ink-500">
-                  {question.signal}
-                </p>
-              </div>
-            ))}
-          </div>
-        </Card>
+      <section className="mt-5 grid gap-3 sm:grid-cols-3">
+        <InsightPill
+          icon={<Community aria-hidden="true" className="h-4 w-4" />}
+          label="Started"
+          value={String(sessionStats.started)}
+        />
+        <InsightPill
+          icon={<UserRoundCheck aria-hidden="true" className="h-4 w-4" />}
+          label="Completed"
+          value={String(sessionStats.completed)}
+        />
+        <InsightPill
+          icon={<ClipboardCheck aria-hidden="true" className="h-4 w-4" />}
+          label="Needs review"
+          value={String(sessionStats.needsReview)}
+        />
+      </section>
+
+      <section className="mt-10 grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        <div className="space-y-10">
+          <section>
+            <SectionHeading
+              description="Open completed or in-progress sessions and inspect the recruiter recap."
+              icon={<Calendar aria-hidden="true" className="h-4 w-4" />}
+              title="Candidate review queue"
+            />
+            <div className="mt-4 overflow-hidden rounded-3xl border border-ink-100 bg-white/72">
+              {interview.candidateSessions.length > 0 ? (
+                <div className="divide-y divide-ink-100">
+                  {interview.candidateSessions.map((session) => (
+                  <Link
+                    key={session.id}
+                    className="group grid cursor-pointer gap-4 p-4 transition hover:bg-white sm:grid-cols-[minmax(0,1fr)_minmax(16rem,0.75fr)_auto] sm:items-center"
+                    href={`/interviews/${session.realtimeSessionId ?? session.id}`}
+                  >
+                    <span className="min-w-0">
+                      <span className="block truncate text-base font-semibold text-ink-950">
+                        {session.candidateLabel}
+                      </span>
+                      <span className="mt-1 flex flex-wrap items-center gap-2 text-sm text-ink-500">
+                        <StatusBadge tone={statusTone(session.status)}>
+                          {formatStatus(session.status)}
+                        </StatusBadge>
+                        <StatusBadge tone={analysisStatusTone(session.analysisStatus)}>
+                          {formatAnalysisStatus(session.analysisStatus)}
+                        </StatusBadge>
+                      </span>
+                    </span>
+                    <span className="grid gap-2 text-sm text-ink-600 sm:grid-cols-2">
+                      <ReviewFact
+                        icon={<Microphone aria-hidden="true" className="h-4 w-4" />}
+                        label={`${session.transcriptTurnCount} turns`}
+                      />
+                      <ReviewFact
+                        icon={<ClipboardCheck aria-hidden="true" className="h-4 w-4" />}
+                        label={
+                          session.questionCompletionRate === null
+                            ? "No script"
+                            : `${session.questionCompletionRate}% complete`
+                        }
+                      />
+                      <ReviewFact
+                        icon={<Clock aria-hidden="true" className="h-4 w-4" />}
+                        label={formatShortDate(session.startedAt)}
+                      />
+                      <ReviewFact
+                        icon={<Calendar aria-hidden="true" className="h-4 w-4" />}
+                        label={formatShortDate(session.completedAt)}
+                      />
+                    </span>
+                    <span className="text-sm font-medium text-ink-900 transition group-hover:translate-x-0.5">
+                      Review
+                    </span>
+                  </Link>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-5">
+                  <p className="text-sm font-semibold text-ink-900">
+                    No candidate session yet
+                  </p>
+                  <p className="mt-2 text-sm leading-6 text-ink-500">
+                    Once a candidate starts the live interview, the session
+                    appears here with analysis readiness and completion signals.
+                  </p>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section>
+            <SectionHeading
+              description="What the live interviewer will ask, and the signal each answer should reveal."
+              icon={<Microphone aria-hidden="true" className="h-4 w-4" />}
+              title="Interview script"
+            />
+            <div className="mt-4 space-y-3">
+              {interview.questions.map((question, index) => (
+                <article
+                  key={question.id}
+                  className="rounded-3xl border border-ink-100 bg-white/76 p-4"
+                >
+                  <div className="flex gap-4">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#eef0e3] text-xs font-semibold text-olive-800">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <StatusBadge tone="muted">
+                          {formatQuestionSource(question.source)}
+                        </StatusBadge>
+                        <span className="text-xs font-medium text-ink-400">
+                          {Math.max(1, Math.round(question.durationSeconds / 60))} min
+                        </span>
+                      </div>
+                      <p className="text-base font-semibold leading-7 text-ink-950">
+                        {question.prompt}
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-ink-500">
+                        {question.signal}
+                      </p>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        </div>
 
         <div className="space-y-5">
           <Card className="p-5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-              <ShieldCheck aria-hidden="true" className="h-4 w-4" />
-              Evaluation
-            </div>
-            <div className="mt-4 space-y-3">
+            <SectionHeading
+              description="What reviewers should compare after the live screen."
+              icon={<ShieldCheck aria-hidden="true" className="h-4 w-4" />}
+              title="Evaluation matrix"
+            />
+            <div className="mt-4 space-y-2">
               {interview.criteria.map((criterion) => (
-                <div key={criterion.id}>
+                <div
+                  key={criterion.id}
+                  className="rounded-2xl border border-ink-100 bg-white/62 p-3"
+                >
                   <p className="text-sm font-semibold text-ink-950">
                     {criterion.label}
                   </p>
@@ -166,31 +342,20 @@ function InterviewOverview({
           </Card>
 
           <Card className="p-5">
-            <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
-              <Community aria-hidden="true" className="h-4 w-4" />
-              Candidate sessions
-            </div>
-            <div className="mt-4 space-y-3">
-              {interview.candidateSessions.length > 0 ? (
-                interview.candidateSessions.map((session) => (
-                  <Link
-                    key={session.id}
-                    className="flex cursor-pointer items-center justify-between gap-4 rounded-2xl border border-ink-100 bg-white/72 px-4 py-3 text-sm transition hover:border-ink-300"
-                    href={`/interviews/${session.realtimeSessionId ?? session.id}`}
-                  >
-                    <span className="font-medium text-ink-900">
-                      {formatStatus(session.status)}
-                    </span>
-                    <span className="text-ink-500">
-                      {formatDate(session.startedAt)}
-                    </span>
-                  </Link>
-                ))
-              ) : (
-                <p className="text-sm leading-6 text-ink-500">
-                  No candidate has started this interview yet.
+            <SectionHeading
+              description="Rules the interviewer and reviewer must preserve."
+              icon={<ShieldCheck aria-hidden="true" className="h-4 w-4" />}
+              title="Guardrails"
+            />
+            <div className="mt-4 space-y-2">
+              {interview.guardrails.map((guardrail) => (
+                <p
+                  key={guardrail}
+                  className="rounded-2xl border border-ink-100 bg-white/62 p-3 text-sm leading-6 text-ink-600"
+                >
+                  {guardrail}
                 </p>
-              )}
+              ))}
             </div>
           </Card>
         </div>
@@ -199,38 +364,150 @@ function InterviewOverview({
   );
 }
 
-function CandidateSessionPending({
+function CandidateSessionReview({
   error,
   session,
+  summary,
 }: {
   error?: string;
   session: {
+    analysisStatus: "available" | "pending" | "not_ready";
+    candidateLabel: string;
+    completedAt: string | null;
+    eventCount: number;
+    interviewId: string;
+    jobTitle: string;
+    questionCompletionRate: number | null;
     realtimeSessionId: string | null;
+    reviewStatus: "to_call" | "to_review" | "archived";
     roleTitle: string;
+    startedAt: string | null;
     status: string;
+    transcriptTurnCount: number;
   };
+  summary?: LiveInterviewRecruiterSummary;
 }) {
+  const displayedAnalysisStatus = summary ? "available" : session.analysisStatus;
+  const satisfiedCriteria =
+    summary?.criteria.filter((criterion) => criterion.status === "satisfied")
+      .length ?? 0;
+  const criteriaNeedingReview = summary
+    ? summary.criteria.length - satisfiedCriteria
+    : 0;
+
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto max-w-6xl">
       <Link
         className="inline-flex cursor-pointer items-center gap-2 rounded-full text-sm font-medium text-ink-600 transition hover:text-ink-950"
-        href="/"
+        href={`/interviews/${session.interviewId}`}
       >
         <ArrowLeft aria-hidden="true" className="h-4 w-4" />
-        Back
+        Interview
       </Link>
-      <Card className="mt-6 p-6">
-        <Badge className={statusBadgeClass(session.status)}>
-          {formatStatus(session.status)}
-        </Badge>
-        <h1 className="mt-4 text-3xl font-semibold text-ink-950">
-          {session.roleTitle}
-        </h1>
-        <p className="mt-3 text-sm leading-6 text-ink-600">
-          {error ??
-            "The recruiter summary is not available yet. It will appear once the live interview has enough completed data."}
-        </p>
-      </Card>
+
+      <section className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-stretch">
+        <Card className="p-6 sm:p-7">
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge tone={statusTone(session.status)}>
+              {formatStatus(session.status)}
+            </StatusBadge>
+            <StatusBadge tone={reviewStatusTone(session.reviewStatus)}>
+              {formatReviewStatus(session.reviewStatus)}
+            </StatusBadge>
+            <StatusBadge tone={analysisStatusTone(displayedAnalysisStatus)}>
+              {formatAnalysisStatus(displayedAnalysisStatus)}
+            </StatusBadge>
+          </div>
+          <h1 className="mt-4 text-4xl font-semibold tracking-normal text-ink-950">
+            {session.candidateLabel}
+          </h1>
+          <p className="mt-3 text-base leading-7 text-ink-600">
+            {session.roleTitle} · {session.jobTitle}
+          </p>
+          <p className="mt-5 max-w-3xl text-base leading-7 text-ink-600">
+            {summary?.overview ??
+              "The candidate session is available, but the recruiter recap is not ready yet."}
+          </p>
+        </Card>
+
+        <Card className="flex flex-col justify-between p-5">
+          {summary ? (
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-olive-900">
+                Recommendation
+              </p>
+              <h2 className="mt-3 text-2xl font-semibold leading-tight text-ink-950">
+                {summary.recommendation.label}
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-ink-600">
+                {summary.recommendation.rationale}
+              </p>
+            </div>
+          ) : (
+            <div>
+              <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
+                <ShieldCheck aria-hidden="true" className="h-4 w-4" />
+                Review guardrail
+              </div>
+              <p className="mt-3 text-sm leading-6 text-ink-600">
+                Prelude supports human screening review. This page must not be
+                used as an automated hiring or rejection decision.
+              </p>
+            </div>
+          )}
+          <div className="mt-5 grid grid-cols-2 gap-2">
+            <MiniFact label="Criteria met" value={`${satisfiedCriteria}/${summary?.criteria.length ?? 0}`} />
+            <MiniFact label="To clarify" value={String(criteriaNeedingReview)} />
+          </div>
+        </Card>
+      </section>
+
+      <InterviewPulse
+        eventCount={session.eventCount}
+        questionCompletionRate={session.questionCompletionRate}
+        transcriptTurnCount={session.transcriptTurnCount}
+      />
+
+      <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+        {summary ? (
+          <>
+            <div>
+              <CandidateReviewTabs summary={summary} />
+            </div>
+
+            <aside className="space-y-4 lg:sticky lg:top-24">
+              <CandidateAssistantRail
+                candidateLabel={session.candidateLabel}
+                summary={summary}
+              />
+            </aside>
+          </>
+        ) : (
+          <Card className="border-dashed bg-white/72 p-6 lg:col-span-2">
+            <div className="flex items-start gap-3">
+              <span className="grid h-10 w-10 place-items-center rounded-full bg-[#eef0e3] text-olive-800">
+                <WarningTriangle aria-hidden="true" className="h-5 w-5" />
+              </span>
+              <span>
+                <span className="block text-sm font-semibold text-ink-950">
+                  {displayedAnalysisStatus === "not_ready"
+                    ? "Analysis is not ready"
+                    : "Analysis is pending"}
+                </span>
+                <span className="mt-2 block text-sm leading-6 text-ink-600">
+                  {error ??
+                    "The AI brief will appear after the completed live interview has persisted transcript turns and answer evaluations."}
+                </span>
+                {session.realtimeSessionId ? (
+                  <span className="mt-3 block break-all text-xs font-medium text-ink-400">
+                    Session {session.realtimeSessionId} · {session.eventCount} events
+                  </span>
+                ) : null}
+              </span>
+            </div>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }
@@ -283,6 +560,28 @@ function formatStatus(status: string) {
   return status.replace(/_/g, " ");
 }
 
+function formatModeSummary(modes: string[]) {
+  if (modes.length === 0) {
+    return "Form + Audio";
+  }
+
+  return modes
+    .map((mode) => (mode === "text" ? "Form" : mode[0]!.toUpperCase() + mode.slice(1)))
+    .join(" + ");
+}
+
+function formatQuestionSource(source: string) {
+  if (source === "job_description") {
+    return "Role brief";
+  }
+
+  if (source === "attachment") {
+    return "Attachment";
+  }
+
+  return "AI";
+}
+
 function formatDate(value: string | null) {
   if (!value) {
     return "Not started";
@@ -294,18 +593,312 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
-function statusBadgeClass(status: string) {
+function formatShortDate(value: string | null) {
+  if (!value) {
+    return "No date";
+  }
+
+  return new Intl.DateTimeFormat("en", {
+    day: "numeric",
+    month: "short",
+  }).format(new Date(value));
+}
+
+function getEstimatedMinutes(interview: {
+  estimatedMinutes: number | null;
+  questions: Array<{ durationSeconds: number }>;
+}) {
+  if (interview.estimatedMinutes) {
+    return interview.estimatedMinutes;
+  }
+
+  const totalSeconds = interview.questions.reduce(
+    (total, question) => total + question.durationSeconds,
+    0,
+  );
+
+  return Math.max(1, Math.round(totalSeconds / 60));
+}
+
+function statusTone(status: string) {
   if (status === "completed" || status === "needs_review") {
-    return "bg-coral-50 text-coral-800";
+    return "danger";
   }
 
   if (status === "published") {
-    return "bg-ink-900 text-white";
+    return "dark";
   }
 
   if (status === "in_progress" || status === "waiting_candidate") {
-    return "bg-gold-100 text-gold-800";
+    return "warning";
   }
 
-  return "bg-[#f0f1e6] text-olive-800";
+  return "olive";
+}
+
+function reviewStatusTone(status: string) {
+  if (status === "to_call") {
+    return "success";
+  }
+
+  if (status === "archived") {
+    return "muted";
+  }
+
+  return "danger";
+}
+
+function analysisStatusTone(status: string) {
+  if (status === "available") {
+    return "success";
+  }
+
+  if (status === "pending") {
+    return "warning";
+  }
+
+  return "muted";
+}
+
+function formatReviewStatus(status: string) {
+  if (status === "to_call") {
+    return "To call";
+  }
+
+  if (status === "to_review") {
+    return "To review";
+  }
+
+  return "Archived";
+}
+
+function formatAnalysisStatus(status: string) {
+  if (status === "available") {
+    return "Analysis ready";
+  }
+
+  if (status === "pending") {
+    return "Analysis pending";
+  }
+
+  return "Not ready";
+}
+
+function getSessionStats(
+  sessions: Array<{
+    completedAt: string | null;
+    status: string;
+  }>,
+) {
+  const completed = sessions.filter(
+    (session) => session.status === "completed" || session.completedAt,
+  ).length;
+  const started = sessions.filter((session) => session.status !== "created").length;
+
+  return {
+    completed,
+    needsReview: completed,
+    started,
+  };
+}
+
+function SectionHeading({
+  description,
+  icon,
+  title,
+}: {
+  description: string;
+  icon: ReactNode;
+  title: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
+        {icon}
+        {title}
+      </div>
+      <p className="mt-1 max-w-2xl text-sm leading-6 text-ink-500">
+        {description}
+      </p>
+    </div>
+  );
+}
+
+function DetailFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-ink-100 bg-white/62 px-4 py-3">
+      <dt className="text-xs font-medium text-ink-500">{label}</dt>
+      <dd className="mt-1 truncate text-sm font-semibold text-ink-950">
+        {value}
+      </dd>
+    </div>
+  );
+}
+
+function MiniFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl border border-ink-100 bg-white/68 px-3 py-3">
+      <p className="text-xs font-medium text-ink-500">{label}</p>
+      <p className="mt-1 text-lg font-semibold text-ink-950">{value}</p>
+    </div>
+  );
+}
+
+function InterviewPulse({
+  eventCount,
+  questionCompletionRate,
+  transcriptTurnCount,
+}: {
+  eventCount: number;
+  questionCompletionRate: number | null;
+  transcriptTurnCount: number;
+}) {
+  const questionRate = questionCompletionRate ?? 0;
+  const transcriptRate = Math.min(100, transcriptTurnCount * 12.5);
+  const evidenceRate = Math.min(100, eventCount * 12.5);
+
+  return (
+    <Card className="mt-5 p-5">
+      <div className="grid gap-5 lg:grid-cols-[12rem_minmax(0,1fr)] lg:items-center">
+        <div className="self-start">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-olive-900">
+            Interview pulse
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <PulseBar
+            label="Questions answered"
+            percent={questionRate}
+            tone="olive"
+            value={
+              questionCompletionRate === null ? "No script" : `${questionRate}%`
+            }
+          />
+          <PulseBar
+            label="Transcript depth"
+            percent={transcriptRate}
+            tone="ink"
+            value={`${transcriptTurnCount} turns`}
+          />
+          <PulseBar
+            label="Evidence captured"
+            percent={evidenceRate}
+            tone="gold"
+            value={`${eventCount} events`}
+          />
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function PulseBar({
+  label,
+  percent,
+  tone,
+  value,
+}: {
+  label: string;
+  percent: number;
+  tone: "gold" | "ink" | "olive";
+  value: string;
+}) {
+  const barColor =
+    tone === "gold" ? "#ead777" : tone === "ink" ? "#171715" : "#718033";
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-sm font-medium text-ink-600">{label}</p>
+        <p className="text-sm font-semibold text-ink-950">{value}</p>
+      </div>
+      <div className="mt-2 h-3 overflow-hidden rounded-full bg-ink-100">
+        <div
+          className="h-full rounded-full"
+          style={{
+            backgroundColor: barColor,
+            backgroundImage:
+              "repeating-linear-gradient(135deg, rgba(255,255,255,.28) 0, rgba(255,255,255,.28) 2px, transparent 2px, transparent 6px)",
+            width: `${Math.max(4, Math.min(100, percent))}%`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function CandidateAssistantRail({
+  candidateLabel,
+  summary,
+}: {
+  candidateLabel: string;
+  summary: LiveInterviewRecruiterSummary;
+}) {
+  const suggestions = [
+    `What should I clarify with ${candidateLabel}?`,
+    "Is there enough signal to continue?",
+    summary.followUpQuestions[0] ?? "What question should I ask next?",
+  ];
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-ink-950">
+          <Sparks aria-hidden="true" className="h-4 w-4" />
+          Ask about candidate
+        </div>
+        <StatusBadge tone="muted">Soon</StatusBadge>
+      </div>
+      <div className="mt-4 rounded-3xl border border-ink-100 bg-white/62 p-3">
+        <p className="text-sm leading-6 text-ink-500">
+          The assistant will answer from the transcript, criteria matrix, and
+          recruiter recap.
+        </p>
+        <div className="mt-3 rounded-full border border-ink-100 bg-ink-50 px-4 py-3 text-sm text-ink-400">
+          Ask a question...
+        </div>
+      </div>
+      <div className="mt-4 space-y-2">
+        {suggestions.map((suggestion) => (
+          <div
+            key={suggestion}
+            className="rounded-2xl border border-ink-100 bg-white/62 px-3 py-2 text-sm leading-5 text-ink-600"
+          >
+            {suggestion}
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+function ReviewFact({ icon, label }: { icon: ReactNode; label: string }) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-2">
+      <span className="text-ink-400">{icon}</span>
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
+function InsightPill({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-ink-100 bg-white/68 px-4 py-3">
+      <span className="grid h-9 w-9 place-items-center rounded-full bg-ink-900 text-white">
+        {icon}
+      </span>
+      <span>
+        <span className="block text-xs font-medium text-ink-500">{label}</span>
+        <span className="block text-xl font-semibold text-ink-950">{value}</span>
+      </span>
+    </div>
+  );
 }

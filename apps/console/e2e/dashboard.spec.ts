@@ -45,12 +45,12 @@ test("interview agent saves and publishes an attachment-aware draft", async ({
   await page
     .getByText("Tell us about a recent project or situation")
     .click();
-  await page.getByRole("button", { name: "Improve with IA" }).click();
+  await page.getByRole("button", { name: "Improve with AI" }).click();
 
   await expect(page.getByText("Please include the context").first()).toBeVisible();
   await page.getByRole("button", { name: "Add question" }).click();
-  await page.getByLabel("Ask IA to add a question about").fill("mobility");
-  await page.getByRole("button", { name: "Add with IA" }).click();
+  await page.getByLabel("Ask AI to add a question about").fill("mobility");
+  await page.getByRole("button", { name: "Add with AI" }).click();
   await expect(page.getByText("5 questions", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Review evaluation" }).click();

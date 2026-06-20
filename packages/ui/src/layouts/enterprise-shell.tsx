@@ -1,18 +1,15 @@
 import * as React from "react";
 import {
-  Community,
   Dashboard,
-  Suitcase,
-  TaskList,
+  Microphone,
 } from "iconoir-react";
 
+import { BrandMark } from "../components/brand-mark";
 import { cn } from "../lib/cn";
 
 const navItems = [
-  { label: "Dashboard", icon: Dashboard },
-  { label: "Jobs", icon: Suitcase },
-  { label: "Candidates", icon: Community },
-  { label: "Interviews", icon: TaskList }
+  { label: "Dashboard", href: "/", icon: Dashboard },
+  { label: "New interview", href: "/interviews/new", icon: Microphone }
 ];
 
 type EnterpriseAccount = {
@@ -34,55 +31,48 @@ export function EnterpriseShell({
   className?: string;
 }) {
   return (
-    <div className={cn("min-h-screen bg-ink-50 text-ink-900", className)}>
-      <aside className="fixed inset-y-0 left-0 hidden w-64 border-r border-ink-200 bg-white px-4 py-5 lg:block">
-        <div className="text-lg font-semibold">Prelude.ai</div>
-        {account ? (
-          <div className="mt-5 rounded-xl border border-ink-200 bg-ink-50 p-3">
-            <div className="truncate text-sm font-semibold text-ink-900">
-              {account.organizationName}
-            </div>
-            <div className="mt-1 text-xs font-medium uppercase text-ink-500">
-              {formatRole(account.role)}
-            </div>
+    <div
+      className={cn(
+        "min-h-screen bg-[linear-gradient(115deg,#f6f3ec_0%,#fbfaf7_48%,#f1f3e6_100%)] text-ink-900",
+        className
+      )}
+    >
+      <header className="sticky top-0 z-30 border-b border-ink-100 bg-[#fbfaf7]/88 px-4 py-3 backdrop-blur-xl sm:px-8">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
+          <div className="flex min-w-0 items-center gap-5">
+            <BrandMark />
+            <nav className="hidden items-center gap-1 md:flex">
+              {navItems.map((item) => (
+                <a
+                  key={item.label}
+                  className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-full px-3 text-sm font-medium text-ink-600 transition hover:bg-white/76 hover:text-ink-950"
+                  href={item.href}
+                >
+                  <item.icon aria-hidden="true" className="h-4 w-4" />
+                  {item.label}
+                </a>
+              ))}
+            </nav>
           </div>
-        ) : null}
-        <nav className="mt-8 space-y-1">
-          {navItems.map((item) => (
-            <a
-              key={item.label}
-              className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm font-medium text-ink-700 hover:bg-ink-100"
-              href="#"
-            >
-              <item.icon aria-hidden="true" className="h-4 w-4" />
-              {item.label}
-            </a>
-          ))}
-        </nav>
-      </aside>
-      <div className="lg:pl-64">
-        <div className="sticky top-0 z-10 border-b border-ink-200 bg-white/92 px-4 py-3 backdrop-blur md:px-8">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold lg:hidden">Prelude.ai</span>
-            <div className="flex min-w-0 items-center gap-3">
-              {accountActions ? (
-                <div className="shrink-0">{accountActions}</div>
-              ) : null}
-              <div className="min-w-0 text-right">
-                <div className="truncate text-sm font-medium text-ink-900">
-                  {account?.organizationName ?? "Recruiter console"}
-                </div>
-                {account ? (
-                  <div className="truncate text-xs text-ink-500">
-                    {account.userName} - {formatRole(account.role)}
-                  </div>
-                ) : null}
+
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="hidden min-w-0 text-right sm:block">
+              <div className="truncate text-sm font-medium text-ink-950">
+                {account?.organizationName ?? "Recruiter console"}
               </div>
+              {account ? (
+                <div className="truncate text-xs text-ink-500">
+                  {account.userName} · {formatRole(account.role)}
+                </div>
+              ) : null}
             </div>
+            {accountActions ? <div className="shrink-0">{accountActions}</div> : null}
           </div>
         </div>
-        <main className="px-4 py-6 md:px-8">{children}</main>
-      </div>
+      </header>
+      <main className="mx-auto w-full max-w-7xl px-4 py-7 sm:px-8 sm:py-9">
+        {children}
+      </main>
     </div>
   );
 }

@@ -172,12 +172,12 @@ export function LiveInterviewRoom({ token }: { token: string }) {
   return (
     <section className="flex flex-1 flex-col justify-between">
       <div>
-        <div className="inline-flex items-center gap-2 rounded-sm bg-white/10 px-3 py-1 text-xs font-medium text-white/80">
+        <div className="inline-flex items-center gap-2 rounded-full bg-white/10 px-3 py-1 text-xs font-medium text-white/80 ring-1 ring-white/12">
           <ShieldCheck aria-hidden="true" className="h-4 w-4" />
           Private live interview
         </div>
         <h1 className="mt-8 text-3xl font-semibold leading-tight">
-          Meet your Prelude IA interviewer.
+          Meet your Prelude AI interviewer.
         </h1>
         <p className="mt-4 text-base leading-7 text-white/72">
           Speak naturally. The recruiter reviews your answers, not your face,
@@ -186,7 +186,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
       </div>
 
       <div className="mt-8 space-y-4">
-        <div className="rounded-2xl bg-white p-4 text-ink-900 shadow-soft">
+        <div className="rounded-3xl bg-white/94 p-4 text-ink-900 backdrop-blur">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-sm font-semibold">Live room</p>
@@ -204,7 +204,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           </div>
 
           {status === "ready" ? (
-            <label className="mt-4 flex items-center justify-between rounded-xl border border-ink-200 px-3 py-3 text-sm">
+            <label className="mt-4 flex items-center justify-between rounded-2xl border border-ink-200 bg-white/72 px-3 py-3 text-sm">
               <span>
                 <span className="block font-medium text-ink-900">
                   Enable video
@@ -223,7 +223,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           ) : null}
 
           {localStream ? (
-            <div className="mt-4 overflow-hidden rounded-2xl bg-ink-900">
+            <div className="mt-4 overflow-hidden rounded-3xl bg-ink-900">
               <video
                 ref={videoRef}
                 aria-label="Local camera preview"
@@ -236,7 +236,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           ) : null}
 
           {error ? (
-            <div className="mt-4 flex gap-2 rounded-xl bg-coral-100 p-3 text-sm text-ink-900">
+            <div className="mt-4 flex gap-2 rounded-2xl bg-coral-100 p-3 text-sm text-ink-900">
               <AlertTriangle
                 aria-hidden="true"
                 className="mt-0.5 h-4 w-4 shrink-0 text-coral-500"
@@ -246,7 +246,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           ) : null}
 
           {isAudioPlaybackBlocked ? (
-            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-ink-900">
+            <div className="mt-4 rounded-2xl border border-gold-200 bg-gold-50 p-3 text-sm text-ink-900">
               <p className="font-medium">Audio paused by your browser</p>
               <p className="mt-1 text-ink-600">
                 Tap once to hear the interviewer on this device.
@@ -294,7 +294,7 @@ export function LiveInterviewRoom({ token }: { token: string }) {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-white/10 bg-white/6 p-4 text-sm text-white/72">
+        <div className="rounded-3xl border border-white/10 bg-white/8 p-4 text-sm text-white/72 backdrop-blur">
           <p className="font-medium text-white">Current question</p>
           <p className="mt-2 leading-6">
             Bonjour, pouvez-vous vous présenter brièvement et expliquer ce qui
@@ -329,7 +329,7 @@ function Capability({
   label: string;
 }) {
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-ink-200 px-3 py-2">
+    <div className="flex items-center gap-2 rounded-2xl border border-ink-200 bg-white/58 px-3 py-2">
       <Icon aria-hidden={true} className="h-4 w-4 text-ink-700" />
       <span className="font-medium">{label}</span>
       <span className="ml-auto text-xs text-ink-500">

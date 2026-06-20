@@ -20,10 +20,15 @@ export function StepShell({
   title
 }: StepShellProps) {
   return (
-    <main className={cn("mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl flex-col px-5 pb-28 pt-10 sm:px-8 sm:pb-8 sm:pt-16", className)}>
+    <main
+      className={cn(
+        "mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-5xl flex-col px-5 pb-10 pt-10 sm:px-8 sm:pb-8 sm:pt-16",
+        className
+      )}
+    >
       <div className="mx-auto w-full max-w-3xl">
         {eyebrow ? (
-          <p className="mb-5 text-xs font-semibold uppercase tracking-[0.18em] text-olive-700">
+          <p className="mb-5 text-xs font-semibold uppercase tracking-[0.16em] text-olive-800">
             {eyebrow}
           </p>
         ) : null}
@@ -40,7 +45,7 @@ export function StepShell({
       <div className="mx-auto mt-10 w-full max-w-3xl">{children}</div>
 
       {footer ? (
-        <div className="fixed inset-x-0 bottom-0 z-20 mx-auto w-full bg-ink-50/92 px-5 py-4 backdrop-blur sm:static sm:mt-8 sm:max-w-3xl sm:bg-transparent sm:px-0 sm:py-0 sm:backdrop-blur-none">
+        <div className="mx-auto mt-8 w-full max-w-3xl">
           {footer}
         </div>
       ) : null}

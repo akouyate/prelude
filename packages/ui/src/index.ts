@@ -1,4 +1,5 @@
 export { Badge } from "./components/badge";
+export { BrandMark } from "./components/brand-mark";
 export { Button, type ButtonProps } from "./components/button";
 export { Card } from "./components/card";
 export { ChoiceTile, type ChoiceTileProps } from "./components/choice-tile";
@@ -6,6 +7,7 @@ export { Dialog } from "./components/dialog";
 export { Drawer } from "./components/drawer";
 export { Input, type InputProps } from "./components/input";
 export { Select } from "./components/select";
+export { StatusBadge } from "./components/status-badge";
 export { StepProgress, type StepProgressProps } from "./components/step-progress";
 export { Tabs } from "./components/tabs";
 export { Textarea, type TextareaProps } from "./components/textarea";

@@ -29,7 +29,7 @@ export default async function NewInterviewPage({
   return (
     <>
       <Link
-        className="fixed right-5 top-20 z-20 inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-full border border-ink-200 bg-white/80 px-4 text-sm font-medium text-ink-900 shadow-soft backdrop-blur transition hover:border-ink-900 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6] sm:right-8"
+        className="fixed right-5 top-20 z-20 inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-full border border-ink-200 bg-white/80 px-4 text-sm font-medium text-ink-900 backdrop-blur transition hover:border-ink-900 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6] sm:right-8"
         href="/"
       >
         <Xmark aria-hidden="true" className="h-4 w-4" />

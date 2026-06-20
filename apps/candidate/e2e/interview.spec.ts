@@ -29,7 +29,7 @@ test("candidate can join a mocked LiveKit interview room on mobile", async ({
   await page.goto("/interview/demo-token");
   await expect(
     page.getByRole("heading", {
-      name: "Meet your Prelude IA interviewer."
+      name: "Meet your Prelude AI interviewer."
     })
   ).toBeVisible();
   await page.getByRole("button", { name: "Start live interview" }).click();

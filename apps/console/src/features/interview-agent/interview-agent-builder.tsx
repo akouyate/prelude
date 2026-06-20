@@ -462,7 +462,7 @@ export function InterviewAgentBuilder({
       return {
         ...current,
         questions: [...current.questions, nextQuestion],
-        rationale: `IA prepared ${current.questions.length + 1} focused questions for this first-screening interview.`
+        rationale: `AI prepared ${current.questions.length + 1} focused questions for this first-screening interview.`
       };
     });
   }, []);
@@ -481,7 +481,7 @@ export function InterviewAgentBuilder({
       return {
         ...current,
         questions,
-        rationale: `IA prepared ${questions.length} focused questions for this first-screening interview.`
+        rationale: `AI prepared ${questions.length} focused questions for this first-screening interview.`
       };
     });
   }, []);
@@ -602,13 +602,13 @@ export function InterviewAgentBuilder({
           ) : null}
 
           {saveError && currentStep !== "share" ? (
-            <p className="mt-5 rounded-xl border border-coral-200 bg-coral-50 px-4 py-3 text-sm font-medium text-coral-800">
+            <p className="mt-5 rounded-2xl border border-coral-200 bg-coral-50 px-4 py-3 text-sm font-medium text-coral-800">
               {saveError}
             </p>
           ) : null}
 
           {saveMessage && currentStep !== "share" ? (
-            <p className="mt-5 rounded-xl border border-meadow-200 bg-meadow-50 px-4 py-3 text-sm font-medium text-meadow-800">
+            <p className="mt-5 rounded-2xl border border-meadow-200 bg-meadow-50 px-4 py-3 text-sm font-medium text-meadow-800">
               {saveMessage}
             </p>
           ) : null}
@@ -655,7 +655,7 @@ function SetupProgress({ currentStep }: { currentStep: StepId }) {
                   isComplete
                     ? "border-ink-900 bg-ink-900 text-white"
                     : isCurrent
-                      ? "border-olive-800 bg-[#f0f1e6] text-olive-900 shadow-[0_0_0_4px_rgb(69_66_60/0.08)]"
+                      ? "border-olive-800 bg-[#eef0e3] text-olive-900"
                       : "border-ink-200 bg-white/70 text-ink-500"
                 }`}
               >
@@ -719,7 +719,7 @@ function AgentMessage({
   };
 
   return (
-    <div className="flex min-w-0 gap-3 rounded-2xl border border-ink-100 bg-white/72 px-4 py-3 shadow-soft backdrop-blur">
+    <div className="flex min-w-0 gap-3 rounded-3xl border border-ink-100 bg-white/72 px-4 py-3 backdrop-blur">
       <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink-900 text-white">
         <Brain aria-hidden="true" className="h-4 w-4" />
       </div>
@@ -749,7 +749,7 @@ function BriefStep({
     <div className="min-w-0 space-y-5">
       <Field label="Role">
         <input
-          className="h-12 w-full min-w-0 rounded-xl border border-ink-200 bg-white/80 px-3 text-sm font-normal text-ink-900 outline-none transition focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
+          className="h-12 w-full min-w-0 rounded-2xl border border-ink-200 bg-white/80 px-3 text-sm font-normal text-ink-900 outline-none transition focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
           value={jobTitle}
           onChange={(event) => onJobTitleChange(event.target.value)}
         />
@@ -763,14 +763,14 @@ function BriefStep({
         />
       </Field>
 
-      <label className="flex min-w-0 cursor-pointer flex-col items-stretch justify-between gap-3 rounded-2xl border border-dashed border-ink-300 bg-white/62 p-4 text-sm text-ink-700 transition hover:border-olive-800 hover:bg-white sm:flex-row sm:items-center sm:p-5">
+      <label className="flex min-w-0 cursor-pointer flex-col items-stretch justify-between gap-3 rounded-3xl border border-dashed border-ink-200 bg-white/62 p-4 text-sm text-ink-700 transition hover:border-olive-800 hover:bg-white sm:flex-row sm:items-center sm:p-5">
         <span className="flex min-w-0 items-center gap-3">
           <Paperclip aria-hidden="true" className="h-4 w-4 shrink-0" />
           <span className="min-w-0 leading-5">
             {attachmentName ?? "Add role context, scorecard, or briefing PDF"}
           </span>
         </span>
-        <span className="shrink-0 font-medium text-ink-900 sm:text-right">
+        <span className="w-fit shrink-0 rounded-full border border-ink-200 bg-white/80 px-3 py-2 font-medium text-ink-900 sm:text-right">
           Choose file
         </span>
         <input
@@ -809,7 +809,7 @@ function CalibrateStep({
                 key={option.value}
                 className={`h-12 cursor-pointer rounded-full border bg-white/80 px-4 text-sm font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
                   seniority === option.value
-                  ? "border-olive-800 bg-[#f0f1e6] text-olive-900 shadow-[0_0_0_3px_rgb(69_66_60/0.08)]"
+                  ? "border-olive-800 bg-[#eef0e3] text-olive-900"
                   : "border-ink-200 text-ink-700 hover:border-ink-300 hover:bg-white"
               }`}
               type="button"
@@ -831,7 +831,7 @@ function CalibrateStep({
                 aria-label={`${checked ? "Remove" : "Add"} ${mode.label} response mode`}
                 className={`inline-flex h-10 cursor-pointer items-center gap-2 rounded-full border px-4 text-sm font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
                   checked
-                    ? "border-olive-800 bg-[#f0f1e6] text-olive-900 shadow-[0_0_0_3px_rgb(69_66_60/0.08)]"
+                    ? "border-olive-800 bg-[#eef0e3] text-olive-900"
                     : "border-ink-200 bg-white/80 text-ink-700 hover:border-ink-300 hover:bg-white"
                 }`}
                 type="button"
@@ -857,7 +857,7 @@ function CalibrateStep({
                 aria-label={`${checked ? "Remove" : "Add"} ${option.label} signal`}
                 className={`cursor-pointer rounded-2xl border bg-white/80 p-4 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
                   checked
-                    ? "border-olive-800 bg-[#f0f1e6] shadow-[0_0_0_3px_rgb(69_66_60/0.08)]"
+                    ? "border-olive-800 bg-[#eef0e3]"
                     : "border-ink-200 bg-white/80 hover:border-ink-300 hover:bg-white"
                 }`}
                 type="button"
@@ -901,7 +901,7 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
   if (question.source === "attachment") {
     return {
       icon: <Paperclip aria-hidden="true" className="h-4 w-4" />,
-      iconClass: "bg-[#f0f1e6] text-olive-800",
+      iconClass: "bg-[#eef0e3] text-olive-800",
       label: "Context"
     };
   }
@@ -944,7 +944,7 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
 
   return {
     icon: <Briefcase aria-hidden="true" className="h-4 w-4" />,
-    iconClass: "bg-[#f0f1e6] text-olive-800",
+    iconClass: "bg-[#eef0e3] text-olive-800",
     label: "Experience"
   };
 }
@@ -986,7 +986,7 @@ function QuestionsStep({
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 pb-4">
         <p className="max-w-xl text-sm leading-6 text-ink-600">
-          IA prepared these screening questions. Listen, edit, or add one if a signal is missing.
+          AI prepared these screening questions. Listen, edit, or add one if a signal is missing.
         </p>
         <Button variant="secondary" onClick={onRegenerate}>
           <RotateCcw aria-hidden="true" className="h-4 w-4" />
@@ -994,7 +994,7 @@ function QuestionsStep({
         </Button>
       </div>
 
-      <div className="divide-y divide-ink-100 overflow-hidden rounded-2xl border border-ink-200 bg-white/76 shadow-soft">
+      <div className="divide-y divide-ink-100 overflow-hidden rounded-3xl border border-ink-100 bg-white/76">
         {draft.questions.map((question, index) => {
           const selected = question.id === selectedQuestionId;
           const editing = question.id === editingQuestionId;
@@ -1034,7 +1034,7 @@ function QuestionsStep({
 
                 <div className="min-w-0 flex-1">
                   <button
-                    className="block w-full cursor-pointer rounded-xl text-left outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6]"
+                    className="block w-full cursor-pointer rounded-2xl text-left outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6]"
                     type="button"
                     onClick={() => onSelectQuestion(question.id)}
                   >
@@ -1042,7 +1042,7 @@ function QuestionsStep({
                       <span className="rounded-full bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-700">
                         {String(index + 1).padStart(2, "0")}
                       </span>
-                      <span className="rounded-full bg-[#f0f1e6] px-2 py-0.5 text-xs font-medium text-olive-800">
+                      <span className="rounded-full bg-[#eef0e3] px-2 py-0.5 text-xs font-medium text-olive-800">
                         {meta.label}
                       </span>
                     </span>
@@ -1072,7 +1072,7 @@ function QuestionsStep({
                           onClick={() => onRefineQuestion(question.id, "sharper")}
                         >
                           <Sparkles aria-hidden="true" className="h-4 w-4" />
-                          Improve with IA
+                          Improve with AI
                         </Button>
                       </div>
                     </div>
@@ -1090,7 +1090,7 @@ function QuestionsStep({
                         onClick={() => onRefineQuestion(question.id, "sharper")}
                       >
                         <Sparkles aria-hidden="true" className="h-4 w-4" />
-                        Improve with IA
+                        Improve with AI
                       </Button>
                       <Button
                         variant="secondary"
@@ -1115,26 +1115,26 @@ function QuestionsStep({
         })}
       </div>
 
-      <div className="rounded-2xl border border-dashed border-ink-300 bg-white/60 p-4 transition hover:border-olive-800">
+      <div className="rounded-3xl border border-dashed border-ink-200 bg-white/60 p-4 transition hover:border-olive-800">
         {isAddingQuestion ? (
           <div className="space-y-3">
             <div>
               <p className="text-sm font-semibold text-ink-900">Add a question</p>
               <p className="mt-1 text-sm leading-5 text-ink-600">
-                Tell IA what signal is missing, or write the question directly later.
+                Tell AI what signal is missing, or write the question directly later.
               </p>
             </div>
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
               <input
-                aria-label="Ask IA to add a question about"
-                className="h-10 min-w-0 rounded-xl border border-ink-200 bg-white/88 px-3 text-sm outline-none focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
+                aria-label="Ask AI to add a question about"
+                className="h-10 min-w-0 rounded-2xl border border-ink-200 bg-white/88 px-3 text-sm outline-none focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
                 value={addTopic}
                 placeholder="salary alignment, mobility, language..."
                 onChange={(event) => setAddTopic(event.target.value)}
               />
               <Button onClick={() => addWithAI(addTopic || "screening fit")}>
                 <Sparkles aria-hidden="true" className="h-4 w-4" />
-                Add with IA
+                Add with AI
               </Button>
             </div>
           </div>
@@ -1152,7 +1152,7 @@ function QuestionsStep({
                 Add question
               </span>
               <span className="mt-1 block text-sm text-ink-600">
-                Ask IA for one missing screening signal.
+                Ask AI for one missing screening signal.
               </span>
             </span>
           </button>
@@ -1174,7 +1174,7 @@ function EvaluationStep({ draft }: { draft: InterviewAgentDraft }) {
           {draft.criteria.map((criterion) => (
             <div
               key={criterion.id}
-              className="rounded-2xl border border-ink-200 bg-white/76 p-4"
+              className="rounded-3xl border border-ink-100 bg-white/76 p-4"
             >
               <p className="text-sm font-semibold text-ink-900">{criterion.label}</p>
               <p className="mt-1 text-sm leading-5 text-ink-600">
@@ -1190,7 +1190,7 @@ function EvaluationStep({ draft }: { draft: InterviewAgentDraft }) {
           <ShieldCheck aria-hidden="true" className="h-4 w-4 text-ink-700" />
           Guardrails
         </div>
-        <div className="mt-3 space-y-3 rounded-2xl border border-ink-100 bg-white/72 p-4 shadow-soft">
+        <div className="mt-3 space-y-3 rounded-3xl border border-ink-100 bg-white/72 p-4">
           {draft.guardrails.map((guardrail) => (
             <div key={guardrail} className="flex gap-3 text-sm leading-6 text-ink-700">
               <Check aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-olive-800" />
@@ -1242,7 +1242,7 @@ function ShareStep({
         <SummaryMetric label="Organization" value={companyName} />
       </div>
 
-      <div className="rounded-2xl border border-ink-200 bg-white/72 p-5 shadow-soft">
+      <div className="rounded-3xl border border-ink-100 bg-white/72 p-5">
         <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
           <Link2 aria-hidden="true" className="h-4 w-4 text-ink-700" />
           Candidate link
@@ -1261,13 +1261,13 @@ function ShareStep({
       </div>
 
       {saveError ? (
-        <div className="rounded-xl border border-coral-200 bg-coral-50 p-4 text-sm font-medium text-coral-800">
+        <div className="rounded-2xl border border-coral-200 bg-coral-50 p-4 text-sm font-medium text-coral-800">
           {saveError}
         </div>
       ) : null}
 
       {saveMessage ? (
-        <div className="rounded-xl border border-meadow-200 bg-meadow-50 p-4 text-sm font-medium text-meadow-700">
+        <div className="rounded-2xl border border-meadow-200 bg-meadow-50 p-4 text-sm font-medium text-meadow-700">
           {saveMessage}
         </div>
       ) : null}
@@ -1363,7 +1363,7 @@ function CandidatePreviewDialog({
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 p-4"
       role="dialog"
     >
-      <div className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-soft">
+      <div className="w-full max-w-sm rounded-2xl bg-white p-4">
         <div className="mb-4 flex items-center justify-between">
           <p className="text-sm font-semibold text-ink-900">Candidate preview</p>
           <button
@@ -1418,7 +1418,7 @@ function Field({
 
 function SummaryMetric({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-ink-200 p-4">
+    <div className="rounded-2xl border border-ink-200 p-4">
       <p className="text-sm text-ink-500">{label}</p>
       <p className="mt-1 text-xl font-semibold leading-tight text-ink-900">{value}</p>
     </div>
