@@ -2,8 +2,8 @@
 
 ## Objective
 
-Ship the V1 E2E workflow step by step. Current implementation slice:
-post-#20 smoke URL usability and E2E workflow hardening.
+Ship the V1 E2E workflow step by step. Current implementation slice: `#21`
+recruiter insights dashboard POC.
 
 ## Scope
 
@@ -52,6 +52,18 @@ post-#20 smoke URL usability and E2E workflow hardening.
   the smoke report open directly in the console.
 - Made local mock organization scope idempotent against reruns, parallel page
   loaders, and historical mock users/organizations.
+- Added shared server-side candidate review signals derived from persisted
+  `CandidateBrief` records.
+- Updated dashboard review queue cards to show real persisted evidence,
+  criteria distribution, answer coverage, clarification count, and limitations
+  without global scores or ranking language.
+- Reworked candidate interview detail into a recruiter review surface with
+  underline section navigation, persisted facts, question-by-question answers,
+  AI synthesis, human notes placeholder, limitations, and technical evidence.
+- Added visible non-decision guardrails on the dashboard and candidate detail
+  page.
+- Kept human notes and review status mutation controls out of #21 because #63
+  owns the editable reviewer workflow.
 
 ## Phases
 
@@ -77,7 +89,9 @@ post-#20 smoke URL usability and E2E workflow hardening.
 - Live LLM mode remains opt-in and blocked without explicit acknowledgement.
 - Core workflow P0 implementation slices are closed through #57.
 - #20 is closed after the compliance/trust guardrail slice.
-- #21 remains the final recruiter-insights wrapper epic.
+- #21 is covered by this branch as the final recruiter-insights wrapper epic.
+- #63 remains the follow-up for editable human notes and review status mutation
+  controls.
 
 ## Validation
 
@@ -118,8 +132,18 @@ post-#20 smoke URL usability and E2E workflow hardening.
 - `curl -i http://127.0.0.1:3000/interviews/is_e2e_codex-post-20-smoke`:
   returned `200 OK`.
 - `pnpm --dir apps/console test:e2e`: passed after the smoke URL auth-scope fix.
+- `pnpm --dir apps/console typecheck`: passed for #21.
+- `pnpm --dir apps/console lint`: passed for #21.
+- `pnpm --dir apps/console test`: passed for #21.
+- `pnpm --dir apps/console test:e2e`: passed for #21.
+- `git diff --check`: passed for #21.
+- `make e2e-smoke E2E_SMOKE_RUN_ID=codex-21-insights-final POSTGRES_PORT=55432 DATABASE_URL=...`:
+  passed with decision `Pass`.
+- `curl http://localhost:3000/interviews/is_e2e_codex-21-insights`: returned
+  `200`.
+- Desktop and mobile Playwright screenshots were captured for the persisted
+  candidate detail page.
 
 ## Remaining Follow-Up
 
-- #21 remains open as the recruiter interview insights dashboard wrapper.
 - #63 owns human notes and review status mutation controls.

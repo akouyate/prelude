@@ -143,9 +143,14 @@ export default async function DashboardPage() {
           <div>
             <h2 className="text-xl font-semibold text-ink-950">Review queue</h2>
             <p className="mt-1 text-sm text-ink-500">
-              Real candidate sessions from completed or in-progress live interviews.
+              Real candidate sessions from completed or in-progress live
+              interviews.
             </p>
           </div>
+        </div>
+        <div className="mb-4 rounded-2xl border border-ink-100 bg-white/62 px-4 py-3 text-sm leading-6 text-ink-600">
+          Prelude helps review first-screening evidence. It does not rank
+          candidates or make hiring or rejection decisions.
         </div>
 
         {dashboard.reviewQueue.length > 0 ? (
@@ -162,7 +167,9 @@ export default async function DashboardPage() {
                       <span className="truncate text-base font-semibold text-ink-950">
                         {session.candidateLabel}
                       </span>
-                      <StatusBadge tone={reviewStatusTone(session.reviewStatus)}>
+                      <StatusBadge
+                        tone={reviewStatusTone(session.reviewStatus)}
+                      >
                         {formatReviewStatus(session.reviewStatus)}
                       </StatusBadge>
                     </span>
@@ -177,24 +184,47 @@ export default async function DashboardPage() {
                       label={formatStatus(session.status)}
                     />
                     <ReviewFact
-                      icon={<ShieldCheck aria-hidden="true" className="h-4 w-4" />}
-                      label={formatAnalysisStatus(session.analysisStatus)}
+                      icon={
+                        <ShieldCheck aria-hidden="true" className="h-4 w-4" />
+                      }
+                      label={
+                        session.hasCompletedBrief
+                          ? formatCriteriaDistribution(
+                              session.criteriaDistribution,
+                            )
+                          : formatAnalysisStatus(session.analysisStatus)
+                      }
                     />
                     <ReviewFact
-                      icon={<Microphone aria-hidden="true" className="h-4 w-4" />}
-                      label={`${session.transcriptTurnCount} turns`}
+                      icon={
+                        <Microphone aria-hidden="true" className="h-4 w-4" />
+                      }
+                      label={formatQuestionCompletionLabel(
+                        session.questionCompletionRate,
+                      )}
                     />
                     <ReviewFact
                       icon={<Calendar aria-hidden="true" className="h-4 w-4" />}
-                      label={formatShortDate(session.completedAt ?? session.startedAt)}
+                      label={
+                        session.pointsToClarifyCount === null
+                          ? formatShortDate(
+                              session.completedAt ?? session.startedAt,
+                            )
+                          : `${session.pointsToClarifyCount} clarification${
+                              session.pointsToClarifyCount > 1 ? "s" : ""
+                            }`
+                      }
                     />
                   </span>
 
                   <span className="flex items-center justify-between gap-3 text-sm font-medium text-ink-900 sm:justify-end">
-                    {session.questionCompletionRate === null ? (
-                      <span className="text-ink-400">No script</span>
+                    {session.limitationsCount > 0 ? (
+                      <span className="text-ink-500">
+                        {session.limitationsCount} limit
+                        {session.limitationsCount > 1 ? "s" : ""}
+                      </span>
                     ) : (
-                      <span>{session.questionCompletionRate}% complete</span>
+                      <span>Review</span>
                     )}
                     <ArrowRight
                       aria-hidden="true"
@@ -277,9 +307,7 @@ export default async function DashboardPage() {
               ))
             ) : (
               <Card className="p-6">
-                <p className="text-sm font-medium text-ink-900">
-                  No role yet
-                </p>
+                <p className="text-sm font-medium text-ink-900">No role yet</p>
                 <p className="mt-2 text-sm leading-6 text-ink-600">
                   Create the first interview draft to add a role to this
                   workspace.
@@ -306,34 +334,36 @@ export default async function DashboardPage() {
                 />
                 <SetupFact
                   label="Default mode"
-                  value={dashboard.organization.defaultInterviewMode ?? "Not set"}
+                  value={
+                    dashboard.organization.defaultInterviewMode ?? "Not set"
+                  }
                 />
               </dl>
             </Card>
           </div>
 
           <div>
-          <h2 className="text-xl font-semibold text-ink-950">Sources</h2>
-          <div className="mt-4 space-y-3">
-            {dashboard.connectors.map((connector) => (
-              <Card
-                key={`${connector.provider}-${connector.status}`}
-                className="flex items-center gap-3 p-4"
-              >
-                <span className="grid h-9 w-9 place-items-center rounded-full bg-[#eef0e3] text-olive-800">
-                  <CheckCircle aria-hidden="true" className="h-5 w-5" />
-                </span>
-                <span>
-                  <span className="block text-sm font-semibold text-ink-950">
-                    {formatProvider(connector.provider)}
+            <h2 className="text-xl font-semibold text-ink-950">Sources</h2>
+            <div className="mt-4 space-y-3">
+              {dashboard.connectors.map((connector) => (
+                <Card
+                  key={`${connector.provider}-${connector.status}`}
+                  className="flex items-center gap-3 p-4"
+                >
+                  <span className="grid h-9 w-9 place-items-center rounded-full bg-[#eef0e3] text-olive-800">
+                    <CheckCircle aria-hidden="true" className="h-5 w-5" />
                   </span>
-                  <span className="mt-0.5 block text-sm text-ink-500">
-                    {formatStatus(connector.status)}
+                  <span>
+                    <span className="block text-sm font-semibold text-ink-950">
+                      {formatProvider(connector.provider)}
+                    </span>
+                    <span className="mt-0.5 block text-sm text-ink-500">
+                      {formatStatus(connector.status)}
+                    </span>
                   </span>
-                </span>
-              </Card>
-            ))}
-          </div>
+                </Card>
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -436,6 +466,40 @@ function formatAnalysisStatus(status: string) {
   }
 
   return "Not ready";
+}
+
+function formatQuestionCompletionLabel(value: number | null) {
+  if (value === null) {
+    return "No script";
+  }
+
+  if (value >= 100) {
+    return "All planned answered";
+  }
+
+  if (value > 0) {
+    return "Partially answered";
+  }
+
+  return "Not answered";
+}
+
+function formatCriteriaDistribution(distribution: {
+  "Not assessable": number;
+  Medium: number;
+  Strong: number;
+  Weak: number;
+}) {
+  const labels = [
+    distribution.Strong > 0 ? `Strong ${distribution.Strong}` : null,
+    distribution.Medium > 0 ? `Medium ${distribution.Medium}` : null,
+    distribution.Weak > 0 ? `Weak ${distribution.Weak}` : null,
+    distribution["Not assessable"] > 0
+      ? `Not assessable ${distribution["Not assessable"]}`
+      : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return labels.length > 0 ? labels.join(" · ") : "Brief pending";
 }
 
 function formatShortDate(value: string | null) {
