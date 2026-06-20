@@ -1,9 +1,6 @@
 import "server-only";
 
-import {
-  candidateBriefSchema,
-  type CandidateBriefDto,
-} from "@prelude/contracts";
+import { type CandidateBriefDto } from "@prelude/contracts";
 import { prisma } from "@prelude/db";
 import type {
   InterviewAgentDraft,
@@ -28,6 +25,11 @@ import {
   getCandidateSessionEvidence,
   type CandidateSessionEvidence,
 } from "./live-session-evidence";
+import {
+  getCandidateReviewSignals,
+  toCandidateBriefDto,
+  type CriteriaDistribution,
+} from "./candidate-review-signals";
 import { findCandidateSessionSpineForOrganization } from "./candidate-session-spine";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
@@ -83,6 +85,7 @@ export type InterviewDetailData =
         evidence: CandidateSessionEvidence;
         interviewId: string;
         jobTitle: string;
+        questions: InterviewQuestionDraft[];
         roleTitle: string;
       };
     };
@@ -92,7 +95,11 @@ export type CandidateSessionSummary = {
   candidateLabel: string;
   completedAt: string | null;
   eventCount: number;
+  criteriaDistribution: CriteriaDistribution;
+  hasCompletedBrief: boolean;
   id: string;
+  limitationsCount: number;
+  pointsToClarifyCount: number | null;
   questionCompletionRate: number | null;
   realtimeSessionId: string | null;
   reviewStatus: RecruiterReviewStatus;
@@ -285,6 +292,7 @@ export async function getInterviewDetail(
         evidence,
         interviewId: candidateSession.interviewId,
         jobTitle: candidateSession.job.title,
+        questions: readQuestions(candidateSession.interview.questions),
         questionCompletionRate: evidence.questionCompletionRate,
         roleTitle: candidateSession.interview.roleTitle,
         status: evidence.status,
@@ -298,32 +306,6 @@ export async function getInterviewDetail(
   return null;
 }
 
-function toCandidateBriefDto(
-  brief: {
-    candidateSessionId: string;
-    limitations: unknown;
-    status: string;
-    summaryJson: unknown;
-  } | null,
-): CandidateBriefDto | null {
-  if (!brief) {
-    return null;
-  }
-
-  const parsed = candidateBriefSchema.safeParse(brief.summaryJson);
-  if (parsed.success) {
-    return parsed.data;
-  }
-
-  const fallback = candidateBriefSchema.safeParse({
-    candidateSessionId: brief.candidateSessionId,
-    limitations: readStringArray(brief.limitations),
-    status: brief.status,
-  });
-
-  return fallback.success ? fallback.data : null;
-}
-
 function toCandidateSessionSummary({
   eventStatsBySessionId,
   liveStatusById,
@@ -334,7 +316,12 @@ function toCandidateSessionSummary({
   liveStatusById: Map<string, string>;
   questionCount: number;
   session: {
-    candidateBrief?: { status: string } | null;
+    candidateBrief?: {
+      candidateSessionId: string;
+      limitations: unknown;
+      status: string;
+      summaryJson: unknown;
+    } | null;
     candidateEmail: string | null;
     candidateName: string | null;
     completedAt: Date | null;
@@ -346,6 +333,8 @@ function toCandidateSessionSummary({
     updatedAt: Date;
   };
 }): CandidateSessionSummary {
+  const brief = toCandidateBriefDto(session.candidateBrief ?? null);
+  const reviewSignals = getCandidateReviewSignals(brief);
   const status =
     (session.realtimeSessionId
       ? liveStatusById.get(session.realtimeSessionId)
@@ -367,8 +356,12 @@ function toCandidateSessionSummary({
     completedAt:
       session.completedAt?.toISOString() ??
       (status === "completed" ? session.updatedAt.toISOString() : null),
+    criteriaDistribution: reviewSignals.criteriaDistribution,
     eventCount: eventStats?.eventCount ?? 0,
+    hasCompletedBrief: reviewSignals.hasCompletedBrief,
     id: session.id,
+    limitationsCount: reviewSignals.limitationsCount,
+    pointsToClarifyCount: reviewSignals.pointsToClarifyCount,
     questionCompletionRate: getQuestionCompletionRate({
       questionCount,
       stats: eventStats,

@@ -11,6 +11,11 @@ import {
   type LiveAnalysisStatus,
   type RecruiterReviewStatus,
 } from "../interviews/live-session-insights";
+import {
+  getCandidateReviewSignals,
+  toCandidateBriefDto,
+  type CriteriaDistribution,
+} from "../interviews/candidate-review-signals";
 import { listCandidateSessionSpinesForOrganization } from "../interviews/candidate-session-spine";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
@@ -53,10 +58,14 @@ export type ConsoleDashboardData = {
     analysisStatus: LiveAnalysisStatus;
     candidateLabel: string;
     completedAt: string | null;
+    criteriaDistribution: CriteriaDistribution;
     eventCount: number;
+    hasCompletedBrief: boolean;
     href: string;
     id: string;
     jobTitle: string;
+    limitationsCount: number;
+    pointsToClarifyCount: number | null;
     questionCompletionRate: number | null;
     realtimeSessionId: string | null;
     reviewStatus: RecruiterReviewStatus;
@@ -193,6 +202,8 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
       ? eventStatsBySessionId.get(session.realtimeSessionId)
       : undefined;
     const questionCount = readJsonArray(session.interview.questions).length;
+    const brief = toCandidateBriefDto(session.candidateBrief);
+    const reviewSignals = getCandidateReviewSignals(brief);
 
     return {
       analysisStatus: resolveAnalysisStatus(
@@ -207,10 +218,14 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
       completedAt:
         session.completedAt?.toISOString() ??
         (status === "completed" ? session.updatedAt.toISOString() : null),
+      criteriaDistribution: reviewSignals.criteriaDistribution,
       eventCount: eventStats?.eventCount ?? 0,
+      hasCompletedBrief: reviewSignals.hasCompletedBrief,
       href: `/interviews/${session.realtimeSessionId ?? session.id}`,
       id: session.id,
       jobTitle: session.job.title,
+      limitationsCount: reviewSignals.limitationsCount,
+      pointsToClarifyCount: reviewSignals.pointsToClarifyCount,
       questionCompletionRate: getQuestionCompletionRate({
         questionCount,
         stats: eventStats,
