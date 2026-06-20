@@ -26,6 +26,7 @@ import { CandidateReviewTabs } from "../../../src/features/interview-agent/candi
 import { isClerkConfigured } from "../../../src/server/auth/clerk-config";
 import { getConsoleAuthContext } from "../../../src/server/auth/console-auth";
 import { getInterviewDetail } from "../../../src/server/interviews/interview-loaders";
+import type { CandidateSessionEvidence } from "../../../src/server/interviews/live-session-evidence";
 import { requireCompletedOrganizationOnboarding } from "../../../src/server/onboarding/onboarding-guard";
 
 type InterviewDetailPageProps = {
@@ -73,11 +74,7 @@ export default async function InterviewDetailPage({
         <InterviewOverview detail={detail} />
       ) : (
         <CandidateSessionReview
-          error={
-            summaryResult?.summary
-              ? undefined
-              : summaryResult?.error
-          }
+          error={summaryResult?.summary ? undefined : summaryResult?.error}
           session={detail.candidateSession}
           summary={summaryResult?.summary}
         />
@@ -132,7 +129,10 @@ function InterviewOverview({
           <dl className="mt-7 grid gap-3 sm:grid-cols-3">
             <DetailFact label="Job" value={interview.jobTitle} />
             <DetailFact label="Duration" value={`${estimatedMinutes} min`} />
-            <DetailFact label="Updated" value={formatShortDate(interview.updatedAt)} />
+            <DetailFact
+              label="Updated"
+              value={formatShortDate(interview.updatedAt)}
+            />
           </dl>
 
           <div className="mt-7 flex flex-wrap gap-2">
@@ -218,50 +218,66 @@ function InterviewOverview({
               {interview.candidateSessions.length > 0 ? (
                 <div className="divide-y divide-ink-100">
                   {interview.candidateSessions.map((session) => (
-                  <Link
-                    key={session.id}
-                    className="group grid cursor-pointer gap-4 p-4 transition hover:bg-white sm:grid-cols-[minmax(0,1fr)_minmax(16rem,0.75fr)_auto] sm:items-center"
-                    href={`/interviews/${session.realtimeSessionId ?? session.id}`}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate text-base font-semibold text-ink-950">
-                        {session.candidateLabel}
+                    <Link
+                      key={session.id}
+                      className="group grid cursor-pointer gap-4 p-4 transition hover:bg-white sm:grid-cols-[minmax(0,1fr)_minmax(16rem,0.75fr)_auto] sm:items-center"
+                      href={`/interviews/${session.realtimeSessionId ?? session.id}`}
+                    >
+                      <span className="min-w-0">
+                        <span className="block truncate text-base font-semibold text-ink-950">
+                          {session.candidateLabel}
+                        </span>
+                        <span className="mt-1 flex flex-wrap items-center gap-2 text-sm text-ink-500">
+                          <StatusBadge tone={statusTone(session.status)}>
+                            {formatStatus(session.status)}
+                          </StatusBadge>
+                          <StatusBadge
+                            tone={analysisStatusTone(session.analysisStatus)}
+                          >
+                            {formatAnalysisStatus(session.analysisStatus)}
+                          </StatusBadge>
+                        </span>
                       </span>
-                      <span className="mt-1 flex flex-wrap items-center gap-2 text-sm text-ink-500">
-                        <StatusBadge tone={statusTone(session.status)}>
-                          {formatStatus(session.status)}
-                        </StatusBadge>
-                        <StatusBadge tone={analysisStatusTone(session.analysisStatus)}>
-                          {formatAnalysisStatus(session.analysisStatus)}
-                        </StatusBadge>
+                      <span className="grid gap-2 text-sm text-ink-600 sm:grid-cols-2">
+                        <ReviewFact
+                          icon={
+                            <Microphone
+                              aria-hidden="true"
+                              className="h-4 w-4"
+                            />
+                          }
+                          label={`${session.transcriptTurnCount} turns`}
+                        />
+                        <ReviewFact
+                          icon={
+                            <ClipboardCheck
+                              aria-hidden="true"
+                              className="h-4 w-4"
+                            />
+                          }
+                          label={
+                            session.questionCompletionRate === null
+                              ? "No script"
+                              : `${session.questionCompletionRate}% complete`
+                          }
+                        />
+                        <ReviewFact
+                          icon={
+                            <Clock aria-hidden="true" className="h-4 w-4" />
+                          }
+                          label={formatShortDate(session.startedAt)}
+                        />
+                        <ReviewFact
+                          icon={
+                            <Calendar aria-hidden="true" className="h-4 w-4" />
+                          }
+                          label={formatShortDate(session.completedAt)}
+                        />
                       </span>
-                    </span>
-                    <span className="grid gap-2 text-sm text-ink-600 sm:grid-cols-2">
-                      <ReviewFact
-                        icon={<Microphone aria-hidden="true" className="h-4 w-4" />}
-                        label={`${session.transcriptTurnCount} turns`}
-                      />
-                      <ReviewFact
-                        icon={<ClipboardCheck aria-hidden="true" className="h-4 w-4" />}
-                        label={
-                          session.questionCompletionRate === null
-                            ? "No script"
-                            : `${session.questionCompletionRate}% complete`
-                        }
-                      />
-                      <ReviewFact
-                        icon={<Clock aria-hidden="true" className="h-4 w-4" />}
-                        label={formatShortDate(session.startedAt)}
-                      />
-                      <ReviewFact
-                        icon={<Calendar aria-hidden="true" className="h-4 w-4" />}
-                        label={formatShortDate(session.completedAt)}
-                      />
-                    </span>
-                    <span className="text-sm font-medium text-ink-900 transition group-hover:translate-x-0.5">
-                      Review
-                    </span>
-                  </Link>
+                      <span className="text-sm font-medium text-ink-900 transition group-hover:translate-x-0.5">
+                        Review
+                      </span>
+                    </Link>
                   ))}
                 </div>
               ) : (
@@ -300,7 +316,11 @@ function InterviewOverview({
                           {formatQuestionSource(question.source)}
                         </StatusBadge>
                         <span className="text-xs font-medium text-ink-400">
-                          {Math.max(1, Math.round(question.durationSeconds / 60))} min
+                          {Math.max(
+                            1,
+                            Math.round(question.durationSeconds / 60),
+                          )}{" "}
+                          min
                         </span>
                       </div>
                       <p className="text-base font-semibold leading-7 text-ink-950">
@@ -375,6 +395,7 @@ function CandidateSessionReview({
     candidateLabel: string;
     completedAt: string | null;
     eventCount: number;
+    evidence: CandidateSessionEvidence;
     interviewId: string;
     jobTitle: string;
     questionCompletionRate: number | null;
@@ -387,7 +408,9 @@ function CandidateSessionReview({
   };
   summary?: LiveInterviewRecruiterSummary;
 }) {
-  const displayedAnalysisStatus = summary ? "available" : session.analysisStatus;
+  const displayedAnalysisStatus = summary
+    ? "available"
+    : session.analysisStatus;
   const satisfiedCriteria =
     summary?.criteria.filter((criterion) => criterion.status === "satisfied")
       .length ?? 0;
@@ -456,8 +479,14 @@ function CandidateSessionReview({
             </div>
           )}
           <div className="mt-5 grid grid-cols-2 gap-2">
-            <MiniFact label="Criteria met" value={`${satisfiedCriteria}/${summary?.criteria.length ?? 0}`} />
-            <MiniFact label="To clarify" value={String(criteriaNeedingReview)} />
+            <MiniFact
+              label="Criteria met"
+              value={`${satisfiedCriteria}/${summary?.criteria.length ?? 0}`}
+            />
+            <MiniFact
+              label="To clarify"
+              value={String(criteriaNeedingReview)}
+            />
           </div>
         </Card>
       </section>
@@ -469,46 +498,138 @@ function CandidateSessionReview({
       />
 
       <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
-        {summary ? (
-          <>
-            <div>
-              <CandidateReviewTabs summary={summary} />
-            </div>
+        <div className="space-y-4">
+          <RuntimeEvidenceCard evidence={session.evidence} />
 
-            <aside className="space-y-4 lg:sticky lg:top-24">
-              <CandidateAssistantRail
-                candidateLabel={session.candidateLabel}
-                summary={summary}
-              />
-            </aside>
-          </>
-        ) : (
-          <Card className="border-dashed bg-white/72 p-6 lg:col-span-2">
-            <div className="flex items-start gap-3">
-              <span className="grid h-10 w-10 place-items-center rounded-full bg-[#eef0e3] text-olive-800">
-                <WarningTriangle aria-hidden="true" className="h-5 w-5" />
-              </span>
-              <span>
-                <span className="block text-sm font-semibold text-ink-950">
-                  {displayedAnalysisStatus === "not_ready"
-                    ? "Analysis is not ready"
-                    : "Analysis is pending"}
+          {summary ? (
+            <CandidateReviewTabs summary={summary} />
+          ) : (
+            <Card className="border-dashed bg-white/72 p-6">
+              <div className="flex items-start gap-3">
+                <span className="grid h-10 w-10 place-items-center rounded-full bg-[#eef0e3] text-olive-800">
+                  <WarningTriangle aria-hidden="true" className="h-5 w-5" />
                 </span>
-                <span className="mt-2 block text-sm leading-6 text-ink-600">
-                  {error ??
-                    "The AI brief will appear after the completed live interview has persisted transcript turns and answer evaluations."}
-                </span>
-                {session.realtimeSessionId ? (
-                  <span className="mt-3 block break-all text-xs font-medium text-ink-400">
-                    Session {session.realtimeSessionId} · {session.eventCount} events
+                <span>
+                  <span className="block text-sm font-semibold text-ink-950">
+                    {displayedAnalysisStatus === "not_ready"
+                      ? "Analysis is not ready"
+                      : "Analysis is pending"}
                   </span>
-                ) : null}
-              </span>
-            </div>
-          </Card>
-        )}
+                  <span className="mt-2 block text-sm leading-6 text-ink-600">
+                    {error ??
+                      "The AI brief will appear after the completed live interview has persisted transcript turns and answer evaluations."}
+                  </span>
+                  {session.realtimeSessionId ? (
+                    <span className="mt-3 block break-all text-xs font-medium text-ink-400">
+                      Session {session.realtimeSessionId} · {session.eventCount}{" "}
+                      events
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+            </Card>
+          )}
+        </div>
+
+        {summary ? (
+          <aside className="space-y-4 lg:sticky lg:top-24">
+            <CandidateAssistantRail
+              candidateLabel={session.candidateLabel}
+              summary={summary}
+            />
+          </aside>
+        ) : null}
       </div>
     </div>
+  );
+}
+
+function RuntimeEvidenceCard({
+  evidence,
+}: {
+  evidence: CandidateSessionEvidence;
+}) {
+  const previewTurns = evidence.transcriptTurns.slice(0, 5);
+
+  return (
+    <Card className="p-5">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge tone={statusTone(evidence.status)}>
+              {formatStatus(evidence.status)}
+            </StatusBadge>
+            {evidence.runtimeStatus ? (
+              <StatusBadge tone="neutral">
+                Runtime {formatStatus(evidence.runtimeStatus)}
+              </StatusBadge>
+            ) : (
+              <StatusBadge tone="muted">No runtime session</StatusBadge>
+            )}
+            {evidence.terminalEventType ? (
+              <StatusBadge tone="success">
+                {formatStatus(evidence.terminalEventType)}
+              </StatusBadge>
+            ) : null}
+          </div>
+          <h2 className="mt-4 text-2xl font-semibold text-ink-950">
+            Runtime evidence
+          </h2>
+          <p className="mt-2 text-sm leading-6 text-ink-600">
+            Reconstructed from persisted live events linked to this candidate
+            session. This is the durable transcript source for analysis and
+            recruiter review.
+          </p>
+
+          {previewTurns.length > 0 ? (
+            <div className="mt-5 space-y-3">
+              {previewTurns.map((turn) => (
+                <div
+                  key={`${turn.sequenceNumber}-${turn.turnId}`}
+                  className="rounded-2xl border border-ink-100 bg-white/62 p-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-500">
+                      {turn.speaker}
+                    </p>
+                    <span className="text-xs text-ink-400">
+                      #{turn.sequenceNumber}
+                    </span>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-ink-700">
+                    {turn.text}
+                  </p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-5 rounded-2xl border border-dashed border-ink-100 bg-white/54 p-3 text-sm leading-6 text-ink-500">
+              No transcript turn has been persisted for this session yet.
+            </p>
+          )}
+        </div>
+
+        <div className="grid content-start gap-2">
+          <MiniFact label="Events" value={String(evidence.eventCount)} />
+          <MiniFact
+            label="Transcript"
+            value={`${evidence.transcriptTurns.length} turns`}
+          />
+          <MiniFact
+            label="Q/A groups"
+            value={String(evidence.questionAnswerSequence.length)}
+          />
+          <MiniFact
+            label="Questions"
+            value={
+              evidence.questionCompletionRate === null
+                ? "No script"
+                : `${evidence.questionCompletionRate}%`
+            }
+          />
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -566,7 +687,9 @@ function formatModeSummary(modes: string[]) {
   }
 
   return modes
-    .map((mode) => (mode === "text" ? "Form" : mode[0]!.toUpperCase() + mode.slice(1)))
+    .map((mode) =>
+      mode === "text" ? "Form" : mode[0]!.toUpperCase() + mode.slice(1),
+    )
     .join(" + ");
 }
 
@@ -701,7 +824,9 @@ function getSessionStats(
   const completed = sessions.filter(
     (session) => session.status === "completed" || session.completedAt,
   ).length;
-  const started = sessions.filter((session) => session.status !== "created").length;
+  const started = sessions.filter(
+    (session) => session.status !== "created",
+  ).length;
 
   return {
     completed,
@@ -905,7 +1030,9 @@ function InsightPill({
       </span>
       <span>
         <span className="block text-xs font-medium text-ink-500">{label}</span>
-        <span className="block text-xl font-semibold text-ink-950">{value}</span>
+        <span className="block text-xl font-semibold text-ink-950">
+          {value}
+        </span>
       </span>
     </div>
   );

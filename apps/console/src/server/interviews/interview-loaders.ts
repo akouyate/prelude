@@ -20,6 +20,11 @@ import {
   type LiveEventStats,
   type RecruiterReviewStatus,
 } from "./live-session-insights";
+import {
+  buildCandidateSessionEvidence,
+  getCandidateSessionEvidence,
+  type CandidateSessionEvidence,
+} from "./live-session-evidence";
 import { findCandidateSessionSpineForOrganization } from "./candidate-session-spine";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
@@ -71,6 +76,7 @@ export type InterviewDetailData =
       kind: "candidate_session";
       organizationName: string;
       candidateSession: CandidateSessionSummary & {
+        evidence: CandidateSessionEvidence;
         interviewId: string;
         jobTitle: string;
         roleTitle: string;
@@ -237,19 +243,47 @@ export async function getInterviewDetail(
       getLiveStatusById(realtimeSessionIds),
       getLiveEventStatsBySessionId(realtimeSessionIds),
     ]);
+    const questionCount = readQuestions(
+      candidateSession.interview.questions,
+    ).length;
+    const evidence = await getCandidateSessionEvidence({
+      productSession: candidateSession,
+      questionCount,
+    });
+    const summary = toCandidateSessionSummary({
+      eventStatsBySessionId,
+      liveStatusById,
+      questionCount,
+      session: candidateSession,
+    });
 
     return {
       candidateSession: {
-        ...toCandidateSessionSummary({
-          eventStatsBySessionId,
-          liveStatusById,
-          questionCount: readQuestions(candidateSession.interview.questions)
-            .length,
-          session: candidateSession,
-        }),
+        ...summary,
+        analysisStatus: resolveAnalysisStatus(
+          evidence.status,
+          {
+            answerEvaluationCount:
+              eventStatsBySessionId.get(
+                candidateSession.realtimeSessionId ?? "",
+              )?.answerEvaluationCount ?? 0,
+            eventCount: evidence.eventCount,
+            questionCompletedCount: Math.round(
+              ((evidence.questionCompletionRate ?? 0) / 100) * questionCount,
+            ),
+            transcriptTurnCount: evidence.transcriptTurns.length,
+          },
+          candidateSession.candidateBrief?.status,
+        ),
+        completedAt: evidence.completedAt ?? summary.completedAt,
+        eventCount: evidence.eventCount,
+        evidence,
         interviewId: candidateSession.interviewId,
         jobTitle: candidateSession.job.title,
+        questionCompletionRate: evidence.questionCompletionRate,
         roleTitle: candidateSession.interview.roleTitle,
+        status: evidence.status,
+        transcriptTurnCount: evidence.transcriptTurns.length,
       },
       kind: "candidate_session",
       organizationName: organization.name,
@@ -257,6 +291,11 @@ export async function getInterviewDetail(
   }
 
   const realtimeSession = await prisma.liveInterviewSession.findUnique({
+    include: {
+      events: {
+        orderBy: { sequenceNumber: "asc" },
+      },
+    },
     where: { id: idOrSessionId },
   });
 
@@ -284,27 +323,39 @@ export async function getInterviewDetail(
   const eventStats = eventStatsBySessionId.get(realtimeSession.id);
   const questionCount = readQuestions(realtimeInterview.questions).length;
   const status = realtimeSession.status;
+  const evidence = buildCandidateSessionEvidence({
+    events: realtimeSession.events,
+    productSession: {
+      completedAt: status === "completed" ? realtimeSession.updatedAt : null,
+      realtimeSessionId: realtimeSession.id,
+      status,
+      updatedAt: realtimeSession.updatedAt,
+    },
+    questionCount,
+    runtimeSession: {
+      id: realtimeSession.id,
+      status,
+      updatedAt: realtimeSession.updatedAt,
+    },
+  });
 
   return {
     candidateSession: {
       analysisStatus: resolveAnalysisStatus(status, eventStats),
       candidateLabel: `Candidate ${realtimeSession.candidateId.slice(-6)}`,
-      completedAt:
-        status === "completed"
-          ? realtimeSession.updatedAt.toISOString()
-          : null,
-      eventCount: eventStats?.eventCount ?? 0,
+      completedAt: evidence.completedAt,
+      eventCount: evidence.eventCount,
+      evidence,
       id: realtimeSession.candidateId,
       interviewId: realtimeInterview.id,
       jobTitle: realtimeInterview.job.title,
-      questionCompletionRate:
-        getQuestionCompletionRate({ questionCount, stats: eventStats }),
+      questionCompletionRate: evidence.questionCompletionRate,
       realtimeSessionId: realtimeSession.id,
       reviewStatus: resolveReviewStatus(status),
       roleTitle: realtimeInterview.roleTitle,
       startedAt: realtimeSession.createdAt.toISOString(),
-      status,
-      transcriptTurnCount: eventStats?.transcriptTurnCount ?? 0,
+      status: evidence.status,
+      transcriptTurnCount: evidence.transcriptTurns.length,
     },
     kind: "candidate_session",
     organizationName: organization.name,
@@ -356,8 +407,10 @@ function toCandidateSessionSummary({
       (status === "completed" ? session.updatedAt.toISOString() : null),
     eventCount: eventStats?.eventCount ?? 0,
     id: session.id,
-    questionCompletionRate:
-      getQuestionCompletionRate({ questionCount, stats: eventStats }),
+    questionCompletionRate: getQuestionCompletionRate({
+      questionCount,
+      stats: eventStats,
+    }),
     realtimeSessionId: session.realtimeSessionId,
     reviewStatus: resolveReviewStatus(session.reviewStatus),
     startedAt: session.startedAt?.toISOString() ?? null,
