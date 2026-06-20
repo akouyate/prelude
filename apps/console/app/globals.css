@@ -49,7 +49,7 @@
   --color-gold-800: #5e3e14;
   --font-title: var(--font-title-sans), ui-sans-serif, system-ui, sans-serif;
   --font-display: Georgia, ui-serif, serif;
-  --shadow-soft: 0 12px 32px rgb(23 23 21 / 0.08);
+  --shadow-soft: none;
 }
 
 :root {

@@ -2,13 +2,17 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import {
   ArrowRight,
+  Calendar,
   CheckCircle,
+  Clock,
   Community,
   Microphone,
   Plus,
+  ShieldCheck,
   Suitcase,
+  WarningTriangle,
 } from "iconoir-react";
-import { Badge, Card } from "@prelude/ui";
+import { Card, StatusBadge } from "@prelude/ui";
 
 import { getConsoleDashboardData } from "../../src/server/dashboard/dashboard-data";
 import { requireCompletedOrganizationOnboarding } from "../../src/server/onboarding/onboarding-guard";
@@ -21,6 +25,32 @@ export default async function DashboardPage() {
 
   const dashboard = await getConsoleDashboardData();
   const hasReviewTarget = Boolean(dashboard.primaryReviewHref);
+  const reviewCtaLabel =
+    dashboard.metrics.needsReview > 0 ? "Review latest" : "Open latest role";
+  const nextAction =
+    dashboard.metrics.needsReview > 0
+      ? {
+          description:
+            "Start with completed sessions. They already have screening signals ready for recruiter review.",
+          href: dashboard.primaryReviewHref ?? "/",
+          label: "Open review queue",
+          title: "Review candidate signals",
+        }
+      : dashboard.metrics.published > 0
+        ? {
+            description:
+              "Share a live interview link and let Prelude collect first-screening signals.",
+            href: dashboard.primaryReviewHref ?? "/interviews/new",
+            label: "Open latest role",
+            title: "Invite candidates",
+          }
+        : {
+            description:
+              "Create the first interview draft from a job brief, then publish the candidate link.",
+            href: "/interviews/new",
+            label: "Create interview",
+            title: "Prepare first role",
+          };
 
   return (
     <main className="relative z-10 mx-auto w-full max-w-6xl px-5 pb-14 pt-8 sm:px-8">
@@ -49,7 +79,7 @@ export default async function DashboardPage() {
                 className="inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-full border border-ink-200 bg-white/70 px-5 text-sm font-medium text-ink-900 transition hover:border-ink-900 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
                 href={dashboard.primaryReviewHref!}
               >
-                Review latest
+                {reviewCtaLabel}
                 <ArrowRight aria-hidden="true" className="h-4 w-4" />
               </Link>
             ) : null}
@@ -57,21 +87,36 @@ export default async function DashboardPage() {
         </div>
 
         <Card className="p-5">
-          <p className="text-sm font-medium text-ink-500">Workspace setup</p>
-          <dl className="mt-5 space-y-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-olive-900">
+            Next best action
+          </p>
+          <h2 className="mt-3 text-2xl font-semibold text-ink-950">
+            {nextAction.title}
+          </h2>
+          <p className="mt-3 text-sm leading-6 text-ink-600">
+            {nextAction.description}
+          </p>
+          <dl className="mt-5 grid grid-cols-3 gap-2">
             <DashboardFact
-              label="Company size"
-              value={dashboard.organization.companySize ?? "Not set"}
+              label="Review"
+              value={dashboard.metrics.needsReview.toString()}
             />
             <DashboardFact
-              label="Hiring focus"
-              value={dashboard.organization.hiringFocus ?? "Not set"}
+              label="Live"
+              value={dashboard.metrics.published.toString()}
             />
             <DashboardFact
-              label="Default mode"
-              value={dashboard.organization.defaultInterviewMode ?? "Not set"}
+              label="Drafts"
+              value={dashboard.metrics.drafts.toString()}
             />
           </dl>
+          <Link
+            className="mt-5 inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-full bg-ink-900 px-4 text-sm font-medium text-white transition hover:bg-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6]"
+            href={nextAction.href}
+          >
+            {nextAction.label}
+            <ArrowRight aria-hidden="true" className="h-4 w-4" />
+          </Link>
         </Card>
       </section>
 
@@ -82,9 +127,9 @@ export default async function DashboardPage() {
           value={dashboard.metrics.activeRoles.toString()}
         />
         <MetricCard
-          icon={<Microphone aria-hidden="true" className="h-5 w-5" />}
-          label="Draft interviews"
-          value={dashboard.metrics.drafts.toString()}
+          icon={<CheckCircle aria-hidden="true" className="h-5 w-5" />}
+          label="Completed screens"
+          value={dashboard.metrics.completed.toString()}
         />
         <MetricCard
           icon={<Community aria-hidden="true" className="h-5 w-5" />}
@@ -93,13 +138,101 @@ export default async function DashboardPage() {
         />
       </section>
 
+      <section className="mt-10">
+        <div className="mb-4 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-semibold text-ink-950">Review queue</h2>
+            <p className="mt-1 text-sm text-ink-500">
+              Real candidate sessions from completed or in-progress live interviews.
+            </p>
+          </div>
+        </div>
+
+        {dashboard.reviewQueue.length > 0 ? (
+          <div className="overflow-hidden rounded-3xl border border-ink-100 bg-white/72">
+            <div className="divide-y divide-ink-100">
+              {dashboard.reviewQueue.map((session) => (
+                <Link
+                  key={session.id}
+                  className="group grid cursor-pointer gap-4 p-4 transition hover:bg-white sm:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)_auto] sm:items-center"
+                  href={session.href}
+                >
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-base font-semibold text-ink-950">
+                        {session.candidateLabel}
+                      </span>
+                      <StatusBadge tone={reviewStatusTone(session.reviewStatus)}>
+                        {formatReviewStatus(session.reviewStatus)}
+                      </StatusBadge>
+                    </span>
+                    <span className="mt-1 block truncate text-sm text-ink-500">
+                      {session.roleTitle} · {session.jobTitle}
+                    </span>
+                  </span>
+
+                  <span className="grid gap-2 text-sm text-ink-600 sm:grid-cols-2">
+                    <ReviewFact
+                      icon={<Clock aria-hidden="true" className="h-4 w-4" />}
+                      label={formatStatus(session.status)}
+                    />
+                    <ReviewFact
+                      icon={<ShieldCheck aria-hidden="true" className="h-4 w-4" />}
+                      label={formatAnalysisStatus(session.analysisStatus)}
+                    />
+                    <ReviewFact
+                      icon={<Microphone aria-hidden="true" className="h-4 w-4" />}
+                      label={`${session.transcriptTurnCount} turns`}
+                    />
+                    <ReviewFact
+                      icon={<Calendar aria-hidden="true" className="h-4 w-4" />}
+                      label={formatShortDate(session.completedAt ?? session.startedAt)}
+                    />
+                  </span>
+
+                  <span className="flex items-center justify-between gap-3 text-sm font-medium text-ink-900 sm:justify-end">
+                    {session.questionCompletionRate === null ? (
+                      <span className="text-ink-400">No script</span>
+                    ) : (
+                      <span>{session.questionCompletionRate}% complete</span>
+                    )}
+                    <ArrowRight
+                      aria-hidden="true"
+                      className="h-4 w-4 text-ink-400 transition group-hover:translate-x-0.5 group-hover:text-ink-900"
+                    />
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <Card className="border-dashed bg-white/58 p-6">
+            <div className="flex items-start gap-3">
+              <span className="grid h-10 w-10 place-items-center rounded-full bg-[#eef0e3] text-olive-800">
+                <WarningTriangle aria-hidden="true" className="h-5 w-5" />
+              </span>
+              <span>
+                <span className="block text-sm font-semibold text-ink-950">
+                  No candidate session yet
+                </span>
+                <span className="mt-2 block max-w-2xl text-sm leading-6 text-ink-600">
+                  Share a published interview link. When a candidate starts the
+                  live interview, the real session will appear here with review
+                  status and analysis availability.
+                </span>
+              </span>
+            </div>
+          </Card>
+        )}
+      </section>
+
       <section className="mt-10 grid gap-8 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <div>
           <div className="mb-4 flex items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-semibold text-ink-950">Interviews</h2>
               <p className="mt-1 text-sm text-ink-500">
-                Draft, publish, and review first-screening interviews from one list.
+                Draft, publish, and inspect the interview setup for each role.
               </p>
             </div>
           </div>
@@ -132,9 +265,9 @@ export default async function DashboardPage() {
                     </span>
                   </span>
                   <span className="flex shrink-0 items-center gap-3">
-                    <Badge className={statusBadgeClass(interview.state)}>
+                    <StatusBadge tone={statusTone(interview.state)}>
                       {formatStatus(interview.state)}
-                    </Badge>
+                    </StatusBadge>
                     <ArrowRight
                       aria-hidden="true"
                       className="h-4 w-4 text-ink-400 transition group-hover:translate-x-0.5 group-hover:text-ink-900"
@@ -164,7 +297,7 @@ export default async function DashboardPage() {
                 key={`${connector.provider}-${connector.status}`}
                 className="flex items-center gap-3 p-4"
               >
-                <span className="grid h-9 w-9 place-items-center rounded-full bg-[#f0f1e6] text-olive-800">
+                <span className="grid h-9 w-9 place-items-center rounded-full bg-[#eef0e3] text-olive-800">
                   <CheckCircle aria-hidden="true" className="h-5 w-5" />
                 </span>
                 <span>
@@ -186,9 +319,9 @@ export default async function DashboardPage() {
 
 function DashboardFact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-4">
-      <dt className="text-sm text-ink-500">{label}</dt>
-      <dd className="text-right text-sm font-medium text-ink-950">{value}</dd>
+    <div className="rounded-2xl border border-ink-100 bg-white/62 px-3 py-3">
+      <dt className="text-xs font-medium text-ink-500">{label}</dt>
+      <dd className="mt-1 text-lg font-semibold text-ink-950">{value}</dd>
     </div>
   );
 }
@@ -215,8 +348,17 @@ function MetricCard({
   );
 }
 
+function ReviewFact({ icon, label }: { icon: ReactNode; label: string }) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-2">
+      <span className="text-ink-400">{icon}</span>
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
 function formatProvider(provider: string | null) {
-  if (!provider) {
+  if (!provider || provider === "manual") {
     return "Manual";
   }
 
@@ -235,22 +377,69 @@ function formatStatus(status: string) {
   return status.replace(/_/g, " ");
 }
 
-function statusBadgeClass(status: string) {
+function formatReviewStatus(status: string) {
+  if (status === "to_call") {
+    return "To call";
+  }
+
+  if (status === "to_review") {
+    return "To review";
+  }
+
+  return "Archived";
+}
+
+function formatAnalysisStatus(status: string) {
+  if (status === "available") {
+    return "Analysis ready";
+  }
+
+  if (status === "pending") {
+    return "Analysis pending";
+  }
+
+  return "Not ready";
+}
+
+function formatShortDate(value: string | null) {
+  if (!value) {
+    return "No date";
+  }
+
+  return new Intl.DateTimeFormat("en", {
+    day: "2-digit",
+    month: "short",
+  }).format(new Date(value));
+}
+
+function statusTone(status: string) {
   if (status === "needs_review") {
-    return "bg-coral-50 text-coral-800";
+    return "danger";
   }
 
   if (status === "candidate_started") {
-    return "bg-gold-100 text-gold-800";
+    return "warning";
   }
 
   if (status === "published") {
-    return "bg-ink-900 text-white";
+    return "dark";
   }
 
   if (status === "completed") {
-    return "bg-meadow-50 text-meadow-800";
+    return "success";
   }
 
-  return "bg-[#f0f1e6] text-olive-800";
+  return "olive";
+}
+
+function reviewStatusTone(status: string) {
+  if (status === "to_call") {
+    return "success";
+  }
+
+  if (status === "archived") {
+    return "muted";
+  }
+
+  return "danger";
 }

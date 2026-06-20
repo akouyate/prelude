@@ -328,7 +328,7 @@ export default function OrganizationOnboardingPage() {
         >
           <Input
             autoFocus
-            className="h-14 rounded-lg border-ink-200 bg-white px-4 text-lg shadow-[0_10px_28px_rgb(23_23_21/0.05)]"
+            className="h-14 rounded-2xl border-ink-200 bg-white px-4 text-lg"
             onChange={(event) => update("companyName", event.target.value)}
             placeholder="Acme Talent"
             value={state.companyName}
@@ -387,7 +387,7 @@ export default function OrganizationOnboardingPage() {
         >
           <Input
             autoFocus
-            className="h-14 rounded-lg border-ink-200 bg-white px-4 text-lg shadow-[0_10px_28px_rgb(23_23_21/0.05)]"
+            className="h-14 rounded-2xl border-ink-200 bg-white px-4 text-lg"
             onChange={(event) => update("manualJobTitle", event.target.value)}
             placeholder="Restaurant Manager"
             value={state.manualJobTitle}
@@ -401,9 +401,9 @@ export default function OrganizationOnboardingPage() {
             <button
               key={job.id}
               className={cn(
-                "flex w-full cursor-pointer items-center justify-between rounded-xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
+                "flex w-full cursor-pointer items-center justify-between rounded-3xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
                 state.selectedJobId === job.id
-                  ? "border-olive-700 bg-[#f0f1e6]"
+                  ? "border-olive-700 bg-[#eef0e3]"
                   : "border-ink-100 bg-white/60 hover:border-ink-300 hover:bg-white"
               )}
               onClick={() => update("selectedJobId", job.id)}
@@ -436,7 +436,7 @@ export default function OrganizationOnboardingPage() {
       ) : null}
 
       {step === "ready" ? (
-        <div className="rounded-2xl border border-ink-100 bg-white/65 p-5 shadow-soft">
+        <div className="rounded-3xl border border-ink-100 bg-white/65 p-5">
           <dl className="grid gap-4 text-sm sm:grid-cols-2">
             <SummaryItem label="Workspace" value={state.companyName} />
             <SummaryItem label="Company size" value={state.companySize} />
@@ -450,7 +450,7 @@ export default function OrganizationOnboardingPage() {
             <SummaryItem label="Candidate mode" value={state.interviewMode} />
           </dl>
           {submitError ? (
-            <p className="mt-5 rounded-xl border border-[#f4c7b7] bg-[#fff4f0] px-4 py-3 text-sm text-[#8f2f1a]">
+            <p className="mt-5 rounded-2xl border border-[#f4c7b7] bg-[#fff4f0] px-4 py-3 text-sm text-[#8f2f1a]">
               {submitError}
             </p>
           ) : null}
@@ -493,10 +493,10 @@ function JobSourceGrid({
             key={option.value}
             aria-pressed={isSelected}
             className={cn(
-              "group flex min-h-40 w-full cursor-pointer flex-col rounded-2xl border p-5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-200",
+              "group flex min-h-40 w-full cursor-pointer flex-col rounded-3xl border p-5 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6]",
               isManual ? "sm:col-span-2" : undefined,
               isSelected
-                ? "border-olive-700 bg-[#f0f1e6] shadow-[0_16px_36px_rgb(23_23_21/0.08)]"
+                ? "border-olive-700 bg-[#eef0e3]"
                 : "border-ink-100 bg-white/55 hover:border-ink-300 hover:bg-white"
             )}
             onClick={() => onSelect(option.value)}
@@ -504,7 +504,7 @@ function JobSourceGrid({
           >
             <span className="flex items-start justify-between gap-4">
               <span className="flex items-center gap-3">
-                <span className="grid h-12 w-12 place-items-center rounded-xl border border-ink-100 bg-white">
+                  <span className="grid h-12 w-12 place-items-center rounded-2xl border border-ink-100 bg-white">
                   <SourceLogo source={option.value} />
                 </span>
                 <span>
@@ -751,19 +751,19 @@ function WizardFooter({
 function WelcomeStep() {
   return (
     <div className="grid gap-4 sm:grid-cols-3">
-      <div className="rounded-xl border border-ink-100 bg-white/55 p-4">
+      <div className="rounded-3xl border border-ink-100 bg-white/55 p-4">
         <p className="text-sm font-semibold text-ink-900">One question at a time</p>
         <p className="mt-2 text-sm leading-6 text-ink-600">
           The setup stays focused, closer to Typeform and Tally than a settings form.
         </p>
       </div>
-      <div className="rounded-xl border border-ink-100 bg-white/55 p-4">
+      <div className="rounded-3xl border border-ink-100 bg-white/55 p-4">
         <p className="text-sm font-semibold text-ink-900">Mock job imports</p>
         <p className="mt-2 text-sm leading-6 text-ink-600">
           Validate LinkedIn and Indeed onboarding before real partner APIs.
         </p>
       </div>
-      <div className="rounded-xl border border-ink-100 bg-white/55 p-4">
+      <div className="rounded-3xl border border-ink-100 bg-white/55 p-4">
         <p className="text-sm font-semibold text-ink-900">Ready to draft</p>
         <p className="mt-2 text-sm leading-6 text-ink-600">
           The flow lands directly on the first interview draft action.

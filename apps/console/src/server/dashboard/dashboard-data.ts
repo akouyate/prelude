@@ -2,6 +2,15 @@ import "server-only";
 
 import { prisma } from "@prelude/db";
 
+import {
+  getLiveEventStatsBySessionId,
+  getLiveStatusById,
+  getQuestionCompletionRate,
+  resolveAnalysisStatus,
+  resolveReviewStatus,
+  type LiveAnalysisStatus,
+  type RecruiterReviewStatus,
+} from "../interviews/live-session-insights";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
 export type DashboardInterviewState =
@@ -38,6 +47,22 @@ export type ConsoleDashboardData = {
     state: DashboardInterviewState;
     title: string;
     updatedAt: string;
+  }>;
+  reviewQueue: Array<{
+    analysisStatus: LiveAnalysisStatus;
+    candidateLabel: string;
+    completedAt: string | null;
+    eventCount: number;
+    href: string;
+    id: string;
+    jobTitle: string;
+    questionCompletionRate: number | null;
+    realtimeSessionId: string | null;
+    reviewStatus: RecruiterReviewStatus;
+    roleTitle: string;
+    startedAt: string | null;
+    status: string;
+    transcriptTurnCount: number;
   }>;
   connectors: Array<{
     provider: string;
@@ -100,16 +125,25 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
         },
       }),
       prisma.candidateSession.findMany({
+        include: {
+          interview: {
+            include: {
+              job: true,
+            },
+          },
+        },
         orderBy: { updatedAt: "desc" },
         where: { organizationId: scope.organizationId },
       }),
     ]);
 
-  const liveStatusById = await getLiveStatusById(
-    candidateSessions
-      .map((session) => session.realtimeSessionId)
-      .filter((id): id is string => Boolean(id)),
-  );
+  const realtimeSessionIds = candidateSessions
+    .map((session) => session.realtimeSessionId)
+    .filter((id): id is string => Boolean(id));
+  const [liveStatusById, eventStatsBySessionId] = await Promise.all([
+    getLiveStatusById(realtimeSessionIds),
+    getLiveEventStatsBySessionId(realtimeSessionIds),
+  ]);
   const completed = candidateSessions.filter(
     (session) => currentCandidateStatus(session, liveStatusById) === "completed",
   );
@@ -153,6 +187,36 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
     (session) => currentCandidateStatus(session, liveStatusById) === "completed",
   );
   const latestInterview = interviews[0];
+  const reviewQueue = candidateSessions.slice(0, 8).map((session) => {
+    const status = currentCandidateStatus(session, liveStatusById);
+    const eventStats = session.realtimeSessionId
+      ? eventStatsBySessionId.get(session.realtimeSessionId)
+      : undefined;
+    const questionCount = readJsonArray(session.interview.questions).length;
+
+    return {
+      analysisStatus: resolveAnalysisStatus(status, eventStats),
+      candidateLabel:
+        session.candidateName ??
+        session.candidateEmail ??
+        `Candidate ${session.id.slice(-6)}`,
+      completedAt:
+        session.completedAt?.toISOString() ??
+        (status === "completed" ? session.updatedAt.toISOString() : null),
+      eventCount: eventStats?.eventCount ?? 0,
+      href: `/interviews/${session.realtimeSessionId ?? session.id}`,
+      id: session.id,
+      jobTitle: session.interview.job.title,
+      questionCompletionRate:
+        getQuestionCompletionRate({ questionCount, stats: eventStats }),
+      realtimeSessionId: session.realtimeSessionId,
+      reviewStatus: resolveReviewStatus(status),
+      roleTitle: session.interview.roleTitle,
+      startedAt: session.startedAt?.toISOString() ?? null,
+      status,
+      transcriptTurnCount: eventStats?.transcriptTurnCount ?? 0,
+    };
+  });
 
   return {
     connectors: organization.jobSourceConnections.map((connector) => ({
@@ -178,6 +242,7 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
     primaryReviewHref: latestCompleted?.realtimeSessionId
       ? `/interviews/${latestCompleted.realtimeSessionId}`
       : (latestInterview?.href ?? null),
+    reviewQueue,
   };
 }
 
@@ -229,20 +294,6 @@ function currentCandidateStatus(session: {
   );
 }
 
-async function getLiveStatusById(sessionIds: string[]) {
-  if (sessionIds.length === 0) {
-    return new Map<string, string>();
-  }
-
-  const liveSessions = await prisma.liveInterviewSession.findMany({
-    select: {
-      id: true,
-      status: true,
-    },
-    where: {
-      id: { in: sessionIds },
-    },
-  });
-
-  return new Map(liveSessions.map((session) => [session.id, session.status]));
+function readJsonArray(value: unknown) {
+  return Array.isArray(value) ? value : [];
 }

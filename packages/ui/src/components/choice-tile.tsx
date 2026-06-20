@@ -34,10 +34,10 @@ export const ChoiceTile = React.forwardRef<HTMLElement, ChoiceTileProps>(
         nativeButton
         type={type}
         className={cn(
-          "group relative flex min-h-36 w-full cursor-pointer flex-col items-center justify-center rounded-xl border p-5 text-center transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
+          "group relative flex min-h-36 w-full cursor-pointer flex-col items-center justify-center rounded-3xl border p-5 text-center transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
           selected
-            ? "border-olive-700 bg-[#f0f1e6] text-ink-900 shadow-[0_16px_36px_rgb(23_23_21/0.08)]"
-            : "border-ink-100 bg-white/55 text-ink-900 hover:border-ink-300 hover:bg-white",
+            ? "border-olive-800 bg-[#eef0e3] text-ink-900"
+            : "border-ink-100 bg-white/58 text-ink-900 hover:border-ink-300 hover:bg-white",
           className
         )}
         {...props}
@@ -51,8 +51,8 @@ export const ChoiceTile = React.forwardRef<HTMLElement, ChoiceTileProps>(
           <span
             aria-hidden="true"
             className={cn(
-              "mb-4 grid h-12 w-12 place-items-center rounded-md border text-ink-900",
-              selected ? "border-olive-700 bg-white/70" : "border-ink-100 bg-ink-50/60"
+              "mb-4 grid h-12 w-12 place-items-center rounded-2xl border text-ink-900",
+              selected ? "border-olive-800 bg-white/70" : "border-ink-100 bg-ink-50/60"
             )}
           >
             {icon}
@@ -65,7 +65,7 @@ export const ChoiceTile = React.forwardRef<HTMLElement, ChoiceTileProps>(
           </span>
         ) : null}
         {meta ? (
-          <span className="mt-3 rounded-sm bg-white/70 px-2 py-1 text-xs font-medium text-ink-600">
+          <span className="mt-3 rounded-full bg-white/70 px-2.5 py-1 text-xs font-medium text-ink-600">
             {meta}
           </span>
         ) : null}

@@ -8,9 +8,9 @@ export default function Loading() {
           <div className="h-10 w-full max-w-md rounded-full bg-ink-100" />
         </div>
         <div className="grid gap-3 sm:grid-cols-3">
-          <div className="h-24 rounded-2xl border border-ink-100 bg-white/60" />
-          <div className="h-24 rounded-2xl border border-ink-100 bg-white/60" />
-          <div className="h-24 rounded-2xl border border-ink-100 bg-white/60" />
+          <div className="h-24 rounded-3xl border border-ink-100 bg-white/60" />
+          <div className="h-24 rounded-3xl border border-ink-100 bg-white/60" />
+          <div className="h-24 rounded-3xl border border-ink-100 bg-white/60" />
         </div>
       </div>
     </main>

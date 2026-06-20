@@ -14,7 +14,7 @@ const variants: Record<ButtonVariant, string> = {
   primary: "bg-ink-900 text-white hover:bg-ink-800",
   secondary:
     "border border-ink-200 bg-white/80 text-ink-900 hover:border-ink-900 hover:bg-white",
-  ghost: "text-ink-800 hover:bg-olive-50"
+  ghost: "text-ink-800 hover:bg-[#eef0e3]"
 };
 
 export const Button = React.forwardRef<HTMLElement, ButtonProps>(

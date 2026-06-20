@@ -2,21 +2,37 @@
 @source "../../../packages/ui/src/**/*.{ts,tsx}";
 
 @theme {
-  --color-ink-50: #f7f8fa;
-  --color-ink-100: #eceff3;
-  --color-ink-200: #d8dee7;
-  --color-ink-500: #68768a;
-  --color-ink-600: #505b6c;
-  --color-ink-700: #414956;
-  --color-ink-800: #252a31;
-  --color-ink-900: #15181d;
+  --color-ink-50: #f6f3ec;
+  --color-ink-100: #ece8de;
+  --color-ink-200: #ddd8cc;
+  --color-ink-300: #c8c1b2;
+  --color-ink-400: #a29b8d;
+  --color-ink-500: #777166;
+  --color-ink-600: #5b574f;
+  --color-ink-700: #45423c;
+  --color-ink-800: #2a2925;
+  --color-ink-900: #171715;
+  --color-olive-50: oklch(0.946 0.178 121.33);
+  --color-olive-100: oklch(0.911 0.219 121.34);
+  --color-olive-200: oklch(0.826 0.199 121.3);
+  --color-olive-300: oklch(0.748 0.18 121.09);
+  --color-olive-400: oklch(0.664 0.16 121.25);
+  --color-olive-500: oklch(0.587 0.141 121.25);
+  --color-olive-600: oklch(0.507 0.122 121.25);
+  --color-olive-700: oklch(0.417 0.101 121.45);
+  --color-olive-800: oklch(0.323 0.077 120.92);
+  --color-olive-900: oklch(0.228 0.055 120.74);
+  --color-olive-950: oklch(0.175 0.042 120.69);
   --color-meadow-100: #d8f3e3;
   --color-meadow-500: #2f9f67;
   --color-meadow-600: #217e50;
   --color-meadow-700: #1d6442;
   --color-coral-100: #ffe3d8;
   --color-coral-500: #dc4e2e;
-  --shadow-soft: 0 12px 32px rgb(21 24 29 / 0.08);
+  --color-gold-50: #fff8df;
+  --color-gold-200: #ffe39a;
+  --color-gold-800: #5e3e14;
+  --shadow-soft: none;
 }
 
 body {

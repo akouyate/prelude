@@ -10,7 +10,7 @@ export function Toast({
     <div
       role="status"
       className={cn(
-        "rounded-xl border border-ink-200 bg-white px-4 py-3 text-sm text-ink-800 shadow-soft",
+        "rounded-2xl border border-ink-100 bg-white/86 px-4 py-3 text-sm text-ink-800 backdrop-blur",
         className
       )}
       {...props}

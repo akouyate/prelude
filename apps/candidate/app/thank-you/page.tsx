@@ -4,7 +4,7 @@ export default function ThankYouPage() {
   return (
     <CandidateShell>
       <div className="flex flex-1 items-center">
-        <div>
+        <div className="rounded-3xl border border-white/10 bg-white/8 p-6 backdrop-blur">
           <h1 className="text-3xl font-semibold">Thanks for your answers.</h1>
           <p className="mt-4 text-white/72">
             The recruiter will review your pre-interview and decide the next
