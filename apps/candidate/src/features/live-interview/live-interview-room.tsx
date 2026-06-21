@@ -673,7 +673,7 @@ function LiveInterviewStage({
   );
 
   return (
-    <section className="-mx-4 -mb-5 mt-5 flex min-h-[calc(100vh-5.25rem)] flex-col overflow-hidden rounded-t-[2rem] bg-[radial-gradient(circle_at_50%_-10%,#3c421f_0%,#1d1c16_38%,#131210_100%)] px-5 pb-5 pt-6 text-white sm:-mx-6 sm:rounded-[2.25rem] sm:px-8">
+    <section className="-mx-4 -mb-5 mt-5 flex h-[calc(100svh-5.25rem)] min-h-[34rem] flex-col overflow-hidden rounded-t-[2rem] bg-[radial-gradient(circle_at_50%_-10%,#3c421f_0%,#1d1c16_38%,#131210_100%)] px-5 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-6 text-white supports-[height:100dvh]:h-[calc(100dvh-5.25rem)] sm:-mx-6 sm:rounded-[2.25rem] sm:px-8">
       <div className="flex items-center justify-between gap-4">
         <div className="flex items-center gap-2 text-sm font-semibold text-white/82">
           <span className="grid h-8 w-8 place-items-center rounded-full bg-white/10">
@@ -684,17 +684,20 @@ function LiveInterviewStage({
         <StatusPill status={status} />
       </div>
 
-      <div className="grid flex-1 place-items-center py-10 text-center">
+      <div className="grid min-h-0 flex-1 place-items-center py-5 text-center sm:py-10">
         <div className="w-full max-w-3xl">
-          <div className="relative mx-auto grid h-32 w-32 place-items-center">
+          <div className="relative mx-auto grid h-24 w-24 place-items-center sm:h-32 sm:w-32">
             <span className="absolute inset-0 rounded-full border border-olive-300/40 motion-safe:animate-[cc-ring_2.4s_ease-out_infinite]" />
             <span className="absolute inset-0 rounded-full border border-olive-300/30 motion-safe:animate-[cc-ring_2.4s_ease-out_infinite_1.2s]" />
-            <span className="grid h-16 w-16 place-items-center rounded-full bg-[radial-gradient(circle_at_35%_30%,oklch(0.826_0.199_121.3),oklch(0.507_0.122_121.25))]">
-              <Mic aria-hidden="true" className="h-7 w-7 text-ink-950" />
+            <span className="grid h-14 w-14 place-items-center rounded-full bg-[radial-gradient(circle_at_35%_30%,oklch(0.826_0.199_121.3),oklch(0.507_0.122_121.25))] sm:h-16 sm:w-16">
+              <Mic
+                aria-hidden="true"
+                className="h-6 w-6 text-ink-950 sm:h-7 sm:w-7"
+              />
             </span>
           </div>
 
-          <p className="mt-8 text-xs font-semibold uppercase tracking-[0.18em] text-olive-200">
+          <p className="mt-6 text-xs font-semibold uppercase tracking-[0.18em] text-olive-200 sm:mt-8">
             {isRoomActive ? "Interviewer" : "Connecting"}
           </p>
           <h2 className="mx-auto mt-4 max-w-2xl text-2xl font-semibold leading-tight tracking-normal sm:text-4xl lg:text-5xl">
@@ -737,7 +740,7 @@ function LiveInterviewStage({
         </div>
       </div>
 
-      <div className="ml-auto flex w-full items-center justify-between gap-3 rounded-full border border-white/10 bg-ink-950/70 p-2 text-white backdrop-blur sm:w-auto">
+      <div className="ml-auto flex w-full shrink-0 items-center justify-between gap-3 rounded-full border border-white/10 bg-ink-950/70 p-2 text-white backdrop-blur sm:w-auto">
         <Button
           className="h-10 bg-coral-500/20 px-4 text-coral-100 hover:bg-coral-500/30"
           onClick={onEndInterview}
