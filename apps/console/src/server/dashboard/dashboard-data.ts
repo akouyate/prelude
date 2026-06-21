@@ -16,6 +16,7 @@ import {
   toCandidateBriefDto,
   type CriteriaDistribution,
 } from "../interviews/candidate-review-signals";
+import { getReviewNotePreview } from "../interviews/candidate-review-display";
 import { listCandidateSessionSpinesForOrganization } from "../interviews/candidate-session-spine";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
@@ -68,7 +69,10 @@ export type ConsoleDashboardData = {
     pointsToClarifyCount: number | null;
     questionCompletionRate: number | null;
     realtimeSessionId: string | null;
+    reviewNotePreview: string | null;
+    reviewNoteUpdatedAt: string | null;
     reviewStatus: RecruiterReviewStatus;
+    reviewStatusUpdatedAt: string | null;
     roleTitle: string;
     startedAt: string | null;
     status: string;
@@ -231,7 +235,11 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
         stats: eventStats,
       }),
       realtimeSessionId: session.realtimeSessionId,
+      reviewNotePreview: getReviewNotePreview(session.reviewNote),
+      reviewNoteUpdatedAt: session.reviewNoteUpdatedAt?.toISOString() ?? null,
       reviewStatus: resolveReviewStatus(session.reviewStatus),
+      reviewStatusUpdatedAt:
+        session.reviewStatusUpdatedAt?.toISOString() ?? null,
       roleTitle: session.interview.roleTitle,
       startedAt: session.startedAt?.toISOString() ?? null,
       status,
@@ -277,16 +285,29 @@ function resolveInterviewState({
   interviewStatus?: string;
   sessions: Array<{
     realtimeSessionId: string | null;
+    reviewStatus?: string | null;
     status: string;
   }>;
   liveStatusById: Map<string, string>;
 }): DashboardInterviewState {
+  const completedSessions = sessions.filter(
+    (session) => currentCandidateStatus(session, liveStatusById) === "completed",
+  );
+
+  if (
+    completedSessions.some(
+      (session) => resolveReviewStatus(session.reviewStatus) === "to_review",
+    )
+  ) {
+    return "needs_review";
+  }
+
   const statuses = sessions.map((session) =>
     currentCandidateStatus(session, liveStatusById),
   );
 
-  if (statuses.includes("completed")) {
-    return "needs_review";
+  if (completedSessions.length > 0) {
+    return "completed";
   }
 
   if (statuses.some((status) => activeCandidateStatuses.has(status))) {

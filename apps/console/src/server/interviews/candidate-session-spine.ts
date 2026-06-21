@@ -6,6 +6,18 @@ const candidateSessionSpineInclude = {
   candidateBrief: true,
   interview: true,
   job: true,
+  reviewNoteUpdatedBy: {
+    select: {
+      email: true,
+      name: true,
+    },
+  },
+  reviewStatusUpdatedBy: {
+    select: {
+      email: true,
+      name: true,
+    },
+  },
 } satisfies Prisma.CandidateSessionInclude;
 
 export type CandidateSessionSpine = Prisma.CandidateSessionGetPayload<{

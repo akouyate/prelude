@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { type CandidateBriefDto } from "@prelude/contracts";
-import { Button, Card, EnterpriseShell, StatusBadge } from "@prelude/ui";
+import { Button, Card, EnterpriseShell, StatusBadge, Textarea } from "@prelude/ui";
 import {
   ArrowLeft,
   Calendar,
@@ -22,8 +22,13 @@ import { ConsoleAuthControls } from "../../../src/features/auth/console-auth-con
 import { isConsoleAuthClerkEnabled } from "../../../src/server/auth/clerk-config";
 import { getConsoleAuthContext } from "../../../src/server/auth/console-auth";
 import { generateCandidateBriefAction } from "../../../src/server/interviews/candidate-brief-actions";
+import { updateCandidateReviewAction } from "../../../src/server/interviews/candidate-review-actions";
 import { getInterviewDetail } from "../../../src/server/interviews/interview-loaders";
 import type { CandidateSessionEvidence } from "../../../src/server/interviews/live-session-evidence";
+import {
+  canManageCandidateReview,
+  candidateReviewNoteMaxLength,
+} from "../../../src/domain/candidate-review-policy";
 import { requireCompletedOrganizationOnboarding } from "../../../src/server/onboarding/onboarding-guard";
 
 type InterviewDetailPageProps = {
@@ -61,7 +66,10 @@ export default async function InterviewDetailPage({
       {detail.kind === "interview" ? (
         <InterviewOverview detail={detail} />
       ) : (
-        <CandidateSessionReview session={detail.candidateSession} />
+        <CandidateSessionReview
+          canManageReview={canManageCandidateReview(account.role)}
+          session={detail.candidateSession}
+        />
       )}
     </EnterpriseShell>
   );
@@ -226,6 +234,11 @@ function InterviewOverview({
                             {formatReviewStatus(session.reviewStatus)}
                           </StatusBadge>
                         </span>
+                        {session.reviewNotePreview ? (
+                          <span className="mt-2 block truncate text-sm text-ink-500">
+                            Internal note: {session.reviewNotePreview}
+                          </span>
+                        ) : null}
                       </span>
                       <span className="grid gap-2 text-sm text-ink-600 sm:grid-cols-2">
                         <ReviewFact
@@ -385,8 +398,10 @@ function InterviewOverview({
 }
 
 function CandidateSessionReview({
+  canManageReview,
   session,
 }: {
+  canManageReview: boolean;
   session: {
     analysisStatus: "available" | "pending" | "not_ready" | "failed";
     brief: CandidateBriefDto | null;
@@ -413,7 +428,13 @@ function CandidateSessionReview({
     }>;
     questionCompletionRate: number | null;
     realtimeSessionId: string | null;
+    reviewNote: string | null;
+    reviewNotePreview: string | null;
+    reviewNoteUpdatedAt: string | null;
+    reviewNoteUpdatedBy: string | null;
     reviewStatus: "to_call" | "to_review" | "archived";
+    reviewStatusUpdatedAt: string | null;
+    reviewStatusUpdatedBy: string | null;
     roleTitle: string;
     startedAt: string | null;
     status: string;
@@ -550,7 +571,17 @@ function CandidateSessionReview({
               </div>
             </Card>
           ) : null}
-          <HumanReviewCard reviewStatus={session.reviewStatus} />
+          <HumanReviewCard
+            canManageReview={canManageReview}
+            detailPath={`/interviews/${session.realtimeSessionId ?? session.id}`}
+            reviewNote={session.reviewNote}
+            reviewNoteUpdatedAt={session.reviewNoteUpdatedAt}
+            reviewNoteUpdatedBy={session.reviewNoteUpdatedBy}
+            reviewStatus={session.reviewStatus}
+            reviewStatusUpdatedAt={session.reviewStatusUpdatedAt}
+            reviewStatusUpdatedBy={session.reviewStatusUpdatedBy}
+            sessionId={session.id}
+          />
           <DataLimitationsCard
             brief={session.brief}
             evidence={session.evidence}
@@ -906,34 +937,134 @@ function RuntimeEvidenceCard({
   );
 }
 
+const reviewStatusOptions = [
+  {
+    description: "Needs a human look before any next step.",
+    label: "To review",
+    value: "to_review",
+  },
+  {
+    description: "Prepare a recruiter follow-up.",
+    label: "To call",
+    value: "to_call",
+  },
+  {
+    description: "No active follow-up planned for now.",
+    label: "Archived",
+    value: "archived",
+  },
+] as const;
+
 function HumanReviewCard({
+  canManageReview,
+  detailPath,
+  reviewNote,
+  reviewNoteUpdatedAt,
+  reviewNoteUpdatedBy,
   reviewStatus,
+  reviewStatusUpdatedAt,
+  reviewStatusUpdatedBy,
+  sessionId,
 }: {
+  canManageReview: boolean;
+  detailPath: string;
+  reviewNote: string | null;
+  reviewNoteUpdatedAt: string | null;
+  reviewNoteUpdatedBy: string | null;
   reviewStatus: "to_call" | "to_review" | "archived";
+  reviewStatusUpdatedAt: string | null;
+  reviewStatusUpdatedBy: string | null;
+  sessionId: string;
 }) {
   return (
     <Card className="p-5" id="human-notes">
       <SectionHeading
-        description="Human reviewer workspace. Automated analysis stops before any hiring decision."
+        description="Private recruiter workspace. AI support remains separate from the human review status."
         icon={<UserRoundCheck aria-hidden="true" className="h-4 w-4" />}
-        title="Human notes"
+        title="Human review"
       />
-      <div className="mt-5 grid gap-3 lg:grid-cols-[14rem_minmax(0,1fr)]">
+
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
         <MiniFact
-          label="Review status"
+          label="Human status"
           value={formatReviewStatus(reviewStatus)}
         />
-        <div className="rounded-2xl border border-dashed border-ink-100 bg-white/58 p-4">
-          <p className="text-sm font-semibold text-ink-950">
-            No internal note stored yet
-          </p>
-          <p className="mt-2 text-sm leading-6 text-ink-600">
-            Use this page to prepare the human follow-up. Notes and status
-            mutation controls are tracked separately, so this view remains a
-            read-only review surface for now.
-          </p>
-        </div>
+        <MiniFact
+          label="Status updated"
+          value={formatAuditLine(reviewStatusUpdatedBy, reviewStatusUpdatedAt)}
+        />
+        <MiniFact
+          label="Note updated"
+          value={formatAuditLine(reviewNoteUpdatedBy, reviewNoteUpdatedAt)}
+        />
       </div>
+
+      <form action={updateCandidateReviewAction} className="mt-5 space-y-5">
+        <input name="candidateSessionId" type="hidden" value={sessionId} />
+        <input name="detailPath" type="hidden" value={detailPath} />
+
+        <fieldset
+          className="space-y-5 disabled:opacity-70"
+          disabled={!canManageReview}
+        >
+          <legend className="sr-only">Human review status and note</legend>
+          <div className="grid gap-2 md:grid-cols-3">
+            {reviewStatusOptions.map((option) => (
+              <label key={option.value} className="cursor-pointer">
+                <input
+                  className="peer sr-only"
+                  defaultChecked={reviewStatus === option.value}
+                  name="reviewStatus"
+                  type="radio"
+                  value={option.value}
+                />
+                <span className="block min-h-28 rounded-3xl border border-ink-100 bg-white/62 p-4 transition peer-checked:border-ink-900 peer-checked:bg-[#eef0e3] peer-focus-visible:ring-2 peer-focus-visible:ring-olive-300">
+                  <span className="block text-sm font-semibold text-ink-950">
+                    {option.label}
+                  </span>
+                  <span className="mt-2 block text-sm leading-5 text-ink-500">
+                    {option.description}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+
+          <div>
+            <label
+              className="text-sm font-semibold text-ink-950"
+              htmlFor="reviewNote"
+            >
+              Internal note
+            </label>
+            <Textarea
+              className="mt-2 min-h-36"
+              defaultValue={reviewNote ?? ""}
+              id="reviewNote"
+              maxLength={candidateReviewNoteMaxLength}
+              name="reviewNote"
+              placeholder="Add job-related observations, follow-up points, or recruiter context. Leave empty to clear the note."
+            />
+            <p className="mt-2 text-xs leading-5 text-ink-500">
+              Private to this organization. Keep notes job-related and avoid
+              protected-trait rationale.
+            </p>
+          </div>
+        </fieldset>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm leading-6 text-ink-500">
+            {canManageReview
+              ? "Saving updates records the reviewer and timestamp."
+              : "Viewer access can read review notes but cannot modify them."}
+          </p>
+          {canManageReview ? (
+            <Button type="submit">Save review</Button>
+          ) : (
+            <StatusBadge tone="muted">Read-only</StatusBadge>
+          )}
+        </div>
+      </form>
     </Card>
   );
 }
@@ -1313,6 +1444,19 @@ function formatDate(value: string | null) {
   }).format(new Date(value));
 }
 
+function formatAuditLine(userLabel: string | null, value: string | null) {
+  if (!userLabel && !value) {
+    return "No human update";
+  }
+
+  if (!value) {
+    return userLabel ?? "No timestamp";
+  }
+
+  const formattedDate = formatDate(value);
+  return userLabel ? `${userLabel} · ${formattedDate}` : formattedDate;
+}
+
 function formatShortDate(value: string | null) {
   if (!value) {
     return "No date";
@@ -1451,19 +1595,22 @@ function formatAnalysisStatus(status: string) {
 function getSessionStats(
   sessions: Array<{
     completedAt: string | null;
+    reviewStatus: string;
     status: string;
   }>,
 ) {
-  const completed = sessions.filter(
+  const completedSessions = sessions.filter(
     (session) => session.status === "completed" || session.completedAt,
-  ).length;
+  );
   const started = sessions.filter(
     (session) => session.status !== "created",
   ).length;
 
   return {
-    completed,
-    needsReview: completed,
+    completed: completedSessions.length,
+    needsReview: completedSessions.filter(
+      (session) => session.reviewStatus === "to_review",
+    ).length,
     started,
   };
 }

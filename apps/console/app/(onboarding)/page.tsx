@@ -176,6 +176,11 @@ export default async function DashboardPage() {
                     <span className="mt-1 block truncate text-sm text-ink-500">
                       {session.roleTitle} · {session.jobTitle}
                     </span>
+                    {session.reviewNotePreview ? (
+                      <span className="mt-2 block truncate text-sm text-ink-500">
+                        Internal note: {session.reviewNotePreview}
+                      </span>
+                    ) : null}
                   </span>
 
                   <span className="grid gap-2 text-sm text-ink-600 sm:grid-cols-2">
