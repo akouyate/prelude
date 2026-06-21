@@ -154,3 +154,5 @@ The live IA commercial POC checklist is documented in
 [`docs/operations/live-ia-commercial-poc-checklist.md`](docs/operations/live-ia-commercial-poc-checklist.md).
 Compliance and candidate trust guardrails are documented in
 [`docs/operations/compliance-trust-guardrails.md`](docs/operations/compliance-trust-guardrails.md).
+Evaluation matrix implementation sources are tracked in
+[`docs/sources/evaluation-matrix.md`](docs/sources/evaluation-matrix.md).

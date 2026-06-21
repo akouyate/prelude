@@ -59,9 +59,17 @@ export {
   type TranscriptionResponse,
 } from "./schemas/submission";
 export {
+  candidateBriefConfidenceSchema,
   candidateBriefEvidenceSchema,
+  candidateBriefEvaluationCriterionSchema,
+  candidateBriefEvaluationMatrixSchema,
+  candidateBriefEvaluationStatusSchema,
+  candidateBriefInferredSignalSchema,
+  candidateBriefRecommendedNextStepSchema,
+  candidateBriefRecommendationLabelSchema,
   candidateBriefSchema,
   candidateBriefStatusSchema,
+  candidateBriefCriterionCategorySchema,
   candidateCriterionEvaluationSchema,
   candidateCriterionEvaluationStatusSchema,
   complianceFlagSchema,

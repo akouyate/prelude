@@ -1017,6 +1017,43 @@ function PersistedBriefCard({ brief }: { brief: CandidateBriefDto }) {
         <p className="mt-2 text-sm leading-6 text-ink-600">{brief.summary}</p>
       ) : null}
 
+      {brief.evaluationMatrix ? (
+        <div className="mt-5 rounded-3xl border border-ink-100 bg-white/54 p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-sm font-semibold text-ink-950">
+              Evaluation matrix
+            </p>
+            <StatusBadge
+              tone={recommendationTone(
+                brief.evaluationMatrix.recommendationLabel,
+              )}
+            >
+              {formatRecommendationLabel(
+                brief.evaluationMatrix.recommendationLabel,
+              )}
+            </StatusBadge>
+            <StatusBadge tone="neutral">
+              {brief.evaluationMatrix.recommendationConfidence} confidence
+            </StatusBadge>
+          </div>
+          <p className="mt-3 text-sm leading-6 text-ink-600">
+            {brief.evaluationMatrix.recommendationRationale}
+          </p>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2">
+            <BriefColumn
+              empty="No grounded fact was extracted from the transcript."
+              title="Grounded facts"
+              values={brief.evaluationMatrix.facts}
+            />
+            <BriefColumn
+              empty="No missing information was detected."
+              title="Missing information"
+              values={brief.evaluationMatrix.missingInfo}
+            />
+          </div>
+        </div>
+      ) : null}
+
       <div className="mt-5 grid gap-4 lg:grid-cols-2">
         <BriefColumn
           empty="No strength was extracted from the persisted evidence."
@@ -1082,6 +1119,32 @@ function PersistedBriefCard({ brief }: { brief: CandidateBriefDto }) {
       ) : null}
     </Card>
   );
+}
+
+function formatRecommendationLabel(
+  value: NonNullable<CandidateBriefDto["evaluationMatrix"]>["recommendationLabel"],
+) {
+  switch (value) {
+    case "continue":
+      return "Continue";
+    case "targeted_follow_up":
+      return "Targeted follow-up";
+    case "inconclusive":
+      return "Inconclusive";
+  }
+}
+
+function recommendationTone(
+  value: NonNullable<CandidateBriefDto["evaluationMatrix"]>["recommendationLabel"],
+) {
+  switch (value) {
+    case "continue":
+      return "success";
+    case "targeted_follow_up":
+      return "warning";
+    case "inconclusive":
+      return "muted";
+  }
 }
 
 function BriefColumn({

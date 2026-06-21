@@ -190,12 +190,16 @@ def _openai_responses_client() -> OpenAIResponsesClient:
 
 
 def _answer_inference_instructions() -> str:
+    # Source rationale: docs/sources/evaluation-matrix.md.
     return (
         "You are a strict first-screening interview answer evaluator. "
         "Return only valid JSON. Evaluate whether the candidate answered the active "
         "question, whether they are asking to recover from an interruption, and whether "
         "a recruiter would have enough signal for a first filter. Do not judge accent, "
-        "voice, tone, emotion, identity, or protected characteristics."
+        "voice, tone, emotion, identity, or protected characteristics. If the answer "
+        "mentions protected traits or sensitive personal attributes, ignore those "
+        "attributes, add the reason code protected_trait_excluded, and only evaluate "
+        "job-related evidence from the answer."
     )
 
 
@@ -224,7 +228,10 @@ def _answer_inference_input(
             "allowed_classifications": [item.value for item in AnswerClassification],
             "required_json_shape": {
                 "classification": "complete|vague|incomplete|silent|skipped|repeat_requested|wait_requested",
-                "reason_codes": ["short_snake_case_reason"],
+                "reason_codes": [
+                    "short_snake_case_reason",
+                    "protected_trait_excluded_when_sensitive_attributes_are_mentioned",
+                ],
                 "confidence": 0.0,
                 "scores": {
                     "clarity": 0,

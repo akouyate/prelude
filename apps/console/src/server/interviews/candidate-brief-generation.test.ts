@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildLocalCandidateBrief,
+  createCandidateBriefSynthesizerFromEnv,
+  createFallbackCandidateBriefSynthesizer,
   type CandidateBriefSynthesizerInput,
 } from "./candidate-brief-generation";
 
@@ -29,6 +31,14 @@ describe("candidate brief generation", () => {
     );
     expect(JSON.stringify(brief).toLowerCase()).not.toContain("score");
     expect(brief.limitations.join(" ")).toContain("protected traits");
+    expect(brief.evaluationMatrix).toMatchObject({
+      recommendationLabel: "targeted_follow_up",
+      recommendedNextStep: "to_review",
+    });
+    expect(brief.evaluationMatrix?.criteria.map((criterion) => criterion.status)).toEqual([
+      "partial",
+      "partial",
+    ]);
   });
 
   it("marks criteria not assessable when transcript evidence is missing", () => {
@@ -54,6 +64,83 @@ describe("candidate brief generation", () => {
       "The interview did not complete every planned question.",
     );
     expect(brief.pointsToClarify).toContain("Clarify customer judgement.");
+    expect(brief.evaluationMatrix?.recommendationLabel).toBe("inconclusive");
+  });
+
+  it("does not treat absurd speech as reviewable evidence", () => {
+    const brief = buildLocalCandidateBrief(
+      input({
+        evidence: {
+          ...input().evidence,
+          transcriptTurns: [
+            {
+              endedAt: "2026-06-20T10:00:03.000Z",
+              eventType: "candidate_turn_finalized",
+              questionId: "q1",
+              sequenceNumber: 2,
+              speaker: "candidate",
+              startedAt: "2026-06-20T10:00:00.000Z",
+              text: "caca",
+              turnId: "turn_bad",
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(brief.criteria.every((criterion) => criterion.status === "Weak")).toBe(
+      true,
+    );
+    expect(
+      brief.criteria.every((criterion) => criterion.evidence.length === 0),
+    ).toBe(true);
+    expect(brief.evaluationMatrix?.recommendationLabel).toBe("inconclusive");
+    expect(brief.evaluationMatrix?.criteria[0]?.status).toBe("risk");
+  });
+
+  it("keeps the local synthesizer as the default when live LLM is not enabled", () => {
+    const synthesizer = createCandidateBriefSynthesizerFromEnv({
+      OPENAI_API_KEY: "sk-test",
+    });
+
+    expect(synthesizer.provider).toBe("local_synthesis");
+  });
+
+  it("selects an OpenAI-backed synthesizer with local fallback only when enabled", () => {
+    const synthesizer = createCandidateBriefSynthesizerFromEnv({
+      CANDIDATE_BRIEF_LLM_ENABLED: "1",
+      CANDIDATE_BRIEF_LLM_MODEL: "gpt-test",
+      OPENAI_API_KEY: "sk-test",
+    });
+
+    expect(synthesizer.modelName).toBe("gpt-test");
+    expect(synthesizer.provider).toBe(
+      "openai_responses_with_local_synthesis_fallback",
+    );
+  });
+
+  it("falls back to local synthesis if the primary provider fails", async () => {
+    const synthesizer = createFallbackCandidateBriefSynthesizer({
+      fallback: {
+        modelName: "local",
+        provider: "local",
+        synthesize: async (value) => buildLocalCandidateBrief(value),
+      },
+      primary: {
+        modelName: "llm",
+        provider: "llm",
+        synthesize: async () => {
+          throw new Error("network unavailable");
+        },
+      },
+    });
+
+    const brief = await synthesizer.synthesize(input());
+
+    expect(brief.status).toBe("completed");
+    expect(brief.limitations).toContain(
+      "LLM synthesis was unavailable; a conservative local fallback was used.",
+    );
   });
 });
 
