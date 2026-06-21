@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { recruiterLimitationCopy } from "@prelude/core";
 import {
   ArrowRight,
   Calendar,
@@ -64,7 +65,7 @@ export default async function DashboardPage() {
           </h1>
           <p className="mt-5 max-w-2xl text-base leading-7 text-ink-600">
             Keep first-screening work focused: prepare interviews, review
-            candidate signals, and move only qualified profiles forward.
+            candidate evidence, and decide where human follow-up is needed.
           </p>
           <div className="mt-7 flex flex-wrap gap-3">
             <Link
@@ -149,8 +150,7 @@ export default async function DashboardPage() {
           </div>
         </div>
         <div className="mb-4 rounded-2xl border border-ink-100 bg-white/62 px-4 py-3 text-sm leading-6 text-ink-600">
-          Prelude helps review first-screening evidence. It does not rank
-          candidates or make hiring or rejection decisions.
+          {recruiterLimitationCopy}
         </div>
 
         {dashboard.reviewQueue.length > 0 ? (

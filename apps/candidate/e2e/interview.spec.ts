@@ -42,7 +42,7 @@ test("candidate can join a mocked LiveKit interview room on mobile", async ({
   await expect(page.getByText("Before you start")).toBeVisible();
   await page.getByLabel("Your name").fill("Ada Lovelace");
   await page.getByLabel("Email").fill("ada@example.com");
-  await page.getByLabel(/I agree to join this AI-guided/).check();
+  await page.getByLabel(/I understand that I am joining/).check();
   await page.getByRole("button", { name: "Join the interview" }).click();
 
   await expect(page.getByText("Live now", { exact: true })).toBeVisible();
@@ -70,7 +70,7 @@ test("candidate sees a clear error when microphone permission is denied", async 
   await page.goto(`/interview/${fixture.publicToken}`);
   await page.getByRole("button", { name: "Get started" }).click();
   await page.getByLabel("Your name").fill("Ada Lovelace");
-  await page.getByLabel(/I agree to join this AI-guided/).check();
+  await page.getByLabel(/I understand that I am joining/).check();
   await page.getByRole("button", { name: "Join the interview" }).click();
 
   await expect(

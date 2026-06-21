@@ -146,6 +146,17 @@ describe("POST /api/live-interview-sessions", () => {
         },
       },
     });
+    expect(prismaMock.candidateSession.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          consentCopyVersion: "candidate-consent-v1",
+          consentedAt: expect.any(Date),
+          startedAt: existingSession.startedAt,
+          status: "started",
+        }),
+        where: { id: "cs_existing" },
+      }),
+    );
     expect(realtimeRequestBody()).toMatchObject({
       allowed_modalities: ["audio"],
       candidate_id: "cs_existing",

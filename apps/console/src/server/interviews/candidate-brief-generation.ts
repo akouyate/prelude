@@ -2,7 +2,13 @@ import {
   candidateBriefSchema,
   type CandidateBriefDto,
 } from "@prelude/contracts";
-import { defaultComplianceFlags, recruiterLimitationCopy } from "@prelude/core";
+import {
+  complianceFlagCodes,
+  defaultComplianceFlags,
+  disallowedQuestionTopics,
+  recruiterLimitationCopy,
+  sensitiveInformationHandlingRule,
+} from "@prelude/core";
 import { prisma, type Prisma } from "@prelude/db";
 
 import { createOpenAICandidateBriefSynthesizer } from "./candidate-brief-openai";
@@ -237,8 +243,17 @@ export function buildLocalCandidateBrief(
   const candidateTurns = input.evidence.transcriptTurns.filter(
     (turn) => turn.speaker === "candidate",
   );
-  const reviewableCandidateTurns = candidateTurns.filter(isReviewableTurn);
-  const limitations = getLimitations(input.evidence, candidateTurns);
+  const hasSensitiveSignal = candidateTurns.some((turn) =>
+    containsSensitiveTopic(turn.text),
+  );
+  const reviewableCandidateTurns = candidateTurns
+    .filter(isReviewableTurn)
+    .filter((turn) => !containsSensitiveTopic(turn.text));
+  const limitations = getLimitations(
+    input.evidence,
+    candidateTurns,
+    hasSensitiveSignal,
+  );
   const criteria = input.criteria.map((criterion) =>
     evaluateCriterion({
       criterion,
@@ -261,7 +276,12 @@ export function buildLocalCandidateBrief(
 
   return candidateBriefSchema.parse({
     candidateSessionId: input.candidateSessionId,
-    complianceFlags: [...defaultComplianceFlags],
+    complianceFlags: [
+      ...defaultComplianceFlags,
+      ...(hasSensitiveSignal
+        ? [complianceFlagCodes.sensitiveSignalReviewRequired]
+        : []),
+    ],
     criteria,
     limitations,
     pointsToClarify: [
@@ -536,8 +556,12 @@ function truncateEvidenceText(text: string) {
 function getLimitations(
   evidence: CandidateSessionEvidence,
   candidateTurns: CandidateTranscriptTurn[],
+  hasSensitiveSignal: boolean,
 ) {
-  const limitations: string[] = [recruiterLimitationCopy];
+  const limitations: string[] = [
+    recruiterLimitationCopy,
+    sensitiveInformationHandlingRule,
+  ];
 
   if (candidateTurns.length === 0) {
     limitations.push("No candidate transcript turns were available.");
@@ -548,6 +572,12 @@ function getLimitations(
     evidence.questionCompletionRate < 100
   ) {
     limitations.push("The interview did not complete every planned question.");
+  }
+
+  if (hasSensitiveSignal) {
+    limitations.push(
+      "Candidate-volunteered protected or sensitive information was excluded from recruiter-facing evidence.",
+    );
   }
 
   return limitations;
@@ -566,6 +596,26 @@ function isReviewableTurn(turn: CandidateTranscriptTurn) {
   }
 
   return true;
+}
+
+function containsSensitiveTopic(text: string) {
+  const normalized = normalizeText(text);
+
+  return SENSITIVE_TOPIC_MARKERS.some((marker) => {
+    const normalizedMarker = normalizeText(marker);
+
+    if (/\s/.test(normalizedMarker)) {
+      return normalized.includes(normalizedMarker);
+    }
+
+    return new RegExp(`\\b${escapeRegExp(normalizedMarker)}\\b`).test(
+      normalized,
+    );
+  });
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function truncateShortText(text: string) {
@@ -658,4 +708,30 @@ const NON_REVIEWABLE_MARKERS = [
   "aucune idee",
   "no idea",
   "i don't know",
+] as const;
+
+const SENSITIVE_TOPIC_MARKERS = [
+  ...disallowedQuestionTopics,
+  "disabled",
+  "disability",
+  "ethnicity",
+  "family",
+  "gender",
+  "health",
+  "medical",
+  "origin",
+  "pregnant",
+  "pregnancy",
+  "children",
+  "childcare",
+  "married",
+  "race",
+  "nationality",
+  "sexual orientation",
+  "politics",
+  "political",
+  "religion",
+  "religious",
+  "face",
+  "biometric",
 ] as const;

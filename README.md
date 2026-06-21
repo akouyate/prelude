@@ -156,3 +156,5 @@ Compliance and candidate trust guardrails are documented in
 [`docs/operations/compliance-trust-guardrails.md`](docs/operations/compliance-trust-guardrails.md).
 Evaluation matrix implementation sources are tracked in
 [`docs/sources/evaluation-matrix.md`](docs/sources/evaluation-matrix.md).
+Compliance guardrail source rationale is tracked in
+[`docs/sources/compliance-guardrails.md`](docs/sources/compliance-guardrails.md).

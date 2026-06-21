@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { type CandidateBriefDto } from "@prelude/contracts";
+import { recruiterLimitationCopy } from "@prelude/core";
 import { Button, Card, EnterpriseShell, StatusBadge, Textarea } from "@prelude/ui";
 import {
   ArrowLeft,
@@ -487,8 +488,7 @@ function CandidateSessionReview({
               Human review only
             </div>
             <p className="mt-3 text-sm leading-6 text-ink-600">
-              Prelude summarizes first-screening evidence for recruiter review.
-              It does not rank candidates or make hiring or rejection decisions.
+              {recruiterLimitationCopy}
             </p>
           </div>
           <div className="mt-5 grid gap-2">

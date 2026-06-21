@@ -1,8 +1,7 @@
 import { randomBytes } from "node:crypto";
 
+import { candidateConsentCopyVersion } from "@prelude/core";
 import { prisma } from "@prelude/db";
-
-export const candidateConsentCopyVersion = "candidate-consent-v1";
 
 export type PublicInterviewContext =
   | {
