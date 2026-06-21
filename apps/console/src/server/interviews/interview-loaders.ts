@@ -30,6 +30,10 @@ import {
   toCandidateBriefDto,
   type CriteriaDistribution,
 } from "./candidate-review-signals";
+import {
+  formatReviewUserLabel,
+  getReviewNotePreview,
+} from "./candidate-review-display";
 import { findCandidateSessionSpineForOrganization } from "./candidate-session-spine";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
@@ -86,6 +90,11 @@ export type InterviewDetailData =
         interviewId: string;
         jobTitle: string;
         questions: InterviewQuestionDraft[];
+        reviewNote: string | null;
+        reviewNoteUpdatedAt: string | null;
+        reviewNoteUpdatedBy: string | null;
+        reviewStatusUpdatedAt: string | null;
+        reviewStatusUpdatedBy: string | null;
         roleTitle: string;
       };
     };
@@ -102,7 +111,10 @@ export type CandidateSessionSummary = {
   pointsToClarifyCount: number | null;
   questionCompletionRate: number | null;
   realtimeSessionId: string | null;
+  reviewNotePreview: string | null;
+  reviewNoteUpdatedAt: string | null;
   reviewStatus: RecruiterReviewStatus;
+  reviewStatusUpdatedAt: string | null;
   startedAt: string | null;
   status: string;
   transcriptTurnCount: number;
@@ -190,6 +202,18 @@ export async function getInterviewDetail(
         include: {
           candidateBrief: true,
           job: true,
+          reviewNoteUpdatedBy: {
+            select: {
+              email: true,
+              name: true,
+            },
+          },
+          reviewStatusUpdatedBy: {
+            select: {
+              email: true,
+              name: true,
+            },
+          },
         },
         orderBy: { updatedAt: "desc" },
       },
@@ -294,6 +318,17 @@ export async function getInterviewDetail(
         jobTitle: candidateSession.job.title,
         questions: readQuestions(candidateSession.interview.questions),
         questionCompletionRate: evidence.questionCompletionRate,
+        reviewNote: candidateSession.reviewNote,
+        reviewNoteUpdatedAt:
+          candidateSession.reviewNoteUpdatedAt?.toISOString() ?? null,
+        reviewNoteUpdatedBy: formatReviewUserLabel(
+          candidateSession.reviewNoteUpdatedBy,
+        ),
+        reviewStatusUpdatedAt:
+          candidateSession.reviewStatusUpdatedAt?.toISOString() ?? null,
+        reviewStatusUpdatedBy: formatReviewUserLabel(
+          candidateSession.reviewStatusUpdatedBy,
+        ),
         roleTitle: candidateSession.interview.roleTitle,
         status: evidence.status,
         transcriptTurnCount: evidence.transcriptTurns.length,
@@ -327,7 +362,10 @@ function toCandidateSessionSummary({
     completedAt: Date | null;
     id: string;
     realtimeSessionId: string | null;
+    reviewNote?: string | null;
+    reviewNoteUpdatedAt?: Date | null;
     reviewStatus?: string | null;
+    reviewStatusUpdatedAt?: Date | null;
     startedAt: Date | null;
     status: string;
     updatedAt: Date;
@@ -367,7 +405,11 @@ function toCandidateSessionSummary({
       stats: eventStats,
     }),
     realtimeSessionId: session.realtimeSessionId,
+    reviewNotePreview: getReviewNotePreview(session.reviewNote),
+    reviewNoteUpdatedAt: session.reviewNoteUpdatedAt?.toISOString() ?? null,
     reviewStatus: resolveReviewStatus(session.reviewStatus),
+    reviewStatusUpdatedAt:
+      session.reviewStatusUpdatedAt?.toISOString() ?? null,
     startedAt: session.startedAt?.toISOString() ?? null,
     status,
     transcriptTurnCount: eventStats?.transcriptTurnCount ?? 0,

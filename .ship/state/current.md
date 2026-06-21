@@ -2,41 +2,28 @@
 
 ## Objective
 
-Ship GitHub issue #87: Evaluation matrix and recruiter decision logic.
+Ship GitHub issue #63: Recruiter Review, internal notes, and review status.
 
 ## Scope
 
-- Build an evidence-based recruiter review layer for V1.
-- Preserve human-owned hiring decisions: no ranking, no global fit score, no
-  autonomous rejection.
-- Keep current UI compatibility while adding a richer evaluation matrix contract.
-- Harden live answer evaluation around vague, incoherent, off-topic, missing, and
-  protected-trait scenarios.
-- Add a provider-gated post-session candidate brief synthesis path with mocked
-  tests by default and explicit opt-in for live LLM execution.
-- Keep deterministic/local fallbacks so interview completion is not blocked by
-  LLM failures.
-- Added the V1 `evaluationMatrix` contract to `CandidateBriefDto` while keeping
-  legacy persisted briefs valid.
-- Added an env-gated OpenAI Responses adapter for post-session candidate brief
-  synthesis behind the existing `CandidateBriefSynthesizer` interface.
-- Wrapped the OpenAI adapter with local fallback so LLM failure does not fail
-  brief generation.
-- Improved local synthesis so absurd/off-topic candidate speech is not promoted
-  into reviewable evidence.
-- Exposed the matrix compactly in the interview detail recruiter brief.
-- Hardened Python live answer inference instructions around protected-trait
-  exclusion and added a protected-trait scenario.
-- Updated Go realtime summary to prefer explicit evaluation matrices over
-  brittle answer-length checks.
-- Added `docs/sources/evaluation-matrix.md` and README links for the OpenAI,
-  EEOC, NYC AEDT, and EU AI Act sources behind the implementation guardrails.
+- Add a minimal human-owned review workflow on top of real candidate sessions.
+- Keep AI recommendation and human review status explicitly separate.
+- Preserve V1 statuses: `To review`, `To call`, and `Archived`.
+- Let owner/admin/recruiter update status and internal note from candidate
+  detail.
+- Keep viewer access read-only with server-side mutation rejection.
+- Persist latest status/note author and timestamp.
+- Add a lightweight review event log for status and note changes.
+- Reflect current status and note preview in dashboard and interview candidate
+  lists.
+- Avoid copy that implies automatic hiring, rejection, or ranking decisions.
 
 ## Phases
 
 - [x] Intake
 - [x] Repository investigation
 - [x] Issue refinement
+- [x] HR validation
 - [x] Architecture review
 - [x] Plan
 - [x] Execution
@@ -48,17 +35,19 @@ Ship GitHub issue #87: Evaluation matrix and recruiter decision logic.
 
 ## Validation
 
-- `pnpm --dir packages/contracts test`: passed, 4 files / 23 tests.
-- `pnpm --dir packages/contracts typecheck`: passed.
-- `pnpm --dir apps/console test`: passed, 6 files / 37 tests.
+- HR/recruiter business validation completed by agent Avicenna.
+- `pnpm --dir apps/console test`: passed, 8 files / 46 tests.
 - `pnpm --dir apps/console typecheck`: passed.
 - `pnpm --dir apps/console lint`: passed.
-- `services/interviewer-agent/.venv/bin/python -m pytest tests/test_answer_inference.py tests/test_orchestrator.py`:
-  passed, 20 tests.
-- `go test ./...` from `services/realtime`: passed, 45 tests / 7 packages.
+- `pnpm --dir packages/db typecheck`: passed.
+- `DATABASE_URL='postgresql://postgres:postgres@localhost:15432/prelude?schema=public' pnpm --dir packages/db exec prisma validate --schema prisma/schema.prisma`: passed.
+- `DATABASE_URL='postgresql://postgres:postgres@localhost:15432/prelude?schema=public' pnpm --dir packages/db db:migrate`: applied `20260621132000_candidate_review_notes_status`.
+- `make e2e-smoke POSTGRES_PORT=15432 REDIS_PORT=16379 DATABASE_URL='postgresql://postgres:postgres@localhost:15432/prelude?schema=public' E2E_SMOKE_RUN_ID=review-63-smoke E2E_SMOKE_CONSOLE_URL=http://localhost:3000`: passed.
+- Playwright browser smoke: updated `cs_e2e_review-63-smoke` to `To call`, saved an internal note, verified candidate detail and dashboard reflection.
 - `git diff --check`: passed.
 
 ## Remaining Follow-Up
 
-- Live post-session LLM smoke requires `CANDIDATE_BRIEF_LLM_ENABLED=1` and
-  `OPENAI_API_KEY`; this was intentionally not run by default.
+- Team comment threads, notifications, ATS kanban, automated AI status changes,
+  candidate-facing outcomes, and multi-reviewer approvals remain out of scope
+  for this V1 slice.

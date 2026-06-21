@@ -8,17 +8,18 @@ datasource db {
 }
 
 model Organization {
-  id                    String                   @id @default(cuid())
-  clerkOrganizationId   String?                  @unique
+  id                    String                        @id @default(cuid())
+  clerkOrganizationId   String?                       @unique
   name                  String
   companySize           String?
   hiringFocus           String?
   defaultInterviewMode  String?
-  onboardingState       Json                     @default("{}")
-  onboardingStep        String                   @default("welcome")
+  onboardingState       Json                          @default("{}")
+  onboardingStep        String                        @default("welcome")
   onboardingCompletedAt DateTime?
-  createdAt             DateTime                 @default(now())
+  createdAt             DateTime                      @default(now())
   candidateBriefs       CandidateBrief[]
+  candidateReviewEvents CandidateSessionReviewEvent[]
   candidateSessions     CandidateSession[]
   interviewDrafts       InterviewDraft[]
   interviews            Interview[]
@@ -28,12 +29,15 @@ model Organization {
 }
 
 model User {
-  id          String                   @id @default(cuid())
-  clerkUserId String                   @unique
-  email       String                   @unique
-  name        String?
-  createdAt   DateTime                 @default(now())
-  memberships OrganizationMembership[]
+  id                                  String                        @id @default(cuid())
+  clerkUserId                         String                        @unique
+  email                               String                        @unique
+  name                                String?
+  createdAt                           DateTime                      @default(now())
+  candidateReviewEvents               CandidateSessionReviewEvent[] @relation("CandidateReviewEventAuthor")
+  candidateSessionReviewNoteUpdates   CandidateSession[]            @relation("CandidateSessionReviewNoteAuthor")
+  candidateSessionReviewStatusUpdates CandidateSession[]            @relation("CandidateSessionReviewStatusAuthor")
+  memberships                         OrganizationMembership[]
 }
 
 model OrganizationMembership {
@@ -127,30 +131,60 @@ model Interview {
 }
 
 model CandidateSession {
-  id                 String          @id @default(cuid())
-  organizationId     String
-  jobId              String
-  interviewId        String
-  realtimeSessionId  String?         @unique
-  candidateName      String?
-  candidateEmail     String?
-  resumeToken        String?         @unique
-  consentedAt        DateTime?
-  consentCopyVersion String?
-  status             String          @default("created")
-  reviewStatus       String          @default("to_review")
-  startedAt          DateTime?
-  completedAt        DateTime?
-  createdAt          DateTime        @default(now())
-  updatedAt          DateTime        @updatedAt
-  organization       Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  job                Job             @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  interview          Interview       @relation(fields: [interviewId], references: [id], onDelete: Cascade)
-  candidateBrief     CandidateBrief?
+  id                      String                        @id @default(cuid())
+  organizationId          String
+  jobId                   String
+  interviewId             String
+  realtimeSessionId       String?                       @unique
+  candidateName           String?
+  candidateEmail          String?
+  resumeToken             String?                       @unique
+  consentedAt             DateTime?
+  consentCopyVersion      String?
+  status                  String                        @default("created")
+  reviewStatus            String                        @default("to_review")
+  reviewNote              String?
+  reviewStatusUpdatedAt   DateTime?
+  reviewStatusUpdatedById String?
+  reviewNoteUpdatedAt     DateTime?
+  reviewNoteUpdatedById   String?
+  startedAt               DateTime?
+  completedAt             DateTime?
+  createdAt               DateTime                      @default(now())
+  updatedAt               DateTime                      @updatedAt
+  organization            Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job                     Job                           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  interview               Interview                     @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  candidateBrief          CandidateBrief?
+  reviewEvents            CandidateSessionReviewEvent[]
+  reviewStatusUpdatedBy   User?                         @relation("CandidateSessionReviewStatusAuthor", fields: [reviewStatusUpdatedById], references: [id], onDelete: SetNull)
+  reviewNoteUpdatedBy     User?                         @relation("CandidateSessionReviewNoteAuthor", fields: [reviewNoteUpdatedById], references: [id], onDelete: SetNull)
 
   @@index([organizationId, status, updatedAt])
+  @@index([organizationId, reviewStatus, updatedAt])
   @@index([jobId, status])
   @@index([interviewId, status])
+  @@index([reviewStatusUpdatedById])
+  @@index([reviewNoteUpdatedById])
+}
+
+model CandidateSessionReviewEvent {
+  id                 String           @id @default(cuid())
+  organizationId     String
+  candidateSessionId String
+  authorUserId       String
+  eventType          String
+  previousStatus     String?
+  nextStatus         String?
+  note               String?
+  createdAt          DateTime         @default(now())
+  organization       Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  candidateSession   CandidateSession @relation(fields: [candidateSessionId], references: [id], onDelete: Cascade)
+  author             User             @relation("CandidateReviewEventAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
+
+  @@index([candidateSessionId, createdAt])
+  @@index([organizationId, createdAt])
+  @@index([authorUserId, createdAt])
 }
 
 model CandidateBrief {
