@@ -238,6 +238,23 @@ export function LiveInterviewRoom({
   const interview = context.kind === "not_found" ? null : context.interview;
   const allowedModes = interview?.responseModes ?? ["audio", "video"];
   const canStart = hasAcceptedConsent && candidateName.trim().length > 1;
+  const isLiveExperience = isBusy || isRoomActive;
+
+  React.useEffect(() => {
+    if (!isLiveExperience) {
+      return undefined;
+    }
+
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+    };
+  }, [isLiveExperience]);
 
   if (!interview) {
     return <UnavailableInterview />;
@@ -265,7 +282,7 @@ export function LiveInterviewRoom({
     );
   }
 
-  if (isBusy || isRoomActive) {
+  if (isLiveExperience) {
     return (
       <LiveInterviewStage
         allowedModes={allowedModes}
@@ -675,18 +692,23 @@ function LiveInterviewStage({
   );
 
   return (
-    <section className="-mx-4 -mb-5 mt-5 flex h-[calc(100svh-5.25rem)] min-h-[34rem] flex-col overflow-hidden rounded-t-[2rem] bg-[radial-gradient(circle_at_50%_-10%,#3c421f_0%,#1d1c16_38%,#131210_100%)] px-5 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-6 text-white supports-[height:100dvh]:h-[calc(100dvh-5.25rem)] sm:-mx-6 sm:rounded-[2.25rem] sm:px-8">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex items-center gap-2 text-sm font-semibold text-white/82">
-          <span className="grid h-8 w-8 place-items-center rounded-full bg-white/10">
-            <Mic aria-hidden="true" className="h-4 w-4" />
-          </span>
-          Live interview
+    <section className="fixed inset-0 z-50 flex h-[100svh] flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_-10%,#3c421f_0%,#1d1c16_38%,#131210_100%)] px-5 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+1rem)] text-white supports-[height:100dvh]:h-[100dvh] sm:px-8">
+      <div className="flex shrink-0 items-center justify-between gap-4">
+        <div>
+          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white/42">
+            Powered by Prelude.ai
+          </p>
+          <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-white/82">
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-white/10">
+              <Mic aria-hidden="true" className="h-4 w-4" />
+            </span>
+            Live interview
+          </div>
         </div>
         <StatusPill status={status} />
       </div>
 
-      <div className="grid min-h-0 flex-1 place-items-center py-5 text-center sm:py-10">
+      <div className="grid min-h-0 flex-1 place-items-center py-4 text-center sm:py-10">
         <div className="w-full max-w-3xl">
           <div className="relative mx-auto grid h-24 w-24 place-items-center sm:h-32 sm:w-32">
             <span className="absolute inset-0 rounded-full border border-olive-300/40 motion-safe:animate-[cc-ring_2.4s_ease-out_infinite]" />
