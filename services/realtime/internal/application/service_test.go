@@ -34,6 +34,20 @@ func (fakeLiveKit) CreateJoin(_ context.Context, input application.LiveKitJoinIn
 	}, nil
 }
 
+type fakeAgentDispatchQueue struct {
+	requests []application.AgentJoinRequest
+	err      error
+}
+
+func (q *fakeAgentDispatchQueue) EnqueueAgentJoin(_ context.Context, request application.AgentJoinRequest) (application.AgentJoinDispatchResult, error) {
+	if q.err != nil {
+		return application.AgentJoinDispatchResult{}, q.err
+	}
+
+	q.requests = append(q.requests, request)
+	return application.AgentJoinDispatchResult{Enqueued: true}, nil
+}
+
 type memoryStoreWithPlans struct {
 	*store.MemoryStore
 	plans map[string]application.InterviewPlan
@@ -594,6 +608,121 @@ func TestServiceAcceptsCandidateMediaReadinessBeforeAgentJoin(t *testing.T) {
 	}
 	if len(got.Events) != 2 {
 		t.Fatalf("expected 2 events, got %d", len(got.Events))
+	}
+}
+
+func TestServiceDispatchesAgentWhenCandidateMediaIsReady(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+	dispatchQueue := &fakeAgentDispatchQueue{}
+	service.SetAgentDispatchQueue(dispatchQueue)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID:   "plan_123",
+		CandidateID:       "candidate_123",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio, domain.ModalityVideo},
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	joined := eventInput(session.Session.ID, 1, "evt_candidate_joined", domain.EventCandidateJoined)
+	joined.Actor = domain.EventActorCandidate
+	joined.Payload = json.RawMessage(`{
+		"candidate_participant_id": "candidate-session",
+		"room_name": "prelude-session-test",
+		"modes": ["audio", "video"]
+	}`)
+	if _, err := service.IngestEvent(context.Background(), joined); err != nil {
+		t.Fatalf("candidate_joined returned error: %v", err)
+	}
+	if len(dispatchQueue.requests) != 0 {
+		t.Fatalf("expected no dispatch on candidate_joined, got %d", len(dispatchQueue.requests))
+	}
+
+	mediaReady := eventInput(session.Session.ID, 2, "evt_candidate_media_ready", domain.EventCandidateMediaReady)
+	mediaReady.Actor = domain.EventActorCandidate
+	mediaReady.Payload = json.RawMessage(`{
+		"candidate_participant_id": "candidate-session",
+		"room_name": "prelude-session-test",
+		"audio": true,
+		"video": true,
+		"published_tracks": ["microphone", "camera"]
+	}`)
+	if _, err := service.IngestEvent(context.Background(), mediaReady); err != nil {
+		t.Fatalf("candidate_media_ready returned error: %v", err)
+	}
+
+	if len(dispatchQueue.requests) != 1 {
+		t.Fatalf("expected one dispatch request, got %d", len(dispatchQueue.requests))
+	}
+	request := dispatchQueue.requests[0]
+	if request.SessionID != session.Session.ID {
+		t.Fatalf("expected session id %q, got %q", session.Session.ID, request.SessionID)
+	}
+	if request.CandidateID != "candidate_123" {
+		t.Fatalf("expected candidate id candidate_123, got %q", request.CandidateID)
+	}
+	if !request.RequestedAt.Equal(clock.now) {
+		t.Fatalf("expected requested_at %s, got %s", clock.now, request.RequestedAt)
+	}
+
+	duplicate, err := service.IngestEvent(context.Background(), mediaReady)
+	if err != nil {
+		t.Fatalf("duplicate candidate_media_ready returned error: %v", err)
+	}
+	if !duplicate.Duplicate {
+		t.Fatal("expected duplicate candidate_media_ready result")
+	}
+	if len(dispatchQueue.requests) != 1 {
+		t.Fatalf("expected no extra dispatch for duplicate event, got %d requests", len(dispatchQueue.requests))
+	}
+}
+
+func TestServiceDoesNotFailEventIngestionWhenAgentDispatchFails(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+	service.SetAgentDispatchQueue(&fakeAgentDispatchQueue{err: errors.New("redis unavailable")})
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID:   "plan_123",
+		CandidateID:       "candidate_123",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio, domain.ModalityVideo},
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	joined := eventInput(session.Session.ID, 1, "evt_candidate_joined", domain.EventCandidateJoined)
+	joined.Actor = domain.EventActorCandidate
+	joined.Payload = json.RawMessage(`{
+		"candidate_participant_id": "candidate-session",
+		"room_name": "prelude-session-test",
+		"modes": ["audio", "video"]
+	}`)
+	if _, err := service.IngestEvent(context.Background(), joined); err != nil {
+		t.Fatalf("candidate_joined returned error: %v", err)
+	}
+
+	mediaReady := eventInput(session.Session.ID, 2, "evt_candidate_media_ready", domain.EventCandidateMediaReady)
+	mediaReady.Actor = domain.EventActorCandidate
+	mediaReady.Payload = json.RawMessage(`{
+		"candidate_participant_id": "candidate-session",
+		"room_name": "prelude-session-test",
+		"audio": true,
+		"video": true,
+		"published_tracks": ["microphone", "camera"]
+	}`)
+	if _, err := service.IngestEvent(context.Background(), mediaReady); err != nil {
+		t.Fatalf("candidate_media_ready returned error despite dispatch failure: %v", err)
+	}
+
+	got, err := service.GetSession(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if len(got.Events) != 2 {
+		t.Fatalf("expected persisted events despite dispatch failure, got %d", len(got.Events))
 	}
 }
 

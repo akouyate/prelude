@@ -9,6 +9,7 @@ import (
 
 	"github.com/akouyate/prelude/services/realtime/internal/adapters/httpapi"
 	"github.com/akouyate/prelude/services/realtime/internal/adapters/livekit"
+	"github.com/akouyate/prelude/services/realtime/internal/adapters/redisqueue"
 	"github.com/akouyate/prelude/services/realtime/internal/adapters/store"
 	"github.com/akouyate/prelude/services/realtime/internal/application"
 )
@@ -48,6 +49,23 @@ func main() {
 	}
 	slog.Info("using livekit gateway", "mode", livekitMode)
 	service := application.NewService(repository, livekitGateway, application.SystemClock{})
+	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
+		dispatcher, err := redisqueue.NewAgentJoinDispatcher(context.Background(), redisqueue.AgentJoinDispatcherConfig{
+			URL:       redisURL,
+			StreamKey: os.Getenv("AGENT_JOIN_STREAM_KEY"),
+		})
+		if err != nil {
+			slog.Error("failed to configure redis agent dispatcher", "error", err)
+			os.Exit(1)
+		}
+		defer func() {
+			if err := dispatcher.Close(); err != nil {
+				slog.Warn("failed to close redis agent dispatcher", "error", err)
+			}
+		}()
+		service.SetAgentDispatchQueue(dispatcher)
+		slog.Info("using redis agent dispatcher")
+	}
 	handler := httpapi.NewServer(service)
 
 	server := &http.Server{

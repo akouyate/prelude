@@ -17,6 +17,23 @@ services:
       retries: 10
       start_period: 5s
 
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - prelude_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+
 volumes:
   prelude_postgres_data:
     name: prelude_postgres_data
+  prelude_redis_data:
+    name: prelude_redis_data

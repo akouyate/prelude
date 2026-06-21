@@ -12,6 +12,7 @@
   --color-ink-700: #45423c;
   --color-ink-800: #2a2925;
   --color-ink-900: #171715;
+  --color-ink-950: #10100f;
   --color-olive-50: oklch(0.946 0.178 121.33);
   --color-olive-100: oklch(0.911 0.219 121.34);
   --color-olive-200: oklch(0.826 0.199 121.3);
@@ -27,17 +28,120 @@
   --color-meadow-500: #2f9f67;
   --color-meadow-600: #217e50;
   --color-meadow-700: #1d6442;
+  --color-coral-50: #fff4f0;
   --color-coral-100: #ffe3d8;
   --color-coral-500: #dc4e2e;
+  --color-coral-800: #762a1d;
   --color-gold-50: #fff8df;
+  --color-gold-100: #ffedb8;
   --color-gold-200: #ffe39a;
   --color-gold-800: #5e3e14;
+  --font-title: var(--font-title-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-display: Georgia, ui-serif, serif;
   --shadow-soft: none;
+}
+
+:root {
+  color-scheme: light;
 }
 
 body {
   margin: 0;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #f6f3ec;
+  font-family: var(--font-sans), Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-title-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+@keyframes cc-ring {
+  0% {
+    opacity: 0.55;
+    transform: scale(0.7);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+
+@keyframes cc-wave {
+  0%,
+  100% {
+    transform: scaleY(0.28);
+  }
+
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes cc-livedot {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.35;
+    transform: scale(0.8);
+  }
+}
+
+@keyframes cc-blink {
+  0%,
+  49% {
+    opacity: 1;
+  }
+
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes cc-wordIn {
+  from {
+    filter: blur(6px);
+    opacity: 0;
+    transform: translateY(9px);
+  }
+
+  to {
+    filter: blur(0);
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cc-histIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes cc-aura {
+  0%,
+  100% {
+    opacity: 0.72;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1.08);
+  }
 }
 
 :where(a[href], button:not(:disabled), summary, label[for], [role="button"]) {

@@ -78,6 +78,22 @@ class HttpRealtimeApiClient:
             for event in session.get("events") or []
         )
 
+    async def get_event_types(self, session_id: str) -> set[EventType]:
+        session = await self._get_session_payload(session_id)
+        event_types: set[EventType] = set()
+        for event in session.get("events") or []:
+            if not isinstance(event, dict):
+                continue
+            event_type = event.get("type")
+            if not isinstance(event_type, str):
+                continue
+            try:
+                event_types.add(EventType(event_type))
+            except ValueError:
+                continue
+
+        return event_types
+
     async def _get_session_payload(self, session_id: str) -> dict[str, object]:
         headers = {"Accept": "application/json"}
         if self._api_key:

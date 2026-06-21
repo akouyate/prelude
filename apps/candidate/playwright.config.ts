@@ -7,14 +7,22 @@ const e2eDatabaseUrl =
 
 export default defineConfig({
   testDir: "./e2e",
-  webServer: {
-    env: {
-      DATABASE_URL: e2eDatabaseUrl,
+  webServer: [
+    {
+      command: "node e2e/fake-realtime-server.mjs",
+      reuseExistingServer: !process.env.CI,
+      url: "http://127.0.0.1:18081/healthz",
     },
-    command: "pnpm dev",
-    url: "http://127.0.0.1:3001",
-    reuseExistingServer: !process.env.CI,
-  },
+    {
+      env: {
+        DATABASE_URL: e2eDatabaseUrl,
+        PRELUDE_REALTIME_API_URL: "http://127.0.0.1:18081",
+      },
+      command: "pnpm dev",
+      url: "http://127.0.0.1:3001",
+      reuseExistingServer: !process.env.CI,
+    },
+  ],
   use: {
     baseURL: "http://127.0.0.1:3001",
     trace: "on-first-retry",

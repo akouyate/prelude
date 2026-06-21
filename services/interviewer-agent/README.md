@@ -220,6 +220,19 @@ the repository root:
 make live-openai-worker SESSION_ID={session_id}
 ```
 
+For the normal local live flow, prefer the Redis-backed auto-worker:
+
+```bash
+make env-up
+make live-openai-autoworker
+```
+
+With `REDIS_URL` configured on the Go realtime API, the API publishes an agent
+join job to a Redis Stream after `candidate_media_ready`. The auto-worker
+consumes that stream, verifies the session still needs an agent through the Go
+API, then runs the same per-session OpenAI worker. The manual
+`live-openai-worker` target remains useful as a debug fallback.
+
 The target loads `.env`, requires `REALTIME_API_URL`, fetches:
 
 ```text
