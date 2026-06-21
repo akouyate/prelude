@@ -60,12 +60,20 @@ PORT=8081 go run ./cmd/server
 ```
 
 By default, the server uses the in-memory store. To use durable Postgres storage,
-start the local database from the repository root and run with `DATABASE_URL`:
+start the local database from the repository root and run with `DATABASE_URL`.
+`make env-up` also starts Redis, which is used only for ephemeral live-agent
+dispatch:
 
 ```bash
 make env-up
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/prelude?schema=public" go run ./cmd/server
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/prelude?schema=public" \
+REDIS_URL="redis://localhost:6379/0" \
+go run ./cmd/server
 ```
+
+When Redis is configured, the realtime API appends a Redis Stream job after
+`candidate_media_ready` is persisted. Postgres remains the source of truth for
+sessions and events.
 
 By default, LiveKit joins are mocked so local development works offline. To mint
 real candidate and agent LiveKit JWT join tokens, provide all LiveKit variables

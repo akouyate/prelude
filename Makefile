@@ -2,7 +2,9 @@ SHELL := /bin/sh
 
 COMPOSE ?= docker compose
 POSTGRES_PORT ?= 5432
+REDIS_PORT ?= 6379
 DATABASE_URL ?= postgresql://postgres:postgres@localhost:$(POSTGRES_PORT)/prelude?schema=public
+REDIS_URL ?= redis://localhost:$(REDIS_PORT)/0
 MIGRATION_NAME ?= init
 LOAD_ENV := set -a; [ ! -f .env ] || . ./.env; set +a
 BENCHMARK_PROVIDER ?= mock_openai_realtime
@@ -12,6 +14,8 @@ BENCHMARK_RUN_ID ?=
 BENCHMARK_PERSIST_REALTIME ?=
 ALLOW_LIVE_LLM_TESTS ?=
 REALTIME_API_URL ?=
+AGENT_JOIN_STREAM_KEY ?=
+LIVE_WORKER_MAX_CONCURRENCY ?=
 LIVE_SMOKE_REALTIME_API_URL ?= http://127.0.0.1:8080
 SESSION_ID ?=
 LIVE_WORKER_SKIP_OPENAI ?=
@@ -25,7 +29,7 @@ E2E_SMOKE_LIVE_LLM ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell db-migrate db-generate db-studio agent-benchmark live-openai-worker live-smoke-report e2e-smoke e2e-smoke-live dev
+.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell db-migrate db-generate db-studio agent-benchmark live-openai-worker live-openai-autoworker live-smoke-report e2e-smoke e2e-smoke-live dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "Prelude local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -50,6 +54,24 @@ env-up: ## Start local Docker services.
 	printf "\nPostgres did not become healthy in time.\n"; \
 	$(COMPOSE) logs postgres; \
 	exit 1
+	@printf "Waiting for Redis to become healthy"
+	@container_id="$$( $(COMPOSE) ps -q redis )"; \
+	if [ -z "$$container_id" ]; then \
+		printf "\nRedis container was not created.\n"; \
+		exit 1; \
+	fi; \
+	for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do \
+		status="$$( docker inspect --format '{{.State.Health.Status}}' "$$container_id" 2>/dev/null || true )"; \
+		if [ "$$status" = "healthy" ]; then \
+			printf "\nRedis is healthy.\n"; \
+			exit 0; \
+		fi; \
+		printf "."; \
+		sleep 2; \
+	done; \
+	printf "\nRedis did not become healthy in time.\n"; \
+	$(COMPOSE) logs redis; \
+	exit 1
 
 env-down: ## Stop local Docker services without deleting volumes.
 	$(COMPOSE) down
@@ -62,6 +84,9 @@ db-logs: ## Follow local Postgres logs.
 
 db-shell: ## Open a psql shell inside the local Postgres container.
 	$(COMPOSE) exec postgres psql -U postgres -d prelude
+
+redis-shell: ## Open a redis-cli shell inside the local Redis container.
+	$(COMPOSE) exec redis redis-cli
 
 db-migrate: ## Run Prisma migrations against local Postgres.
 	@$(LOAD_ENV); \
@@ -134,6 +159,36 @@ live-openai-worker: ## Run the Python OpenAI live interviewer worker for SESSION
 	fi; \
 	cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.live_worker \
 		--session-id "$(SESSION_ID)" \
+		--realtime-api-url "$$realtime_api_url" \
+		$$worker_args
+
+live-openai-autoworker: ## Run the Redis-backed Python auto-worker that starts live interviewer agents.
+	@$(LOAD_ENV); \
+	realtime_api_url="$${REALTIME_API_URL:-}"; \
+	redis_url="$${REDIS_URL:-$(REDIS_URL)}"; \
+	if [ -n "$(REALTIME_API_URL)" ]; then \
+		realtime_api_url="$(REALTIME_API_URL)"; \
+	fi; \
+	if [ -n "$(REDIS_URL)" ]; then \
+		redis_url="$(REDIS_URL)"; \
+	fi; \
+	test -n "$$realtime_api_url" || (printf "REALTIME_API_URL is required in .env, shell, or make args.\n"; exit 1); \
+	test -n "$$redis_url" || (printf "REDIS_URL is required in .env, shell, or make args.\n"; exit 1); \
+	worker_args=""; \
+	if [ -n "$${REALTIME_API_KEY:-}" ]; then \
+		worker_args="$$worker_args --api-key $$REALTIME_API_KEY"; \
+	fi; \
+	if [ -n "$(AGENT_JOIN_STREAM_KEY)" ]; then \
+		worker_args="$$worker_args --stream-key $(AGENT_JOIN_STREAM_KEY)"; \
+	fi; \
+	if [ -n "$(LIVE_WORKER_MAX_CONCURRENCY)" ]; then \
+		worker_args="$$worker_args --max-concurrency $(LIVE_WORKER_MAX_CONCURRENCY)"; \
+	fi; \
+	if [ "$(LIVE_WORKER_SKIP_OPENAI)" = "1" ]; then \
+		worker_args="$$worker_args --skip-openai-handshake"; \
+	fi; \
+	cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.auto_worker \
+		--redis-url "$$redis_url" \
 		--realtime-api-url "$$realtime_api_url" \
 		$$worker_args
 

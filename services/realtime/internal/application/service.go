@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -47,6 +48,20 @@ type AppendEventResult struct {
 	Duplicate bool
 }
 
+type AgentDispatchQueue interface {
+	EnqueueAgentJoin(ctx context.Context, request AgentJoinRequest) (AgentJoinDispatchResult, error)
+}
+
+type AgentJoinRequest struct {
+	SessionID   string
+	CandidateID string
+	RequestedAt time.Time
+}
+
+type AgentJoinDispatchResult struct {
+	Enqueued bool
+}
+
 type LiveKitGateway interface {
 	CreateJoin(ctx context.Context, input LiveKitJoinInput) (LiveKitJoin, error)
 }
@@ -68,6 +83,7 @@ type LiveKitJoin struct {
 type Service struct {
 	repository     SessionRepository
 	planRepository InterviewPlanRepository
+	agentQueue     AgentDispatchQueue
 	livekit        LiveKitGateway
 	clock          Clock
 }
@@ -87,6 +103,10 @@ func NewService(repository SessionRepository, livekit LiveKitGateway, clock Cloc
 	}
 
 	return service
+}
+
+func (s *Service) SetAgentDispatchQueue(queue AgentDispatchQueue) {
+	s.agentQueue = queue
 }
 
 type CreateSessionInput struct {
@@ -315,7 +335,24 @@ func (s *Service) IngestEvent(ctx context.Context, input IngestEventInput) (Inge
 		return IngestEventOutput{}, err
 	}
 
+	s.dispatchAgentIfNeeded(ctx, result.Event)
+
 	return IngestEventOutput{Event: result.Event, Duplicate: result.Duplicate}, nil
+}
+
+func (s *Service) dispatchAgentIfNeeded(ctx context.Context, event domain.Event) {
+	if s.agentQueue == nil || event.Type != domain.EventCandidateMediaReady {
+		return
+	}
+
+	_, err := s.agentQueue.EnqueueAgentJoin(ctx, AgentJoinRequest{
+		SessionID:   event.SessionID,
+		CandidateID: event.CandidateID,
+		RequestedAt: s.clock.Now(),
+	})
+	if err != nil {
+		slog.Warn("failed to dispatch live agent", "session_id", event.SessionID, "error", err)
+	}
 }
 
 func (s *Service) GetTranscript(ctx context.Context, sessionID string) ([]domain.TranscriptTurn, error) {

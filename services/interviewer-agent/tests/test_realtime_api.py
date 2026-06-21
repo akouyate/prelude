@@ -100,3 +100,7 @@ async def test_http_realtime_client_counts_and_checks_events() -> None:
     assert await client.count_events("session-test") == 2
     assert await client.has_event("session-test", EventType.CANDIDATE_JOINED)
     assert not await client.has_event("session-test", EventType.SESSION_COMPLETED)
+    assert await client.get_event_types("session-test") == {
+        EventType.CANDIDATE_JOINED,
+        EventType.AGENT_JOINED,
+    }
