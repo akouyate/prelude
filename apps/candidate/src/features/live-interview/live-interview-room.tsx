@@ -171,21 +171,27 @@ export function LiveInterviewRoom({
         session: nextSession,
         stream,
         onReconnecting: () => setStatus("reconnecting"),
-        onConnected: () => setStatus("interviewer_joining"),
-        onReady: () => setStatus("interviewer_joining"),
-        onDisconnected: () => {
-          completeCurrentSession(nextSession);
-          setStatus("completed");
+        onRoomConnected: () => setStatus("interviewer_joining"),
+        onInterviewerJoined: () => setStatus("interviewer_joining"),
+        onInterviewerReady: () => setStatus("connected"),
+        onDisconnected: ({ intentional }) => {
+          if (intentional) {
+            completeCurrentSession(nextSession);
+            setStatus("completed");
+            return;
+          }
+
+          roomRef.current = null;
+          stopLocalStream(stream);
+          setLocalStream(null);
+          setError(
+            "The live interview connection closed unexpectedly. Please refresh the page and retry.",
+          );
+          setStatus("failed");
         },
         onAudioPlaybackBlocked: () => setIsAudioPlaybackBlocked(true),
         onAudioPlaybackReady: () => {
           setIsAudioPlaybackBlocked(false);
-          setStatus((currentStatus) =>
-            currentStatus === "interviewer_joining" ||
-            currentStatus === "reconnecting"
-              ? "connected"
-              : currentStatus,
-          );
         },
       });
     } catch (cause) {

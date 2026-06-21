@@ -10,9 +10,76 @@ import {
 } from "./live-interview-client";
 import type { LiveInterviewSession } from "./live-interview-types";
 
+type FakeRoom = {
+  emit: (event: string, ...args: unknown[]) => void;
+  remoteParticipants: Map<string, unknown>;
+};
+
+const livekitMock = vi.hoisted(() => ({
+  room: null as FakeRoom | null,
+}));
+
+vi.mock("livekit-client", () => {
+  class Room {
+    canPlaybackAudio = true;
+    localParticipant = {
+      publishTrack: vi.fn(),
+    };
+    remoteParticipants = new Map<string, unknown>();
+    private handlers = new Map<string, Array<(...args: unknown[]) => void>>();
+
+    constructor() {
+      livekitMock.room = this;
+    }
+
+    on(event: string, handler: (...args: unknown[]) => void) {
+      const handlers = this.handlers.get(event) ?? [];
+      handlers.push(handler);
+      this.handlers.set(event, handlers);
+      return this;
+    }
+
+    async connect() {
+      return undefined;
+    }
+
+    disconnect() {
+      this.emit("disconnected");
+    }
+
+    emit(event: string, ...args: unknown[]) {
+      this.handlers.get(event)?.forEach((handler) => handler(...args));
+    }
+  }
+
+  return {
+    Room,
+    RoomEvent: {
+      AudioPlaybackStatusChanged: "audioPlaybackStatusChanged",
+      Disconnected: "disconnected",
+      ParticipantConnected: "participantConnected",
+      ParticipantDisconnected: "participantDisconnected",
+      Reconnected: "reconnected",
+      Reconnecting: "reconnecting",
+      TrackSubscribed: "trackSubscribed",
+      TrackUnsubscribed: "trackUnsubscribed",
+    },
+    Track: {
+      Kind: {
+        Audio: "audio",
+      },
+      Source: {
+        Camera: "camera",
+        Microphone: "microphone",
+      },
+    },
+  };
+});
+
 describe("live interview client", () => {
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn());
+    livekitMock.room = null;
   });
 
   afterEach(() => {
@@ -56,24 +123,27 @@ describe("live interview client", () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse({ ok: true }))
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
-    const onConnected = vi.fn();
+    const onRoomConnected = vi.fn();
+    const onInterviewerJoined = vi.fn();
+    const onInterviewerReady = vi.fn();
     const onDisconnected = vi.fn();
     const onAudioPlaybackReady = vi.fn();
-    const onReady = vi.fn();
 
     const room = await connectRoom({
       session: sessionFixture(),
       stream: mediaStreamFixture({ audio: true, video: false }),
       onAudioPlaybackBlocked: vi.fn(),
       onAudioPlaybackReady,
-      onConnected,
+      onInterviewerJoined,
+      onInterviewerReady,
       onDisconnected,
-      onReady,
+      onRoomConnected,
       onReconnecting: vi.fn(),
     });
 
-    expect(onConnected).toHaveBeenCalledOnce();
-    expect(onReady).toHaveBeenCalledOnce();
+    expect(onRoomConnected).toHaveBeenCalledOnce();
+    expect(onInterviewerJoined).toHaveBeenCalledOnce();
+    expect(onInterviewerReady).toHaveBeenCalledOnce();
     expect(onAudioPlaybackReady).toHaveBeenCalledOnce();
     expect(fetch).toHaveBeenNthCalledWith(
       1,
@@ -109,7 +179,73 @@ describe("live interview client", () => {
     );
 
     room.disconnect();
-    expect(onDisconnected).toHaveBeenCalledOnce();
+    expect(onDisconnected).toHaveBeenCalledWith({ intentional: true });
+  });
+
+  it("maps real LiveKit room events to candidate room states", async () => {
+    const remoteAudioElement = {
+      autoplay: false,
+      controls: true,
+      play: vi.fn().mockResolvedValue(undefined),
+      remove: vi.fn(),
+      style: { display: "" },
+    };
+    vi.stubGlobal("document", {
+      body: {
+        appendChild: vi.fn(),
+      },
+    });
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const onRoomConnected = vi.fn();
+    const onInterviewerJoined = vi.fn();
+    const onInterviewerReady = vi.fn();
+    const onReconnecting = vi.fn();
+    const onDisconnected = vi.fn();
+    const onAudioPlaybackReady = vi.fn();
+
+    const room = await connectRoom({
+      session: sessionFixture({
+        livekit: {
+          ...sessionFixture().livekit,
+          isMock: false,
+        },
+      }),
+      stream: mediaStreamFixture({ audio: true, video: false }),
+      onAudioPlaybackBlocked: vi.fn(),
+      onAudioPlaybackReady,
+      onInterviewerJoined,
+      onInterviewerReady,
+      onDisconnected,
+      onReconnecting,
+      onRoomConnected,
+    });
+
+    expect(onRoomConnected).toHaveBeenCalled();
+    expect(onInterviewerReady).not.toHaveBeenCalled();
+
+    livekitMock.room?.remoteParticipants.set("agent-is_123", {});
+    livekitMock.room?.emit("participantConnected");
+    expect(onInterviewerJoined).toHaveBeenCalled();
+
+    livekitMock.room?.emit("trackSubscribed", {
+      attach: () => remoteAudioElement,
+      kind: "audio",
+    });
+    await vi.waitFor(() => expect(onInterviewerReady).toHaveBeenCalled());
+    expect(onAudioPlaybackReady).toHaveBeenCalled();
+
+    livekitMock.room?.emit("reconnecting");
+    expect(onReconnecting).toHaveBeenCalledOnce();
+    livekitMock.room?.emit("reconnected");
+    expect(onInterviewerReady).toHaveBeenCalledTimes(2);
+
+    livekitMock.room?.emit("disconnected");
+    expect(onDisconnected).toHaveBeenCalledWith({ intentional: false });
+
+    room.disconnect();
+    expect(onDisconnected).toHaveBeenCalledWith({ intentional: true });
   });
 
   it("completes resumable product sessions without blocking the UI", async () => {

@@ -1,6 +1,7 @@
 import type {
   ConnectedRoom,
   LiveInterviewSession,
+  RoomDisconnectedEvent,
 } from "./live-interview-types";
 
 export function resumeStorageKey(token: string) {
@@ -50,30 +51,33 @@ export async function completeProductSession(session: LiveInterviewSession) {
 export async function connectRoom({
   session,
   stream,
-  onConnected,
+  onInterviewerJoined,
+  onInterviewerReady,
   onDisconnected,
   onAudioPlaybackBlocked,
   onAudioPlaybackReady,
-  onReady,
+  onRoomConnected,
   onReconnecting,
 }: {
   session: LiveInterviewSession;
   stream: MediaStream;
-  onConnected: () => void;
-  onDisconnected: () => void;
+  onInterviewerJoined: () => void;
+  onInterviewerReady: () => void;
+  onDisconnected: (event: RoomDisconnectedEvent) => void;
   onAudioPlaybackBlocked: () => void;
   onAudioPlaybackReady: () => void;
-  onReady: () => void;
+  onRoomConnected: () => void;
   onReconnecting: () => void;
 }): Promise<ConnectedRoom> {
   if (session.livekit.isMock) {
-    onConnected();
+    onRoomConnected();
     await markCandidateJoined(session, stream);
     await markCandidateMediaReady(session, stream);
-    onReady();
+    onInterviewerJoined();
+    onInterviewerReady();
     onAudioPlaybackReady();
     return {
-      disconnect: onDisconnected,
+      disconnect: () => onDisconnected({ intentional: true }),
       startAudio: async () => undefined,
     };
   }
@@ -81,9 +85,38 @@ export async function connectRoom({
   const { Room, RoomEvent, Track } = await import("livekit-client");
   const room = new Room();
   const remoteAudioElements: HTMLMediaElement[] = [];
+  let intentionalDisconnect = false;
+
+  const markInterviewerJoined = () => {
+    onInterviewerJoined();
+  };
+
+  const markInterviewerReady = () => {
+    markInterviewerJoined();
+    onInterviewerReady();
+  };
+
+  const syncInterviewerState = () => {
+    if (remoteAudioElements.length > 0) {
+      markInterviewerReady();
+      return;
+    }
+
+    if (room.remoteParticipants.size > 0) {
+      markInterviewerJoined();
+      return;
+    }
+
+    onRoomConnected();
+  };
+
   room.on(RoomEvent.Reconnecting, onReconnecting);
-  room.on(RoomEvent.Reconnected, onConnected);
-  room.on(RoomEvent.Disconnected, onDisconnected);
+  room.on(RoomEvent.Reconnected, syncInterviewerState);
+  room.on(RoomEvent.Disconnected, () =>
+    onDisconnected({ intentional: intentionalDisconnect }),
+  );
+  room.on(RoomEvent.ParticipantConnected, markInterviewerJoined);
+  room.on(RoomEvent.ParticipantDisconnected, syncInterviewerState);
   room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
     if (room.canPlaybackAudio) {
       onAudioPlaybackReady();
@@ -96,6 +129,7 @@ export async function connectRoom({
       return;
     }
 
+    markInterviewerReady();
     const element = track.attach();
     element.autoplay = true;
     element.controls = false;
@@ -115,6 +149,7 @@ export async function connectRoom({
         remoteAudioElements.splice(index, 1);
       }
     });
+    syncInterviewerState();
   });
 
   try {
@@ -129,13 +164,13 @@ export async function connectRoom({
         }),
       ),
     );
-    onConnected();
+    onRoomConnected();
     await markCandidateJoined(session, stream);
     await markCandidateMediaReady(session, stream);
+    syncInterviewerState();
     if (!room.canPlaybackAudio) {
       onAudioPlaybackBlocked();
     }
-    onReady();
   } catch (cause) {
     remoteAudioElements.forEach((element) => element.remove());
     room.disconnect();
@@ -149,6 +184,7 @@ export async function connectRoom({
       onAudioPlaybackReady();
     },
     disconnect: () => {
+      intentionalDisconnect = true;
       remoteAudioElements.forEach((element) => element.remove());
       room.disconnect();
     },

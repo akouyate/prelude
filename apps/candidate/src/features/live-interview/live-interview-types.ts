@@ -28,3 +28,7 @@ export type ConnectedRoom = {
   disconnect: () => void;
   startAudio: () => Promise<void>;
 };
+
+export type RoomDisconnectedEvent = {
+  intentional: boolean;
+};
