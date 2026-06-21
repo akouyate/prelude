@@ -10,6 +10,8 @@ does not make final hiring, rejection, ranking, or archive decisions.
 
 ## Candidate Disclosure Copy
 
+Canonical copy version: `candidate-disclosure-v1`.
+
 Use this copy or a localized equivalent before a live interview starts:
 
 > You are speaking with an AI-guided interviewer for a first screening. Your
@@ -19,7 +21,11 @@ Use this copy or a localized equivalent before a live interview starts:
 The candidate consent copy must also say that answers may be recorded as
 transcript evidence for recruiter review.
 
+Canonical consent copy version: `candidate-consent-v1`.
+
 ## Recruiter Limitation Copy
+
+Canonical copy version: `recruiter-limitation-v1`.
 
 Use this copy or a localized equivalent on recruiter review surfaces:
 
@@ -79,4 +85,5 @@ from recruiter-facing evidence.
 - Default smoke and CI paths must not call paid LLM providers.
 
 The source links behind these evaluation and compliance guardrails are tracked
-in [`docs/sources/evaluation-matrix.md`](../sources/evaluation-matrix.md).
+in [`docs/sources/evaluation-matrix.md`](../sources/evaluation-matrix.md) and
+[`docs/sources/compliance-guardrails.md`](../sources/compliance-guardrails.md).

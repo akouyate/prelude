@@ -2,7 +2,14 @@ import {
   candidateBriefSchema,
   type CandidateBriefDto,
 } from "@prelude/contracts";
-import { defaultComplianceFlags, recruiterLimitationCopy } from "@prelude/core";
+import {
+  aiCompliancePolicyVersion,
+  buildAiCompliancePromptContext,
+  defaultComplianceFlags,
+  disallowedQuestionTopics,
+  recruiterLimitationCopy,
+  sensitiveInformationHandlingRule,
+} from "@prelude/core";
 
 import type {
   CandidateBriefSynthesizer,
@@ -113,29 +120,30 @@ function buildPromptInput(input: CandidateBriefSynthesizerInput) {
     candidateLabel: input.candidateLabel,
     candidateSessionId: input.candidateSessionId,
     complianceFlags: defaultComplianceFlags,
+    compliancePolicyVersion: aiCompliancePolicyVersion,
     criteria: input.criteria,
+    disallowedQuestionAndReviewTopics: disallowedQuestionTopics,
     evidence: {
       questionAnswerSequence: input.evidence.questionAnswerSequence,
       questionCompletionRate: input.evidence.questionCompletionRate,
       transcriptTurns: input.evidence.transcriptTurns,
     },
     jobTitle: input.jobTitle,
-    limitations: [recruiterLimitationCopy],
+    limitations: [recruiterLimitationCopy, sensitiveInformationHandlingRule],
     promptVersion: OPENAI_CANDIDATE_BRIEF_PROMPT_VERSION,
     roleTitle: input.roleTitle,
   };
 }
 
 function openAISystemInstructions() {
-  // Source rationale: docs/sources/evaluation-matrix.md.
+  // Source rationale: docs/sources/evaluation-matrix.md and docs/sources/compliance-guardrails.md.
   return [
     "You write concise first-screening recruiter briefs for Prelude.ai.",
     "Return only JSON that matches the requested schema.",
     "Use only transcript evidence from the input. Do not invent facts.",
     "Separate facts, inferred job-related signals, risks, missing information, and recruiter next step.",
     "A spoken answer is not valid unless it is relevant, coherent, and job-related.",
-    "Never rank candidates, generate a global fit score, or autonomously reject/archive candidates.",
-    "Never assess protected traits, accent, emotion, voice quality, personality, disability, age, ethnicity, gender, religion, or health.",
+    buildAiCompliancePromptContext(),
     "If evidence is absent or weak, mark it as missing, unclear, partial, or risk and recommend recruiter follow-up.",
   ].join(" ");
 }

@@ -34,10 +34,21 @@ describe("OpenAI candidate brief synthesizer", () => {
       "targeted_follow_up",
     );
     expect(calls[0]?.headers.Authorization).toBe("Bearer sk-test");
-    expect(JSON.parse(calls[0]?.body ?? "{}")).toMatchObject({
+    const requestBody = JSON.parse(calls[0]?.body ?? "{}");
+
+    expect(requestBody).toMatchObject({
       model: "gpt-test",
       store: false,
     });
+    expect(JSON.stringify(requestBody)).toContain(
+      "Disallowed question and review topics",
+    );
+    expect(JSON.stringify(requestBody)).toContain(
+      "biometric or face analysis",
+    );
+    expect(JSON.stringify(requestBody)).toContain(
+      "sensitive information was excluded",
+    );
   });
 });
 

@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { candidateConsentCopy, candidateDisclosureCopy } from "@prelude/core";
 import { Button, Input } from "@prelude/ui";
 import {
   Camera,
@@ -456,12 +457,11 @@ function WelcomeScreen({
           {interview.roleTitle}
         </h1>
         <p className="mt-5 text-base leading-7 text-ink-700">
-          A short, AI-guided voice interview. We listen to{" "}
+          {candidateDisclosureCopy} We listen to{" "}
           <span className="font-display text-xl italic text-ink-950">
             what you say
           </span>
-          , never your accent, tone, emotion, appearance, or any protected
-          attribute.
+          .
         </p>
 
         <div className="mt-7 flex flex-wrap gap-2">
@@ -689,12 +689,7 @@ function PreflightPanel({
           onChange={(event) => onConsentChange(event.target.checked)}
           type="checkbox"
         />
-        <span>
-          I agree to join this AI-guided screening interview. My answers may be
-          recorded as transcript evidence for recruiter review, and Prelude
-          should not assess protected attributes, appearance, accent, tone, or
-          emotion.
-        </span>
+        <span>{candidateConsentCopy}</span>
       </label>
     </>
   );

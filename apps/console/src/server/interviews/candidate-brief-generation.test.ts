@@ -98,6 +98,38 @@ describe("candidate brief generation", () => {
     expect(brief.evaluationMatrix?.criteria[0]?.status).toBe("risk");
   });
 
+  it("excludes volunteered sensitive information from recruiter evidence", () => {
+    const brief = buildLocalCandidateBrief(
+      input({
+        evidence: {
+          ...input().evidence,
+          transcriptTurns: [
+            {
+              endedAt: "2026-06-20T10:00:08.000Z",
+              eventType: "candidate_turn_finalized",
+              questionId: "q1",
+              sequenceNumber: 2,
+              speaker: "candidate",
+              startedAt: "2026-06-20T10:00:00.000Z",
+              text: "I am pregnant, but I have managed onboarding projects for support teams.",
+              turnId: "turn_sensitive",
+            },
+          ],
+        },
+      }),
+    );
+
+    expect(brief.complianceFlags).toContain(
+      "sensitive_signal_review_required",
+    );
+    expect(brief.criteria.every((criterion) => criterion.evidence.length === 0)).toBe(
+      true,
+    );
+    expect(brief.limitations.join(" ")).toContain(
+      "sensitive information was excluded",
+    );
+  });
+
   it("keeps the local synthesizer as the default when live LLM is not enabled", () => {
     const synthesizer = createCandidateBriefSynthesizerFromEnv({
       OPENAI_API_KEY: "sk-test",
