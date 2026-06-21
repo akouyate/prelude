@@ -1,6 +1,7 @@
 import type {
   ConnectedRoom,
   LiveInterviewSession,
+  LiveTranscriptTurn,
   RoomDisconnectedEvent,
 } from "./live-interview-types";
 
@@ -46,6 +47,26 @@ export async function completeProductSession(session: LiveInterviewSession) {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ resumeToken: session.resumeToken }),
   }).catch(() => undefined);
+}
+
+export async function fetchLiveTranscript(sessionId: string) {
+  const response = await fetch(
+    `/api/live-interview-sessions/${sessionId}/transcript`,
+    {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error("transcript_unavailable");
+  }
+
+  const payload = (await response.json()) as {
+    transcript?: LiveTranscriptTurn[];
+  };
+
+  return payload.transcript ?? [];
 }
 
 export async function connectRoom({

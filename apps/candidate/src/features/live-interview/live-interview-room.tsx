@@ -18,6 +18,7 @@ import {
   completeProductSession,
   connectRoom,
   createSession,
+  fetchLiveTranscript,
   resumeStorageKey,
   stopLocalStream,
   toCandidateError,
@@ -25,6 +26,7 @@ import {
 import type {
   ConnectedRoom,
   LiveInterviewSession,
+  LiveTranscriptTurn,
   RoomStatus,
 } from "./live-interview-types";
 import { prepareVoiceLevelMeter, VoiceLevelMeter } from "./voice-level-meter";
@@ -70,6 +72,9 @@ export function LiveInterviewRoom({
   const [localStream, setLocalStream] = React.useState<MediaStream | null>(
     null,
   );
+  const [transcriptTurns, setTranscriptTurns] = React.useState<
+    LiveTranscriptTurn[]
+  >([]);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
   const roomRef = React.useRef<ConnectedRoom | null>(null);
   const localStreamRef = React.useRef<MediaStream | null>(null);
@@ -136,6 +141,7 @@ export function LiveInterviewRoom({
 
     setError(null);
     setIsAudioPlaybackBlocked(false);
+    setTranscriptTurns([]);
     setElapsedSeconds(0);
     setStatus("preparing");
 
@@ -262,6 +268,33 @@ export function LiveInterviewRoom({
     };
   }, [isLiveExperience]);
 
+  React.useEffect(() => {
+    if (!session?.sessionId || !isRoomActive) {
+      return undefined;
+    }
+
+    let isCancelled = false;
+
+    const loadTranscript = async () => {
+      try {
+        const turns = await fetchLiveTranscript(session.sessionId);
+        if (!isCancelled) {
+          setTranscriptTurns(turns);
+        }
+      } catch {
+        // Transcript is a progressive enhancement for the room UI.
+      }
+    };
+
+    void loadTranscript();
+    const interval = window.setInterval(loadTranscript, 1200);
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [isRoomActive, session?.sessionId]);
+
   if (!interview) {
     return <UnavailableInterview />;
   }
@@ -300,6 +333,7 @@ export function LiveInterviewRoom({
         onEnableAudio={enableAudio}
         onEndInterview={endInterview}
         status={status}
+        transcriptTurns={transcriptTurns}
         videoRef={videoRef}
       />
     );
@@ -680,6 +714,7 @@ function LiveInterviewStage({
   onEnableAudio,
   onEndInterview,
   status,
+  transcriptTurns,
   videoRef,
 }: {
   allowedModes: string[];
@@ -691,14 +726,42 @@ function LiveInterviewStage({
   onEnableAudio: () => void;
   onEndInterview: () => void;
   status: RoomStatus;
+  transcriptTurns: LiveTranscriptTurn[];
   videoRef: React.RefObject<HTMLVideoElement | null>;
 }) {
   const showVideo = Boolean(
     localStream && allowedModes.includes("video") && isVideoEnabled,
   );
+  const interviewerTurns = React.useMemo(
+    () => transcriptTurns.filter((turn) => turn.speaker === "interviewer"),
+    [transcriptTurns],
+  );
+  const activeInterviewerTurn =
+    interviewerTurns.length > 0
+      ? interviewerTurns[interviewerTurns.length - 1]
+      : null;
+  const previousInterviewerTurns = activeInterviewerTurn
+    ? interviewerTurns.slice(Math.max(0, interviewerTurns.length - 3), -1)
+    : [];
+  const activeWords = React.useMemo(
+    () =>
+      splitTranscriptWords(
+        activeInterviewerTurn?.text ?? statusDescription(status),
+      ),
+    [activeInterviewerTurn?.text, status],
+  );
+  const isConnectingOnly =
+    status === "preparing" ||
+    status === "permission_required" ||
+    status === "connecting";
 
   return (
     <section className="fixed inset-0 z-50 flex h-[100svh] flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_-10%,#3c421f_0%,#1d1c16_38%,#131210_100%)] px-5 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+1rem)] text-white supports-[height:100dvh]:h-[100dvh] sm:px-8">
+      <div className="pointer-events-none absolute left-1/2 top-[30%] h-[120vh] w-[150vw] -translate-x-1/2 opacity-70">
+        <div className="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 bg-[radial-gradient(closest-side,oklch(0.7_0.17_121.25_/_0.34),oklch(0.55_0.13_121.25_/_0.13)_45%,transparent_72%)] blur-3xl motion-safe:animate-[cc-aura_4.4s_ease-in-out_infinite]" />
+      </div>
+      <div className="pointer-events-none absolute inset-0 opacity-45 [background-image:url('data:image/svg+xml;utf8,<svg_xmlns=%22http://www.w3.org/2000/svg%22_width=%22160%22_height=%22160%22><filter_id=%22n%22><feTurbulence_type=%22fractalNoise%22_baseFrequency=%220.8%22_numOctaves=%222%22/></filter><rect_width=%22100%25%22_height=%22100%25%22_filter=%22url(%23n)%22_opacity=%220.04%22/></svg>')]" />
+
       <div className="flex shrink-0 items-center justify-between gap-4">
         <div>
           <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white/42">
@@ -714,32 +777,55 @@ function LiveInterviewStage({
         <StatusPill status={status} />
       </div>
 
-      <div className="grid min-h-0 flex-1 place-items-center py-4 text-center sm:py-10">
-        <div className="w-full max-w-3xl">
-          <div className="relative mx-auto grid h-24 w-24 place-items-center sm:h-32 sm:w-32">
-            <span className="absolute inset-0 rounded-full border border-olive-300/40 motion-safe:animate-[cc-ring_2.4s_ease-out_infinite]" />
-            <span className="absolute inset-0 rounded-full border border-olive-300/30 motion-safe:animate-[cc-ring_2.4s_ease-out_infinite_1.2s]" />
-            <span className="grid h-14 w-14 place-items-center rounded-full bg-[radial-gradient(circle_at_35%_30%,oklch(0.826_0.199_121.3),oklch(0.507_0.122_121.25))] sm:h-16 sm:w-16">
-              <Mic
-                aria-hidden="true"
-                className="h-6 w-6 text-ink-950 sm:h-7 sm:w-7"
-              />
-            </span>
-          </div>
+      <div className="relative grid min-h-0 flex-1 place-items-center py-4 sm:py-10">
+        <div className="w-full max-w-4xl">
+          {isConnectingOnly ? (
+            <ConnectingInterviewState status={status} />
+          ) : (
+            <div
+              aria-live="polite"
+              className="mx-auto max-w-3xl text-left"
+              key={activeInterviewerTurn?.turnId ?? status}
+            >
+              <div className="mb-5 inline-flex items-center gap-2 sm:mb-7">
+                <span className="h-2 w-2 rounded-full bg-olive-200 motion-safe:animate-[cc-livedot_1.6s_ease-in-out_infinite]" />
+                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-olive-200">
+                  Interviewer
+                </span>
+              </div>
 
-          <p className="mt-6 text-xs font-semibold uppercase tracking-[0.18em] text-olive-200 sm:mt-8">
-            {isRoomActive ? "Interviewer" : "Connecting"}
-          </p>
-          <h2 className="mx-auto mt-4 max-w-2xl text-2xl font-semibold leading-tight tracking-normal sm:text-4xl lg:text-5xl">
-            {statusDescription(status)}
-          </h2>
-          <p className="mx-auto mt-4 max-w-lg text-sm leading-6 text-white/58 sm:text-base">
-            You can ask to repeat the question, take a moment to think, or
-            answer naturally. The interviewer will wait while you finish.
-          </p>
+              <div className="flex flex-col gap-3">
+                {previousInterviewerTurns.map((turn) => (
+                  <p
+                    className="max-w-2xl animate-[cc-histIn_.5s_ease_both] text-base font-medium leading-7 text-white/32 sm:text-xl"
+                    key={turn.turnId}
+                  >
+                    {turn.text}
+                  </p>
+                ))}
+                <p className="text-3xl font-semibold leading-[1.22] tracking-normal text-[#fef9f2] sm:text-5xl lg:text-6xl">
+                  {activeWords.map((word, index) => (
+                    <span
+                      className="mr-[0.24em] inline-block animate-[cc-wordIn_.5s_cubic-bezier(.2,.7,.2,1)_both]"
+                      key={`${word}-${index}`}
+                      style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}
+                    >
+                      {word}
+                    </span>
+                  ))}
+                  <span className="inline-block h-[0.92em] w-[3px] translate-y-[0.08em] bg-olive-200 motion-safe:animate-[cc-blink_1s_step-end_infinite]" />
+                </p>
+              </div>
+
+              <p className="mt-7 max-w-xl text-sm leading-6 text-white/50 sm:text-base">
+                You can ask to repeat the question, take a moment to think, or
+                answer naturally. The interviewer will wait while you finish.
+              </p>
+            </div>
+          )}
 
           {showVideo ? (
-            <div className="mx-auto mt-8 max-w-sm overflow-hidden rounded-[1.75rem] border border-white/10 bg-ink-950">
+            <div className="absolute bottom-24 left-5 w-28 overflow-hidden rounded-3xl border border-white/10 bg-ink-950 sm:bottom-8 sm:left-8 sm:w-44">
               <video
                 ref={videoRef}
                 aria-label="Local camera preview"
@@ -786,6 +872,29 @@ function LiveInterviewStage({
         <VoiceLevelMeter isActive={isRoomActive} stream={localStream} />
       </div>
     </section>
+  );
+}
+
+function ConnectingInterviewState({ status }: { status: RoomStatus }) {
+  return (
+    <div className="mx-auto max-w-2xl text-center">
+      <div className="relative mx-auto grid h-28 w-28 place-items-center sm:h-36 sm:w-36">
+        <span className="absolute inset-0 rounded-full border border-olive-300/40 motion-safe:animate-[cc-ring_2.4s_ease-out_infinite]" />
+        <span className="absolute inset-0 rounded-full border border-olive-300/30 motion-safe:animate-[cc-ring_2.4s_ease-out_infinite_1.2s]" />
+        <span className="grid h-16 w-16 place-items-center rounded-full bg-[radial-gradient(circle_at_35%_30%,oklch(0.826_0.199_121.3),oklch(0.507_0.122_121.25))]">
+          <Mic aria-hidden="true" className="h-7 w-7 text-ink-950" />
+        </span>
+      </div>
+      <p className="mt-8 text-xs font-semibold uppercase tracking-[0.18em] text-olive-200">
+        Connecting
+      </p>
+      <h2 className="mx-auto mt-4 max-w-2xl text-2xl font-semibold leading-tight tracking-normal sm:text-4xl">
+        {statusDescription(status)}
+      </h2>
+      <p className="mx-auto mt-4 max-w-lg text-sm leading-6 text-white/58 sm:text-base">
+        One moment while we set up your private room.
+      </p>
+    </div>
   );
 }
 
@@ -975,4 +1084,8 @@ function statusDescription(status: RoomStatus) {
   }
 
   return "Ready when you are.";
+}
+
+function splitTranscriptWords(text: string) {
+  return text.trim().split(/\s+/).filter(Boolean);
 }

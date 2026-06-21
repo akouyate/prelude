@@ -4,6 +4,7 @@ import {
   completeProductSession,
   connectRoom,
   createSession,
+  fetchLiveTranscript,
   resumeStorageKey,
   stopLocalStream,
   toCandidateError,
@@ -260,6 +261,41 @@ describe("live interview client", () => {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ resumeToken: "resume_123" }),
+      },
+    );
+  });
+
+  it("loads normalized live transcript turns", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        transcript: [
+          {
+            turnId: "turn_1",
+            sessionId: "is_123",
+            speaker: "interviewer",
+            text: "Can you introduce yourself?",
+            isFinal: true,
+            startedAt: "2026-06-21T09:00:00Z",
+          },
+        ],
+      }),
+    );
+
+    await expect(fetchLiveTranscript("is_123")).resolves.toEqual([
+      {
+        turnId: "turn_1",
+        sessionId: "is_123",
+        speaker: "interviewer",
+        text: "Can you introduce yourself?",
+        isFinal: true,
+        startedAt: "2026-06-21T09:00:00Z",
+      },
+    ]);
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/live-interview-sessions/is_123/transcript",
+      {
+        headers: { accept: "application/json" },
+        cache: "no-store",
       },
     );
   });

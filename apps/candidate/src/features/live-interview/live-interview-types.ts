@@ -24,6 +24,17 @@ export type LiveInterviewSession = {
   };
 };
 
+export type LiveTranscriptTurn = {
+  turnId: string;
+  sessionId: string;
+  questionId?: string;
+  speaker: "candidate" | "interviewer" | "system";
+  text: string;
+  isFinal: boolean;
+  startedAt: string;
+  endedAt?: string;
+};
+
 export type ConnectedRoom = {
   disconnect: () => void;
   startAudio: () => Promise<void>;
