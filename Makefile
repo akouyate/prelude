@@ -31,7 +31,7 @@ E2E_SMOKE_LIVE_LLM ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell db-migrate db-generate db-studio agent-benchmark live-openai-worker live-openai-autoworker live-smoke-report e2e-smoke e2e-smoke-live dev
+.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell db-migrate db-generate db-studio agent-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "Prelude local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -205,6 +205,18 @@ live-smoke-report: ## Print a replayability report for a live interview SESSION_
 		realtime_api_url="$(REALTIME_API_URL)"; \
 	fi; \
 	node scripts/live-smoke-report.mjs \
+		--session-id "$(SESSION_ID)" \
+		--realtime-api-url "$$realtime_api_url"
+
+live-smoke-report-strict: ## Fail if a live interview SESSION_ID has lifecycle anomalies.
+	@test -n "$(SESSION_ID)" || (printf "SESSION_ID is required. Example: make live-smoke-report-strict SESSION_ID=is_xxx REALTIME_API_URL=http://127.0.0.1:8080\n"; exit 1)
+	@$(LOAD_ENV); \
+	realtime_api_url="$${REALTIME_API_URL:-$(LIVE_SMOKE_REALTIME_API_URL)}"; \
+	if [ -n "$(REALTIME_API_URL)" ]; then \
+		realtime_api_url="$(REALTIME_API_URL)"; \
+	fi; \
+	node scripts/live-smoke-report.mjs \
+		--strict \
 		--session-id "$(SESSION_ID)" \
 		--realtime-api-url "$$realtime_api_url"
 

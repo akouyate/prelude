@@ -19,6 +19,7 @@ import {
   completeProductSession,
   connectRoom,
   createSession,
+  fetchLiveSessionState,
   fetchLiveTranscript,
   resumeStorageKey,
   stopLocalStream,
@@ -30,6 +31,13 @@ import type {
   LiveTranscriptTurn,
   RoomStatus,
 } from "./live-interview-types";
+import {
+  hasClosingTranscript,
+  shouldKeepCurrentRuntimeStatus,
+  statusFromSessionState,
+  statusFromTranscriptTurn,
+  transcriptTurnsFromSessionState,
+} from "./live-interview-runtime";
 import { prepareVoiceLevelMeter, VoiceLevelMeter } from "./voice-level-meter";
 
 type CandidateStep = "welcome" | "setup";
@@ -45,8 +53,13 @@ const statusCopy: Record<RoomStatus, string> = {
   permission_required: "Allow microphone",
   connecting: "Connecting",
   interviewer_joining: "Interviewer is joining",
+  agent_joined: "Interviewer joined",
   connected: "Live now",
+  interviewer_speaking: "Interviewer speaking",
+  candidate_speaking: "Listening to you",
+  listening: "Your turn",
   reconnecting: "Reconnecting",
+  closing: "Wrapping up",
   failed: "Needs attention",
   completed: "Completed",
 };
@@ -80,6 +93,8 @@ export function LiveInterviewRoom({
   const roomRef = React.useRef<ConnectedRoom | null>(null);
   const localStreamRef = React.useRef<MediaStream | null>(null);
   const startInFlightRef = React.useRef(false);
+  const completionTimerRef = React.useRef<number | null>(null);
+  const serverCompletionScheduledRef = React.useRef(false);
   const completedProductSessionIdsRef = React.useRef(new Set<string>());
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const mergeTranscriptTurns = React.useCallback(
@@ -114,6 +129,9 @@ export function LiveInterviewRoom({
 
   React.useEffect(() => {
     return () => {
+      if (completionTimerRef.current) {
+        window.clearTimeout(completionTimerRef.current);
+      }
       stopLocalStream(localStreamRef.current);
       roomRef.current?.disconnect();
     };
@@ -148,6 +166,29 @@ export function LiveInterviewRoom({
     [],
   );
 
+  const scheduleServerCompletion = React.useCallback(
+    (nextSession: LiveInterviewSession | null, hasClosingTurn: boolean) => {
+      if (serverCompletionScheduledRef.current) {
+        return;
+      }
+
+      serverCompletionScheduledRef.current = true;
+      completeCurrentSession(nextSession);
+      setStatus("closing");
+
+      const delayMs = hasClosingTurn ? 2200 : 3600;
+      completionTimerRef.current = window.setTimeout(() => {
+        roomRef.current?.disconnect();
+        roomRef.current = null;
+        stopLocalStream(localStreamRef.current);
+        setLocalStream(null);
+        setIsAudioPlaybackBlocked(false);
+        setStatus("completed");
+      }, delayMs);
+    },
+    [completeCurrentSession],
+  );
+
   const startInterview = React.useCallback(async () => {
     if (
       startInFlightRef.current ||
@@ -166,6 +207,11 @@ export function LiveInterviewRoom({
     setIsAudioPlaybackBlocked(false);
     setTranscriptTurns([]);
     setElapsedSeconds(0);
+    serverCompletionScheduledRef.current = false;
+    if (completionTimerRef.current) {
+      window.clearTimeout(completionTimerRef.current);
+      completionTimerRef.current = null;
+    }
     setStatus("preparing");
 
     try {
@@ -205,8 +251,10 @@ export function LiveInterviewRoom({
         onInterviewerReady: () => setStatus("connected"),
         onDisconnected: ({ intentional }) => {
           if (intentional) {
-            completeCurrentSession(nextSession);
-            setStatus("completed");
+            if (!serverCompletionScheduledRef.current) {
+              completeCurrentSession(nextSession);
+              setStatus("completed");
+            }
             return;
           }
 
@@ -222,7 +270,12 @@ export function LiveInterviewRoom({
         onAudioPlaybackReady: () => {
           setIsAudioPlaybackBlocked(false);
         },
-        onTranscriptTurn: (turn) => mergeTranscriptTurns([turn]),
+        onTranscriptTurn: (turn) => {
+          mergeTranscriptTurns([turn]);
+          setStatus((currentStatus) =>
+            statusFromTranscriptTurn(turn, currentStatus),
+          );
+        },
       });
     } catch (cause) {
       roomRef.current?.disconnect();
@@ -270,7 +323,12 @@ export function LiveInterviewRoom({
     status === "connecting";
   const isRoomActive =
     status === "interviewer_joining" ||
+    status === "agent_joined" ||
     status === "connected" ||
+    status === "interviewer_speaking" ||
+    status === "candidate_speaking" ||
+    status === "listening" ||
+    status === "closing" ||
     status === "reconnecting";
   const interview = context.kind === "not_found" ? null : context.interview;
   const allowedModes = interview?.responseModes ?? ["audio", "video"];
@@ -312,13 +370,69 @@ export function LiveInterviewRoom({
     };
 
     void loadTranscript();
-    const interval = window.setInterval(loadTranscript, 7500);
+    const interval = window.setInterval(loadTranscript, 2500);
 
     return () => {
       isCancelled = true;
       window.clearInterval(interval);
     };
   }, [isRoomActive, mergeTranscriptTurns, session?.sessionId]);
+
+  React.useEffect(() => {
+    if (!session?.sessionId || session.livekit.isMock || !isRoomActive) {
+      return undefined;
+    }
+
+    let isCancelled = false;
+
+    const loadSessionState = async () => {
+      try {
+        const state = await fetchLiveSessionState(session.sessionId);
+        if (isCancelled) {
+          return;
+        }
+
+        const stateTurns = transcriptTurnsFromSessionState(state);
+        if (stateTurns.length > 0) {
+          mergeTranscriptTurns(stateTurns);
+        }
+
+        const nextStatus = statusFromSessionState(state);
+        if (nextStatus === "completed") {
+          scheduleServerCompletion(session, hasClosingTranscript(state));
+          return;
+        }
+        if (nextStatus === "failed") {
+          setStatus("failed");
+          setError(
+            "The interviewer could not complete this session. Please ask the recruiter for a fresh link.",
+          );
+          return;
+        }
+
+        setStatus((currentStatus) =>
+          shouldKeepCurrentRuntimeStatus(currentStatus, nextStatus)
+            ? currentStatus
+            : nextStatus,
+        );
+      } catch {
+        // Runtime state polling is a fallback signal; LiveKit remains primary.
+      }
+    };
+
+    void loadSessionState();
+    const interval = window.setInterval(loadSessionState, 1250);
+
+    return () => {
+      isCancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [
+    isRoomActive,
+    mergeTranscriptTurns,
+    scheduleServerCompletion,
+    session,
+  ]);
 
   if (!interview) {
     return <UnavailableInterview />;
@@ -951,26 +1065,6 @@ function ModeChoice({
   );
 }
 
-function Capability({
-  active,
-  icon: Icon,
-  label,
-}: {
-  active: boolean;
-  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
-  label: string;
-}) {
-  return (
-    <div className="flex items-center gap-2 rounded-2xl border border-ink-100 bg-white/70 px-3 py-2">
-      <Icon aria-hidden={true} className="h-4 w-4 text-ink-700" />
-      <span className="font-medium">{label}</span>
-      <span className="ml-auto text-xs text-ink-500">
-        {active ? "Ready" : "Off"}
-      </span>
-    </div>
-  );
-}
-
 function SoftPill({
   icon: Icon,
   label,
@@ -1092,11 +1186,26 @@ function statusDescription(status: RoomStatus) {
   if (status === "interviewer_joining") {
     return "The interviewer is joining. You can relax and answer naturally.";
   }
+  if (status === "agent_joined") {
+    return "The interviewer has joined and is getting ready.";
+  }
   if (status === "connected") {
     return "You are live. The interviewer will wait while you finish speaking.";
   }
+  if (status === "interviewer_speaking") {
+    return "The interviewer is speaking.";
+  }
+  if (status === "candidate_speaking") {
+    return "Keep going. The interviewer is listening.";
+  }
+  if (status === "listening") {
+    return "Your turn. Answer naturally when you are ready.";
+  }
   if (status === "reconnecting") {
     return "Connection changed. We are reconnecting you automatically.";
+  }
+  if (status === "closing") {
+    return "Thank you. The interviewer is wrapping up the conversation.";
   }
   if (status === "failed") {
     return "Something needs your attention before the interview can start.";

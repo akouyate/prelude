@@ -4,8 +4,13 @@ export type RoomStatus =
   | "permission_required"
   | "connecting"
   | "interviewer_joining"
+  | "agent_joined"
   | "connected"
+  | "interviewer_speaking"
+  | "candidate_speaking"
+  | "listening"
   | "reconnecting"
+  | "closing"
   | "failed"
   | "completed";
 
@@ -33,6 +38,21 @@ export type LiveTranscriptTurn = {
   isFinal: boolean;
   startedAt: string;
   endedAt?: string;
+};
+
+export type LiveSessionEvent = {
+  eventId: string;
+  sequence: number;
+  type: string;
+  actor: "agent" | "candidate" | "system" | string;
+  occurredAt: string;
+  payload: Record<string, unknown>;
+};
+
+export type LiveSessionState = {
+  sessionId: string;
+  status: string;
+  events: LiveSessionEvent[];
 };
 
 export type ConnectedRoom = {
