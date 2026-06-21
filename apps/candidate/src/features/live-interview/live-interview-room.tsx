@@ -27,6 +27,7 @@ import type {
   LiveInterviewSession,
   RoomStatus,
 } from "./live-interview-types";
+import { prepareVoiceLevelMeter, VoiceLevelMeter } from "./voice-level-meter";
 
 type CandidateStep = "welcome" | "setup";
 
@@ -129,6 +130,7 @@ export function LiveInterviewRoom({
       return;
     }
 
+    prepareVoiceLevelMeter();
     startInFlightRef.current = true;
     let grantedStream: MediaStream | null = null;
 
@@ -753,18 +755,7 @@ function LiveInterviewStage({
           {formatDuration(elapsedSeconds)}
         </span>
         <span className="h-6 w-px bg-white/10" />
-        <div className="flex h-7 items-end gap-1 px-3">
-          {[0, 1, 2, 3, 4].map((bar) => (
-            <span
-              className="w-1 rounded-full bg-olive-200 motion-safe:animate-[cc-wave_.7s_ease-in-out_infinite]"
-              key={bar}
-              style={{
-                animationDelay: `${bar * 0.1}s`,
-                height: `${14 + ((bar * 7) % 14)}px`,
-              }}
-            />
-          ))}
-        </div>
+        <VoiceLevelMeter isActive={isRoomActive} stream={localStream} />
       </div>
     </section>
   );
