@@ -6,7 +6,12 @@ const extraAllowedDevOrigins =
     .filter(Boolean) ?? [];
 
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["127.0.0.1", ...extraAllowedDevOrigins],
+  allowedDevOrigins: [
+    "127.0.0.1",
+    "*.ngrok.app",
+    "*.ngrok-free.app",
+    ...extraAllowedDevOrigins
+  ],
   transpilePackages: [
     "@prelude/contracts",
     "@prelude/design-system",

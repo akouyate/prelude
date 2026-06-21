@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
+import json
 import re
 import unicodedata
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Mapping
+from typing import Mapping, Protocol
 
 from app.adapters.answer_inference import HeuristicAnswerInferenceProvider
 from app.application.ports import AnswerInferenceProvider
@@ -38,6 +40,7 @@ FIRST_REPLY_INSTRUCTIONS = (
 )
 
 CLOSING_PLAYOUT_TIMEOUT_SECONDS = 25.0
+PRELUDE_TRANSCRIPT_TOPIC = "prelude.transcript.v1"
 
 INITIAL_GREETING_RE = re.compile(
     r"^\s*(bonjour|bonsoir|hello|hi|good morning|good afternoon|good evening)"
@@ -409,6 +412,37 @@ class PreludeEventEmitter:
             )
 
 
+class TranscriptPublisher(Protocol):
+    async def publish_turn(self, transcript_turn: dict[str, object]) -> None: ...
+
+
+class LiveTranscriptPublisher:
+    def __init__(self, room: object) -> None:
+        self._room = room
+
+    async def publish_turn(self, transcript_turn: dict[str, object]) -> None:
+        try:
+            local_participant = getattr(self._room, "local_participant")
+            publish_data = getattr(local_participant, "publish_data")
+            result = publish_data(
+                json.dumps(
+                    {
+                        "type": "transcript_turn",
+                        "transcriptTurn": _camelize_transcript_turn(transcript_turn),
+                    },
+                    separators=(",", ":"),
+                ),
+                reliable=True,
+                topic=PRELUDE_TRANSCRIPT_TOPIC,
+            )
+            if inspect.isawaitable(result):
+                await result
+        except Exception:
+            # The Go event log is the source of truth. Realtime transcript push is
+            # a latency optimization and should never block interview progress.
+            return
+
+
 class LiveKitAgentEventBridge:
     def __init__(
         self,
@@ -644,10 +678,12 @@ class LiveInterviewOrchestrationController:
         emitter: PreludeEventEmitter,
         session: object,
         answer_inference: AnswerInferenceProvider | None = None,
+        transcript_publisher: TranscriptPublisher | None = None,
     ) -> None:
         self._plan = plan
         self._emitter = emitter
         self._session = session
+        self._transcript_publisher = transcript_publisher
         self._orchestrator = InterviewOrchestrator(plan)
         self._answer_inference = answer_inference or HeuristicAnswerInferenceProvider()
         self._lock = asyncio.Lock()
@@ -721,6 +757,16 @@ class LiveInterviewOrchestrationController:
         turn_id: str,
         occurred_at: datetime,
     ) -> None:
+        transcript_turn = {
+            "turn_id": turn_id,
+            "session_id": self._emitter._session_id,
+            "question_id": turn.question_id,
+            "speaker": "candidate",
+            "text": turn.transcript or "[no audible response]",
+            "is_final": True,
+            "started_at": turn.started_at.isoformat(),
+            "ended_at": turn.ended_at.isoformat(),
+        }
         await self._emitter.emit(
             EventType.CANDIDATE_TURN_FINALIZED,
             {
@@ -729,20 +775,12 @@ class LiveInterviewOrchestrationController:
                 "candidate_intent": turn.candidate_intent.value,
                 "is_answer_to_active_question": turn.is_answer_to_active_question,
                 "classifier_reason": turn.classifier_reason,
-                "transcript_turn": {
-                    "turn_id": turn_id,
-                    "session_id": self._emitter._session_id,
-                    "question_id": turn.question_id,
-                    "speaker": "candidate",
-                    "text": turn.transcript or "[no audible response]",
-                    "is_final": True,
-                    "started_at": turn.started_at.isoformat(),
-                    "ended_at": turn.ended_at.isoformat(),
-                },
+                "transcript_turn": transcript_turn,
             },
             actor=EventActor.CANDIDATE,
             occurred_at=occurred_at,
         )
+        await self._publish_transcript_turn(transcript_turn)
 
     async def _emit_backchannel(
         self,
@@ -1002,6 +1040,17 @@ class LiveInterviewOrchestrationController:
             actor=EventActor.AGENT,
         )
         speech_text = spoken_text or prompt
+        await self._publish_transcript_turn(
+            {
+                "turn_id": f"{self._emitter._session_id}:interviewer:{utterance_id}",
+                "session_id": self._emitter._session_id,
+                "question_id": command.question_id,
+                "speaker": "interviewer",
+                "text": speech_text,
+                "is_final": True,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         reply = _generate_exact_control_reply(
             self._session,
             speech_text,
@@ -1020,6 +1069,16 @@ class LiveInterviewOrchestrationController:
         self._terminal = True
         closing = _closing_message(self._plan)
         closing_utterance_id = f"{self._emitter._session_id}:live-openai:closing"
+        await self._publish_transcript_turn(
+            {
+                "turn_id": f"{self._emitter._session_id}:interviewer:closing",
+                "session_id": self._emitter._session_id,
+                "speaker": "interviewer",
+                "text": closing,
+                "is_final": True,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
         await self._emitter.emit(
             EventType.AGENT_SPEECH_STARTED,
             {
@@ -1064,6 +1123,14 @@ class LiveInterviewOrchestrationController:
             actor=EventActor.AGENT,
         )
         self._closed.set()
+
+    async def _publish_transcript_turn(
+        self,
+        transcript_turn: dict[str, object],
+    ) -> None:
+        if self._transcript_publisher is None:
+            return
+        await self._transcript_publisher.publish_turn(transcript_turn)
 
 
 class OpenAILiveKitWorker:
@@ -1176,6 +1243,7 @@ class OpenAILiveKitWorker:
                 emitter=emitter,
                 session=session,
                 answer_inference=self._answer_inference,
+                transcript_publisher=LiveTranscriptPublisher(room),
             )
             bridge = LiveKitAgentEventBridge(
                 emitter=emitter,
@@ -1435,6 +1503,22 @@ def _closing_instructions(closing: str) -> str:
         "Do not ask another question and do not add extra commentary: "
         f"{closing}"
     )
+
+
+def _camelize_transcript_turn(turn: dict[str, object]) -> dict[str, object]:
+    keys = {
+        "turn_id": "turnId",
+        "session_id": "sessionId",
+        "question_id": "questionId",
+        "is_final": "isFinal",
+        "started_at": "startedAt",
+        "ended_at": "endedAt",
+    }
+    return {
+        keys.get(key, key): value
+        for key, value in turn.items()
+        if value is not None
+    }
 
 
 def _generate_exact_reply(

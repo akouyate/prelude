@@ -81,6 +81,28 @@ export function LiveInterviewRoom({
   const startInFlightRef = React.useRef(false);
   const completedProductSessionIdsRef = React.useRef(new Set<string>());
   const videoRef = React.useRef<HTMLVideoElement | null>(null);
+  const mergeTranscriptTurns = React.useCallback(
+    (incomingTurns: LiveTranscriptTurn[]) => {
+      setTranscriptTurns((currentTurns) => {
+        const byTurnId = new Map(
+          currentTurns.map((turn) => [turn.turnId, turn] as const),
+        );
+
+        incomingTurns.forEach((incomingTurn) => {
+          const currentTurn = byTurnId.get(incomingTurn.turnId);
+          if (!currentTurn || incomingTurn.isFinal || !currentTurn.isFinal) {
+            byTurnId.set(incomingTurn.turnId, incomingTurn);
+          }
+        });
+
+        return Array.from(byTurnId.values()).sort(
+          (left, right) =>
+            Date.parse(left.startedAt) - Date.parse(right.startedAt),
+        );
+      });
+    },
+    [],
+  );
 
   React.useEffect(() => {
     localStreamRef.current = localStream;
@@ -199,6 +221,7 @@ export function LiveInterviewRoom({
         onAudioPlaybackReady: () => {
           setIsAudioPlaybackBlocked(false);
         },
+        onTranscriptTurn: (turn) => mergeTranscriptTurns([turn]),
       });
     } catch (cause) {
       roomRef.current?.disconnect();
@@ -217,6 +240,7 @@ export function LiveInterviewRoom({
     context.kind,
     hasAcceptedConsent,
     isVideoEnabled,
+    mergeTranscriptTurns,
     token,
   ]);
 
@@ -279,7 +303,7 @@ export function LiveInterviewRoom({
       try {
         const turns = await fetchLiveTranscript(session.sessionId);
         if (!isCancelled) {
-          setTranscriptTurns(turns);
+          mergeTranscriptTurns(turns);
         }
       } catch {
         // Transcript is a progressive enhancement for the room UI.
@@ -287,13 +311,13 @@ export function LiveInterviewRoom({
     };
 
     void loadTranscript();
-    const interval = window.setInterval(loadTranscript, 1200);
+    const interval = window.setInterval(loadTranscript, 7500);
 
     return () => {
       isCancelled = true;
       window.clearInterval(interval);
     };
-  }, [isRoomActive, session?.sessionId]);
+  }, [isRoomActive, mergeTranscriptTurns, session?.sessionId]);
 
   if (!interview) {
     return <UnavailableInterview />;

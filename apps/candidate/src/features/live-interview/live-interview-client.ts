@@ -2,8 +2,12 @@ import type {
   ConnectedRoom,
   LiveInterviewSession,
   LiveTranscriptTurn,
+  LiveTranscriptTurnHandler,
   RoomDisconnectedEvent,
 } from "./live-interview-types";
+
+const PRELUDE_TRANSCRIPT_TOPIC = "prelude.transcript.v1";
+const LIVEKIT_TRANSCRIPTION_TOPIC = "lk.transcription";
 
 export function resumeStorageKey(token: string) {
   return `prelude:candidate-session:${token}`;
@@ -72,6 +76,7 @@ export async function fetchLiveTranscript(sessionId: string) {
 export async function connectRoom({
   session,
   stream,
+  onTranscriptTurn,
   onInterviewerJoined,
   onInterviewerReady,
   onDisconnected,
@@ -82,6 +87,7 @@ export async function connectRoom({
 }: {
   session: LiveInterviewSession;
   stream: MediaStream;
+  onTranscriptTurn?: LiveTranscriptTurnHandler;
   onInterviewerJoined: () => void;
   onInterviewerReady: () => void;
   onDisconnected: (event: RoomDisconnectedEvent) => void;
@@ -106,6 +112,7 @@ export async function connectRoom({
   const { Room, RoomEvent, Track } = await import("livekit-client");
   const room = new Room();
   const remoteAudioElements: HTMLMediaElement[] = [];
+  const transcriptDecoder = new TextDecoder();
   let intentionalDisconnect = false;
 
   const markInterviewerJoined = () => {
@@ -145,6 +152,38 @@ export async function connectRoom({
       onAudioPlaybackBlocked();
     }
   });
+  room.on(RoomEvent.DataReceived, (payload, _participant, _kind, topic) => {
+    if (topic !== PRELUDE_TRANSCRIPT_TOPIC) {
+      return;
+    }
+
+    const turn = decodeRealtimeTranscriptPacket(
+      transcriptDecoder.decode(payload),
+    );
+    if (turn) {
+      onTranscriptTurn?.(turn);
+    }
+  });
+  room.registerTextStreamHandler?.(
+    LIVEKIT_TRANSCRIPTION_TOPIC,
+    (reader, participantInfo) => {
+      void reader
+        .readAll()
+        .then((text) => {
+          const turn = livekitTextStreamToTranscriptTurn({
+            attributes: reader.info.attributes,
+            participantIdentity: participantInfo.identity,
+            sessionId: session.sessionId,
+            text,
+            timestamp: reader.info.timestamp,
+          });
+          if (turn) {
+            onTranscriptTurn?.(turn);
+          }
+        })
+        .catch(() => undefined);
+    },
+  );
   room.on(RoomEvent.TrackSubscribed, (track) => {
     if (track.kind !== Track.Kind.Audio) {
       return;
@@ -207,9 +246,142 @@ export async function connectRoom({
     disconnect: () => {
       intentionalDisconnect = true;
       remoteAudioElements.forEach((element) => element.remove());
+      room.unregisterTextStreamHandler?.(LIVEKIT_TRANSCRIPTION_TOPIC);
       room.disconnect();
     },
   };
+}
+
+export function decodeRealtimeTranscriptPacket(
+  payload: string,
+): LiveTranscriptTurn | null {
+  try {
+    const parsed = JSON.parse(payload) as {
+      type?: unknown;
+      transcriptTurn?: unknown;
+      transcript_turn?: unknown;
+    };
+    if (parsed.type !== "transcript_turn") {
+      return null;
+    }
+
+    return normalizeRealtimeTranscriptTurn(
+      parsed.transcriptTurn ?? parsed.transcript_turn,
+    );
+  } catch {
+    return null;
+  }
+}
+
+function livekitTextStreamToTranscriptTurn({
+  attributes,
+  participantIdentity,
+  sessionId,
+  text,
+  timestamp,
+}: {
+  attributes?: Record<string, string>;
+  participantIdentity: string;
+  sessionId: string;
+  text: string;
+  timestamp: number;
+}): LiveTranscriptTurn | null {
+  const normalizedText = text.trim();
+  if (!normalizedText) {
+    return null;
+  }
+
+  const segmentId = attributes?.lk_segment_id ?? attributes?.segment_id;
+  const isFinal = attributes?.lk_transcription_final !== "false";
+  const transcribedTrackId =
+    attributes?.lk_transcribed_track_id ?? attributes?.transcribed_track_id;
+  const speaker = participantIdentity.startsWith("agent-")
+    ? "interviewer"
+    : "candidate";
+  const startedAt = new Date(normalizeLivekitTimestamp(timestamp)).toISOString();
+
+  return {
+    turnId:
+      segmentId ??
+      `${sessionId}:livekit:${participantIdentity}:${transcribedTrackId ?? startedAt}`,
+    sessionId,
+    speaker,
+    text: normalizedText,
+    isFinal,
+    startedAt,
+    endedAt: isFinal ? startedAt : undefined,
+  };
+}
+
+function normalizeRealtimeTranscriptTurn(
+  input: unknown,
+): LiveTranscriptTurn | null {
+  if (!input || typeof input !== "object") {
+    return null;
+  }
+
+  const object = input as Record<string, unknown>;
+  const turnId = stringField(object, "turnId", "turn_id");
+  const sessionId = stringField(object, "sessionId", "session_id");
+  const speaker = stringField(object, "speaker");
+  const text = stringField(object, "text");
+  const startedAt = stringField(object, "startedAt", "started_at");
+
+  if (
+    !turnId ||
+    !sessionId ||
+    !text ||
+    !startedAt ||
+    (speaker !== "candidate" && speaker !== "interviewer" && speaker !== "system")
+  ) {
+    return null;
+  }
+
+  return {
+    turnId,
+    sessionId,
+    questionId: stringField(object, "questionId", "question_id"),
+    speaker,
+    text,
+    isFinal: booleanField(object, true, "isFinal", "is_final"),
+    startedAt,
+    endedAt: stringField(object, "endedAt", "ended_at"),
+  };
+}
+
+function stringField(
+  object: Record<string, unknown>,
+  ...keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = object[key];
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function booleanField(
+  object: Record<string, unknown>,
+  fallback: boolean,
+  ...keys: string[]
+) {
+  for (const key of keys) {
+    const value = object[key];
+    if (typeof value === "boolean") {
+      return value;
+    }
+  }
+  return fallback;
+}
+
+function normalizeLivekitTimestamp(timestamp: number) {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) {
+    return Date.now();
+  }
+
+  return timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp;
 }
 
 export function stopLocalStream(stream: MediaStream | null) {

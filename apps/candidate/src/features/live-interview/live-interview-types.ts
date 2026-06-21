@@ -40,6 +40,8 @@ export type ConnectedRoom = {
   startAudio: () => Promise<void>;
 };
 
+export type LiveTranscriptTurnHandler = (turn: LiveTranscriptTurn) => void;
+
 export type RoomDisconnectedEvent = {
   intentional: boolean;
 };

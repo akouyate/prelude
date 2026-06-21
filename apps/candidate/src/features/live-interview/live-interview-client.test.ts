@@ -4,6 +4,7 @@ import {
   completeProductSession,
   connectRoom,
   createSession,
+  decodeRealtimeTranscriptPacket,
   fetchLiveTranscript,
   resumeStorageKey,
   stopLocalStream,
@@ -11,9 +12,21 @@ import {
 } from "./live-interview-client";
 import type { LiveInterviewSession } from "./live-interview-types";
 
+type FakeTextStreamHandler = (
+  reader: {
+    info: {
+      attributes?: Record<string, string>;
+      timestamp: number;
+    };
+    readAll: () => Promise<string>;
+  },
+  participantInfo: { identity: string },
+) => void;
+
 type FakeRoom = {
   emit: (event: string, ...args: unknown[]) => void;
   remoteParticipants: Map<string, unknown>;
+  textStreamHandlers: Map<string, FakeTextStreamHandler>;
 };
 
 const livekitMock = vi.hoisted(() => ({
@@ -27,6 +40,7 @@ vi.mock("livekit-client", () => {
       publishTrack: vi.fn(),
     };
     remoteParticipants = new Map<string, unknown>();
+    textStreamHandlers = new Map();
     private handlers = new Map<string, Array<(...args: unknown[]) => void>>();
 
     constructor() {
@@ -48,6 +62,14 @@ vi.mock("livekit-client", () => {
       this.emit("disconnected");
     }
 
+    registerTextStreamHandler(topic: string, handler: FakeTextStreamHandler) {
+      this.textStreamHandlers.set(topic, handler);
+    }
+
+    unregisterTextStreamHandler(topic: string) {
+      this.textStreamHandlers.delete(topic);
+    }
+
     emit(event: string, ...args: unknown[]) {
       this.handlers.get(event)?.forEach((handler) => handler(...args));
     }
@@ -57,6 +79,7 @@ vi.mock("livekit-client", () => {
     Room,
     RoomEvent: {
       AudioPlaybackStatusChanged: "audioPlaybackStatusChanged",
+      DataReceived: "dataReceived",
       Disconnected: "disconnected",
       ParticipantConnected: "participantConnected",
       ParticipantDisconnected: "participantDisconnected",
@@ -247,6 +270,119 @@ describe("live interview client", () => {
 
     room.disconnect();
     expect(onDisconnected).toHaveBeenCalledWith({ intentional: true });
+  });
+
+  it("pushes realtime transcript turns received from LiveKit data packets", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const onTranscriptTurn = vi.fn();
+
+    await connectRoom({
+      session: sessionFixture({
+        livekit: {
+          ...sessionFixture().livekit,
+          isMock: false,
+        },
+      }),
+      stream: mediaStreamFixture({ audio: true, video: false }),
+      onAudioPlaybackBlocked: vi.fn(),
+      onAudioPlaybackReady: vi.fn(),
+      onDisconnected: vi.fn(),
+      onInterviewerJoined: vi.fn(),
+      onInterviewerReady: vi.fn(),
+      onReconnecting: vi.fn(),
+      onRoomConnected: vi.fn(),
+      onTranscriptTurn,
+    });
+
+    livekitMock.room?.emit(
+      "dataReceived",
+      new TextEncoder().encode(
+        JSON.stringify({
+          type: "transcript_turn",
+          transcriptTurn: {
+            turnId: "turn_1",
+            sessionId: "is_123",
+            speaker: "interviewer",
+            text: "Can you introduce yourself?",
+            isFinal: true,
+            startedAt: "2026-06-21T09:00:00Z",
+          },
+        }),
+      ),
+      {},
+      "reliable",
+      "prelude.transcript.v1",
+    );
+
+    expect(onTranscriptTurn).toHaveBeenCalledWith({
+      turnId: "turn_1",
+      sessionId: "is_123",
+      speaker: "interviewer",
+      text: "Can you introduce yourself?",
+      isFinal: true,
+      startedAt: "2026-06-21T09:00:00Z",
+    });
+  });
+
+  it("pushes native LiveKit transcription text streams", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const onTranscriptTurn = vi.fn();
+
+    await connectRoom({
+      session: sessionFixture({
+        livekit: {
+          ...sessionFixture().livekit,
+          isMock: false,
+        },
+      }),
+      stream: mediaStreamFixture({ audio: true, video: false }),
+      onAudioPlaybackBlocked: vi.fn(),
+      onAudioPlaybackReady: vi.fn(),
+      onDisconnected: vi.fn(),
+      onInterviewerJoined: vi.fn(),
+      onInterviewerReady: vi.fn(),
+      onReconnecting: vi.fn(),
+      onRoomConnected: vi.fn(),
+      onTranscriptTurn,
+    });
+
+    livekitMock.room?.textStreamHandlers.get("lk.transcription")?.(
+      {
+        info: {
+          attributes: {
+            lk_segment_id: "segment_1",
+            lk_transcribed_track_id: "track_1",
+            lk_transcription_final: "true",
+          },
+          timestamp: 1_780_000_000,
+        },
+        readAll: () => Promise.resolve(" Can you introduce yourself? "),
+      },
+      { identity: "agent-is_123" },
+    );
+
+    await vi.waitFor(() =>
+      expect(onTranscriptTurn).toHaveBeenCalledWith({
+        turnId: "segment_1",
+        sessionId: "is_123",
+        speaker: "interviewer",
+        text: "Can you introduce yourself?",
+        isFinal: true,
+        startedAt: "2026-05-28T20:26:40.000Z",
+        endedAt: "2026-05-28T20:26:40.000Z",
+      }),
+    );
+  });
+
+  it("ignores malformed realtime transcript packets", () => {
+    expect(decodeRealtimeTranscriptPacket("{")).toBeNull();
+    expect(
+      decodeRealtimeTranscriptPacket(JSON.stringify({ type: "other" })),
+    ).toBeNull();
   });
 
   it("completes resumable product sessions without blocking the UI", async () => {

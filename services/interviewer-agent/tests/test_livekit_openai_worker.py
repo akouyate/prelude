@@ -11,7 +11,9 @@ from app.adapters.livekit_openai_worker import (
     FIRST_REPLY_INSTRUCTIONS,
     LiveKitAgentEventBridge,
     LiveInterviewOrchestrationController,
+    LiveTranscriptPublisher,
     OpenAILiveWorkerConfig,
+    PRELUDE_TRANSCRIPT_TOPIC,
     PreludeEventEmitter,
     build_live_interviewer_instructions,
     _candidate_turn_from_live_transcript,
@@ -99,6 +101,41 @@ class FakeBridge:
         self.drained = True
 
 
+class FakeTranscriptPublisher:
+    def __init__(self) -> None:
+        self.turns: list[dict[str, object]] = []
+
+    async def publish_turn(self, transcript_turn: dict[str, object]) -> None:
+        self.turns.append(transcript_turn)
+
+
+class FakeLiveKitLocalParticipant:
+    def __init__(self) -> None:
+        self.packets: list[dict[str, object]] = []
+
+    def publish_data(
+        self,
+        payload: str,
+        *,
+        reliable: bool = True,
+        destination_identities: list[str] | None = None,
+        topic: str = "",
+    ) -> None:
+        self.packets.append(
+            {
+                "payload": payload,
+                "reliable": reliable,
+                "destination_identities": destination_identities or [],
+                "topic": topic,
+            }
+        )
+
+
+class FakeLiveKitRoom:
+    def __init__(self) -> None:
+        self.local_participant = FakeLiveKitLocalParticipant()
+
+
 async def _append_event(events: list[InterviewEvent], event: InterviewEvent) -> None:
     events.append(event)
 
@@ -137,6 +174,65 @@ async def test_emitter_serializes_event_delivery_by_sequence() -> None:
     await asyncio.gather(first, second)
 
     assert [event.sequence for event in events] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_live_transcript_publisher_sends_reliable_camelcase_packet() -> None:
+    room = FakeLiveKitRoom()
+    publisher = LiveTranscriptPublisher(room)
+
+    await publisher.publish_turn(
+        {
+            "turn_id": "turn_1",
+            "session_id": "is_123",
+            "question_id": "q1",
+            "speaker": "interviewer",
+            "text": "Can you introduce yourself?",
+            "is_final": True,
+            "started_at": "2026-06-21T09:00:00Z",
+        }
+    )
+
+    assert len(room.local_participant.packets) == 1
+    packet = room.local_participant.packets[0]
+    assert packet["topic"] == PRELUDE_TRANSCRIPT_TOPIC
+    assert packet["reliable"] is True
+    assert packet["payload"] == (
+        '{"type":"transcript_turn","transcriptTurn":'
+        '{"turnId":"turn_1","sessionId":"is_123","questionId":"q1",'
+        '"speaker":"interviewer","text":"Can you introduce yourself?",'
+        '"isFinal":true,"startedAt":"2026-06-21T09:00:00Z"}}'
+    )
+
+
+@pytest.mark.asyncio
+async def test_live_orchestration_controller_pushes_transcript_turns() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    publisher = FakeTranscriptPublisher()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+        transcript_publisher=publisher,
+    )
+
+    await controller.start()
+    await controller.handle_candidate_transcript(
+        "Je suis interesse par le poste.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+
+    assert publisher.turns[0]["speaker"] == "interviewer"
+    assert publisher.turns[0]["text"]
+    assert publisher.turns[1]["speaker"] == "candidate"
+    assert publisher.turns[1]["text"] == "Je suis interesse par le poste."
 
 
 @pytest.mark.asyncio
