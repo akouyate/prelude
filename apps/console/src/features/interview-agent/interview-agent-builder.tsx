@@ -7,10 +7,8 @@ import {
   type InterviewQuestionDraft,
   type InterviewSeniority
 } from "@prelude/core";
-import { Badge, Button, Textarea } from "@prelude/ui";
+import { Badge, Button, Textarea, cn } from "@prelude/ui";
 import {
-  ArrowLeft,
-  ArrowRight,
   Attachment as Paperclip,
   Brain,
   Check,
@@ -44,8 +42,17 @@ import {
   type PublishInterviewDraftResult,
   type SaveInterviewDraftResult,
 } from "../../server/interviews/interview-drafts";
+import {
+  InterviewBuilderAgentCard,
+  InterviewBuilderBreadcrumb,
+  InterviewBuilderFooter,
+  InterviewBuilderMobileProgress,
+  InterviewBuilderStepHeader,
+  InterviewBuilderStepRail,
+} from "./interview-builder-layout";
 
 type StepId = "brief" | "calibrate" | "questions" | "evaluation" | "share";
+type BriefSource = "indeed" | "linkedin" | "link" | "manual" | "upload";
 type QuestionAction = "warmer" | "sharper" | "replace" | "logistics";
 type ResponseMode = InterviewResponseMode;
 
@@ -94,6 +101,51 @@ const responseModes: Array<{ value: ResponseMode; label: string }> = [
   { value: "text", label: "Form" },
   { value: "video", label: "Video" },
   { value: "audio", label: "Audio" }
+];
+
+const briefSources: Array<{
+  connected?: boolean;
+  description: string;
+  icon?: React.ReactNode;
+  label: string;
+  logo?: React.ReactNode;
+  logoClassName?: string;
+  value: BriefSource;
+}> = [
+  {
+    connected: true,
+    description: "Connected",
+    label: "LinkedIn",
+    logo: "in",
+    logoClassName: "bg-[#0a66c2] text-white",
+    value: "linkedin",
+  },
+  {
+    connected: true,
+    description: "Connected",
+    label: "Indeed",
+    logo: "Id",
+    logoClassName: "bg-[#003a9b] text-white",
+    value: "indeed",
+  },
+  {
+    description: "Paste a job URL",
+    icon: <Link2 aria-hidden={true} className="h-4 w-4" />,
+    label: "Link",
+    value: "link",
+  },
+  {
+    description: "PDF or DOCX",
+    icon: <Paperclip aria-hidden={true} className="h-4 w-4" />,
+    label: "Upload",
+    value: "upload",
+  },
+  {
+    description: "From scratch",
+    icon: <Pencil aria-hidden={true} className="h-4 w-4" />,
+    label: "Manual",
+    value: "manual",
+  },
 ];
 
 const defaultJobDescription =
@@ -256,12 +308,17 @@ export function InterviewAgentBuilder({
   );
   const [selectedQuestionId, setSelectedQuestionId] = React.useState<string>();
   const [isPreviewOpen, setIsPreviewOpen] = React.useState(false);
+  const [isGeneratingDraft, setIsGeneratingDraft] = React.useState(false);
+  const [generationPhase, setGenerationPhase] = React.useState(0);
   const [isSavingDraft, setIsSavingDraft] = React.useState(false);
   const [isPublishingDraft, setIsPublishingDraft] = React.useState(false);
   const [saveMessage, setSaveMessage] = React.useState<string>();
   const [saveError, setSaveError] = React.useState<string>();
   const [publishedInterview, setPublishedInterview] =
     React.useState<Extract<PublishInterviewDraftResult, { ok: true }>>();
+  const generationTimers = React.useRef<Array<ReturnType<typeof setTimeout>>>(
+    [],
+  );
 
   const currentStepIndex = steps.findIndex((step) => step.id === currentStep);
   const currentStepConfig = steps[currentStepIndex] ?? steps[0]!;
@@ -287,10 +344,37 @@ export function InterviewAgentBuilder({
     return nextDraft;
   }, [attachmentName, companyName, focus, jobDescription, jobTitle, seniority]);
 
+  React.useEffect(() => {
+    return () => {
+      generationTimers.current.forEach((timer) => clearTimeout(timer));
+      generationTimers.current = [];
+    };
+  }, []);
+
   const goToStep = React.useCallback((step: StepId) => {
     setCurrentStep(step);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
+
+  const startDraftGeneration = React.useCallback(() => {
+    generationTimers.current.forEach((timer) => clearTimeout(timer));
+    generationTimers.current = [];
+    goToStep("questions");
+    setIsGeneratingDraft(true);
+    setGenerationPhase(0);
+    setDraft(undefined);
+
+    generationTimers.current = [
+      setTimeout(() => setGenerationPhase(1), 520),
+      setTimeout(() => setGenerationPhase(2), 1040),
+      setTimeout(() => {
+        createDraft();
+        setGenerationPhase(3);
+        setIsGeneratingDraft(false);
+      }, 1560),
+    ];
+  }, [createDraft, goToStep]);
+
 
   const saveCurrentDraft = React.useCallback(
     async (
@@ -501,8 +585,7 @@ export function InterviewAgentBuilder({
     }
 
     if (currentStep === "calibrate") {
-      createDraft();
-      goToStep("questions");
+      startDraftGeneration();
       return;
     }
 
@@ -514,7 +597,7 @@ export function InterviewAgentBuilder({
     if (currentStep === "evaluation") {
       void saveAndShare();
     }
-  }, [createDraft, currentStep, goToStep, saveAndShare]);
+  }, [currentStep, goToStep, saveAndShare, startDraftGeneration]);
 
   const back = React.useCallback(() => {
     const previousStep = steps[currentStepIndex - 1]?.id;
@@ -526,31 +609,44 @@ export function InterviewAgentBuilder({
 
   return (
     <>
-      <main className="relative z-10 mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl min-w-0 items-center gap-10 px-5 pb-12 pt-6 sm:px-8 lg:grid-cols-[14rem_minmax(0,35rem)] lg:justify-center lg:pb-20">
-        <SetupProgress currentStep={currentStep} />
+      <main className="relative z-10 mx-auto grid w-full max-w-[1060px] min-w-0 gap-[clamp(24px,4vw,56px)] px-4 pb-20 pt-[clamp(22px,3.5vw,36px)] sm:px-7 lg:grid-cols-[212px_minmax(0,1fr)]">
+        <InterviewBuilderBreadcrumb
+          isSaved={Boolean(saveMessage || persistedDraftId)}
+          roleTitle={jobTitle}
+        />
+        <InterviewBuilderStepRail
+          currentStep={currentStep}
+          onStepChange={goToStep}
+          steps={steps}
+        />
 
         <section className="min-w-0 w-full">
-          <MobileProgress currentStep={currentStep} />
+          <InterviewBuilderMobileProgress
+            currentStep={currentStep}
+            steps={steps}
+          />
 
-          <div className="mb-7">
-            <AgentMessage step={currentStep} draft={draft} />
-          </div>
+          <InterviewBuilderAgentCard
+            isThinking={isGeneratingDraft}
+            message={getAgentMessage(currentStep, draft, isGeneratingDraft)}
+          />
 
-          <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-ink-500">
-                Step {currentStepIndex + 1} of {steps.length}
-              </p>
-              <h1 className="mt-2 text-2xl font-semibold leading-tight text-ink-900 sm:text-3xl">
-                {currentStepConfig.title}
-              </h1>
-            </div>
-            {draft ? (
-              <div className="flex flex-wrap gap-2">
-                <Badge>{draft.questions.length} questions</Badge>
-                <Badge>{attachmentName ? "Attachment-aware" : "Job brief only"}</Badge>
-              </div>
-            ) : null}
+          <div className="mb-6">
+            <InterviewBuilderStepHeader
+              badges={
+                draft ? (
+                  <>
+                    <Badge>{draft.questions.length} questions</Badge>
+                    <Badge>
+                      {attachmentName ? "Attachment-aware" : "Job brief only"}
+                    </Badge>
+                  </>
+                ) : null
+              }
+              stepIndex={currentStepIndex}
+              stepTitle={currentStepConfig.title}
+              totalSteps={steps.length}
+            />
           </div>
 
           {currentStep === "brief" ? (
@@ -575,12 +671,21 @@ export function InterviewAgentBuilder({
             />
           ) : null}
 
-          {currentStep === "questions" && draft ? (
+          {currentStep === "questions" && isGeneratingDraft ? (
+            <GeneratingQuestionsStep
+              focusCount={focus.length}
+              generationPhase={generationPhase}
+              modes={modes}
+              seniority={seniority}
+            />
+          ) : null}
+
+          {currentStep === "questions" && draft && !isGeneratingDraft ? (
             <QuestionsStep
               draft={draft}
               selectedQuestionId={selectedQuestionId}
               onAddQuestion={addQuestion}
-              onRegenerate={createDraft}
+              onRegenerate={startDraftGeneration}
               onRefineQuestion={refineQuestion}
               onRemoveQuestion={removeQuestion}
               onSelectQuestion={setSelectedQuestionId}
@@ -623,7 +728,7 @@ export function InterviewAgentBuilder({
             </p>
           ) : null}
 
-          <WizardFooter
+          <InterviewBuilderFooter
             canGoBack={currentStepIndex > 0}
             currentStep={currentStep}
             isWorking={isSavingDraft}
@@ -644,79 +749,18 @@ export function InterviewAgentBuilder({
   );
 }
 
-function SetupProgress({ currentStep }: { currentStep: StepId }) {
-  const currentIndex = steps.findIndex((step) => step.id === currentStep);
+function getAgentMessage(
+  step: StepId,
+  draft?: InterviewAgentDraft,
+  isGenerating = false,
+) {
+  if (isGenerating) {
+    return "Working through the role now — drafting questions tuned to your signals. This takes a few seconds.";
+  }
 
-  return (
-    <nav
-      aria-label="Interview draft progress"
-      className="hidden self-center lg:block"
-    >
-      <p className="mb-5 text-sm font-medium text-ink-600">Interview setup</p>
-      <ol className="space-y-5">
-        {steps.map((step, index) => {
-          const isCurrent = step.id === currentStep;
-          const isComplete = index < currentIndex;
-
-          return (
-            <li key={step.id} className="flex items-center gap-3">
-              <span
-                className={`grid h-7 w-7 place-items-center rounded-full border text-xs font-semibold ${
-                  isComplete
-                    ? "border-ink-900 bg-ink-900 text-white"
-                    : isCurrent
-                      ? "border-olive-800 bg-[#eef0e3] text-olive-900"
-                      : "border-ink-200 bg-white/70 text-ink-500"
-                }`}
-              >
-                {isComplete ? <Check aria-hidden="true" className="h-4 w-4" /> : index + 1}
-              </span>
-              <span
-                className={`text-sm font-medium ${
-                  isCurrent ? "text-ink-900" : "text-ink-700"
-                }`}
-              >
-                {step.label}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
-    </nav>
-  );
-}
-
-function MobileProgress({ currentStep }: { currentStep: StepId }) {
-  const currentIndex = steps.findIndex((step) => step.id === currentStep);
-
-  return (
-    <nav aria-label="Interview draft progress" className="mb-8 lg:hidden">
-      <div className="flex items-center justify-between text-xs font-medium text-ink-500">
-        <span>{steps[currentIndex]?.label}</span>
-        <span>
-          {currentIndex + 1}/{steps.length}
-        </span>
-      </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-ink-100">
-        <div
-          className="h-full rounded-full bg-olive-800 transition-all"
-          style={{ width: `${((currentIndex + 1) / steps.length) * 100}%` }}
-        />
-      </div>
-    </nav>
-  );
-}
-
-function AgentMessage({
-  step,
-  draft
-}: {
-  step: StepId;
-  draft?: InterviewAgentDraft;
-}) {
   const messages: Record<StepId, string> = {
     brief:
-      "Paste the job description and I’ll identify the skills, judgment calls, and motivation signals worth screening for.",
+      "Tell me where this role lives — connect LinkedIn or Indeed, paste a link, upload context, or write it yourself. I’ll pull the skills, judgment calls, and motivation signals worth screening for.",
     calibrate:
       "I found the strongest hiring signals for this role. Adjust anything before I draft the interview.",
     questions:
@@ -728,16 +772,125 @@ function AgentMessage({
       "The draft is ready. Preview the candidate experience only if you want a final check before publishing."
   };
 
+  return messages[step];
+}
+
+function getBriefSourceLabel(source: BriefSource) {
+  if (source === "linkedin") {
+    return "LinkedIn";
+  }
+
+  if (source === "indeed") {
+    return "Indeed";
+  }
+
+  if (source === "link") {
+    return "Job link";
+  }
+
+  if (source === "upload") {
+    return "Upload";
+  }
+
+  return "Manual";
+}
+
+function GeneratingQuestionsStep({
+  focusCount,
+  generationPhase,
+  modes,
+  seniority,
+}: {
+  focusCount: number;
+  generationPhase: number;
+  modes: ResponseMode[];
+  seniority: InterviewSeniority;
+}) {
+  const generationSteps = [
+    "Reading the role and job description",
+    "Mapping your selected hiring signals",
+    "Writing questions that ask for real examples",
+  ];
+  const skeletonWidths = ["74%", "88%", "64%", "81%"];
+
   return (
-    <div className="flex min-w-0 gap-3 rounded-3xl border border-ink-100 bg-white/72 px-4 py-3 backdrop-blur">
-      <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-ink-900 text-white">
-        <Brain aria-hidden="true" className="h-4 w-4" />
+    <div className="mt-6 rounded-[18px] border border-[#e7e2d8] bg-white px-[22px] py-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <span className="inline-flex items-center gap-2.5 text-[13.5px] font-semibold text-ink-950">
+          <span className="h-[15px] w-[15px] animate-spin rounded-full border-2 border-[#e2ddd2] border-t-olive-700" />
+          Drafting questions
+        </span>
+        <span className="text-[12.5px] text-ink-400">
+          Tuned to {formatSeniorityLabel(seniority)} · {focusCount} signals ·{" "}
+          {getResponseModeSummary(modes)}
+        </span>
       </div>
-      <p className="min-w-0 max-w-3xl text-sm leading-6 text-ink-700">
-        {messages[step]}
-      </p>
+
+      <div className="mt-5 flex flex-col gap-3">
+        {generationSteps.map((label, index) => {
+          const done = index < generationPhase;
+          const active = index === generationPhase;
+
+          return (
+            <div className="flex items-center gap-3" key={label}>
+              <span
+                className={`grid h-[22px] w-[22px] shrink-0 place-items-center rounded-full border ${
+                  done
+                    ? "border-ink-900 bg-ink-900 text-white"
+                    : active
+                      ? "border-[#cdd6b4] bg-white text-olive-700"
+                      : "border-[#e2ddd2] bg-white text-ink-300"
+                }`}
+              >
+                {done ? (
+                  <Check aria-hidden={true} className="h-3 w-3" />
+                ) : active ? (
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-[#e2ddd2] border-t-olive-700" />
+                ) : null}
+              </span>
+              <span
+                className={`text-[13.5px] ${
+                  active || done
+                    ? "font-semibold text-ink-950"
+                    : "font-medium text-ink-400"
+                }`}
+              >
+                {label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-[22px] flex flex-col gap-3.5 border-t border-[#f0ece1] pt-[18px]">
+        {skeletonWidths.map((width, index) => (
+          <div className="flex items-center gap-3" key={width}>
+            <span className="h-[38px] w-[38px] shrink-0 rounded-full bg-[#f1ede2]" />
+            <span className="h-9 w-9 shrink-0 rounded-[10px] bg-[#f1ede2]" />
+            <span className="flex min-w-0 flex-1 flex-col gap-2">
+              <span className="h-2.5 w-[30%] rounded-full bg-[#f0ece1]" />
+              <span
+                className="h-[13px] rounded-full bg-[#efeadf]"
+                style={{ width: index <= generationPhase + 1 ? width : "46%" }}
+              />
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
+}
+
+function formatSeniorityLabel(value: InterviewSeniority) {
+  if (value === "junior") {
+    return "Junior";
+  }
+
+  if (value === "senior") {
+    return "Senior";
+  }
+
+  return "Mid-level";
 }
 
 function BriefStep({
@@ -755,23 +908,111 @@ function BriefStep({
   onJobDescriptionChange: (value: string) => void;
   onJobTitleChange: (value: string) => void;
 }) {
+  const [source, setSource] = React.useState<BriefSource>(
+    attachmentName ? "upload" : "linkedin",
+  );
+  const [jobUrl, setJobUrl] = React.useState("");
+  const sourceLabel = getBriefSourceLabel(source);
+  const showImportedBanner =
+    source === "indeed" || source === "linkedin" || source === "link";
+
   return (
-    <div className="min-w-0 space-y-5">
-      <Field label="Role">
+    <div className="min-w-0">
+      <p className="mb-3 text-[13.5px] font-semibold text-ink-600">
+        Where should I start?
+      </p>
+      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
+        {briefSources.map((option) => {
+          const active = source === option.value;
+
+          return (
+            <button
+              className={cn(
+                selectionSurfaceClass(active),
+                "relative flex min-h-[112px] flex-col items-start gap-2.5 rounded-[18px] p-3.5 text-left",
+              )}
+              key={option.value}
+              onClick={() => setSource(option.value)}
+              type="button"
+            >
+              <span
+                className={`grid h-[34px] w-[34px] place-items-center rounded-[9px] text-[13px] font-bold ${
+                  option.logoClassName ?? "bg-[#f3f1ea] text-ink-600"
+                }`}
+              >
+                {option.logo ?? option.icon}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[13px] font-semibold text-ink-950">
+                  {option.label}
+                </span>
+                <span className="mt-1 flex items-center gap-1.5 text-[11.5px] text-ink-400">
+                  {option.connected ? (
+                    <span className="h-1.5 w-1.5 rounded-full bg-meadow-600" />
+                  ) : null}
+                  {option.description}
+                </span>
+              </span>
+              {active ? (
+                <span className="absolute right-2.5 top-2.5 grid h-[18px] w-[18px] place-items-center rounded-full bg-olive-900 text-white">
+                  <Check aria-hidden={true} className="h-3 w-3" />
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+
+      {source === "link" ? (
+        <div className="mt-[18px] flex flex-wrap items-center gap-2.5 rounded-[15px] border border-[#e7e2d8] bg-[#fbfaf7] p-4">
+          <input
+            className="h-11 min-w-[220px] flex-1 rounded-xl border border-[#ddd8cc] bg-white px-3.5 text-sm text-ink-950 outline-none transition focus:border-olive-700 focus:ring-2 focus:ring-[#e5e8d6]"
+            placeholder="https://company.com/careers/customer-success-manager"
+            value={jobUrl}
+            onChange={(event) => setJobUrl(event.target.value)}
+          />
+          <Button>
+            <Sparkles aria-hidden={true} className="h-4 w-4" />
+            Fetch with AI
+          </Button>
+        </div>
+      ) : null}
+
+      <div className="mt-[18px]">
+        {showImportedBanner ? (
+          <div className="mb-[18px] flex flex-wrap items-center gap-2.5 rounded-[18px] border border-[#d8deca] bg-[#f3f4ea] px-3.5 py-3">
+            <span className="inline-flex h-6 items-center rounded-full border border-[#dfe2d3] bg-white px-2.5 text-[11.5px] font-semibold text-ink-600">
+              {sourceLabel}
+            </span>
+            <span className="min-w-0 flex-1 text-[13px] text-ink-700">
+              <span className="font-semibold">Fields are prefilled.</span> Edit
+              anything before continuing.
+            </span>
+            <button
+              className="h-[30px] cursor-pointer rounded-full border border-[#d1cbbf] bg-white px-3 text-xs font-semibold text-ink-800 transition hover:border-ink-900"
+              type="button"
+              onClick={() => setSource("manual")}
+            >
+              Change posting
+            </button>
+          </div>
+        ) : null}
+
+        <Field label="Role">
         <input
-          className="h-12 w-full min-w-0 rounded-2xl border border-ink-200 bg-white/80 px-3 text-sm font-normal text-ink-900 outline-none transition focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
+          className="mt-2 h-12 w-full min-w-0 rounded-[13px] border border-[#ddd8cc] bg-white px-[15px] text-[15px] font-medium text-ink-950 outline-none transition focus:border-olive-700 focus:ring-2 focus:ring-[#e5e8d6]"
           value={jobTitle}
           onChange={(event) => onJobTitleChange(event.target.value)}
         />
-      </Field>
+        </Field>
 
-      <Field label="Job description">
+        <Field label="Job description">
         <Textarea
-          className="min-h-64 w-full min-w-0 max-w-full bg-white/80 text-sm font-normal leading-6 focus:border-olive-800 focus:ring-[#e5e8d6]"
+          className="mt-2 min-h-[184px] w-full min-w-0 max-w-full rounded-[13px] border-[#ddd8cc] bg-white px-[15px] py-3.5 text-sm font-normal leading-[1.6] text-ink-700 focus:border-olive-700 focus:ring-[#e5e8d6]"
           value={jobDescription}
           onChange={(event) => onJobDescriptionChange(event.target.value)}
         />
-      </Field>
+        </Field>
 
       <label className="flex min-w-0 cursor-pointer flex-col items-stretch justify-between gap-3 rounded-3xl border border-dashed border-ink-200 bg-white/62 p-4 text-sm text-ink-700 transition hover:border-olive-800 hover:bg-white sm:flex-row sm:items-center sm:p-5">
         <span className="flex min-w-0 items-center gap-3">
@@ -790,6 +1031,7 @@ function BriefStep({
           onChange={(event) => onAttachmentChange(event.target.files?.[0]?.name)}
         />
       </label>
+      </div>
     </div>
   );
 }
@@ -814,20 +1056,23 @@ function CalibrateStep({
       <div>
         <p className="text-sm font-medium text-ink-700">Seniority</p>
         <div className="mt-2 grid gap-2 sm:grid-cols-3 lg:grid-cols-1">
-          {seniorityOptions.map((option) => (
+          {seniorityOptions.map((option) => {
+            const selected = seniority === option.value;
+
+            return (
               <button
                 key={option.value}
-                className={`h-12 cursor-pointer rounded-full border bg-white/80 px-4 text-sm font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
-                  seniority === option.value
-                  ? "border-olive-800 bg-[#eef0e3] text-olive-900"
-                  : "border-ink-200 text-ink-700 hover:border-ink-300 hover:bg-white"
-              }`}
-              type="button"
-              onClick={() => onSeniorityChange(option.value)}
-            >
-              {option.label}
-            </button>
-          ))}
+                className={cn(
+                  selectionSurfaceClass(selected),
+                  "h-12 rounded-full px-4 text-sm font-semibold",
+                )}
+                type="button"
+                onClick={() => onSeniorityChange(option.value)}
+              >
+                {option.label}
+              </button>
+            );
+          })}
         </div>
 
         <p className="mt-6 text-sm font-medium text-ink-700">Candidate formats</p>
@@ -839,15 +1084,16 @@ function CalibrateStep({
               <button
                 key={mode.value}
                 aria-label={`${checked ? "Remove" : "Add"} ${mode.label} response mode`}
-                className={`inline-flex h-10 cursor-pointer items-center gap-2 rounded-full border px-4 text-sm font-medium outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
-                  checked
-                    ? "border-olive-800 bg-[#eef0e3] text-olive-900"
-                    : "border-ink-200 bg-white/80 text-ink-700 hover:border-ink-300 hover:bg-white"
-                }`}
+                className={cn(
+                  selectionSurfaceClass(checked),
+                  "inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm font-semibold",
+                )}
                 type="button"
                 onClick={() => toggleMode(mode.value)}
               >
-                {checked ? <Check aria-hidden="true" className="h-4 w-4" /> : null}
+                {checked ? (
+                  <Check aria-hidden="true" className="h-4 w-4 text-olive-900" />
+                ) : null}
                 {mode.label}
               </button>
             );
@@ -865,21 +1111,21 @@ function CalibrateStep({
               <button
                 key={option.value}
                 aria-label={`${checked ? "Remove" : "Add"} ${option.label} signal`}
-                className={`cursor-pointer rounded-2xl border bg-white/80 p-4 text-left outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
-                  checked
-                    ? "border-olive-800 bg-[#eef0e3]"
-                    : "border-ink-200 bg-white/80 hover:border-ink-300 hover:bg-white"
-                }`}
+                className={cn(
+                  selectionSurfaceClass(checked),
+                  "rounded-[20px] p-4 text-left",
+                )}
                 type="button"
                 onClick={() => toggleFocus(option.value)}
               >
                 <span className="flex items-start gap-3">
                   <span
-                    className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-sm border ${
+                    className={cn(
+                      "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-[7px] border transition",
                       checked
-                        ? "border-olive-800 bg-olive-800 text-white"
-                        : "border-ink-300"
-                    }`}
+                        ? "border-olive-900 bg-olive-900 text-white"
+                        : "border-[#cfc8bb] bg-white/72 text-transparent",
+                    )}
                   >
                     {checked ? <Check aria-hidden="true" className="h-3.5 w-3.5" /> : null}
                   </span>
@@ -898,6 +1144,15 @@ function CalibrateStep({
         </div>
       </div>
     </div>
+  );
+}
+
+function selectionSurfaceClass(selected: boolean) {
+  return cn(
+    "cursor-pointer border outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6]",
+    selected
+      ? "border-[#d8deca] bg-[#f3f4ea] text-olive-950"
+      : "border-[#e7e2d8] bg-white/72 text-ink-700 hover:border-[#d1cbbf] hover:bg-white",
   );
 }
 
@@ -972,7 +1227,7 @@ function QuestionsStep({
   draft: InterviewAgentDraft;
   selectedQuestionId?: string;
   onAddQuestion: (topic: string) => void;
-  onRegenerate: () => InterviewAgentDraft;
+  onRegenerate: () => void;
   onRefineQuestion: (questionId: string, action: QuestionAction) => void;
   onRemoveQuestion: (questionId: string) => void;
   onSelectQuestion: (questionId: string) => void;
@@ -1353,54 +1608,6 @@ function ShareStep({
           </a>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-function WizardFooter({
-  canGoBack,
-  currentStep,
-  isWorking,
-  onBack,
-  onNext
-}: {
-  canGoBack: boolean;
-  currentStep: StepId;
-  isWorking: boolean;
-  onBack: () => void;
-  onNext: () => void;
-}) {
-  const nextLabels: Partial<Record<StepId, string>> = {
-    brief: "Continue",
-    calibrate: "Create questions",
-    questions: "Review evaluation",
-    evaluation: "Save and share"
-  };
-
-  return (
-    <div className="mt-8 grid gap-3 sm:flex sm:flex-wrap sm:items-center sm:justify-between">
-      <Button
-        className="w-full sm:w-auto"
-        disabled={!canGoBack || isWorking}
-        variant="secondary"
-        onClick={onBack}
-      >
-        <ArrowLeft aria-hidden="true" className="h-4 w-4" />
-        Back
-      </Button>
-
-      {currentStep === "share" ? (
-        null
-      ) : (
-        <Button className="w-full sm:w-auto" disabled={isWorking} onClick={onNext}>
-          {isWorking ? "Saving..." : nextLabels[currentStep]}
-          {currentStep === "calibrate" ? (
-            <Sparkles aria-hidden="true" className="h-4 w-4" />
-          ) : (
-            <ArrowRight aria-hidden="true" className="h-4 w-4" />
-          )}
-        </Button>
-      )}
     </div>
   );
 }

@@ -121,6 +121,29 @@ Supported scenarios:
 - `noise`
 - `audio_only`
 - `video_enabled`
+- `absurd_answer`
+- `off_topic`
+- `low_information`
+- `contradictory`
+- `generic_claim`
+- `cmo`
+- `buyer`
+- `hr`
+- `ai_orchestrator`
+- `cmo_vague`
+- `buyer_off_topic`
+- `hr_contradictory`
+- `ai_orchestrator_low_information`
+
+To run the role-style matrix in one pass:
+
+```bash
+make agent-role-benchmark BENCHMARK_ITERATIONS=1
+```
+
+This runs the clear-answer CMO, buyer, HR, and AI orchestrator scenarios, then
+the role-specific weak-answer scenarios that verify the interviewer challenges a
+vague, off-topic, contradictory, or low-information answer before moving on.
 
 Supported provider names:
 

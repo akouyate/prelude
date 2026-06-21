@@ -13,6 +13,7 @@ BENCHMARK_SCENARIO ?= normal
 BENCHMARK_ITERATIONS ?= 3
 BENCHMARK_RUN_ID ?=
 BENCHMARK_PERSIST_REALTIME ?=
+ROLE_BENCHMARK_ITERATIONS ?= 1
 ALLOW_LIVE_LLM_TESTS ?=
 REALTIME_API_URL ?=
 AGENT_JOIN_STREAM_KEY ?=
@@ -31,7 +32,7 @@ E2E_SMOKE_LIVE_LLM ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell db-migrate db-generate db-studio agent-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live dev
+.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell db-migrate db-generate db-studio agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "Prelude local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -134,6 +135,13 @@ agent-benchmark: ## Run the Python live IA provider benchmark harness.
 		$(if $(BENCHMARK_RUN_ID),--benchmark-run-id "$(BENCHMARK_RUN_ID)") \
 		$$realtime_args \
 		$$live_llm_args
+
+agent-role-benchmark: ## Run the role-style benchmark matrix across CMO, buyer, HR, and AI orchestrator.
+	@$(LOAD_ENV); \
+	cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.role_benchmark_cli \
+		--provider "$(BENCHMARK_PROVIDER)" \
+		--iterations "$(ROLE_BENCHMARK_ITERATIONS)" \
+		$(if $(BENCHMARK_RUN_ID),--benchmark-run-id "$(BENCHMARK_RUN_ID)")
 
 live-openai-worker: ## Run the Python OpenAI live interviewer worker for SESSION_ID.
 	@test -n "$(SESSION_ID)" || (printf "SESSION_ID is required. Example: make live-openai-worker SESSION_ID=is_xxx\n"; exit 1)

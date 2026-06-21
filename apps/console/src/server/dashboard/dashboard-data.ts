@@ -20,7 +20,7 @@ import { getReviewNotePreview } from "../interviews/candidate-review-display";
 import { listCandidateSessionSpinesForOrganization } from "../interviews/candidate-session-spine";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
-export type DashboardInterviewState =
+export type DashboardRoleScreenState =
   | "draft"
   | "published"
   | "candidate_started"
@@ -43,15 +43,16 @@ export type ConsoleDashboardData = {
     needsReview: number;
     published: number;
   };
-  interviews: Array<{
+  roles: Array<{
     candidateCount: number;
+    candidatePath: string | null;
     description: string;
     href: string;
     id: string;
     jobId: string;
     location: string | null;
     sourceProvider: string | null;
-    state: DashboardInterviewState;
+    state: DashboardRoleScreenState;
     title: string;
     updatedAt: string;
   }>;
@@ -163,7 +164,7 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
     ),
   );
 
-  const interviews = organization.jobs.map((job) => {
+  const roles = organization.jobs.map((job) => {
     const interview = job.interviews[0];
     const draft = job.interviewDrafts[0];
     const state = resolveInterviewState({
@@ -175,6 +176,7 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
 
     return {
       candidateCount: interview?.candidateSessions.length ?? 0,
+      candidatePath: interview ? `/interview/${interview.publicToken}` : null,
       description:
         interview?.roleBrief ?? draft?.roleBrief ?? job.description ?? "",
       href: interview
@@ -199,8 +201,8 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
     (session) =>
       currentCandidateStatus(session, liveStatusById) === "completed",
   );
-  const latestInterview = interviews[0];
-  const reviewQueue = candidateSessions.slice(0, 8).map((session) => {
+  const latestRole = roles[0];
+  const reviewQueue = candidateSessions.map((session) => {
     const status = currentCandidateStatus(session, liveStatusById);
     const eventStats = session.realtimeSessionId
       ? eventStatsBySessionId.get(session.realtimeSessionId)
@@ -252,7 +254,6 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
       provider: connector.provider,
       status: connector.status,
     })),
-    interviews,
     metrics: {
       activeRoles: organization.jobs.length,
       candidateStarted: active.length,
@@ -270,8 +271,9 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
     },
     primaryReviewHref: latestCompleted
       ? `/interviews/${latestCompleted.realtimeSessionId ?? latestCompleted.id}`
-      : (latestInterview?.href ?? null),
+      : (latestRole?.href ?? null),
     reviewQueue,
+    roles,
   };
 }
 
@@ -289,7 +291,7 @@ function resolveInterviewState({
     status: string;
   }>;
   liveStatusById: Map<string, string>;
-}): DashboardInterviewState {
+}): DashboardRoleScreenState {
   const completedSessions = sessions.filter(
     (session) => currentCandidateStatus(session, liveStatusById) === "completed",
   );

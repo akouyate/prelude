@@ -36,14 +36,14 @@ export const ChoiceTile = React.forwardRef<HTMLElement, ChoiceTileProps>(
         className={cn(
           "group relative flex min-h-36 w-full cursor-pointer flex-col items-center justify-center rounded-3xl border p-5 text-center transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
           selected
-            ? "border-olive-800 bg-[#eef0e3] text-ink-900"
-            : "border-ink-100 bg-white/58 text-ink-900 hover:border-ink-300 hover:bg-white",
+            ? "border-[#d8deca] bg-[#f3f4ea] text-ink-950"
+            : "border-[#e7e2d8] bg-white/72 text-ink-900 hover:border-[#d1cbbf] hover:bg-white",
           className
         )}
         {...props}
       >
         {selected ? (
-          <span className="absolute right-3 top-3 grid h-6 w-6 place-items-center rounded-full bg-olive-800 text-white">
+          <span className="absolute right-3 top-3 grid h-6 w-6 place-items-center rounded-full bg-olive-900 text-white">
             <Check aria-hidden="true" className="h-3.5 w-3.5" />
           </span>
         ) : null}
@@ -52,7 +52,9 @@ export const ChoiceTile = React.forwardRef<HTMLElement, ChoiceTileProps>(
             aria-hidden="true"
             className={cn(
               "mb-4 grid h-12 w-12 place-items-center rounded-2xl border text-ink-900",
-              selected ? "border-olive-800 bg-white/70" : "border-ink-100 bg-ink-50/60"
+              selected
+                ? "border-[#d8deca] bg-white/72"
+                : "border-[#e7e2d8] bg-[#f7f6f1]"
             )}
           >
             {icon}

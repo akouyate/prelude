@@ -7,10 +7,21 @@ export { Dialog } from "./components/dialog";
 export { Drawer } from "./components/drawer";
 export { Input, type InputProps } from "./components/input";
 export { Select } from "./components/select";
+export {
+  SegmentedTabs,
+  type SegmentedTabOption,
+  type SegmentedTabsProps,
+} from "./components/segmented-tabs";
 export { StatusBadge } from "./components/status-badge";
+export { Switch, type SwitchProps } from "./components/switch";
 export { StepProgress, type StepProgressProps } from "./components/step-progress";
 export { Tabs } from "./components/tabs";
 export { Textarea, type TextareaProps } from "./components/textarea";
+export {
+  UnderlineTabs,
+  type UnderlineTabOption,
+  type UnderlineTabsProps,
+} from "./components/underline-tabs";
 export { Toast } from "./feedback/toast";
 export { CandidateShell } from "./layouts/candidate-shell";
 export { EmptyState } from "./layouts/empty-state";

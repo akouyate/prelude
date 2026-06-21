@@ -1,0 +1,135 @@
+import Link from "next/link";
+import { StatusBadge } from "@prelude/ui";
+
+export type DashboardActiveRoleState =
+  | "candidate_started"
+  | "completed"
+  | "draft"
+  | "needs_review"
+  | "published";
+
+export type DashboardActiveRole = {
+  candidateCount: number;
+  href: string;
+  id: string;
+  location: string | null;
+  sourceProvider: string | null;
+  state: DashboardActiveRoleState;
+  title: string;
+};
+
+export function DashboardActiveRoles({
+  roles,
+}: {
+  roles: DashboardActiveRole[];
+}) {
+  return (
+    <section
+      className="rounded-[24px] border border-ink-100 bg-white/74 p-4 backdrop-blur"
+      id="interviews"
+    >
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-base font-semibold text-ink-950">Active roles</h2>
+          <p className="mt-1 text-sm text-ink-500">
+            Draft, publish, and inspect each role setup.
+          </p>
+        </div>
+        <Link
+          className="shrink-0 cursor-pointer text-[12.5px] font-medium text-ink-500 transition hover:text-ink-950"
+          href="/roles"
+        >
+          View all
+        </Link>
+      </div>
+
+      {roles.length > 0 ? (
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          {roles.slice(0, 4).map((role) => (
+            <Link
+              className="group flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-ink-100 bg-white/60 px-3.5 py-3 transition hover:border-ink-200 hover:bg-white"
+              href={role.href}
+              key={role.id}
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold text-ink-950">
+                  {role.title}
+                </span>
+                <span className="mt-1 block truncate text-xs text-ink-500">
+                  {role.location ?? "Location not set"} ·{" "}
+                  {formatProvider(role.sourceProvider)} · {role.candidateCount}{" "}
+                  candidate{role.candidateCount > 1 ? "s" : ""}
+                </span>
+              </span>
+              <StatusBadge
+                className="shrink-0 whitespace-nowrap"
+                tone={statusTone(role.state)}
+              >
+                {formatInterviewState(role.state)}
+              </StatusBadge>
+            </Link>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-4 rounded-2xl border border-dashed border-ink-100 bg-white/54 p-5">
+          <p className="text-sm font-semibold text-ink-950">No role yet</p>
+          <p className="mt-2 text-sm leading-6 text-ink-500">
+            Create the first role screen to add a role to this workspace.
+          </p>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function formatProvider(provider: string | null) {
+  if (!provider || provider === "manual") {
+    return "Manual";
+  }
+
+  if (provider === "linkedin") {
+    return "LinkedIn";
+  }
+
+  if (provider === "indeed") {
+    return "Indeed";
+  }
+
+  return humanize(provider);
+}
+
+function formatInterviewState(status: DashboardActiveRoleState) {
+  if (status === "candidate_started") {
+    return "In progress";
+  }
+
+  if (status === "needs_review") {
+    return "Needs review";
+  }
+
+  return humanize(status);
+}
+
+function statusTone(status: DashboardActiveRoleState) {
+  if (status === "needs_review") {
+    return "danger";
+  }
+
+  if (status === "candidate_started") {
+    return "warning";
+  }
+
+  if (status === "published") {
+    return "dark";
+  }
+
+  if (status === "completed") {
+    return "success";
+  }
+
+  return "olive";
+}
+
+function humanize(value: string) {
+  return value.replace(/_/g, " ");
+}

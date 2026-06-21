@@ -114,6 +114,105 @@ async def test_benchmark_runner_smoke_scenarios_challenge_weak_answers(
     )
 
 
+@pytest.mark.parametrize(
+    ("scenario", "expected_plan_id"),
+    [
+        (BenchmarkScenarioName.CMO, "plan-benchmark-cmo"),
+        (BenchmarkScenarioName.BUYER, "plan-benchmark-buyer"),
+        (BenchmarkScenarioName.HR, "plan-benchmark-hr"),
+        (BenchmarkScenarioName.AI_ORCHESTRATOR, "plan-benchmark-ai-orchestrator"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_benchmark_runner_smokes_role_specific_interview_styles(
+    scenario: BenchmarkScenarioName,
+    expected_plan_id: str,
+) -> None:
+    runner = BenchmarkRunner()
+    config = BenchmarkRunConfig(
+        provider="mock_openai_realtime",
+        scenario=scenario,
+        iterations=1,
+        benchmark_run_id=f"bench-{scenario.value}",
+        session_id_prefix=f"session-{scenario.value}",
+    )
+
+    report = await runner.run(config)
+
+    run = report.runs[0]
+    events = runner.events_by_session[run.session_id]
+    evaluations = [
+        event for event in events if event.type == EventType.ANSWER_EVALUATED
+    ]
+
+    assert run.status == "completed"
+    assert run.metrics.completed_questions == 3
+    assert run.metrics.provider_errors == 0
+    assert run.metrics.followups_asked == 0
+    assert all(
+        event.provider_metadata["scenario"] == scenario.value for event in events
+    )
+    assert all(
+        event.provider_metadata["scenario_description"] for event in events
+    )
+    assert all(
+        event.payload["interview_plan_id"] == expected_plan_id
+        for event in events
+        if "interview_plan_id" in event.payload
+    )
+    assert len(evaluations) == 3
+    assert all(
+        event.payload["policy_action"] == "complete_question"
+        for event in evaluations
+    )
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        BenchmarkScenarioName.CMO_VAGUE,
+        BenchmarkScenarioName.BUYER_OFF_TOPIC,
+        BenchmarkScenarioName.HR_CONTRADICTORY,
+        BenchmarkScenarioName.AI_ORCHESTRATOR_LOW_INFORMATION,
+    ],
+)
+@pytest.mark.asyncio
+async def test_benchmark_runner_challenges_weak_answers_in_role_contexts(
+    scenario: BenchmarkScenarioName,
+) -> None:
+    runner = BenchmarkRunner()
+    config = BenchmarkRunConfig(
+        provider="mock_openai_realtime",
+        scenario=scenario,
+        iterations=1,
+        benchmark_run_id=f"bench-{scenario.value}",
+        session_id_prefix=f"session-{scenario.value}",
+    )
+
+    report = await runner.run(config)
+
+    run = report.runs[0]
+    events = runner.events_by_session[run.session_id]
+    evaluations = [
+        event for event in events if event.type == EventType.ANSWER_EVALUATED
+    ]
+    followups = [event for event in events if event.type == EventType.FOLLOWUP_ASKED]
+
+    assert run.status == "completed"
+    assert run.metrics.completed_questions == 3
+    assert run.metrics.provider_errors == 0
+    assert run.metrics.followups_asked == 1
+    assert len(followups) == 1
+    assert any(
+        event.payload["policy_action"] == "ask_followup"
+        and event.payload["evaluation_matrix"]["challenge"]["needed"] is True
+        for event in evaluations
+    )
+    assert all(
+        event.provider_metadata["scenario"] == scenario.value for event in events
+    )
+
+
 @pytest.mark.asyncio
 async def test_benchmark_runner_blocks_real_provider_when_credentials_are_missing() -> None:
     class RecordingHttpFactory:
