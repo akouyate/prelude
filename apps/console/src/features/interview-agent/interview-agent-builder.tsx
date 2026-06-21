@@ -619,7 +619,6 @@ export function InterviewAgentBuilder({
         />
         <InterviewBuilderStepRail
           currentStep={currentStep}
-          onStepChange={goToStep}
           steps={steps}
         />
 

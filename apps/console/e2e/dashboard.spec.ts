@@ -44,6 +44,9 @@ test("interview agent saves and publishes a draft", async ({ page }) => {
     .fill(
       "We are hiring a Customer Success Manager to onboard SMB customers, reduce churn risk, coordinate with product teams, and turn customer feedback into practical improvements. The role needs clear communication, prioritization, and comfort handling ambiguous customer situations.",
     );
+  await expect(
+    page.getByRole("button", { name: "Questions", exact: true }),
+  ).toHaveCount(0);
   await page.locator("section").getByRole("button", { name: "Calibrate" }).click();
 
   await expect(

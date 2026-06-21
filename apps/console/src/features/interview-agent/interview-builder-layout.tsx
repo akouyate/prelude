@@ -38,11 +38,9 @@ export function InterviewBuilderBreadcrumb({
 
 export function InterviewBuilderStepRail<TStep extends string>({
   currentStep,
-  onStepChange,
   steps,
 }: {
   currentStep: TStep;
-  onStepChange: (step: TStep) => void;
   steps: Array<InterviewBuilderStep<TStep>>;
 }) {
   const currentIndex = steps.findIndex((step) => step.id === currentStep);
@@ -63,24 +61,23 @@ export function InterviewBuilderStepRail<TStep extends string>({
           return (
             <li className="flex gap-[13px]" key={step.id}>
               <span className="flex shrink-0 flex-col items-center">
-                <button
+                <span
+                  aria-current={current ? "step" : undefined}
                   className={cn(
-                    "grid h-7 w-7 cursor-pointer place-items-center rounded-full border text-xs font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
+                    "grid h-7 w-7 place-items-center rounded-full border text-xs font-bold transition",
                     complete
                       ? "border-ink-900 bg-ink-900 text-white"
                       : current
                         ? "border-[#cdd6b4] bg-[#eef0e3] text-olive-900"
                         : "border-[#ddd8cc] bg-white text-ink-400",
                   )}
-                  onClick={() => onStepChange(step.id)}
-                  type="button"
                 >
                   {complete ? (
                     <Check aria-hidden={true} className="h-3.5 w-3.5" />
                   ) : (
                     index + 1
                   )}
-                </button>
+                </span>
                 {index < steps.length - 1 ? (
                   <span
                     className={cn(
@@ -90,20 +87,18 @@ export function InterviewBuilderStepRail<TStep extends string>({
                   />
                 ) : null}
               </span>
-              <button
+              <span
                 className={cn(
-                  "h-7 cursor-pointer bg-transparent pt-0.5 text-left text-[13.5px] transition",
+                  "h-7 bg-transparent pt-0.5 text-left text-[13.5px] transition",
                   current
                     ? "font-bold text-ink-950"
                     : complete
                       ? "font-medium text-ink-600"
                       : "font-medium text-ink-400",
                 )}
-                onClick={() => onStepChange(step.id)}
-                type="button"
               >
                 {step.label}
-              </button>
+              </span>
             </li>
           );
         })}
