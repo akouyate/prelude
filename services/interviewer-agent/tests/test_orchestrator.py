@@ -280,6 +280,13 @@ def test_matrix_challenges_absurd_answer_instead_of_accepting_text() -> None:
             "answer_needs_clarification",
         ),
         (
+            "protected_trait_without_job_signal",
+            "q2",
+            "J'ai 52 ans et je suis mere de famille.",
+            AnswerClassification.VAGUE,
+            "off_topic_or_low_relevance",
+        ),
+        (
             "concrete_relevant_experience",
             "q2",
             (

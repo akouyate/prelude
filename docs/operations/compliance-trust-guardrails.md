@@ -77,3 +77,6 @@ from recruiter-facing evidence.
   `excludedSensitiveSignals`.
 - Published interview plans still snapshot recruiter-approved guardrails.
 - Default smoke and CI paths must not call paid LLM providers.
+
+The source links behind these evaluation and compliance guardrails are tracked
+in [`docs/sources/evaluation-matrix.md`](../sources/evaluation-matrix.md).

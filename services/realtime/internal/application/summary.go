@@ -103,12 +103,14 @@ type answerEvaluation struct {
 }
 
 type evaluationMatrix struct {
-	OverallScore      int                   `json:"overall_score"`
-	OverallScoreCamel int                   `json:"overallScore"`
-	MaxScore          int                   `json:"max_score"`
-	MaxScoreCamel     int                   `json:"maxScore"`
-	Dimensions        []evaluationDimension `json:"dimensions"`
-	Challenge         evaluationChallenge   `json:"challenge"`
+	EvaluatorMode      string                `json:"evaluator_mode"`
+	EvaluatorModeCamel string                `json:"evaluatorMode"`
+	OverallScore       int                   `json:"overall_score"`
+	OverallScoreCamel  int                   `json:"overallScore"`
+	MaxScore           int                   `json:"max_score"`
+	MaxScoreCamel      int                   `json:"maxScore"`
+	Dimensions         []evaluationDimension `json:"dimensions"`
+	Challenge          evaluationChallenge   `json:"challenge"`
 }
 
 type evaluationDimension struct {
@@ -349,6 +351,17 @@ func criterionStatus(answers []candidateAnswer, evaluation answerEvaluation) str
 	if evaluation.Classification == "vague" || evaluation.Classification == "incomplete" || evaluation.Classification == "silent" || evaluation.Classification == "skipped" {
 		return "unclear"
 	}
+	if matrix := evaluation.matrix(); matrix != nil {
+		if matrix.Challenge.Needed {
+			return "unclear"
+		}
+		overallScore := firstNonZeroInt(matrix.OverallScore, matrix.OverallScoreCamel)
+		maxScore := firstNonZeroInt(matrix.MaxScore, matrix.MaxScoreCamel)
+		if maxScore > 0 && overallScore < 10 {
+			return "unclear"
+		}
+		return "satisfied"
+	}
 	for _, answer := range answers {
 		if len([]rune(answer.turn.Text)) < 36 {
 			return "unclear"
@@ -528,6 +541,15 @@ func appendUnique(values []string, next string) []string {
 		}
 	}
 	return append(values, next)
+}
+
+func firstNonZeroInt(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }
 
 func dedupeStrings(values []string) []string {

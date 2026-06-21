@@ -266,6 +266,9 @@ orchestrator as the policy owner. When `OPENAI_ANSWER_INFERENCE_ENABLED=1` and
 times out, the worker falls back to the local heuristic evaluator so the
 interview can continue.
 
+The implementation and compliance sources for the evaluation matrix are tracked
+in [`../../docs/sources/evaluation-matrix.md`](../../docs/sources/evaluation-matrix.md).
+
 For a bounded real-provider smoke:
 
 ```bash

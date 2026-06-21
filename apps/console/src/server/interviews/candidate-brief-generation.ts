@@ -5,6 +5,7 @@ import {
 import { defaultComplianceFlags, recruiterLimitationCopy } from "@prelude/core";
 import { prisma, type Prisma } from "@prelude/db";
 
+import { createOpenAICandidateBriefSynthesizer } from "./candidate-brief-openai";
 import {
   getCandidateSessionEvidence,
   type CandidateSessionEvidence,
@@ -13,6 +14,7 @@ import {
 
 export const candidateBriefPromptVersion = "candidate-brief-v1";
 export const candidateBriefSchemaVersion = 1;
+export const defaultCandidateBriefLlmModel = "gpt-4.1-mini";
 
 export type CandidateBriefSynthesizerInput = {
   candidateLabel: string;
@@ -54,7 +56,7 @@ export type GenerateCandidateBriefResult =
 export async function generateCandidateBriefForSession({
   candidateSessionId,
   organizationId,
-  synthesizer = createLocalCandidateBriefSynthesizer(),
+  synthesizer = createCandidateBriefSynthesizerFromEnv(),
 }: {
   candidateSessionId: string;
   organizationId: string;
@@ -172,11 +174,60 @@ export async function generateCandidateBriefForSession({
   }
 }
 
+export function createCandidateBriefSynthesizerFromEnv(
+  source: Record<string, string | undefined> = process.env,
+): CandidateBriefSynthesizer {
+  const enabled = source.CANDIDATE_BRIEF_LLM_ENABLED;
+  const apiKey = source.OPENAI_API_KEY;
+
+  if (!isEnabled(enabled) || !apiKey) {
+    return createLocalCandidateBriefSynthesizer();
+  }
+
+  const primary = createOpenAICandidateBriefSynthesizer({
+    apiKey,
+    model: source.CANDIDATE_BRIEF_LLM_MODEL ?? defaultCandidateBriefLlmModel,
+    timeoutMs: toTimeoutMs(source.CANDIDATE_BRIEF_LLM_TIMEOUT_SECONDS),
+  });
+
+  return createFallbackCandidateBriefSynthesizer({
+    fallback: createLocalCandidateBriefSynthesizer(),
+    primary,
+  });
+}
+
 export function createLocalCandidateBriefSynthesizer(): CandidateBriefSynthesizer {
   return {
     modelName: candidateBriefPromptVersion,
     provider: "local_synthesis",
     synthesize: async (input) => buildLocalCandidateBrief(input),
+  };
+}
+
+export function createFallbackCandidateBriefSynthesizer({
+  fallback,
+  primary,
+}: {
+  fallback: CandidateBriefSynthesizer;
+  primary: CandidateBriefSynthesizer;
+}): CandidateBriefSynthesizer {
+  return {
+    modelName: primary.modelName,
+    provider: `${primary.provider}_with_${fallback.provider}_fallback`,
+    synthesize: async (input) => {
+      try {
+        return await primary.synthesize(input);
+      } catch {
+        const brief = await fallback.synthesize(input);
+        return candidateBriefSchema.parse({
+          ...brief,
+          limitations: [
+            ...brief.limitations,
+            "LLM synthesis was unavailable; a conservative local fallback was used.",
+          ].slice(0, 8),
+        });
+      }
+    },
   };
 }
 
@@ -186,9 +237,14 @@ export function buildLocalCandidateBrief(
   const candidateTurns = input.evidence.transcriptTurns.filter(
     (turn) => turn.speaker === "candidate",
   );
+  const reviewableCandidateTurns = candidateTurns.filter(isReviewableTurn);
   const limitations = getLimitations(input.evidence, candidateTurns);
   const criteria = input.criteria.map((criterion) =>
-    evaluateCriterion(criterion, candidateTurns),
+    evaluateCriterion({
+      criterion,
+      hasCandidateSpeech: candidateTurns.length > 0,
+      reviewableCandidateTurns,
+    }),
   );
   const strongOrMedium = criteria.filter(
     (criterion) =>
@@ -222,9 +278,16 @@ export function buildLocalCandidateBrief(
         : []),
     ].slice(0, 8),
     risks:
-      notAssessable.length > 0
-        ? ["Some criteria are not assessable from the available transcript."]
+      notAssessable.length > 0 ||
+      criteria.some((criterion) => criterion.status === "Weak")
+        ? [
+            "Some criteria are not assessable from reviewable, job-related transcript evidence.",
+          ]
         : [],
+    evaluationMatrix: buildLocalEvaluationMatrix({
+      criteria,
+      roleTitle: input.roleTitle,
+    }),
     status: "completed",
     strengths: strongOrMedium
       .slice(0, 3)
@@ -234,11 +297,16 @@ export function buildLocalCandidateBrief(
   });
 }
 
-function evaluateCriterion(
-  criterion: BriefCriterion,
-  candidateTurns: CandidateTranscriptTurn[],
-): CandidateBriefDto["criteria"][number] {
-  const evidence = candidateTurns
+function evaluateCriterion({
+  criterion,
+  hasCandidateSpeech,
+  reviewableCandidateTurns,
+}: {
+  criterion: BriefCriterion;
+  hasCandidateSpeech: boolean;
+  reviewableCandidateTurns: CandidateTranscriptTurn[];
+}): CandidateBriefDto["criteria"][number] {
+  const evidence = reviewableCandidateTurns
     .filter((turn) => turn.text.trim().length > 0)
     .slice(0, 2)
     .map((turn) => ({
@@ -252,6 +320,17 @@ function evaluateCriterion(
   );
 
   if (evidence.length === 0) {
+    if (hasCandidateSpeech) {
+      return {
+        criterionId: criterion.id,
+        evidence: [],
+        label: criterion.label,
+        rationale:
+          "Candidate speech was captured, but it did not contain reviewable job-related evidence.",
+        status: "Weak",
+      };
+    }
+
     return {
       criterionId: criterion.id,
       evidence: [],
@@ -288,6 +367,145 @@ function evaluateCriterion(
     rationale: "Transcript evidence is brief and needs recruiter follow-up.",
     status: "Weak",
   };
+}
+
+function buildLocalEvaluationMatrix({
+  criteria,
+  roleTitle,
+}: {
+  criteria: CandidateBriefDto["criteria"];
+  roleTitle: string;
+}): NonNullable<CandidateBriefDto["evaluationMatrix"]> {
+  const matrixCriteria = criteria.map((criterion) => {
+    const status = toMatrixStatus(criterion.status, criterion.evidence.length);
+    const missingInfo =
+      status === "satisfied"
+        ? []
+        : [`Clarify ${criterion.label.toLowerCase()} with concrete evidence.`];
+
+    return {
+      category: categorizeCriterion(criterion.label),
+      confidence: toMatrixConfidence(criterion.status),
+      criterionId: criterion.criterionId,
+      evidence: criterion.evidence,
+      followUps:
+        status === "satisfied"
+          ? []
+          : [
+              `Can you share a concrete example for ${criterion.label.toLowerCase()}?`,
+            ],
+      label: criterion.label,
+      missingInfo,
+      rationale: criterion.rationale,
+      status,
+    };
+  });
+  const facts = criteria
+    .flatMap((criterion) => criterion.evidence.slice(0, 1))
+    .map((item) => `Candidate stated: ${truncateShortText(item.text)}`)
+    .slice(0, 6);
+  const inferredSignals = criteria
+    .filter(
+      (criterion) =>
+        criterion.status === "Strong" || criterion.status === "Medium",
+    )
+    .slice(0, 6)
+    .map((criterion) => ({
+      confidence: toMatrixConfidence(criterion.status),
+      evidence: criterion.evidence,
+      label: `${criterion.label} signal`,
+    }));
+  const weakOrMissing = matrixCriteria.filter(
+    (criterion) => criterion.status !== "satisfied",
+  );
+  const recommendationLabel =
+    matrixCriteria.length > 0 && weakOrMissing.length === 0
+      ? "continue"
+      : facts.length === 0
+        ? "inconclusive"
+        : "targeted_follow_up";
+
+  return {
+    criteria: matrixCriteria,
+    facts,
+    inferredSignals,
+    missingInfo: dedupeStrings(
+      matrixCriteria.flatMap((criterion) => criterion.missingInfo),
+    ).slice(0, 8),
+    recommendationConfidence:
+      recommendationLabel === "continue"
+        ? "medium"
+        : facts.length === 0
+          ? "low"
+          : "medium",
+    recommendationLabel,
+    recommendationRationale:
+      recommendationLabel === "continue"
+        ? `The ${roleTitle} screen contains enough reviewable evidence to continue recruiter review.`
+        : facts.length === 0
+          ? `The ${roleTitle} screen did not produce enough reviewable evidence for a recruiter recommendation.`
+          : `The ${roleTitle} screen produced useful signal, but the recruiter should clarify missing details before advancing.`,
+    recommendedNextStep:
+      recommendationLabel === "continue" ? "to_call" : "to_review",
+    risks: criteria
+      .filter((criterion) => criterion.status === "Weak")
+      .map((criterion) => `${criterion.label}: ${criterion.rationale}`)
+      .slice(0, 8),
+  };
+}
+
+function toMatrixStatus(
+  status: CandidateBriefDto["criteria"][number]["status"],
+  evidenceCount: number,
+): NonNullable<CandidateBriefDto["evaluationMatrix"]>["criteria"][number]["status"] {
+  switch (status) {
+    case "Strong":
+      return "satisfied";
+    case "Medium":
+      return "partial";
+    case "Weak":
+      return evidenceCount > 0 ? "unclear" : "risk";
+    case "Not assessable":
+      return "missing";
+  }
+}
+
+function toMatrixConfidence(
+  status: CandidateBriefDto["criteria"][number]["status"],
+): NonNullable<CandidateBriefDto["evaluationMatrix"]>["criteria"][number]["confidence"] {
+  switch (status) {
+    case "Strong":
+      return "high";
+    case "Medium":
+      return "medium";
+    case "Weak":
+    case "Not assessable":
+      return "low";
+  }
+}
+
+function categorizeCriterion(
+  label: string,
+): NonNullable<CandidateBriefDto["evaluationMatrix"]>["criteria"][number]["category"] {
+  const normalized = normalizeText(label);
+
+  if (containsAny(normalized, ["availability", "available", "mobility"])) {
+    return "availability";
+  }
+  if (containsAny(normalized, ["logistics", "salary", "compensation"])) {
+    return "logistics";
+  }
+  if (containsAny(normalized, ["motivation", "interest"])) {
+    return "motivation";
+  }
+  if (containsAny(normalized, ["communication", "clarity"])) {
+    return "communication";
+  }
+  if (containsAny(normalized, ["experience", "customer", "project"])) {
+    return "experience";
+  }
+
+  return "role_specific";
 }
 
 function buildSummary({
@@ -335,6 +553,62 @@ function getLimitations(
   return limitations;
 }
 
+function isReviewableTurn(turn: CandidateTranscriptTurn) {
+  const normalized = normalizeText(turn.text);
+  const tokens = normalized.split(/\s+/).filter(Boolean);
+
+  if (tokens.length < 4) {
+    return false;
+  }
+
+  if (containsAny(normalized, NON_REVIEWABLE_MARKERS)) {
+    return false;
+  }
+
+  return true;
+}
+
+function truncateShortText(text: string) {
+  const normalized = text.trim();
+  if (normalized.length <= 160) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, 157).trimEnd()}...`;
+}
+
+function normalizeText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase();
+}
+
+function containsAny(value: string, markers: readonly string[]) {
+  return markers.some((marker) => value.includes(marker));
+}
+
+function dedupeStrings(values: string[]) {
+  return [...new Set(values)];
+}
+
+function isEnabled(value: string | undefined) {
+  return value === "1" || value === "true" || value === "yes";
+}
+
+function toTimeoutMs(value: string | undefined) {
+  if (!value) {
+    return 8000;
+  }
+
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    return 8000;
+  }
+
+  return Math.min(Math.round(seconds * 1000), 30000);
+}
+
 function readCriteria(value: unknown): BriefCriterion[] {
   if (!Array.isArray(value)) {
     return [];
@@ -371,3 +645,17 @@ function isCriterion(value: unknown): value is {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+const NON_REVIEWABLE_MARKERS = [
+  "caca",
+  "poop",
+  "prout",
+  "asdf",
+  "football",
+  "meteo",
+  "weather",
+  "je ne sais pas",
+  "aucune idee",
+  "no idea",
+  "i don't know",
+] as const;
