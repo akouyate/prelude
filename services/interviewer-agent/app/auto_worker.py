@@ -5,6 +5,7 @@ import asyncio
 import os
 import socket
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Protocol
 
 import redis.asyncio as redis
@@ -18,6 +19,12 @@ from app.live_worker import run_live_worker
 DEFAULT_STREAM_KEY = "prelude:agent-join:stream"
 DEFAULT_CONSUMER_GROUP = "prelude-live-workers"
 DEFAULT_PENDING_IDLE_SECONDS = 30
+
+
+def log(message: str, **fields: object) -> None:
+    payload = " ".join(f"{key}={value}" for key, value in fields.items() if value is not None)
+    prefix = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    print(f"{prefix} {message} {payload}".rstrip(), flush=True)
 
 
 @dataclass(frozen=True)
@@ -180,9 +187,11 @@ async def run_auto_worker(
                 realtime_api_url=realtime_api_url,
                 api_key=api_key,
             ):
+                log("agent_job_skipped", session_id=job.session_id, reason="session_not_startable")
                 await queue.ack(job)
                 return
 
+            log("agent_worker_starting", session_id=job.session_id)
             await run_live_worker(
                 session_id=job.session_id,
                 realtime_api_url=realtime_api_url,
@@ -191,7 +200,9 @@ async def run_auto_worker(
             )
             await queue.ack(job)
             completed_jobs += 1
+            log("agent_worker_completed", session_id=job.session_id)
         except Exception as exc:  # pragma: no cover - covered through behavior tests
+            log("agent_worker_failed", session_id=job.session_id, error=str(exc))
             await queue.retry(job, str(exc))
         finally:
             processed_jobs += 1
@@ -221,6 +232,12 @@ async def run_auto_worker(
                     await asyncio.sleep(0)
                 continue
 
+            log(
+                "agent_job_claimed",
+                session_id=job.session_id,
+                candidate_id=job.candidate_id,
+                attempts=job.attempts,
+            )
             task = asyncio.create_task(run_job(job))
             running.add(task)
 
@@ -291,9 +308,11 @@ async def main() -> None:
         poll_timeout_seconds=args.poll_timeout_seconds,
         pending_idle_seconds=args.pending_idle_seconds,
     )
-    print(
-        "Starting Prelude live auto-worker "
-        f"host={socket.gethostname()} stream={args.stream_key} concurrency={args.max_concurrency}"
+    log(
+        "auto_worker_started",
+        host=socket.gethostname(),
+        stream=args.stream_key,
+        concurrency=args.max_concurrency,
     )
     await run_auto_worker(
         queue=queue,

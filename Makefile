@@ -5,6 +5,7 @@ POSTGRES_PORT ?= 5432
 REDIS_PORT ?= 6379
 DATABASE_URL ?= postgresql://postgres:postgres@localhost:$(POSTGRES_PORT)/prelude?schema=public
 REDIS_URL ?= redis://localhost:$(REDIS_PORT)/0
+PYTHON_VERSION ?= 3.14
 MIGRATION_NAME ?= init
 LOAD_ENV := set -a; [ ! -f .env ] || . ./.env; set +a
 BENCHMARK_PROVIDER ?= mock_openai_realtime
@@ -158,7 +159,7 @@ live-openai-worker: ## Run the Python OpenAI live interviewer worker for SESSION
 	if [ -n "$(LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS)" ]; then \
 		export LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS="$(LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS)"; \
 	fi; \
-	cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.live_worker \
+	cd services/interviewer-agent && PYTHONPATH=. uv run --python "$(PYTHON_VERSION)" --with-requirements requirements.txt python -u -m app.live_worker \
 		--session-id "$(SESSION_ID)" \
 		--realtime-api-url "$$realtime_api_url" \
 		$$worker_args
@@ -191,7 +192,7 @@ live-openai-autoworker: ## Run the Redis-backed Python auto-worker that starts l
 	if [ "$(LIVE_WORKER_SKIP_OPENAI)" = "1" ]; then \
 		worker_args="$$worker_args --skip-openai-handshake"; \
 	fi; \
-	cd services/interviewer-agent && uv run --with-requirements requirements.txt python -m app.auto_worker \
+	cd services/interviewer-agent && PYTHONPATH=. uv run --python "$(PYTHON_VERSION)" --with-requirements requirements.txt python -u -m app.auto_worker \
 		--redis-url "$$redis_url" \
 		--realtime-api-url "$$realtime_api_url" \
 		$$worker_args
