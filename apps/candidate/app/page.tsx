@@ -8,7 +8,7 @@ export default function CandidateHomePage() {
           <p className="text-sm font-semibold uppercase tracking-[0.16em] text-olive-900">
             Candidate interview
           </p>
-          <h1 className="mt-4 text-4xl font-semibold leading-tight text-ink-950">
+          <h1 className="mt-4 text-3xl font-semibold leading-tight text-ink-950 sm:text-4xl">
             Open the link shared by the recruiter.
           </h1>
           <p className="mt-4 text-sm leading-6 text-ink-600">

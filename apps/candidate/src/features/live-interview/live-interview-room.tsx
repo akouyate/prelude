@@ -369,7 +369,7 @@ function WelcomeScreen({
         <p className="mt-8 text-sm font-medium text-ink-600">
           {interview.companyName} invites you to a first conversation
         </p>
-        <h1 className="mt-4 text-5xl font-semibold leading-[1.05] tracking-normal text-ink-950 sm:text-6xl">
+        <h1 className="mt-4 text-4xl font-semibold leading-[1.08] tracking-normal text-ink-950 sm:text-5xl lg:text-6xl">
           {interview.roleTitle}
         </h1>
         <p className="mt-5 text-base leading-7 text-ink-700">
@@ -439,7 +439,7 @@ function InterviewIntro({
         <ShieldCheck aria-hidden="true" className="h-4 w-4" />
         Private first screen
       </div>
-      <h1 className="mt-6 text-4xl font-semibold leading-tight tracking-normal text-ink-950 sm:text-5xl">
+      <h1 className="mt-6 text-3xl font-semibold leading-tight tracking-normal text-ink-950 sm:text-4xl lg:text-5xl">
         Let&apos;s get you ready
       </h1>
       <p className="mt-4 max-w-xl text-base leading-7 text-ink-600">
@@ -480,7 +480,7 @@ function CompletionPanel({
       <span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-meadow-100 text-meadow-700">
         <CheckCircle aria-hidden="true" className="h-8 w-8" />
       </span>
-      <h2 className="mt-5 text-3xl font-semibold">
+      <h2 className="mt-5 text-2xl font-semibold leading-tight sm:text-3xl">
         Thank you,{" "}
         <span className="font-display italic text-ink-950">{firstName}</span>.
       </h2>
@@ -697,7 +697,7 @@ function LiveInterviewStage({
           <p className="mt-8 text-xs font-semibold uppercase tracking-[0.18em] text-olive-200">
             {isRoomActive ? "Interviewer" : "Connecting"}
           </p>
-          <h2 className="mx-auto mt-4 max-w-2xl text-3xl font-semibold leading-tight tracking-normal sm:text-5xl">
+          <h2 className="mx-auto mt-4 max-w-2xl text-2xl font-semibold leading-tight tracking-normal sm:text-4xl lg:text-5xl">
             {statusDescription(status)}
           </h2>
           <p className="mx-auto mt-4 max-w-lg text-sm leading-6 text-white/58 sm:text-base">
