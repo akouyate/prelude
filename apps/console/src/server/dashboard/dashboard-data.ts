@@ -22,6 +22,7 @@ import { getCompletedOrganizationScope } from "../organizations/organization-sco
 
 export type DashboardRoleScreenState =
   | "draft"
+  | "paused"
   | "published"
   | "candidate_started"
   | "completed"
@@ -180,10 +181,10 @@ export async function getConsoleDashboardData(): Promise<ConsoleDashboardData> {
       description:
         interview?.roleBrief ?? draft?.roleBrief ?? job.description ?? "",
       href: interview
-        ? `/interviews/${interview.id}`
+        ? `/roles/${interview.id}`
         : draft
-          ? `/interviews/new?draftId=${draft.id}`
-          : `/interviews/new?jobId=${job.id}`,
+          ? `/roles/new?draftId=${draft.id}`
+          : `/roles/new?jobId=${job.id}`,
       id: interview?.id ?? draft?.id ?? job.id,
       jobId: job.id,
       location: job.location,
@@ -318,6 +319,10 @@ function resolveInterviewState({
 
   if (interviewStatus === "published") {
     return "published";
+  }
+
+  if (interviewStatus === "paused") {
+    return "paused";
   }
 
   if (draftStatus === "published") {

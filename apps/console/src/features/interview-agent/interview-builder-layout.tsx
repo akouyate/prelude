@@ -24,7 +24,7 @@ export function InterviewBuilderBreadcrumb({
         <ArrowLeft aria-hidden={true} className="h-4 w-4 shrink-0" />
         <span className="truncate">{roleTitle}</span>
         <span className="shrink-0 text-ink-200">/</span>
-        <span className="shrink-0 text-ink-950">Edit interview</span>
+        <span className="shrink-0 text-ink-950">Edit role screen</span>
       </a>
       {isSaved ? (
         <span className="hidden shrink-0 items-center gap-1.5 text-[12.5px] text-ink-500 sm:inline-flex">
@@ -49,11 +49,11 @@ export function InterviewBuilderStepRail<TStep extends string>({
 
   return (
     <nav
-      aria-label="Interview draft progress"
+      aria-label="Role screen draft progress"
       className="sticky top-7 hidden self-start lg:block"
     >
       <p className="mb-[18px] text-[11px] font-bold uppercase tracking-[0.13em] text-ink-400">
-        Interview setup
+        Role screen setup
       </p>
       <ol className="flex flex-col">
         {steps.map((step, index) => {
@@ -123,7 +123,7 @@ export function InterviewBuilderMobileProgress<TStep extends string>({
   const safeIndex = Math.max(currentIndex, 0);
 
   return (
-    <nav aria-label="Interview draft progress" className="mb-8 lg:hidden">
+    <nav aria-label="Role screen draft progress" className="mb-8 lg:hidden">
       <div className="flex items-center justify-between text-xs font-semibold text-ink-500">
         <span>{steps[safeIndex]?.label}</span>
         <span>
@@ -221,13 +221,18 @@ export function InterviewBuilderFooter<TStep extends string>({
   const nextLabels: Partial<Record<TStep, string>> = {
     brief: "Calibrate",
     calibrate: "Draft questions",
-    evaluation: "Save and share",
+    evaluation: "Save and publish",
     questions: "Review evaluation",
   } as Partial<Record<TStep, string>>;
 
   if (currentStep === "share") {
     return null;
   }
+
+  const workingLabel =
+    currentStep === "calibrate" || currentStep === "questions"
+      ? "Drafting..."
+      : "Saving...";
 
   return (
     <div className="mt-[34px] flex items-center justify-between gap-3 border-t border-[#e7e2d8] pt-[22px]">
@@ -236,7 +241,7 @@ export function InterviewBuilderFooter<TStep extends string>({
         Back
       </Button>
       <Button disabled={isWorking} onClick={onNext}>
-        {isWorking ? "Saving..." : (nextLabels[currentStep] ?? "Continue")}
+        {isWorking ? workingLabel : (nextLabels[currentStep] ?? "Continue")}
         {currentStep === "calibrate" ? (
           <Sparkles aria-hidden={true} className="h-4 w-4" />
         ) : (

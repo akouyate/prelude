@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  generateMockInterviewDraft,
   type InterviewAgentDraft,
   type InterviewFocus,
   type InterviewQuestionDraft,
@@ -17,6 +16,7 @@ import {
   Heart,
   Link as Link2,
   Message,
+  Microphone,
   Page as FileText,
   Pause,
   Play,
@@ -36,6 +36,12 @@ import {
   interviewPlanPolicy,
 } from "../../domain/interview-plan-policy";
 import {
+  addInterviewQuestionAction,
+  generateInterviewDraftAction,
+  refineInterviewQuestionAction,
+  type InterviewDraftGenerationActionResult,
+} from "../../server/interviews/interview-draft-generation-actions";
+import {
   publishInterviewDraft,
   saveInterviewDraft,
   type InterviewResponseMode,
@@ -52,16 +58,15 @@ import {
 } from "./interview-builder-layout";
 
 type StepId = "brief" | "calibrate" | "questions" | "evaluation" | "share";
-type BriefSource = "indeed" | "linkedin" | "link" | "manual" | "upload";
-type QuestionAction = "warmer" | "sharper" | "replace" | "logistics";
+type QuestionAction = "sharper" | "replace";
 type ResponseMode = InterviewResponseMode;
 
 const steps: Array<{ id: StepId; label: string; title: string }> = [
   { id: "brief", label: "Brief", title: "Start with the role" },
-  { id: "calibrate", label: "Calibrate", title: "Calibrate the interview" },
+  { id: "calibrate", label: "Calibrate", title: "Calibrate the role screen" },
   { id: "questions", label: "Questions", title: "Shape the questions" },
   { id: "evaluation", label: "Evaluation", title: "Set the evaluation standard" },
-  { id: "share", label: "Share", title: "Publish when ready" }
+  { id: "share", label: "Publish", title: "Publish the role screen" }
 ];
 
 const focusOptions: Array<{
@@ -99,57 +104,11 @@ const seniorityOptions: Array<{ value: InterviewSeniority; label: string }> = [
 
 const responseModes: Array<{ value: ResponseMode; label: string }> = [
   { value: "text", label: "Form" },
-  { value: "video", label: "Video" },
   { value: "audio", label: "Audio" }
 ];
-
-const briefSources: Array<{
-  connected?: boolean;
-  description: string;
-  icon?: React.ReactNode;
-  label: string;
-  logo?: React.ReactNode;
-  logoClassName?: string;
-  value: BriefSource;
-}> = [
-  {
-    connected: true,
-    description: "Connected",
-    label: "LinkedIn",
-    logo: "in",
-    logoClassName: "bg-[#0a66c2] text-white",
-    value: "linkedin",
-  },
-  {
-    connected: true,
-    description: "Connected",
-    label: "Indeed",
-    logo: "Id",
-    logoClassName: "bg-[#003a9b] text-white",
-    value: "indeed",
-  },
-  {
-    description: "Paste a job URL",
-    icon: <Link2 aria-hidden={true} className="h-4 w-4" />,
-    label: "Link",
-    value: "link",
-  },
-  {
-    description: "PDF or DOCX",
-    icon: <Paperclip aria-hidden={true} className="h-4 w-4" />,
-    label: "Upload",
-    value: "upload",
-  },
-  {
-    description: "From scratch",
-    icon: <Pencil aria-hidden={true} className="h-4 w-4" />,
-    label: "Manual",
-    value: "manual",
-  },
-];
-
-const defaultJobDescription =
-  "We are hiring a Customer Success Manager to onboard SMB customers, reduce churn risk, coordinate with product teams, and turn customer feedback into practical improvements. The role needs clear communication, prioritization, and comfort handling ambiguous customer situations.";
+const builderResponseModes = new Set<ResponseMode>(
+  responseModes.map((mode) => mode.value),
+);
 
 type InterviewAgentBuilderProps = {
   companyName?: string;
@@ -171,87 +130,6 @@ type PersistedInterviewDraft = {
   draft: InterviewAgentDraft;
 };
 
-function updateQuestionPrompt(
-  question: InterviewQuestionDraft,
-  action: QuestionAction
-): InterviewQuestionDraft {
-  if (action === "warmer") {
-    return {
-      ...question,
-      prompt: question.prompt.replace("Tell us about", "Could you share")
-    };
-  }
-
-  if (action === "sharper") {
-    return {
-      ...question,
-      prompt: `${question.prompt} Please include the context, your action, and the result.`
-    };
-  }
-
-  if (action === "logistics") {
-    return {
-      ...question,
-      prompt:
-        "Before we go further, what should we know about your availability, work setup expectations, or location constraints for this role?",
-      signal: "Basic alignment on practical hiring constraints",
-      source: "agent"
-    };
-  }
-
-  return {
-    ...question,
-    prompt:
-      "Describe one real work situation that best shows how you would succeed in this role."
-  };
-}
-
-function createAIQuestion(topic: string, index: number): InterviewQuestionDraft {
-  const normalizedTopic = topic.trim().toLowerCase();
-
-  if (normalizedTopic.includes("salary") || normalizedTopic.includes("compensation")) {
-    return {
-      id: `ai-salary-${index}`,
-      prompt:
-        "The expected range for this role is shared in the job process. Does that range fit your expectations for a next step?",
-      signal: "Compensation alignment before recruiter time is spent",
-      source: "agent",
-      durationSeconds: 60
-    };
-  }
-
-  if (normalizedTopic.includes("mobility") || normalizedTopic.includes("location")) {
-    return {
-      id: `ai-location-${index}`,
-      prompt:
-        "This role may include location or travel expectations. What constraints should we know before moving forward?",
-      signal: "Location, travel, or mobility alignment where job-related",
-      source: "agent",
-      durationSeconds: 60
-    };
-  }
-
-  if (normalizedTopic.includes("communication")) {
-    return {
-      id: `ai-communication-${index}`,
-      prompt:
-        "Share one example of how you explained a complex customer or internal issue clearly to another person.",
-      signal: "Communication clarity in a realistic work situation",
-      source: "agent",
-      durationSeconds: 75
-    };
-  }
-
-  return {
-    id: `ai-question-${index}`,
-    prompt:
-      "What is one thing you would want the recruiter to understand about your fit for this role?",
-    signal: "Additional recruiter-directed context",
-    source: "agent",
-    durationSeconds: 60
-  };
-}
-
 function getResponseModeSummary(modes: ResponseMode[]) {
   const labels = modes.map((mode) => {
     if (mode === "text") {
@@ -264,12 +142,18 @@ function getResponseModeSummary(modes: ResponseMode[]) {
   return labels.length > 0 ? labels.join(" + ") : "Form";
 }
 
+function normalizeBuilderResponseModes(modes: ResponseMode[] | undefined) {
+  const normalized = modes?.filter((mode) => builderResponseModes.has(mode)) ?? [];
+
+  return normalized.length > 0 ? normalized : (["text", "audio"] satisfies ResponseMode[]);
+}
+
 export function InterviewAgentBuilder({
   companyName = "Acme",
   initialDraft,
-  initialJobDescription = defaultJobDescription,
+  initialJobDescription = "",
   initialJobId,
-  initialJobTitle = "Customer Success Manager"
+  initialJobTitle = ""
 }: InterviewAgentBuilderProps) {
   const router = useRouter();
   const [currentStep, setCurrentStep] = React.useState<StepId>(
@@ -298,9 +182,9 @@ export function InterviewAgentBuilder({
         ] satisfies InterviewFocus[]))
   ]);
   const [modes, setModes] = React.useState<ResponseMode[]>(
-    initialDraft?.responseModes.length ? initialDraft.responseModes : ["text", "audio"]
+    normalizeBuilderResponseModes(initialDraft?.responseModes)
   );
-  const [attachmentName, setAttachmentName] = React.useState<string | undefined>(
+  const [attachmentName] = React.useState<string | undefined>(
     initialDraft?.sourceAttachmentName
   );
   const [draft, setDraft] = React.useState<InterviewAgentDraft | undefined>(
@@ -310,6 +194,7 @@ export function InterviewAgentBuilder({
   const [isPreviewOpen, setIsPreviewOpen] = React.useState(false);
   const [isGeneratingDraft, setIsGeneratingDraft] = React.useState(false);
   const [generationPhase, setGenerationPhase] = React.useState(0);
+  const [workingQuestionId, setWorkingQuestionId] = React.useState<string>();
   const [isSavingDraft, setIsSavingDraft] = React.useState(false);
   const [isPublishingDraft, setIsPublishingDraft] = React.useState(false);
   const [saveMessage, setSaveMessage] = React.useState<string>();
@@ -325,24 +210,47 @@ export function InterviewAgentBuilder({
   const activeQuestion = draft?.questions.find(
     (question) => question.id === selectedQuestionId
   ) ?? draft?.questions[0];
+  const trimmedJobTitle = jobTitle.trim();
+  const trimmedJobDescription = jobDescription.trim();
 
-  const createDraft = React.useCallback(() => {
-    const nextDraft = generateMockInterviewDraft({
-      jobTitle,
-      companyName,
-      jobDescription,
-      seniority,
-      focus,
-      attachmentName
-    });
+  const createDraft = React.useCallback(async () => {
+    let result: InterviewDraftGenerationActionResult;
 
-    setDraft(nextDraft);
+    try {
+      result = await generateInterviewDraftAction({
+        companyName,
+        focus,
+        responseModes: modes,
+        roleBrief: jobDescription,
+        roleTitle: jobTitle,
+        seniority,
+        sourceAttachmentName: attachmentName,
+      });
+    } catch {
+      setSaveError("Prelude could not generate the role screen right now. Please retry.");
+      return null;
+    }
+
+    if (!result.ok) {
+      setSaveError(result.error);
+      return null;
+    }
+
+    setDraft(result.draft);
     setSelectedQuestionId(undefined);
     setPublishedInterview(undefined);
     setSaveMessage(undefined);
     setSaveError(undefined);
-    return nextDraft;
-  }, [attachmentName, companyName, focus, jobDescription, jobTitle, seniority]);
+    return result.draft;
+  }, [
+    attachmentName,
+    companyName,
+    focus,
+    jobDescription,
+    jobTitle,
+    modes,
+    seniority
+  ]);
 
   React.useEffect(() => {
     return () => {
@@ -362,17 +270,24 @@ export function InterviewAgentBuilder({
     goToStep("questions");
     setIsGeneratingDraft(true);
     setGenerationPhase(0);
+    setSaveError(undefined);
     setDraft(undefined);
 
     generationTimers.current = [
       setTimeout(() => setGenerationPhase(1), 520),
       setTimeout(() => setGenerationPhase(2), 1040),
-      setTimeout(() => {
-        createDraft();
-        setGenerationPhase(3);
-        setIsGeneratingDraft(false);
-      }, 1560),
     ];
+
+    void (async () => {
+      const generated = await createDraft();
+      setGenerationPhase(3);
+      setIsGeneratingDraft(false);
+
+      if (!generated) {
+        generationTimers.current.forEach((timer) => clearTimeout(timer));
+        generationTimers.current = [];
+      }
+    })();
   }, [createDraft, goToStep]);
 
 
@@ -422,7 +337,7 @@ export function InterviewAgentBuilder({
       setJobId(result.jobId);
       setPersistedDraftId(result.draftId);
       setSaveMessage("Draft saved");
-      router.replace(`/interviews/new?draftId=${result.draftId}`, {
+      router.replace(`/roles/new?draftId=${result.draftId}`, {
         scroll: false
       });
       router.refresh();
@@ -467,7 +382,7 @@ export function InterviewAgentBuilder({
       result = await publishInterviewDraft(saved.draftId);
     } catch {
       setIsPublishingDraft(false);
-      setSaveError("The interview could not be published. Please try again.");
+      setSaveError("The role screen could not be published. Please try again.");
       return;
     }
 
@@ -479,7 +394,7 @@ export function InterviewAgentBuilder({
     }
 
     setPublishedInterview(result);
-    setSaveMessage("Interview published");
+    setSaveMessage("Role screen published");
     router.refresh();
   }, [router, saveCurrentDraft]);
 
@@ -504,23 +419,53 @@ export function InterviewAgentBuilder({
   }, []);
 
   const refineQuestion = React.useCallback(
-    (questionId: string, action: QuestionAction) => {
-      setDraft((current) => {
-        if (!current) {
-          return current;
+    async (questionId: string, action: QuestionAction) => {
+      if (!draft) {
+        return;
+      }
+
+      setWorkingQuestionId(questionId);
+      setSaveError(undefined);
+
+      try {
+        const result = await refineInterviewQuestionAction({
+          action,
+          companyName,
+          draft,
+          focus,
+          questionId,
+          responseModes: modes,
+          roleBrief: jobDescription,
+          roleTitle: jobTitle,
+          seniority,
+          sourceAttachmentName: attachmentName,
+        });
+
+        if (!result.ok) {
+          setSaveError(result.error);
+          return;
         }
 
-        return {
-          ...current,
-          questions: current.questions.map((question) =>
-            question.id === questionId
-              ? updateQuestionPrompt(question, action)
-              : question
-          )
-        };
-      });
+        setDraft(result.draft);
+        setSelectedQuestionId(result.questionId);
+        setPublishedInterview(undefined);
+        setSaveMessage(undefined);
+      } catch {
+        setSaveError("Prelude could not refine that question. Please retry.");
+      } finally {
+        setWorkingQuestionId(undefined);
+      }
     },
-    []
+    [
+      attachmentName,
+      companyName,
+      draft,
+      focus,
+      jobDescription,
+      jobTitle,
+      modes,
+      seniority
+    ]
   );
 
   const updateQuestion = React.useCallback((questionId: string, prompt: string) => {
@@ -536,28 +481,60 @@ export function InterviewAgentBuilder({
         )
       };
     });
+    setPublishedInterview(undefined);
+    setSaveMessage(undefined);
   }, []);
 
-  const addQuestion = React.useCallback((topic: string) => {
-    setDraft((current) => {
-      if (!current) {
-        return current;
+  const addQuestion = React.useCallback(
+    async (topic: string) => {
+      if (!draft || draft.questions.length >= interviewPlanPolicy.maxQuestions) {
+        return false;
       }
 
-      if (current.questions.length >= interviewPlanPolicy.maxQuestions) {
-        return current;
+      setWorkingQuestionId("new");
+      setSaveError(undefined);
+
+      try {
+        const result = await addInterviewQuestionAction({
+          companyName,
+          draft,
+          focus,
+          responseModes: modes,
+          roleBrief: jobDescription,
+          roleTitle: jobTitle,
+          seniority,
+          sourceAttachmentName: attachmentName,
+          topic,
+        });
+
+        if (!result.ok) {
+          setSaveError(result.error);
+          return false;
+        }
+
+        setDraft(result.draft);
+        setSelectedQuestionId(result.questionId);
+        setPublishedInterview(undefined);
+        setSaveMessage(undefined);
+        return true;
+      } catch {
+        setSaveError("Prelude could not add that question. Please retry.");
+        return false;
+      } finally {
+        setWorkingQuestionId(undefined);
       }
-
-      const nextQuestion = createAIQuestion(topic, current.questions.length + 1);
-      setSelectedQuestionId(nextQuestion.id);
-
-      return {
-        ...current,
-        questions: [...current.questions, nextQuestion],
-        rationale: `AI prepared ${current.questions.length + 1} focused questions for this first-screening interview.`
-      };
-    });
-  }, []);
+    },
+    [
+      attachmentName,
+      companyName,
+      draft,
+      focus,
+      jobDescription,
+      jobTitle,
+      modes,
+      seniority
+    ]
+  );
 
   const removeQuestion = React.useCallback((questionId: string) => {
     setDraft((current) => {
@@ -573,13 +550,26 @@ export function InterviewAgentBuilder({
       return {
         ...current,
         questions,
-        rationale: `AI prepared ${questions.length} focused questions for this first-screening interview.`
+        rationale: `Prelude prepared ${questions.length} focused questions for this first-screening role screen.`
       };
     });
+    setPublishedInterview(undefined);
+    setSaveMessage(undefined);
   }, []);
 
   const next = React.useCallback(() => {
     if (currentStep === "brief") {
+      if (trimmedJobTitle.length < 2) {
+        setSaveError("Add a role title before calibrating the role screen.");
+        return;
+      }
+
+      if (trimmedJobDescription.length < 40) {
+        setSaveError("Add enough job context before calibrating the role screen.");
+        return;
+      }
+
+      setSaveError(undefined);
       goToStep("calibrate");
       return;
     }
@@ -590,6 +580,11 @@ export function InterviewAgentBuilder({
     }
 
     if (currentStep === "questions") {
+      if (!draft) {
+        startDraftGeneration();
+        return;
+      }
+
       goToStep("evaluation");
       return;
     }
@@ -597,7 +592,15 @@ export function InterviewAgentBuilder({
     if (currentStep === "evaluation") {
       void saveAndShare();
     }
-  }, [currentStep, goToStep, saveAndShare, startDraftGeneration]);
+  }, [
+    currentStep,
+    draft,
+    goToStep,
+    saveAndShare,
+    startDraftGeneration,
+    trimmedJobDescription,
+    trimmedJobTitle,
+  ]);
 
   const back = React.useCallback(() => {
     const previousStep = steps[currentStepIndex - 1]?.id;
@@ -612,7 +615,7 @@ export function InterviewAgentBuilder({
       <main className="relative z-10 mx-auto grid w-full max-w-[1060px] min-w-0 gap-[clamp(24px,4vw,56px)] px-4 pb-20 pt-[clamp(22px,3.5vw,36px)] sm:px-7 lg:grid-cols-[212px_minmax(0,1fr)]">
         <InterviewBuilderBreadcrumb
           isSaved={Boolean(saveMessage || persistedDraftId)}
-          roleTitle={jobTitle}
+          roleTitle={trimmedJobTitle || "New role"}
         />
         <InterviewBuilderStepRail
           currentStep={currentStep}
@@ -651,12 +654,16 @@ export function InterviewAgentBuilder({
 
           {currentStep === "brief" ? (
             <BriefStep
-              attachmentName={attachmentName}
               jobDescription={jobDescription}
               jobTitle={jobTitle}
-              onAttachmentChange={setAttachmentName}
-              onJobDescriptionChange={setJobDescription}
-              onJobTitleChange={setJobTitle}
+              onJobDescriptionChange={(value) => {
+                setJobDescription(value);
+                setSaveError(undefined);
+              }}
+              onJobTitleChange={(value) => {
+                setJobTitle(value);
+                setSaveError(undefined);
+              }}
             />
           ) : null}
 
@@ -684,6 +691,7 @@ export function InterviewAgentBuilder({
             <QuestionsStep
               draft={draft}
               selectedQuestionId={selectedQuestionId}
+              workingQuestionId={workingQuestionId}
               onAddQuestion={addQuestion}
               onRegenerate={startDraftGeneration}
               onRefineQuestion={refineQuestion}
@@ -731,7 +739,7 @@ export function InterviewAgentBuilder({
           <InterviewBuilderFooter
             canGoBack={currentStepIndex > 0}
             currentStep={currentStep}
-            isWorking={isSavingDraft}
+            isWorking={isSavingDraft || isGeneratingDraft}
             onBack={back}
             onNext={next}
           />
@@ -760,39 +768,19 @@ function getAgentMessage(
 
   const messages: Record<StepId, string> = {
     brief:
-      "Tell me where this role lives — connect LinkedIn or Indeed, paste a link, upload context, or write it yourself. I’ll pull the skills, judgment calls, and motivation signals worth screening for.",
+      "Write the role title and context. I’ll pull the skills, judgment calls, and motivation signals worth screening for.",
     calibrate:
-      "I found the strongest hiring signals for this role. Adjust anything before I draft the interview.",
+      "I found the strongest hiring signals for this role. Adjust anything before I draft the screen.",
     questions:
       draft?.rationale ??
       "I drafted questions that ask for real examples, not generic self-assessments.",
     evaluation:
-      "These criteria help reviewers compare candidates consistently after the interview.",
+      "These criteria help reviewers compare candidates consistently after the screen.",
     share:
       "The draft is ready. Preview the candidate experience only if you want a final check before publishing."
   };
 
   return messages[step];
-}
-
-function getBriefSourceLabel(source: BriefSource) {
-  if (source === "linkedin") {
-    return "LinkedIn";
-  }
-
-  if (source === "indeed") {
-    return "Indeed";
-  }
-
-  if (source === "link") {
-    return "Job link";
-  }
-
-  if (source === "upload") {
-    return "Upload";
-  }
-
-  return "Manual";
 }
 
 function GeneratingQuestionsStep({
@@ -894,143 +882,51 @@ function formatSeniorityLabel(value: InterviewSeniority) {
 }
 
 function BriefStep({
-  attachmentName,
   jobDescription,
   jobTitle,
-  onAttachmentChange,
   onJobDescriptionChange,
   onJobTitleChange
 }: {
-  attachmentName?: string;
   jobDescription: string;
   jobTitle: string;
-  onAttachmentChange: (value: string | undefined) => void;
   onJobDescriptionChange: (value: string) => void;
   onJobTitleChange: (value: string) => void;
 }) {
-  const [source, setSource] = React.useState<BriefSource>(
-    attachmentName ? "upload" : "linkedin",
-  );
-  const [jobUrl, setJobUrl] = React.useState("");
-  const sourceLabel = getBriefSourceLabel(source);
-  const showImportedBanner =
-    source === "indeed" || source === "linkedin" || source === "link";
-
   return (
     <div className="min-w-0">
-      <p className="mb-3 text-[13.5px] font-semibold text-ink-600">
-        Where should I start?
-      </p>
-      <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-5">
-        {briefSources.map((option) => {
-          const active = source === option.value;
-
-          return (
-            <button
-              className={cn(
-                selectionSurfaceClass(active),
-                "relative flex min-h-[112px] flex-col items-start gap-2.5 rounded-[18px] p-3.5 text-left",
-              )}
-              key={option.value}
-              onClick={() => setSource(option.value)}
-              type="button"
-            >
-              <span
-                className={`grid h-[34px] w-[34px] place-items-center rounded-[9px] text-[13px] font-bold ${
-                  option.logoClassName ?? "bg-[#f3f1ea] text-ink-600"
-                }`}
-              >
-                {option.logo ?? option.icon}
-              </span>
-              <span className="min-w-0">
-                <span className="block text-[13px] font-semibold text-ink-950">
-                  {option.label}
-                </span>
-                <span className="mt-1 flex items-center gap-1.5 text-[11.5px] text-ink-400">
-                  {option.connected ? (
-                    <span className="h-1.5 w-1.5 rounded-full bg-meadow-600" />
-                  ) : null}
-                  {option.description}
-                </span>
-              </span>
-              {active ? (
-                <span className="absolute right-2.5 top-2.5 grid h-[18px] w-[18px] place-items-center rounded-full bg-olive-900 text-white">
-                  <Check aria-hidden={true} className="h-3 w-3" />
-                </span>
-              ) : null}
-            </button>
-          );
-        })}
-      </div>
-
-      {source === "link" ? (
-        <div className="mt-[18px] flex flex-wrap items-center gap-2.5 rounded-[15px] border border-[#e7e2d8] bg-[#fbfaf7] p-4">
-          <input
-            className="h-11 min-w-[220px] flex-1 rounded-xl border border-[#ddd8cc] bg-white px-3.5 text-sm text-ink-950 outline-none transition focus:border-olive-700 focus:ring-2 focus:ring-[#e5e8d6]"
-            placeholder="https://company.com/careers/customer-success-manager"
-            value={jobUrl}
-            onChange={(event) => setJobUrl(event.target.value)}
-          />
-          <Button>
-            <Sparkles aria-hidden={true} className="h-4 w-4" />
-            Fetch with AI
-          </Button>
-        </div>
-      ) : null}
-
-      <div className="mt-[18px]">
-        {showImportedBanner ? (
-          <div className="mb-[18px] flex flex-wrap items-center gap-2.5 rounded-[18px] border border-[#d8deca] bg-[#f3f4ea] px-3.5 py-3">
-            <span className="inline-flex h-6 items-center rounded-full border border-[#dfe2d3] bg-white px-2.5 text-[11.5px] font-semibold text-ink-600">
-              {sourceLabel}
-            </span>
-            <span className="min-w-0 flex-1 text-[13px] text-ink-700">
-              <span className="font-semibold">Fields are prefilled.</span> Edit
-              anything before continuing.
-            </span>
-            <button
-              className="h-[30px] cursor-pointer rounded-full border border-[#d1cbbf] bg-white px-3 text-xs font-semibold text-ink-800 transition hover:border-ink-900"
-              type="button"
-              onClick={() => setSource("manual")}
-            >
-              Change posting
-            </button>
-          </div>
-        ) : null}
-
-        <Field label="Role">
-        <input
-          className="mt-2 h-12 w-full min-w-0 rounded-[13px] border border-[#ddd8cc] bg-white px-[15px] text-[15px] font-medium text-ink-950 outline-none transition focus:border-olive-700 focus:ring-2 focus:ring-[#e5e8d6]"
-          value={jobTitle}
-          onChange={(event) => onJobTitleChange(event.target.value)}
-        />
-        </Field>
-
-        <Field label="Job description">
-        <Textarea
-          className="mt-2 min-h-[184px] w-full min-w-0 max-w-full rounded-[13px] border-[#ddd8cc] bg-white px-[15px] py-3.5 text-sm font-normal leading-[1.6] text-ink-700 focus:border-olive-700 focus:ring-[#e5e8d6]"
-          value={jobDescription}
-          onChange={(event) => onJobDescriptionChange(event.target.value)}
-        />
-        </Field>
-
-      <label className="flex min-w-0 cursor-pointer flex-col items-stretch justify-between gap-3 rounded-3xl border border-dashed border-ink-200 bg-white/62 p-4 text-sm text-ink-700 transition hover:border-olive-800 hover:bg-white sm:flex-row sm:items-center sm:p-5">
-        <span className="flex min-w-0 items-center gap-3">
-          <Paperclip aria-hidden="true" className="h-4 w-4 shrink-0" />
-          <span className="min-w-0 leading-5">
-            {attachmentName ?? "Add role context, scorecard, or briefing PDF"}
+      <div className="rounded-[24px] border border-[#e7e2d8] bg-white/58 p-4 sm:p-5">
+        <div className="mb-[18px] flex items-start gap-3">
+          <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#f3f1ea] text-ink-800">
+            <FileText aria-hidden={true} className="h-4 w-4" />
           </span>
-        </span>
-        <span className="w-fit shrink-0 rounded-full border border-ink-200 bg-white/80 px-3 py-2 font-medium text-ink-900 sm:text-right">
-          Choose file
-        </span>
-        <input
-          className="sr-only"
-          type="file"
-          accept=".pdf,.doc,.docx,.txt,.md"
-          onChange={(event) => onAttachmentChange(event.target.files?.[0]?.name)}
-        />
-      </label>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-ink-950">Manual brief</p>
+            <p className="mt-1 max-w-[620px] text-sm leading-6 text-ink-500">
+              Add the role title and the job context. Prelude will use this brief
+              to draft focused first-screening questions.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-5">
+          <Field label="Role">
+            <input
+              className="mt-2 h-12 w-full min-w-0 rounded-[13px] border border-[#ddd8cc] bg-white px-[15px] text-[15px] font-medium text-ink-950 outline-none transition focus:border-olive-700 focus:ring-2 focus:ring-[#e5e8d6]"
+              placeholder="Senior Product Designer"
+              value={jobTitle}
+              onChange={(event) => onJobTitleChange(event.target.value)}
+            />
+          </Field>
+
+          <Field label="Job description">
+            <Textarea
+              className="mt-2 min-h-[184px] w-full min-w-0 max-w-full rounded-[13px] border-[#ddd8cc] bg-white px-[15px] py-3.5 text-sm font-normal leading-[1.6] text-ink-700 focus:border-olive-700 focus:ring-[#e5e8d6]"
+              placeholder="Paste the job description, responsibilities, context, hiring criteria, location constraints, or anything the interviewer should understand before drafting the first screen."
+              value={jobDescription}
+              onChange={(event) => onJobDescriptionChange(event.target.value)}
+            />
+          </Field>
+        </div>
       </div>
     </div>
   );
@@ -1064,7 +960,7 @@ function CalibrateStep({
                 key={option.value}
                 className={cn(
                   selectionSurfaceClass(selected),
-                  "h-12 rounded-full px-4 text-sm font-semibold",
+                  "h-12 rounded-[18px] px-4 text-sm font-semibold",
                 )}
                 type="button"
                 onClick={() => onSeniorityChange(option.value)}
@@ -1091,6 +987,11 @@ function CalibrateStep({
                 type="button"
                 onClick={() => toggleMode(mode.value)}
               >
+                {mode.value === "audio" ? (
+                  <Microphone aria-hidden="true" className="h-4 w-4" />
+                ) : (
+                  <Message aria-hidden="true" className="h-4 w-4" />
+                )}
                 {checked ? (
                   <Check aria-hidden="true" className="h-4 w-4 text-olive-900" />
                 ) : null}
@@ -1147,7 +1048,11 @@ function CalibrateStep({
   );
 }
 
-function selectionSurfaceClass(selected: boolean) {
+function selectionSurfaceClass(selected: boolean, disabled = false) {
+  if (disabled) {
+    return "cursor-not-allowed border border-[#e7e2d8] bg-white/46 text-ink-400 opacity-75";
+  }
+
   return cn(
     "cursor-pointer border outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6]",
     selected
@@ -1217,6 +1122,7 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
 function QuestionsStep({
   draft,
   selectedQuestionId,
+  workingQuestionId,
   onAddQuestion,
   onRegenerate,
   onRefineQuestion,
@@ -1226,9 +1132,10 @@ function QuestionsStep({
 }: {
   draft: InterviewAgentDraft;
   selectedQuestionId?: string;
-  onAddQuestion: (topic: string) => void;
+  workingQuestionId?: string;
+  onAddQuestion: (topic: string) => Promise<boolean>;
   onRegenerate: () => void;
-  onRefineQuestion: (questionId: string, action: QuestionAction) => void;
+  onRefineQuestion: (questionId: string, action: QuestionAction) => Promise<void>;
   onRemoveQuestion: (questionId: string) => void;
   onSelectQuestion: (questionId: string) => void;
   onUpdateQuestion: (questionId: string, prompt: string) => void;
@@ -1241,10 +1148,13 @@ function QuestionsStep({
     draft.questions.length >= interviewPlanPolicy.maxQuestions;
 
   const addWithAI = React.useCallback(
-    (topic: string) => {
-      onAddQuestion(topic);
-      setAddTopic("");
-      setIsAddingQuestion(false);
+    async (topic: string) => {
+      const added = await onAddQuestion(topic);
+
+      if (added) {
+        setAddTopic("");
+        setIsAddingQuestion(false);
+      }
     },
     [onAddQuestion]
   );
@@ -1253,7 +1163,7 @@ function QuestionsStep({
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 pb-4">
         <p className="max-w-xl text-sm leading-6 text-ink-600">
-          AI prepared these screening questions. Listen, edit, or add one if a signal is missing.
+          Prelude prepared these screening questions. Listen, edit, or add one if a signal is missing.
         </p>
         <Button variant="secondary" onClick={onRegenerate}>
           <RotateCcw aria-hidden="true" className="h-4 w-4" />
@@ -1266,6 +1176,7 @@ function QuestionsStep({
           const selected = question.id === selectedQuestionId;
           const editing = question.id === editingQuestionId;
           const playing = question.id === playingQuestionId;
+          const isWorkingOnQuestion = workingQuestionId === question.id;
           const meta = getQuestionMeta(question);
 
           return (
@@ -1336,10 +1247,11 @@ function QuestionsStep({
                         </Button>
                         <Button
                           variant="secondary"
-                          onClick={() => onRefineQuestion(question.id, "sharper")}
+                          disabled={isWorkingOnQuestion}
+                          onClick={() => void onRefineQuestion(question.id, "sharper")}
                         >
                           <Sparkles aria-hidden="true" className="h-4 w-4" />
-                          Improve with AI
+                          {isWorkingOnQuestion ? "Improving..." : "Improve"}
                         </Button>
                       </div>
                     </div>
@@ -1354,19 +1266,24 @@ function QuestionsStep({
                       </Button>
                       <Button
                         variant="secondary"
-                        onClick={() => onRefineQuestion(question.id, "sharper")}
+                        disabled={isWorkingOnQuestion}
+                        onClick={() => void onRefineQuestion(question.id, "sharper")}
                       >
                         <Sparkles aria-hidden="true" className="h-4 w-4" />
-                        Improve with AI
+                        {isWorkingOnQuestion ? "Improving..." : "Improve"}
                       </Button>
                       <Button
                         variant="secondary"
-                        onClick={() => onRefineQuestion(question.id, "replace")}
+                        disabled={isWorkingOnQuestion}
+                        onClick={() => void onRefineQuestion(question.id, "replace")}
                       >
-                        Replace
+                        {isWorkingOnQuestion ? "Replacing..." : "Replace"}
                       </Button>
                       <Button
-                        disabled={draft.questions.length <= 1}
+                        disabled={
+                          draft.questions.length <=
+                          interviewPlanPolicy.minQuestionsToPublish
+                        }
                         variant="ghost"
                         onClick={() => onRemoveQuestion(question.id)}
                       >
@@ -1386,7 +1303,7 @@ function QuestionsStep({
         {hasReachedQuestionLimit ? (
           <div className="flex items-start gap-3 text-sm leading-6 text-ink-600">
             <Check aria-hidden="true" className="mt-1 h-4 w-4 shrink-0 text-olive-800" />
-            This interview already has 5 questions, which is the V1 limit for
+            This role screen already has 5 questions, which is the V1 limit for
             a focused first screen.
           </div>
         ) : isAddingQuestion ? (
@@ -1394,23 +1311,23 @@ function QuestionsStep({
             <div>
               <p className="text-sm font-semibold text-ink-900">Add a question</p>
               <p className="mt-1 text-sm leading-5 text-ink-600">
-                Tell AI what signal is missing, or write the question directly later.
+                Tell Prelude what signal is missing, or write the question directly later.
               </p>
             </div>
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
               <input
-                aria-label="Ask AI to add a question about"
+                aria-label="Ask Prelude to add a question about"
                 className="h-10 min-w-0 rounded-2xl border border-ink-200 bg-white/88 px-3 text-sm outline-none focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
                 value={addTopic}
                 placeholder="salary alignment, mobility, language..."
                 onChange={(event) => setAddTopic(event.target.value)}
               />
               <Button
-                disabled={hasReachedQuestionLimit}
-                onClick={() => addWithAI(addTopic || "screening fit")}
+                disabled={hasReachedQuestionLimit || workingQuestionId === "new"}
+                onClick={() => void addWithAI(addTopic || "screening fit")}
               >
                 <Sparkles aria-hidden="true" className="h-4 w-4" />
-                Add with AI
+                {workingQuestionId === "new" ? "Adding..." : "Add with Prelude"}
               </Button>
             </div>
           </div>
@@ -1428,7 +1345,7 @@ function QuestionsStep({
                 Add question
               </span>
               <span className="mt-1 block text-sm text-ink-600">
-                Ask AI for one missing screening signal.
+                Ask Prelude for one missing screening signal.
               </span>
             </span>
           </button>
@@ -1545,7 +1462,7 @@ function ShareStep({
         </p>
         <p className="mt-2 text-sm leading-6 text-ink-600">
           Drafts stay private. Publishing snapshots the current questions,
-          criteria, and candidate formats into a shareable interview.
+          criteria, and candidate formats into a shareable role screen.
         </p>
       </div>
 
@@ -1597,7 +1514,7 @@ function ShareStep({
           {isSaving ? "Saving..." : "Save draft"}
         </Button>
         <Button disabled={!canPublish || isSaving || isPublishing} onClick={onPublish}>
-          {isPublishing ? "Publishing..." : "Publish interview"}
+          {isPublishing ? "Publishing..." : "Publish role screen"}
         </Button>
         {publishedInterview ? (
           <a
@@ -1644,7 +1561,7 @@ function CandidatePreviewDialog({
           <p className="text-xs font-medium text-white/60">{companyName}</p>
           <h3 className="mt-4 text-xl font-semibold leading-snug">{question.prompt}</h3>
           <p className="mt-5 text-sm leading-6 text-white/68">
-            Answer by audio, video, or text. You can preview before sending.
+            Answer by audio or form. You can preview before sending.
           </p>
           <div className="mt-8 grid gap-2">
             <button

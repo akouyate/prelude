@@ -6,6 +6,7 @@ export type DashboardActiveRoleState =
   | "completed"
   | "draft"
   | "needs_review"
+  | "paused"
   | "published";
 
 export type DashboardActiveRole = {
@@ -121,6 +122,10 @@ function statusTone(status: DashboardActiveRoleState) {
 
   if (status === "published") {
     return "dark";
+  }
+
+  if (status === "paused") {
+    return "muted";
   }
 
   if (status === "completed") {

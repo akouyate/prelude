@@ -1,5 +1,6 @@
 export {
-  generateMockInterviewDraft,
+  generateDeterministicInterviewDraft,
+  resolveTargetInterviewQuestionCount,
   type InterviewAgentDraft,
   type InterviewCriterionDraft,
   type InterviewDraftInput,

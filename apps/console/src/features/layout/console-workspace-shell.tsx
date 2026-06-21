@@ -6,7 +6,7 @@ import { EnterpriseShell } from "@prelude/ui";
 import type { OrganizationUserContext } from "@prelude/types";
 
 const sidebarStorageKey = "prelude:workspace-sidebar-collapsed";
-const focusModePaths = ["/interviews/new"];
+const focusModePaths = ["/roles/new", "/interviews/new"];
 
 export function ConsoleWorkspaceShell({
   account,

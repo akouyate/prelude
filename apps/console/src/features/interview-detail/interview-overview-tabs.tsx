@@ -1,9 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { CheckCircle, WarningTriangle } from "iconoir-react";
+import {
+  Check,
+  Copy,
+  Link as LinkIcon,
+  Pause,
+  WarningTriangle,
+} from "iconoir-react";
 import { UnderlineTabs, cn } from "@prelude/ui";
 
+import { updateInterviewPublicationStatusAction } from "../../server/interviews/interview-actions";
 import {
   CandidateScreensTable,
   isCandidateScreenInProgress,
@@ -11,7 +18,7 @@ import {
 } from "../candidate-screens";
 
 type ReviewFilter = "all" | "archived" | "in_progress" | "to_call" | "to_review";
-type OverviewTab = "candidates" | "setup";
+type OverviewTab = "candidates" | "overview" | "questions" | "settings";
 
 export type InterviewOverviewQuestion = {
   id: string;
@@ -27,12 +34,39 @@ export type InterviewOverviewCriterion = {
   label: string;
 };
 
+export type InterviewOverviewSource = {
+  mono: string;
+  monoBg: string;
+  monoFg: string;
+  name: string;
+  sub: string;
+  title: string;
+};
+
+export type InterviewOverviewStat = {
+  label: string;
+  tone?: "danger" | "default";
+  value: string;
+};
+
+export type InterviewOverviewConfigItem = {
+  label: string;
+  value: string;
+};
+
 export type InterviewOverviewTabsProps = {
+  candidatePath: string;
   candidates: CandidateScreenListItem[];
+  config: InterviewOverviewConfigItem[];
   criteria: InterviewOverviewCriterion[];
   guardrails: string[];
+  interviewId: string;
+  publicationStatus: string;
   questions: InterviewOverviewQuestion[];
   roleBrief: string;
+  roleTitle: string;
+  source: InterviewOverviewSource | null;
+  stats: InterviewOverviewStat[];
   summaryLine: string;
 };
 
@@ -45,15 +79,21 @@ const filterOptions = [
 ] satisfies Array<{ label: string; value: ReviewFilter }>;
 
 export function InterviewOverviewTabs({
+  candidatePath,
   candidates,
+  config,
   criteria,
   guardrails,
+  interviewId,
+  publicationStatus,
   questions,
   roleBrief,
+  roleTitle,
+  source,
+  stats,
   summaryLine,
 }: InterviewOverviewTabsProps) {
-  const [tab, setTab] = React.useState<OverviewTab>("candidates");
-  const [filter, setFilter] = React.useState<ReviewFilter>("all");
+  const [tab, setTab] = React.useState<OverviewTab>("overview");
   const needsReviewCount = React.useMemo(
     () =>
       candidates.filter(
@@ -63,6 +103,198 @@ export function InterviewOverviewTabs({
       ).length,
     [candidates],
   );
+
+  return (
+    <section className="mt-[26px]">
+      <UnderlineTabs
+        ariaLabel="Role detail sections"
+        onValueChange={setTab}
+        options={[
+          { label: "Overview", value: "overview" },
+          {
+            count: needsReviewCount > 0 ? needsReviewCount : undefined,
+            label: "Candidates",
+            value: "candidates",
+          },
+          { count: questions.length, label: "Questions", value: "questions" },
+          { label: "Settings", value: "settings" },
+        ]}
+        value={tab}
+      />
+
+      {tab === "overview" ? (
+        <OverviewPanel
+          criteria={criteria}
+          roleBrief={roleBrief}
+          source={source}
+          stats={stats}
+        />
+      ) : null}
+      {tab === "candidates" ? (
+        <CandidatesPanel candidates={candidates} summaryLine={summaryLine} />
+      ) : null}
+      {tab === "questions" ? (
+        <QuestionsPanel questions={questions} />
+      ) : null}
+      {tab === "settings" ? (
+        <SettingsPanel
+          candidatePath={candidatePath}
+          config={config}
+          guardrails={guardrails}
+          interviewId={interviewId}
+          publicationStatus={publicationStatus}
+          roleTitle={roleTitle}
+        />
+      ) : null}
+    </section>
+  );
+}
+
+export function CopyCandidateLinkButton({
+  candidatePath,
+  children,
+}: {
+  candidatePath: string;
+  children: React.ReactNode;
+}) {
+  const [copied, setCopied] = React.useState(false);
+
+  const handleCopy = React.useCallback(async () => {
+    const origin = typeof window === "undefined" ? "" : window.location.origin;
+    await navigator.clipboard?.writeText(`${origin}${candidatePath}`);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1600);
+  }, [candidatePath]);
+
+  return (
+    <button
+      className={cn(
+        "inline-flex h-[42px] max-w-[280px] cursor-pointer items-center justify-center gap-[9px] rounded-full border px-3.5 text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
+        copied
+          ? "border-[#cdd9b6] bg-[#eef0e3] text-olive-950"
+          : "border-[#ddd8cc] bg-white text-ink-950 hover:border-ink-950",
+      )}
+      onClick={handleCopy}
+      type="button"
+    >
+      {copied ? (
+        <Check aria-hidden={true} className="h-[15px] w-[15px]" />
+      ) : (
+        <Copy aria-hidden={true} className="h-[15px] w-[15px] text-[#8a8178]" />
+      )}
+      <span className="truncate text-[#5b574f]">
+        {copied ? "Link copied" : children}
+      </span>
+    </button>
+  );
+}
+
+function OverviewPanel({
+  criteria,
+  roleBrief,
+  source,
+  stats,
+}: {
+  criteria: InterviewOverviewCriterion[];
+  roleBrief: string;
+  source: InterviewOverviewSource | null;
+  stats: InterviewOverviewStat[];
+}) {
+  return (
+    <div className="mt-6 flex flex-col gap-[30px]">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {stats.map((stat) => (
+          <div
+            className="rounded-[14px] border border-[#e7e2d8] bg-white px-4 py-[15px]"
+            key={stat.label}
+          >
+            <p
+              className={cn(
+                "text-[26px] font-semibold leading-none tracking-[-0.02em]",
+                stat.tone === "danger" ? "text-[#9c3b25]" : "text-ink-950",
+              )}
+            >
+              {stat.value}
+            </p>
+            <p className="mt-[5px] text-xs text-[#8a8178]">{stat.label}</p>
+          </div>
+        ))}
+      </section>
+
+      {source ? (
+        <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[#e7e2d8] bg-white px-[18px] py-4">
+          <div className="flex min-w-0 items-center gap-3.5">
+            <span
+              className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-xl text-[15px] font-bold tracking-[-0.02em]"
+              style={{ background: source.monoBg, color: source.monoFg }}
+            >
+              {source.mono}
+            </span>
+            <span className="min-w-0">
+              <span className="block text-[14.5px] font-semibold text-ink-950">
+                {source.title}
+              </span>
+              <span className="mt-[3px] block truncate text-[12.5px] text-[#8a8178]">
+                {source.sub}
+              </span>
+            </span>
+          </div>
+          <button
+            className="inline-flex h-[38px] cursor-pointer items-center gap-[7px] rounded-full border border-[#ddd8cc] bg-white px-[15px] text-[13px] font-semibold text-ink-950 transition hover:border-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+            type="button"
+          >
+            View original offer
+            <LinkIcon aria-hidden={true} className="h-3.5 w-3.5" />
+          </button>
+        </section>
+      ) : null}
+
+      <section>
+        <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-[#a29b8d]">
+          Role brief
+        </p>
+        <p className="mt-[9px] max-w-[62ch] text-[15px] leading-[1.6] text-[#5b574f]">
+          {roleBrief || "No role brief has been added yet."}
+        </p>
+      </section>
+
+      <section>
+        <SectionTitle
+          description="What reviewers compare after the screen."
+          title="Evaluation criteria"
+        />
+        <div className="mt-3.5 grid gap-2 md:grid-cols-2">
+          {criteria.length > 0 ? (
+            criteria.map((criterion) => (
+              <article
+                className="rounded-[13px] border border-[#e7e2d8] bg-white px-[15px] py-[13px]"
+                key={criterion.id}
+              >
+                <p className="text-[13.5px] font-semibold text-ink-950">
+                  {criterion.label}
+                </p>
+                <p className="mt-1 text-[12.5px] leading-[1.45] text-[#787367]">
+                  {criterion.description}
+                </p>
+              </article>
+            ))
+          ) : (
+            <EmptyInlineState text="No evaluation criteria have been generated yet." />
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CandidatesPanel({
+  candidates,
+  summaryLine,
+}: {
+  candidates: CandidateScreenListItem[];
+  summaryLine: string;
+}) {
+  const [filter, setFilter] = React.useState<ReviewFilter>("all");
   const visibleCandidates = React.useMemo(
     () =>
       candidates.filter((candidate) => matchesFilter(candidate, filter)),
@@ -70,59 +302,12 @@ export function InterviewOverviewTabs({
   );
 
   return (
-    <section className="mt-6">
-      <UnderlineTabs
-        ariaLabel="Interview detail sections"
-        onValueChange={setTab}
-        options={[
-          {
-            count: needsReviewCount > 0 ? needsReviewCount : undefined,
-            label: "Candidates",
-            value: "candidates",
-          },
-          { label: "Interview setup", value: "setup" },
-        ]}
-        value={tab}
-      />
+    <div className="mt-[22px]">
+      <p className="mb-3.5 text-[13.5px] leading-6 text-[#777166]">
+        {summaryLine}
+      </p>
 
-      {tab === "candidates" ? (
-        <CandidatesPanel
-          candidates={candidates}
-          filter={filter}
-          onFilterChange={setFilter}
-          summaryLine={summaryLine}
-          visibleCandidates={visibleCandidates}
-        />
-      ) : (
-        <SetupPanel
-          criteria={criteria}
-          guardrails={guardrails}
-          questions={questions}
-          roleBrief={roleBrief}
-        />
-      )}
-    </section>
-  );
-}
-
-function CandidatesPanel({
-  candidates,
-  filter,
-  onFilterChange,
-  summaryLine,
-  visibleCandidates,
-}: {
-  candidates: CandidateScreenListItem[];
-  filter: ReviewFilter;
-  onFilterChange: (value: ReviewFilter) => void;
-  summaryLine: string;
-  visibleCandidates: CandidateScreenListItem[];
-}) {
-  return (
-    <div className="mt-5">
-      <p className="text-[13.5px] leading-6 text-ink-500">{summaryLine}</p>
-
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mb-4 flex flex-wrap gap-2">
         {filterOptions.map((option) => {
           const active = option.value === filter;
           const count = candidates.filter((candidate) =>
@@ -132,20 +317,20 @@ function CandidatesPanel({
           return (
             <button
               className={cn(
-                "inline-flex h-8 cursor-pointer items-center gap-2 rounded-full border px-3 text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
+                "inline-flex h-8 cursor-pointer items-center gap-[7px] rounded-full border px-[13px] text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
                 active
                   ? "border-[#e2e6d3] bg-[#eef0e3] text-olive-950"
-                  : "border-ink-100 bg-white text-ink-600 hover:border-ink-300 hover:text-ink-950",
+                  : "border-[#e7e2d8] bg-white text-[#5b574f] hover:border-[#cbc4b6] hover:text-ink-950",
               )}
               key={option.value}
-              onClick={() => onFilterChange(option.value)}
+              onClick={() => setFilter(option.value)}
               type="button"
             >
               {option.label}
               <span
                 className={cn(
                   "text-[11.5px] font-bold",
-                  active ? "text-olive-900" : "text-ink-400",
+                  active ? "text-olive-900" : "text-[#a29b8d]",
                 )}
               >
                 {count}
@@ -157,110 +342,183 @@ function CandidatesPanel({
 
       <CandidateScreensTable
         candidates={visibleCandidates}
-        emptyDescription="No session matches this filter yet."
+        className="mt-0 rounded-[18px] border-[#e7e2d8] bg-white"
+        emptyDescription="No candidate matches this filter yet."
         emptyTitle="No candidates here"
       />
     </div>
   );
 }
 
-function SetupPanel({
-  criteria,
-  guardrails,
+function QuestionsPanel({
   questions,
-  roleBrief,
 }: {
-  criteria: InterviewOverviewCriterion[];
-  guardrails: string[];
   questions: InterviewOverviewQuestion[];
-  roleBrief: string;
 }) {
   return (
-    <div className="mt-6 space-y-8">
-      <section>
-        <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-ink-400">
-          Role brief
-        </p>
-        <p className="mt-2 max-w-[62ch] text-[15px] leading-7 text-ink-600">
-          {roleBrief || "No role brief has been added yet."}
-        </p>
-      </section>
-
-      <section>
-        <SectionTitle
-          description="What the live interviewer asks, and the signal each answer reveals."
-          title="Interview script"
-        />
-        <div className="mt-4 space-y-2.5">
-          {questions.map((question) => (
+    <div className="mt-6">
+      <SectionTitle
+        description="What the live interviewer asks, and the signal each answer reveals."
+        title="Interview script"
+      />
+      <div className="mt-4 flex flex-col gap-2.5">
+        {questions.length > 0 ? (
+          questions.map((question) => (
             <article
-              className="flex gap-4 rounded-2xl border border-ink-100 bg-white px-[18px] py-4"
+              className="flex gap-[15px] rounded-2xl border border-[#e7e2d8] bg-white px-[18px] py-4"
               key={question.id}
             >
               <span className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-full bg-[#eef0e3] text-[11.5px] font-bold text-olive-900">
                 {question.numberLabel}
               </span>
               <span className="min-w-0 flex-1">
-                <p className="text-[15px] font-semibold leading-6 text-ink-950">
+                <p className="text-[15px] font-semibold leading-[1.45] text-ink-950">
                   {question.prompt}
                 </p>
-                <p className="mt-1.5 text-[12.5px] leading-5 text-ink-500">
-                  <span className="font-semibold text-ink-600">Signal · </span>
+                <p className="mt-1.5 text-[12.5px] leading-[1.5] text-[#8a8178]">
+                  <span className="font-semibold text-[#6f6a5f]">Signal · </span>
                   {question.signal}
-                  <span className="text-ink-300"> · </span>
+                  <span className="text-[#c0b9aa]"> · </span>
                   {question.sourceLabel}
                 </p>
               </span>
             </article>
+          ))
+        ) : (
+          <EmptyInlineState text="No questions have been generated yet." />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SettingsPanel({
+  candidatePath,
+  config,
+  guardrails,
+  interviewId,
+  publicationStatus,
+  roleTitle,
+}: {
+  candidatePath: string;
+  config: InterviewOverviewConfigItem[];
+  guardrails: string[];
+  interviewId: string;
+  publicationStatus: string;
+  roleTitle: string;
+}) {
+  const isPaused = publicationStatus === "paused";
+  const nextStatus = isPaused ? "published" : "paused";
+
+  return (
+    <div className="mt-6 flex flex-col gap-[30px]">
+      <section>
+        <SectionTitle
+          description="How this screen runs for every candidate."
+          title="Configuration"
+        />
+        <div className="mt-3.5 overflow-hidden rounded-2xl border border-[#e7e2d8] bg-white">
+          {config.map((item) => (
+            <div
+              className="flex items-center justify-between gap-4 border-b border-[#f0ece1] px-[18px] py-3.5 last:border-b-0"
+              key={item.label}
+            >
+              <span className="text-[13.5px] font-semibold text-ink-950">
+                {item.label}
+              </span>
+              <span className="text-right text-[13px] text-[#5b574f]">
+                {item.value}
+              </span>
+            </div>
           ))}
         </div>
       </section>
 
-      <section className="grid gap-6 md:grid-cols-2">
-        <div>
-          <SectionTitle
-            description="What reviewers compare after the screen."
-            title="Evaluation criteria"
-          />
-          <div className="mt-4 space-y-2">
-            {criteria.map((criterion) => (
-              <div
-                className="rounded-2xl border border-ink-100 bg-white px-4 py-3"
-                key={criterion.id}
-              >
-                <p className="text-[13.5px] font-semibold text-ink-950">
-                  {criterion.label}
-                </p>
-                <p className="mt-1 text-[12.5px] leading-5 text-ink-500">
-                  {criterion.description}
-                </p>
-              </div>
-            ))}
-          </div>
+      <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[#e7e2d8] bg-white px-[18px] py-4">
+        <div className="min-w-0">
+          <p className="text-[14px] font-semibold text-ink-950">
+            Candidate link
+          </p>
+          <p className="mt-1 truncate text-[12.5px] text-[#8a8178]">
+            {candidatePath}
+          </p>
         </div>
+        <CopyCandidateLinkButton candidatePath={candidatePath}>
+          Copy link
+        </CopyCandidateLinkButton>
+      </section>
 
-        <div>
-          <SectionTitle
-            description="Rules the interviewer must preserve."
-            title="Guardrails"
-          />
-          <div className="mt-4 space-y-3">
-            {guardrails.map((guardrail) => (
-              <div className="flex gap-2.5" key={guardrail}>
-                <CheckCircle
+      <section>
+        <SectionTitle
+          description="Rules the interviewer must preserve."
+          title="Guardrails"
+        />
+        <div className="mt-3.5 flex flex-col gap-[11px] px-0.5 py-1">
+          {guardrails.length > 0 ? (
+            guardrails.map((guardrail) => (
+              <div className="flex items-start gap-2.5" key={guardrail}>
+                <Check
                   aria-hidden={true}
-                  className="mt-0.5 h-4 w-4 shrink-0 text-olive-800"
+                  className="mt-0.5 h-[15px] w-[15px] shrink-0 text-olive-800"
                 />
-                <p className="text-[13px] leading-6 text-ink-600">
+                <p className="text-[13px] leading-[1.5] text-[#5b574f]">
                   {guardrail}
                 </p>
               </div>
-            ))}
-          </div>
+            ))
+          ) : (
+            <EmptyInlineState text="No guardrails have been configured yet." />
+          )}
         </div>
       </section>
 
-      <div className="flex gap-2.5 rounded-2xl border border-ink-100 bg-[#f7f7ef] px-4 py-3 text-sm leading-6 text-ink-600">
+      <section
+        className={cn(
+          "flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-[18px] py-4",
+          isPaused
+            ? "border-[#dfe7ca] bg-[#f7f9ef]"
+            : "border-[#efdcd5] bg-[#fdf6f3]",
+        )}
+      >
+        <div className="min-w-0">
+          <p
+            className={cn(
+              "text-sm font-semibold",
+              isPaused ? "text-olive-900" : "text-[#7a2d1c]",
+            )}
+          >
+            {isPaused ? "Resume this role" : "Pause this role"}
+          </p>
+          <p
+            className={cn(
+              "mt-1 text-[12.5px] leading-[1.45]",
+              isPaused ? "text-olive-800" : "text-[#9c6453]",
+            )}
+          >
+            {isPaused
+              ? `Candidates will be able to start ${roleTitle} again. Existing sessions stay unchanged.`
+              : `New candidates won't be able to start ${roleTitle}. Existing sessions are kept.`}
+          </p>
+        </div>
+        <form action={updateInterviewPublicationStatusAction}>
+          <input name="interviewId" type="hidden" value={interviewId} />
+          <input name="nextStatus" type="hidden" value={nextStatus} />
+          <button
+            className={cn(
+              "inline-flex h-[38px] cursor-pointer items-center gap-2 rounded-full border bg-white px-4 text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2",
+              isPaused
+                ? "border-[#d4ddbd] text-olive-900 hover:border-olive-800 focus-visible:ring-olive-300"
+                : "border-[#e0b5a8] text-[#9a3417] hover:border-[#9a3417] focus-visible:ring-coral-100",
+            )}
+            type="submit"
+          >
+            <Pause aria-hidden={true} className="h-4 w-4" />
+            {isPaused ? "Resume role" : "Pause role"}
+          </button>
+        </form>
+      </section>
+
+      <section className="flex gap-2.5 rounded-2xl border border-[#e7e2d8] bg-[#f7f7ef] px-4 py-3 text-sm leading-6 text-[#5b574f]">
         <WarningTriangle
           aria-hidden={true}
           className="mt-0.5 h-4 w-4 shrink-0 text-olive-800"
@@ -269,7 +527,7 @@ function SetupPanel({
           The interview supports human screening only. It must not be used as an
           automated hiring or rejection decision.
         </p>
-      </div>
+      </section>
     </div>
   );
 }
@@ -286,7 +544,15 @@ function SectionTitle({
       <h2 className="text-[17px] font-semibold tracking-[-0.01em] text-ink-950">
         {title}
       </h2>
-      <p className="mt-1 text-[13.5px] text-ink-500">{description}</p>
+      <p className="mt-[5px] text-[13.5px] text-[#777166]">{description}</p>
+    </div>
+  );
+}
+
+function EmptyInlineState({ text }: { text: string }) {
+  return (
+    <div className="rounded-2xl border border-dashed border-[#d8d2c4] bg-white/70 px-4 py-6 text-center text-[13px] text-[#8a8178]">
+      {text}
     </div>
   );
 }

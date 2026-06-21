@@ -71,12 +71,15 @@ export type InterviewDetailData =
         estimatedMinutes: number | null;
         guardrails: string[];
         id: string;
+        jobId: string;
         jobTitle: string;
+        location: string | null;
         publicToken: string;
         questions: InterviewQuestionDraft[];
         responseModes: InterviewResponseMode[];
         roleBrief: string;
         roleTitle: string;
+        sourceProvider: string | null;
         status: string;
         updatedAt: string;
       };
@@ -167,13 +170,14 @@ export async function getInterviewBuilderContext({
     }
   }
 
-  const job = await prisma.job.findFirst({
-    orderBy: { createdAt: "desc" },
-    where: {
-      organizationId: scope.organizationId,
-      ...(jobId ? { id: jobId } : {}),
-    },
-  });
+  const job = jobId
+    ? await prisma.job.findFirst({
+        where: {
+          id: jobId,
+          organizationId: scope.organizationId,
+        },
+      })
+    : null;
 
   return {
     companyName: organization.name,
@@ -251,12 +255,15 @@ export async function getInterviewDetail(
         estimatedMinutes: interview.estimatedMinutes,
         guardrails: readStringArray(interview.guardrails),
         id: interview.id,
+        jobId: interview.jobId,
         jobTitle: interview.job.title,
+        location: interview.job.location,
         publicToken: interview.publicToken,
         questions: readQuestions(interview.questions),
         responseModes: readResponseModes(interview.responseModes),
         roleBrief: interview.roleBrief,
         roleTitle: interview.roleTitle,
+        sourceProvider: interview.job.sourceProvider,
         status: interview.status,
         updatedAt: interview.updatedAt.toISOString(),
       },

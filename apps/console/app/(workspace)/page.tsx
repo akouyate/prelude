@@ -25,7 +25,7 @@ export default async function DashboardPage() {
     getConsoleDashboardData(),
     getConsoleAuthContext(),
   ]);
-  const reviewTarget = dashboard.primaryReviewHref ?? "/interviews/new";
+  const reviewTarget = dashboard.primaryReviewHref ?? "/roles/new";
   const reviewRows = dashboard.reviewQueue.slice(0, 6).map(
     (session): DashboardReviewQueueRow => ({
       analysisStatus: session.analysisStatus,
@@ -123,7 +123,7 @@ function getNextAction({
   return {
     description:
       "Create the first role screen from a job brief, then publish the candidate link.",
-    href: "/interviews/new",
+    href: "/roles/new",
     label: "Create role screen",
     title: "Prepare first role",
   };

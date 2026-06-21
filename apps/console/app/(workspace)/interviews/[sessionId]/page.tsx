@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import type { ComponentType, ReactNode } from "react";
 import { type CandidateBriefDto } from "@prelude/contracts";
 import { recruiterLimitationCopy } from "@prelude/core";
@@ -35,7 +35,6 @@ import {
   initialsForCandidate,
 } from "../../../../src/features/candidate-screens";
 import { CandidateDetailTabs } from "../../../../src/features/interview-detail/candidate-detail-tabs";
-import { InterviewOverview } from "../../../../src/features/interview-detail/interview-overview";
 
 type InterviewDetailPageProps = {
   params: Promise<{
@@ -59,17 +58,15 @@ export default async function InterviewDetailPage({
     notFound();
   }
 
+  if (detail.kind === "interview") {
+    redirect(`/roles/${detail.interview.id}`);
+  }
+
   return (
-    <>
-      {detail.kind === "interview" ? (
-        <InterviewOverview detail={detail} />
-      ) : (
-        <CandidateSessionReview
-          canManageReview={canManageCandidateReview(account.role)}
-          session={detail.candidateSession}
-        />
-      )}
-    </>
+    <CandidateSessionReview
+      canManageReview={canManageCandidateReview(account.role)}
+      session={detail.candidateSession}
+    />
   );
 }
 

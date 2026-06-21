@@ -159,6 +159,16 @@ ALLOW_LIVE_LLM_TESTS=1 make e2e-smoke-live E2E_SMOKE_RUN_ID=local-v1-live
 
 Do not run live LLM smoke in CI.
 
+Role screen creation uses the server-side interview draft generator. Product
+generation uses OpenAI when `OPENAI_API_KEY` and `INTERVIEW_DRAFT_GENERATOR=openai`
+are configured; automated console E2E tests force
+`INTERVIEW_DRAFT_GENERATOR=deterministic` so CI never pays for draft generation.
+To run the explicit paid provider smoke locally:
+
+```bash
+ALLOW_LIVE_LLM_TESTS=1 pnpm --dir apps/console exec vitest run src/server/interviews/interview-draft-generation.live.test.ts
+```
+
 The step-by-step release workflow and remaining slice risks are documented in
 [`docs/architecture/v1-e2e-release-workflow.md`](docs/architecture/v1-e2e-release-workflow.md).
 The live IA commercial POC checklist is documented in
@@ -167,5 +177,7 @@ Compliance and candidate trust guardrails are documented in
 [`docs/operations/compliance-trust-guardrails.md`](docs/operations/compliance-trust-guardrails.md).
 Evaluation matrix implementation sources are tracked in
 [`docs/sources/evaluation-matrix.md`](docs/sources/evaluation-matrix.md).
+Role draft generation sources are tracked in
+[`docs/sources/role-draft-generation.md`](docs/sources/role-draft-generation.md).
 Compliance guardrail source rationale is tracked in
 [`docs/sources/compliance-guardrails.md`](docs/sources/compliance-guardrails.md).

@@ -106,5 +106,12 @@ export function candidateScreenMatchesQuery(
 }
 
 export function isCandidateScreenInProgress(status: string) {
-  return status === "in_progress" || status === "waiting_candidate";
+  return (
+    status === "agent_joining" ||
+    status === "created" ||
+    status === "in_progress" ||
+    status === "paused" ||
+    status === "started" ||
+    status === "waiting_candidate"
+  );
 }

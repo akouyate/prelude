@@ -38,7 +38,7 @@ export function DashboardPageHeader({
         </button>
         <Link
           className="inline-flex h-[38px] cursor-pointer items-center justify-center gap-2 rounded-full bg-ink-900 px-[17px] text-[13px] font-semibold text-white transition hover:bg-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-          href="/interviews/new"
+          href="/roles/new"
         >
           <Plus aria-hidden={true} className="h-4 w-4" />
           New role screen

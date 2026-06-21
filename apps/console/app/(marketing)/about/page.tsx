@@ -28,7 +28,7 @@ export default function AboutPage() {
               </Link>
               <Link
                 className="inline-flex h-12 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-white/80 px-5 text-sm font-semibold text-ink-900 transition hover:border-ink-900 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6]"
-                href="/interviews/new"
+                href="/roles/new"
               >
                 Create interview
               </Link>

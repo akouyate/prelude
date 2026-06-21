@@ -149,6 +149,7 @@ export async function saveInterviewDraft(
   });
 
   revalidatePath("/");
+  revalidatePath("/roles/new");
   revalidatePath("/interviews/new");
 
   return {
@@ -226,7 +227,15 @@ export async function publishInterviewDraft(
     };
 
     if (publicationMode === "return_existing_snapshot" && draft.interview) {
-      return { interview: draft.interview, kind: "published" as const };
+      const interview =
+        draft.interview.status === "published"
+          ? draft.interview
+          : await tx.interview.update({
+              data: { status: "published" },
+              where: { id: draft.interview.id },
+            });
+
+      return { interview, kind: "published" as const };
     }
 
     if (publicationMode === "create_republished_snapshot" && draft.interview) {
@@ -260,12 +269,14 @@ export async function publishInterviewDraft(
   }
 
   revalidatePath("/");
+  revalidatePath("/roles");
+  revalidatePath(`/roles/${result.interview.id}`);
   revalidatePath(`/interviews/${result.interview.id}`);
 
   return {
     ok: true,
     candidatePath: `/interview/${result.interview.publicToken}`,
-    detailPath: `/interviews/${result.interview.id}`,
+    detailPath: `/roles/${result.interview.id}`,
     interviewId: result.interview.id,
     publicToken: result.interview.publicToken,
   };
