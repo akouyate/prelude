@@ -124,6 +124,17 @@ successfully when the report is generated; use
 `node scripts/live-smoke-report.mjs --strict` later if this needs to become a CI
 gate. The full enterprise dashboard view belongs to issue #21.
 
+Use the strict variant after a real LiveKit/OpenAI mobile test when the result
+should block release:
+
+```bash
+make live-smoke-report-strict SESSION_ID=is_xxx
+```
+
+Strict mode fails on lifecycle anomalies such as missing `session_closing`,
+missing closing transcript evidence, provider errors, non-contiguous events, or
+completion before candidate media readiness.
+
 ## V1 E2E Smoke
 
 Create a repeatable local V1 workflow dataset with real Postgres persistence:

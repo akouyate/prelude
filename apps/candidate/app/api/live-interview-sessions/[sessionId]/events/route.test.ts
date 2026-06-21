@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { POST } from "./route";
+import { GET, POST } from "./route";
 
 describe("POST /api/live-interview-sessions/[sessionId]/events", () => {
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -219,6 +220,112 @@ describe("POST /api/live-interview-sessions/[sessionId]/events", () => {
     expect(response.status).toBe(400);
     await expect(response.json()).resolves.toEqual({
       error: { code: "unsupported_event_type" },
+    });
+  });
+});
+
+describe("GET /api/live-interview-sessions/[sessionId]/events", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("proxies normalized realtime session state for the candidate room", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      Response.json({
+        session: {
+          id: "is_ready",
+          candidate_id: "candidate-demo",
+          status: "in_progress",
+          events: [
+            {
+              event_id: "evt_agent_speech_started",
+              type: "agent_speech_started",
+              actor: "agent",
+              sequence_number: 3,
+              occurred_at: "2026-06-21T09:00:00Z",
+              payload: { question_id: "intro" },
+            },
+            {
+              eventId: "evt_question_asked",
+              type: "question_asked",
+              actor: "agent",
+              sequence: 4,
+              occurredAt: "2026-06-21T09:00:02Z",
+              payload: {
+                transcript_turn: {
+                  turn_id: "turn_q1",
+                  speaker: "interviewer",
+                  text: "Can you introduce yourself?",
+                },
+              },
+            },
+          ],
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await GET(
+      new Request(
+        "http://candidate.test/api/live-interview-sessions/is_ready/events",
+      ),
+      { params: Promise.resolve({ sessionId: "is_ready" }) },
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({
+      session: {
+        sessionId: "is_ready",
+        status: "in_progress",
+        events: [
+          {
+            eventId: "evt_agent_speech_started",
+            sequence: 3,
+            type: "agent_speech_started",
+            actor: "agent",
+            occurredAt: "2026-06-21T09:00:00Z",
+            payload: { question_id: "intro" },
+          },
+          {
+            eventId: "evt_question_asked",
+            sequence: 4,
+            type: "question_asked",
+            actor: "agent",
+            occurredAt: "2026-06-21T09:00:02Z",
+            payload: {
+              transcript_turn: {
+                turn_id: "turn_q1",
+                speaker: "interviewer",
+                text: "Can you introduce yourself?",
+              },
+            },
+          },
+        ],
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8080/v1/interview-sessions/is_ready",
+      {
+        headers: { accept: "application/json" },
+        cache: "no-store",
+      },
+    );
+  });
+
+  it("returns 502 when realtime state is unavailable", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(null));
+
+    const response = await GET(
+      new Request(
+        "http://candidate.test/api/live-interview-sessions/is_ready/events",
+      ),
+      { params: Promise.resolve({ sessionId: "is_ready" }) },
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "session_unavailable" },
     });
   });
 });

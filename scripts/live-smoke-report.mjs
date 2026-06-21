@@ -103,6 +103,7 @@ function buildReport({ session, events, transcript }) {
     ].includes(event.type),
   );
   const firstQuestion = firstOf(events, "question_asked");
+  const closing = lastOf(events, "session_closing");
   const completed = lastOf(events, "session_completed");
   const failedEvents = events.filter(
     (event) => event.type === "session_failed",
@@ -158,6 +159,10 @@ function buildReport({ session, events, transcript }) {
         ? eventSequence(candidateReady) < eventSequence(firstQuestion)
         : null,
   };
+  const closingTranscriptTurn =
+    closing?.payload?.transcript_turn ?? closing?.payload?.transcriptTurn;
+  const closingBeforeCompleted =
+    closing && completed ? eventSequence(closing) < eventSequence(completed) : null;
 
   const anomalies = [];
   const warnings = [];
@@ -178,6 +183,15 @@ function buildReport({ session, events, transcript }) {
   }
   if (session.status === "completed" && candidateTurns.length === 0) {
     anomalies.push("Completed session has no candidate transcript turn.");
+  }
+  if (session.status === "completed" && !closing) {
+    anomalies.push("Completed session has no session_closing event.");
+  }
+  if (closing && !closingTranscriptTurn) {
+    anomalies.push("session_closing event has no interviewer transcript turn.");
+  }
+  if (closingBeforeCompleted === false) {
+    anomalies.push("session_completed was emitted before session_closing.");
   }
   if (!answerEvaluationCoverage) {
     anomalies.push(
@@ -244,6 +258,8 @@ function buildReport({ session, events, transcript }) {
       bargeInAcceptedCount: counts.barge_in_accepted ?? 0,
       answerEvaluatedCount: counts.answer_evaluated ?? 0,
       providerErrorCount: failedEvents.length,
+      closingBeforeCompleted,
+      hasClosingTranscript: Boolean(closingTranscriptTurn),
     },
     readiness,
     answerClassifications: countBy(answerEvaluations, (event) =>
@@ -288,6 +304,8 @@ function formatMarkdown(report) {
 - Accepted barge-ins: ${report.metrics.bargeInAcceptedCount}
 - Answer evaluations: ${report.metrics.answerEvaluatedCount}
 - Provider errors: ${report.metrics.providerErrorCount}
+- Closing before completed: ${formatNullableBoolean(report.metrics.closingBeforeCompleted)}
+- Closing transcript: ${formatBoolean(report.metrics.hasClosingTranscript)}
 
 ## Readiness Gate
 

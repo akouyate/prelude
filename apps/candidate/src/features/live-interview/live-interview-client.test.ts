@@ -4,6 +4,7 @@ import {
   completeProductSession,
   connectRoom,
   createSession,
+  fetchLiveSessionState,
   decodeRealtimeTranscriptPacket,
   fetchLiveTranscript,
   resumeStorageKey,
@@ -429,6 +430,49 @@ describe("live interview client", () => {
     ]);
     expect(fetch).toHaveBeenCalledWith(
       "/api/live-interview-sessions/is_123/transcript",
+      {
+        headers: { accept: "application/json" },
+        cache: "no-store",
+      },
+    );
+  });
+
+  it("loads live session runtime state", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      jsonResponse({
+        session: {
+          sessionId: "is_123",
+          status: "in_progress",
+          events: [
+            {
+              eventId: "evt_1",
+              sequence: 1,
+              type: "agent_joined",
+              actor: "agent",
+              occurredAt: "2026-06-21T09:00:00Z",
+              payload: {},
+            },
+          ],
+        },
+      }),
+    );
+
+    await expect(fetchLiveSessionState("is_123")).resolves.toEqual({
+      sessionId: "is_123",
+      status: "in_progress",
+      events: [
+        {
+          eventId: "evt_1",
+          sequence: 1,
+          type: "agent_joined",
+          actor: "agent",
+          occurredAt: "2026-06-21T09:00:00Z",
+          payload: {},
+        },
+      ],
+    });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/live-interview-sessions/is_123/events",
       {
         headers: { accept: "application/json" },
         cache: "no-store",

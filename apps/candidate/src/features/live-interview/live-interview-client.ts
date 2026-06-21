@@ -1,6 +1,7 @@
 import type {
   ConnectedRoom,
   LiveInterviewSession,
+  LiveSessionState,
   LiveTranscriptTurn,
   LiveTranscriptTurnHandler,
   RoomDisconnectedEvent,
@@ -71,6 +72,30 @@ export async function fetchLiveTranscript(sessionId: string) {
   };
 
   return payload.transcript ?? [];
+}
+
+export async function fetchLiveSessionState(sessionId: string) {
+  const response = await fetch(
+    `/api/live-interview-sessions/${sessionId}/events`,
+    {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error("session_state_unavailable");
+  }
+
+  const payload = (await response.json()) as {
+    session?: LiveSessionState;
+  };
+
+  if (!payload.session) {
+    throw new Error("session_state_unavailable");
+  }
+
+  return payload.session;
 }
 
 export async function connectRoom({
