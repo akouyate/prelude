@@ -666,6 +666,17 @@ func TestServiceDispatchesAgentWhenCandidateMediaIsReady(t *testing.T) {
 	if !request.RequestedAt.Equal(clock.now) {
 		t.Fatalf("expected requested_at %s, got %s", clock.now, request.RequestedAt)
 	}
+
+	duplicate, err := service.IngestEvent(context.Background(), mediaReady)
+	if err != nil {
+		t.Fatalf("duplicate candidate_media_ready returned error: %v", err)
+	}
+	if !duplicate.Duplicate {
+		t.Fatal("expected duplicate candidate_media_ready result")
+	}
+	if len(dispatchQueue.requests) != 1 {
+		t.Fatalf("expected no extra dispatch for duplicate event, got %d requests", len(dispatchQueue.requests))
+	}
 }
 
 func TestServiceDoesNotFailEventIngestionWhenAgentDispatchFails(t *testing.T) {

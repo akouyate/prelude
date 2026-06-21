@@ -15,6 +15,7 @@ BENCHMARK_PERSIST_REALTIME ?=
 ALLOW_LIVE_LLM_TESTS ?=
 REALTIME_API_URL ?=
 AGENT_JOIN_STREAM_KEY ?=
+AGENT_JOIN_PENDING_IDLE_SECONDS ?=
 LIVE_WORKER_MAX_CONCURRENCY ?=
 LIVE_SMOKE_REALTIME_API_URL ?= http://127.0.0.1:8080
 SESSION_ID ?=
@@ -180,6 +181,9 @@ live-openai-autoworker: ## Run the Redis-backed Python auto-worker that starts l
 	fi; \
 	if [ -n "$(AGENT_JOIN_STREAM_KEY)" ]; then \
 		worker_args="$$worker_args --stream-key $(AGENT_JOIN_STREAM_KEY)"; \
+	fi; \
+	if [ -n "$(AGENT_JOIN_PENDING_IDLE_SECONDS)" ]; then \
+		worker_args="$$worker_args --pending-idle-seconds $(AGENT_JOIN_PENDING_IDLE_SECONDS)"; \
 	fi; \
 	if [ -n "$(LIVE_WORKER_MAX_CONCURRENCY)" ]; then \
 		worker_args="$$worker_args --max-concurrency $(LIVE_WORKER_MAX_CONCURRENCY)"; \

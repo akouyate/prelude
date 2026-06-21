@@ -17,6 +17,7 @@ from app.live_worker import run_live_worker
 
 DEFAULT_STREAM_KEY = "prelude:agent-join:stream"
 DEFAULT_CONSUMER_GROUP = "prelude-live-workers"
+DEFAULT_PENDING_IDLE_SECONDS = 30
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class RedisAgentJoinQueue:
         consumer_group: str = DEFAULT_CONSUMER_GROUP,
         consumer_name: str | None = None,
         poll_timeout_seconds: int = 5,
+        pending_idle_seconds: int = DEFAULT_PENDING_IDLE_SECONDS,
         max_attempts: int = 3,
     ) -> None:
         self._client = redis.from_url(redis_url, decode_responses=True)
@@ -54,11 +56,16 @@ class RedisAgentJoinQueue:
         self._consumer_name = consumer_name or socket.gethostname()
         self._dead_letter_key = f"{stream_key}:dead"
         self._poll_timeout_seconds = poll_timeout_seconds
+        self._pending_idle_ms = max(pending_idle_seconds, 1) * 1000
         self._max_attempts = max_attempts
         self._group_ready = False
 
     async def next_job(self) -> AgentJoinJob | None:
         await self._ensure_group()
+        claimed_job = await self._claim_stale_job()
+        if claimed_job is not None:
+            return claimed_job
+
         response = await self._client.xreadgroup(
             groupname=self._consumer_group,
             consumername=self._consumer_name,
@@ -71,6 +78,24 @@ class RedisAgentJoinQueue:
 
         _, messages = response[0]
         message_id, payload = messages[0]
+        return await self._job_from_message(message_id, payload)
+
+    async def _claim_stale_job(self) -> AgentJoinJob | None:
+        _, messages, _ = await self._client.xautoclaim(
+            self._stream_key,
+            self._consumer_group,
+            self._consumer_name,
+            min_idle_time=self._pending_idle_ms,
+            start_id="0-0",
+            count=1,
+        )
+        if not messages:
+            return None
+
+        message_id, payload = messages[0]
+        return await self._job_from_message(message_id, payload)
+
+    async def _job_from_message(self, message_id: str, payload: dict[str, str]) -> AgentJoinJob | None:
         session_id = str(payload.get("session_id", "")).strip()
         if not session_id:
             await self._client.xadd(
@@ -233,6 +258,17 @@ def parse_args() -> argparse.Namespace:
         help="Redis blocking pop timeout.",
     )
     parser.add_argument(
+        "--pending-idle-seconds",
+        type=int,
+        default=int(
+            os.getenv(
+                "AGENT_JOIN_PENDING_IDLE_SECONDS",
+                str(DEFAULT_PENDING_IDLE_SECONDS),
+            )
+        ),
+        help="Seconds before a pending Redis Stream job may be reclaimed by this worker.",
+    )
+    parser.add_argument(
         "--max-concurrency",
         type=int,
         default=int(os.getenv("LIVE_WORKER_MAX_CONCURRENCY", "2")),
@@ -253,6 +289,7 @@ async def main() -> None:
         stream_key=args.stream_key,
         consumer_group=args.consumer_group,
         poll_timeout_seconds=args.poll_timeout_seconds,
+        pending_idle_seconds=args.pending_idle_seconds,
     )
     print(
         "Starting Prelude live auto-worker "

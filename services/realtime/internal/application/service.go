@@ -335,7 +335,9 @@ func (s *Service) IngestEvent(ctx context.Context, input IngestEventInput) (Inge
 		return IngestEventOutput{}, err
 	}
 
-	s.dispatchAgentIfNeeded(ctx, result.Event)
+	if !result.Duplicate {
+		s.dispatchAgentIfNeeded(ctx, result.Event)
+	}
 
 	return IngestEventOutput{Event: result.Event, Duplicate: result.Duplicate}, nil
 }
