@@ -9,6 +9,32 @@ export const complianceFlagCodes = {
 export type ComplianceFlagCode =
   (typeof complianceFlagCodes)[keyof typeof complianceFlagCodes];
 
+// Shared category enum for the N6 second-layer protected-topic classifier.
+// Index-aligned with the keyword policy's coarse topics; "none" means clean.
+export const protectedTopicCategories = [
+  "age",
+  "appearance",
+  "accent",
+  "emotion",
+  "ethnicity_or_origin",
+  "disability_or_health",
+  "family_or_pregnancy",
+  "gender_or_sexual_orientation",
+  "religion_or_political_opinion",
+  "biometric_or_face_analysis",
+  "criminal_record",
+  "credit_or_financial",
+  "genetic_information",
+  "union_or_political_activity",
+  "automated_decision",
+  // Neutral fallback used by the deterministic provider and by the LLM-parse
+  // path when a flagged verdict carries no usable specific category.
+  "protected_topic",
+  "none",
+] as const;
+
+export type ProtectedTopicCategory = (typeof protectedTopicCategories)[number];
+
 export const aiCompliancePolicyVersion = "ai-compliance-v1";
 export const candidateDisclosureCopyVersion = "candidate-disclosure-v1";
 export const candidateConsentCopyVersion = "candidate-consent-v1";

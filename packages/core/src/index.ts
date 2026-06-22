@@ -25,9 +25,11 @@ export {
   findForbiddenAutomatedDecisionPhrases,
   forbiddenAutomatedDecisionPhrases,
   humanInLoopRule,
+  protectedTopicCategories,
   recruiterLimitationCopy,
   recruiterLimitationCopyVersion,
   sensitiveInformationHandlingRule,
   textViolatesPolicy,
   type ComplianceFlagCode,
+  type ProtectedTopicCategory,
 } from "./policies/ai";

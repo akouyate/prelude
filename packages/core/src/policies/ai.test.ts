@@ -15,8 +15,41 @@ import {
   recruiterLimitationCopy,
   recruiterLimitationCopyVersion,
   sensitiveInformationHandlingRule,
+  protectedTopicCategories,
   textViolatesPolicy,
 } from "./ai";
+
+describe("protected topic categories", () => {
+  it("exposes the shared classifier category enum", () => {
+    expect(protectedTopicCategories).toEqual([
+      "age",
+      "appearance",
+      "accent",
+      "emotion",
+      "ethnicity_or_origin",
+      "disability_or_health",
+      "family_or_pregnancy",
+      "gender_or_sexual_orientation",
+      "religion_or_political_opinion",
+      "biometric_or_face_analysis",
+      "criminal_record",
+      "credit_or_financial",
+      "genetic_information",
+      "union_or_political_activity",
+      "automated_decision",
+      "protected_topic",
+      "none",
+    ]);
+  });
+
+  it("includes a 'none' sentinel for clean text", () => {
+    expect(protectedTopicCategories).toContain("none");
+  });
+
+  it("includes a neutral 'protected_topic' fallback category", () => {
+    expect(protectedTopicCategories).toContain("protected_topic");
+  });
+});
 
 describe("AI compliance policy", () => {
   it("discloses the AI interviewer and human review boundaries", () => {

@@ -19,6 +19,10 @@ import {
   resolveInterviewDraftPublicationMode,
 } from "../../domain/interview-plan-policy";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
+import {
+  createProtectedTopicClassifierFromEnv,
+  type ProtectedTopicClassifier,
+} from "./protected-topic-classifier";
 
 export type InterviewResponseMode = "audio" | "video" | "text";
 
@@ -161,6 +165,7 @@ export async function saveInterviewDraft(
 
 export async function publishInterviewDraft(
   draftId: string,
+  classifier: ProtectedTopicClassifier = createProtectedTopicClassifierFromEnv(),
 ): Promise<PublishInterviewDraftResult> {
   const normalizedDraftId = draftId.trim();
 
@@ -170,7 +175,8 @@ export async function publishInterviewDraft(
 
   const scope = await getCompletedOrganizationScope();
 
-  const result = await prisma.$transaction(async (tx) => {
+  // Phase 1: read the draft and run the authoritative keyword gate.
+  const validation = await prisma.$transaction(async (tx) => {
     const draft = await tx.interviewDraft.findFirst({
       include: {
         interview: true,
@@ -206,6 +212,47 @@ export async function publishInterviewDraft(
       };
     }
 
+    return {
+      criteria,
+      draft,
+      guardrails,
+      kind: "validated" as const,
+      questions,
+      responseModes,
+    };
+  });
+
+  if (!validation) {
+    return { ok: false, error: "Interview draft not found." };
+  }
+
+  if (validation.kind === "error") {
+    return { ok: false, error: validation.error };
+  }
+
+  const { criteria, draft, guardrails, questions, responseModes } = validation;
+
+  // Phase 2 (N6): the second-layer LLM classifier runs OUTSIDE the prisma
+  // transaction, AFTER the keyword gate, to catch semantic evasions the
+  // keyword layer misses. It is a hard block at publish but fails OPEN on any
+  // LLM error/timeout/malformed result (the keyword layer already ran and is
+  // authoritative; an OpenAI hiccup must not block every publish).
+  const segments = [
+    ...questions.map((question) => `${question.prompt} ${question.signal}`),
+    ...criteria.map((criterion) => `${criterion.label} ${criterion.description}`),
+  ];
+  const classifications = await classifier.classify(segments);
+  const flagged = classifications.find((classification) => classification.flagged);
+
+  if (flagged) {
+    return {
+      ok: false,
+      error: `Remove a protected or disallowed topic from your interview (${flagged.category}): ${flagged.reason}`,
+    };
+  }
+
+  // Phase 3: write the published snapshot in its own transaction.
+  const result = await prisma.$transaction(async (tx) => {
     const publicationMode = resolveInterviewDraftPublicationMode({
       draftStatus: draft.status,
       hasPublishedSnapshot: Boolean(draft.interview),
@@ -265,14 +312,6 @@ export async function publishInterviewDraft(
 
     return { interview, kind: "published" as const };
   });
-
-  if (!result) {
-    return { ok: false, error: "Interview draft not found." };
-  }
-
-  if (result.kind === "error") {
-    return { ok: false, error: result.error };
-  }
 
   revalidatePath("/");
   revalidatePath("/roles");
