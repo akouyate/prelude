@@ -335,7 +335,8 @@ export async function publishInterviewDraft(
   // never block; only a configured-but-failing OpenAI call reaches the block.
   const segments = [
     ...questions.map(
-      (question) => `${question.prompt} ${question.expectedSignal ?? ""}`,
+      (question) =>
+        `${question.prompt} ${question.expectedSignal ?? ""} ${question.followUpPrompt ?? ""}`,
     ),
     ...criteria.map((criterion) => `${criterion.label} ${criterion.description}`),
   ];
@@ -768,6 +769,13 @@ function coerceQuestion(
     ),
     expectedSignal:
       question.expectedSignal?.trim() || "Job-related screening signal",
+    // Preserve the recruiter-authored, signal-aware follow-up through save/load;
+    // a too-short edit drops to undefined (the live agent falls back to the
+    // category default) rather than rejecting the draft at the contract boundary.
+    followUpPrompt:
+      question.followUpPrompt && question.followUpPrompt.trim().length >= 8
+        ? question.followUpPrompt.trim()
+        : undefined,
     id: question.id.trim() || slugify(prompt).slice(0, 48),
     maxFollowups:
       typeof question.maxFollowups === "number" ? question.maxFollowups : 1,

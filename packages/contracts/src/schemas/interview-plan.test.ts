@@ -73,6 +73,18 @@ describe("interviewPlanQuestionSchema", () => {
 
     expect(result.success).toBe(false);
   });
+
+  it("accepts an optional recruiter-authored follow-up prompt", () => {
+    const parsed = interviewPlanQuestionSchema.parse({
+      id: "q1",
+      prompt: "Tell us about a recent project relevant to this role.",
+      followUpPrompt: "What did you personally decide, and what changed afterward?",
+    });
+
+    expect(parsed.followUpPrompt).toBe(
+      "What did you personally decide, and what changed afterward?",
+    );
+  });
 });
 
 describe("interviewPlanSchema", () => {
@@ -244,6 +256,24 @@ describe("parseStoredInterviewPlan (legacy upgrader)", () => {
     expect(() => parseStoredInterviewPlan(canonicalPlan())).not.toThrow();
   });
 
+  it("preserves a stored recruiter-authored follow-up prompt through the upgrader", () => {
+    const base = canonicalPlan();
+    const parsed = parseStoredInterviewPlan({
+      ...base,
+      questions: [
+        {
+          ...base.questions[0],
+          followUpPrompt:
+            "What did you personally decide, and what changed afterward?",
+        },
+      ],
+    });
+
+    expect(parsed.questions[0]?.followUpPrompt).toBe(
+      "What did you personally decide, and what changed afterward?",
+    );
+  });
+
   it("drops a legacy 'video' response mode instead of rejecting the row", () => {
     const legacyVideoRow = {
       ...canonicalPlan(),
@@ -306,6 +336,28 @@ describe("toLiveInterviewPlan (live handoff mapper)", () => {
       jobId: "job_01",
     });
     expect(liveDefault.candidateModes).toEqual(["audio"]);
+  });
+
+  it("carries the recruiter-authored follow-up prompt into the live question", () => {
+    const base = canonicalPlan();
+    const plan = interviewPlanSchema.parse({
+      ...base,
+      questions: [
+        {
+          ...base.questions[0],
+          followUpPrompt:
+            "What did you personally decide, and what changed afterward?",
+        },
+        base.questions[1],
+      ],
+    });
+
+    const live = toLiveInterviewPlan({ plan, planId: "plan_01", jobId: "job_01" });
+
+    expect(liveInterviewPlanSchema.safeParse(live).success).toBe(true);
+    expect(live.questions[0]?.followUpPrompt).toBe(
+      "What did you personally decide, and what changed afterward?",
+    );
   });
 });
 

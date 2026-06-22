@@ -30,6 +30,10 @@ export type InterviewQuestionDraft = {
   id: string;
   prompt: string;
   expectedSignal: string;
+  // Recruiter-authored, signal-aware follow-up the live agent speaks verbatim
+  // when it needs one bounded probe. Optional at the type level; the generator
+  // fills it (authored-or-derived) for every published question.
+  followUpPrompt?: string;
   category: InterviewQuestionCategory;
   required: boolean;
   maxFollowups: number;

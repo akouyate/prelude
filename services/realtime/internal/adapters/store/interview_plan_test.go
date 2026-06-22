@@ -67,3 +67,30 @@ func TestDecodeInterviewQuestionsThreadsExpectedSignalToTheAgent(t *testing.T) {
 		t.Fatalf("expected the recruiter expected signal to reach the agent, got %q", questions[0].ExpectedSignal)
 	}
 }
+
+// The recruiter-authored, reviewed, compliance-scanned follow-up must reach the
+// agent verbatim — replacing the generic category-synthesized fallback. The agent
+// then speaks it exactly when it needs one bounded probe.
+func TestDecodeInterviewQuestionsHonorsAuthoredFollowUp(t *testing.T) {
+	raw := []byte(`[{"id":"q1","prompt":"Describe a hard tradeoff you owned.","category":"experience","followUpPrompt":"What did you personally decide, and what changed afterward?","source":"agent"}]`)
+	questions := decodeInterviewQuestions(raw)
+	if len(questions) != 1 {
+		t.Fatalf("expected 1 question, got %d", len(questions))
+	}
+	if questions[0].FollowUpPrompt != "What did you personally decide, and what changed afterward?" {
+		t.Fatalf("expected the recruiter-authored follow-up to reach the agent, got %q", questions[0].FollowUpPrompt)
+	}
+}
+
+// A legacy/absent follow-up still falls back to the category default so the agent
+// always has a bounded probe available.
+func TestDecodeInterviewQuestionsFallsBackToCategoryFollowUpWhenAbsent(t *testing.T) {
+	raw := []byte(`[{"id":"q1","prompt":"What makes you want this role?","category":"motivation","source":"agent"}]`)
+	questions := decodeInterviewQuestions(raw)
+	if len(questions) != 1 {
+		t.Fatalf("expected 1 question, got %d", len(questions))
+	}
+	if questions[0].FollowUpPrompt != followUpPrompt("motivation") {
+		t.Fatalf("expected the category fallback follow-up, got %q", questions[0].FollowUpPrompt)
+	}
+}

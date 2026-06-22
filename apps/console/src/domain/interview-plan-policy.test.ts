@@ -149,6 +149,23 @@ describe("interview plan publication policy", () => {
     );
   });
 
+  it("rejects a plan whose question follow-up references a protected topic", () => {
+    const issues = getInterviewPlanPublicationIssues({
+      ...publishablePlan,
+      questions: [
+        {
+          ...publishablePlan.questions[0]!,
+          followUpPrompt: "And just to confirm — what is your age?",
+        },
+        ...publishablePlan.questions.slice(1),
+      ],
+    });
+
+    expect(issues).toContain(
+      "Remove protected or disallowed topics from your questions and evaluation criteria.",
+    );
+  });
+
   it("rejects plans whose criteria reference a protected topic", () => {
     const issues = getInterviewPlanPublicationIssues({
       ...publishablePlan,
@@ -173,6 +190,24 @@ describe("interview plan publication policy", () => {
         criteria: [],
         questions: [
           { prompt: "What is your age?", expectedSignal: "Experience" },
+        ],
+      }),
+    ).toBe(true);
+  });
+
+  it("flags a plan whose question FOLLOW-UP references a protected topic", () => {
+    // The prompt and expectedSignal are clean; only the generated follow-up
+    // smuggles a protected topic. This must still be caught — the follow-up is
+    // spoken to the candidate just like the question.
+    expect(
+      planReferencesDisallowedTopic({
+        criteria: [],
+        questions: [
+          {
+            prompt: "Describe a project you led under deadline.",
+            expectedSignal: "Delivery",
+            followUpPrompt: "Just to confirm — what is your age?",
+          },
         ],
       }),
     ).toBe(true);

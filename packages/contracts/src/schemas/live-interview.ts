@@ -74,6 +74,8 @@ export const liveInterviewQuestionSchema = z.object({
   prompt: z.string().trim().min(8).max(800),
   category: liveInterviewQuestionCategorySchema.default("custom"),
   expectedSignal: z.string().trim().min(4).max(500).optional(),
+  // Recruiter-authored, signal-aware follow-up spoken verbatim by the live agent.
+  followUpPrompt: z.string().trim().min(8).max(800).optional(),
   required: z.boolean().default(true),
   maxFollowups: z.number().int().min(0).max(1).default(1),
 });

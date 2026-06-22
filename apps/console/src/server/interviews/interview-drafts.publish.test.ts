@@ -275,6 +275,30 @@ describe("publishInterviewDraft N6 classifier wiring", () => {
     expect(segments[3]).toContain("Problem solving");
   });
 
+  it("includes the question follow-up in the classifier segment", async () => {
+    draftRecord.current = {
+      ...publishableDraft(),
+      questions: [
+        {
+          ...publishableDraft().questions[0],
+          followUpPrompt:
+            "What did you personally decide, and what changed afterward?",
+        },
+        ...publishableDraft().questions.slice(1),
+      ],
+    };
+    const classifier = passThroughClassifier();
+
+    await publishInterviewDraft("draft_1", classifier);
+
+    const classifyMock = classifier.classify as ReturnType<typeof vi.fn>;
+    const segments = (classifyMock.mock.calls[0]?.[0] ?? []) as string[];
+
+    // The follow-up is concatenated into its question's segment so the N6
+    // classifier scans it too — closing the second-layer bypass.
+    expect(segments[0]).toContain("What did you personally decide");
+  });
+
   it("still blocks on the keyword gate before reaching the classifier", async () => {
     draftRecord.current = {
       ...publishableDraft(),

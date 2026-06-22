@@ -1,3 +1,4 @@
+import { textViolatesPolicy } from "@prelude/core";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -32,6 +33,19 @@ describe("live OpenAI interview draft generation", () => {
       expect(draft.questions.every((question) => question.prompt.length > 8)).toBe(
         true,
       );
+
+      for (const question of draft.questions) {
+        const followUp = question.followUpPrompt ?? "";
+        // Every question ships a bounded, signal-aware follow-up the live agent
+        // speaks verbatim.
+        expect(followUp.length).toBeGreaterThanOrEqual(8);
+        // It must clear the same compliance gate as the question itself.
+        expect(textViolatesPolicy(followUp)).toBe(false);
+        // It must elicit, not telegraph: it never restates the expected signal.
+        expect(followUp.toLowerCase()).not.toContain(
+          question.expectedSignal.toLowerCase(),
+        );
+      }
     },
     45_000,
   );

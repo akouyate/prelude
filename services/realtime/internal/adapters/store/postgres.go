@@ -388,6 +388,7 @@ type persistedQuestion struct {
 	Prompt         string `json:"prompt"`
 	Category       string `json:"category"`
 	ExpectedSignal string `json:"expectedSignal"`
+	FollowUpPrompt string `json:"followUpPrompt"`
 	Source         string `json:"source"`
 }
 
@@ -414,7 +415,7 @@ func decodeInterviewQuestions(value []byte) []application.InterviewQuestion {
 			Prompt:         prompt,
 			Category:       category,
 			ExpectedSignal: strings.TrimSpace(question.ExpectedSignal),
-			FollowUpPrompt: followUpPrompt(category),
+			FollowUpPrompt: resolveFollowUpPrompt(question.FollowUpPrompt, category),
 		})
 	}
 
@@ -467,6 +468,18 @@ func clampQuestionCategory(category string) string {
 	default:
 		return "role_fit"
 	}
+}
+
+// resolveFollowUpPrompt prefers the recruiter-authored, reviewed, and
+// compliance-scanned follow-up persisted on the question, and only falls back to
+// the generic category default when the plan has none (e.g. a legacy row written
+// before the field existed).
+func resolveFollowUpPrompt(authored string, category string) string {
+	if trimmed := strings.TrimSpace(authored); trimmed != "" {
+		return trimmed
+	}
+
+	return followUpPrompt(category)
 }
 
 func followUpPrompt(category string) string {

@@ -302,10 +302,12 @@ export function createDeterministicInterviewDraftGenerator(): InterviewDraftGene
 
   return {
     addQuestion: async (input) =>
-      createDeterministicQuestion({
-        index: input.draft.questions.length + 1,
-        topic: input.topic,
-      }),
+      ensureFollowUpPrompt(
+        createDeterministicQuestion({
+          index: input.draft.questions.length + 1,
+          topic: input.topic,
+        }),
+      ),
     generateDraft,
     generateDraftWithProvenance: async (input) => ({
       draft: await generateDraft(input),
@@ -316,16 +318,18 @@ export function createDeterministicInterviewDraftGenerator(): InterviewDraftGene
     provider: "deterministic_test_generator",
     refineQuestion: async (input) => {
       if (input.action === "replace") {
-        return createDeterministicQuestion({
-          index:
-            input.draft.questions.findIndex(
-              (question) => question.id === input.question.id,
-            ) + 1 || 1,
-          topic: input.question.expectedSignal,
-        });
+        return ensureFollowUpPrompt(
+          createDeterministicQuestion({
+            index:
+              input.draft.questions.findIndex(
+                (question) => question.id === input.question.id,
+              ) + 1 || 1,
+            topic: input.question.expectedSignal,
+          }),
+        );
       }
 
-      return sharpenQuestion(input.question);
+      return ensureFollowUpPrompt(sharpenQuestion(input.question));
     },
   };
 }
@@ -460,6 +464,7 @@ function openAIDraftInstructions() {
     "Ask questions that invite concrete job-related examples, judgment, motivation, and communication signals.",
     "Keep every question short enough for a live voice interview and natural for the candidate.",
     "For each question, set expectedSignal (what a strong answer reveals), required true (every candidate is asked the same verbatim question), maxFollowups 1 (at most one bounded follow-up), and a category from motivation, experience, skills, logistics, availability, compensation, or custom.",
+    "For each question, also set followUpPrompt: one short, natural follow-up that draws out the expectedSignal WITHOUT naming it. Make it open and behavioral — ask for a concrete example, the candidate's own role, a decision they made, or the outcome. Do not presuppose the outcome was positive or successful — ask what happened, not how to make it go well. Never state what you are looking for, never use evaluative words like 'strong', 'good', or 'successful', and never reference protected traits.",
     "Do not ask about protected traits, appearance, accent, tone, emotion, personality, or biometric attributes.",
     "Do not frame output as a hire, reject, ranking, or automated decision.",
     "Include evaluation criteria that map to the questions and can be reviewed by a human recruiter.",
@@ -473,6 +478,7 @@ function openAIQuestionInstructions() {
     "Return only JSON for one question.",
     "Keep the question job-related, concise, natural in live voice, and suitable for the same candidate screen.",
     "Set expectedSignal (what a strong answer reveals), required true, maxFollowups 1, and a category from motivation, experience, skills, logistics, availability, compensation, or custom.",
+    "Set followUpPrompt: one short, natural follow-up that draws out the expectedSignal WITHOUT naming it — open and behavioral (a concrete example, the candidate's own role, a decision, or the outcome). Do not presuppose the outcome was positive or successful, no evaluative words like 'strong'/'good'/'successful', no protected traits.",
     "Do not ask about protected traits, appearance, accent, tone, emotion, personality, or biometric attributes.",
     "Do not introduce hire/reject/ranking language.",
     buildAiCompliancePromptContext(),
@@ -562,7 +568,11 @@ function normalizeDraft(
     criteria: filledCriteria,
     estimatedMinutes: normalizeEstimatedMinutes(value.estimatedMinutes, filledQuestions),
     guardrails: normalizeGuardrails(value.guardrails),
-    questions: filledQuestions,
+    // Every published question carries a bounded, signal-aware follow-up
+    // (authored by the model or derived from the category) so the live agent
+    // never has to synthesize one blindly — and it was scanned by the policy
+    // filter above before reaching here.
+    questions: filledQuestions.map(ensureFollowUpPrompt),
     rationale: normalizeRationale(value.rationale, filledQuestions.length, input),
   };
 }
@@ -667,11 +677,17 @@ function normalizeQuestion(
     "Job-related screening signal";
   const category =
     readQuestionCategory(value.category) ?? inferCategory(source);
+  // A model-authored follow-up shorter than the contract minimum drops to
+  // undefined so the question is not rejected; ensureFollowUpPrompt then
+  // derives a safe category default.
+  const followUpRaw = readString(value.followUpPrompt);
+  const followUpPrompt = followUpRaw.length >= 8 ? followUpRaw : undefined;
 
   const candidate: InterviewQuestionDraft = {
     category,
     durationSeconds: clampNumber(value.durationSeconds, 45, 150, 75),
     expectedSignal,
+    followUpPrompt,
     id: readString(value.id) || fallbackId,
     maxFollowups: clampNumber(value.maxFollowups, 0, 1, 1),
     prompt,
@@ -687,6 +703,7 @@ function normalizeQuestion(
     category: parsed.category as InterviewQuestionCategory,
     durationSeconds: parsed.durationSeconds,
     expectedSignal: parsed.expectedSignal ?? expectedSignal,
+    followUpPrompt: parsed.followUpPrompt,
     id: parsed.id,
     maxFollowups: parsed.maxFollowups,
     prompt: parsed.prompt,
@@ -916,11 +933,52 @@ function missingFocusTopic(
 }
 
 function questionViolatesPolicy(question: InterviewQuestionDraft) {
-  return textViolatesPolicy(`${question.prompt} ${question.expectedSignal}`);
+  return textViolatesPolicy(
+    `${question.prompt} ${question.expectedSignal} ${question.followUpPrompt ?? ""}`,
+  );
 }
 
 function criterionViolatesPolicy(criterion: InterviewCriterionDraft) {
   return textViolatesPolicy(`${criterion.label} ${criterion.description}`);
+}
+
+// Open, behavioral follow-ups keyed by question category. They draw out evidence
+// of the recruiter's expected signal WITHOUT telegraphing it — no evaluative
+// adjectives, never naming what a strong answer should contain. These are
+// hand-authored, compliance-reviewed CONSTANTS: ensureFollowUpPrompt applies
+// them after the policy filter, so they are trusted and must never be templated
+// with role/candidate text (that would bypass the protected-topic scan).
+function deterministicFollowUpPrompt(category: string): string {
+  switch (category) {
+    case "motivation":
+      return "What specifically would make this role the right next step for you?";
+    case "experience":
+      return "Walk me through what you personally did, and what the outcome was.";
+    case "skills":
+      return "Can you give a concrete example from your own work?";
+    case "logistics":
+      return "Is there any practical constraint the recruiter should know now?";
+    case "availability":
+      return "What timing or availability would you need for the next steps?";
+    case "compensation":
+      return "What expectations should the recruiter keep in mind for a next conversation?";
+    default:
+      return "Can you share a specific example, including your role and the result?";
+  }
+}
+
+function ensureFollowUpPrompt(
+  question: InterviewQuestionDraft,
+): InterviewQuestionDraft {
+  const authored = question.followUpPrompt?.trim();
+  if (authored && authored.length >= 8) {
+    return { ...question, followUpPrompt: authored };
+  }
+
+  return {
+    ...question,
+    followUpPrompt: deterministicFollowUpPrompt(question.category),
+  };
 }
 
 function readQuestionSource(value: unknown): InterviewQuestionDraft["source"] | null {
@@ -1046,6 +1104,7 @@ export const interviewQuestionJsonSchema = {
     },
     durationSeconds: { type: "number" },
     expectedSignal: { type: "string" },
+    followUpPrompt: { type: ["string", "null"] },
     id: { type: "string" },
     maxFollowups: { maximum: 1, minimum: 0, type: "integer" },
     prompt: { type: "string" },
@@ -1059,6 +1118,7 @@ export const interviewQuestionJsonSchema = {
     "id",
     "prompt",
     "expectedSignal",
+    "followUpPrompt",
     "category",
     "required",
     "maxFollowups",

@@ -566,7 +566,10 @@ export function InterviewAgentBuilder({
   );
 
   const updateQuestion = React.useCallback(
-    (questionId: string, prompt: string) => {
+    (
+      questionId: string,
+      patch: { prompt?: string; followUpPrompt?: string }
+    ) => {
       setDraft((current) => {
         if (!current) {
           return current;
@@ -575,7 +578,7 @@ export function InterviewAgentBuilder({
         return {
           ...current,
           questions: current.questions.map((question) =>
-            question.id === questionId ? { ...question, prompt } : question
+            question.id === questionId ? { ...question, ...patch } : question
           )
         };
       });
@@ -1333,7 +1336,10 @@ function QuestionsStep({
   onRefineQuestion: (questionId: string, action: QuestionAction) => Promise<void>;
   onRemoveQuestion: (questionId: string) => void;
   onSelectQuestion: (questionId: string) => void;
-  onUpdateQuestion: (questionId: string, prompt: string) => void;
+  onUpdateQuestion: (
+    questionId: string,
+    patch: { prompt?: string; followUpPrompt?: string }
+  ) => void;
 }) {
   const { t } = useTranslation();
   const [editingQuestionId, setEditingQuestionId] = React.useState<string>();
@@ -1420,7 +1426,7 @@ function QuestionsStep({
                         {meta.label}
                       </span>
                       {textViolatesPolicy(
-                        `${question.prompt} ${question.expectedSignal}`
+                        `${question.prompt} ${question.expectedSignal} ${question.followUpPrompt ?? ""}`
                       ) ? (
                         <span className="rounded-full bg-coral-50 px-2 py-0.5 text-xs font-medium text-coral-800">
                           Protected topic
@@ -1439,16 +1445,38 @@ function QuestionsStep({
                         className="min-h-24 bg-white/88 text-sm leading-6 focus:border-olive-800 focus:ring-[#e5e8d6]"
                         value={question.prompt}
                         onChange={(event) =>
-                          onUpdateQuestion(question.id, event.target.value)
+                          onUpdateQuestion(question.id, {
+                            prompt: event.target.value,
+                          })
                         }
                       />
                       {textViolatesPolicy(
-                        `${question.prompt} ${question.expectedSignal}`
+                        `${question.prompt} ${question.expectedSignal} ${question.followUpPrompt ?? ""}`
                       ) ? (
                         <p className="rounded-2xl border border-coral-200 bg-coral-50 px-3 py-2 text-sm font-medium text-coral-800">
                           {t("compliance.questionWarning")}
                         </p>
                       ) : null}
+                      <div className="space-y-1.5">
+                        <p className="text-xs font-medium text-ink-600">
+                          Follow-up the interviewer may ask (optional)
+                        </p>
+                        <Textarea
+                          aria-label={`Question ${index + 1} follow-up`}
+                          className="min-h-16 bg-white/88 text-sm leading-6 focus:border-olive-800 focus:ring-[#e5e8d6]"
+                          value={question.followUpPrompt ?? ""}
+                          placeholder="One short, open follow-up that draws out the answer, spoken to every candidate."
+                          onChange={(event) =>
+                            onUpdateQuestion(question.id, {
+                              followUpPrompt: event.target.value,
+                            })
+                          }
+                        />
+                        <p className="text-xs text-ink-500">
+                          Spoken verbatim to every candidate. Keep it open and
+                          neutral, and do not hint at the answer.
+                        </p>
+                      </div>
                       <div className="flex flex-wrap gap-2">
                         <Button
                           onClick={() => setEditingQuestionId(undefined)}

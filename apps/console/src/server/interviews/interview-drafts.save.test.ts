@@ -242,6 +242,24 @@ describe("N10 saveInterviewDraft compliance gate", () => {
     expect(tx.job.update).not.toHaveBeenCalled();
   });
 
+  it("rejects and persists nothing when a question follow-up references a protected topic", async () => {
+    const input = baseInput();
+    const result = await saveInterviewDraft({
+      ...input,
+      questions: [
+        {
+          ...input.questions[0]!,
+          followUpPrompt: "And what is your date of birth?",
+        },
+        input.questions[1]!,
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(tx.interviewDraft.create).not.toHaveBeenCalled();
+    expect(tx.interviewDraft.update).not.toHaveBeenCalled();
+  });
+
   it("rejects and persists nothing when a criterion references a protected topic", async () => {
     const result = await saveInterviewDraft({
       ...baseInput(),
@@ -265,5 +283,24 @@ describe("N10 saveInterviewDraft compliance gate", () => {
 
     expect(result.ok).toBe(true);
     expect(tx.interviewDraft.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists the recruiter-authored follow-up prompt", async () => {
+    const followUp =
+      "What did you personally decide, and what changed afterward?";
+    const input = baseInput();
+    const result = await saveInterviewDraft({
+      ...input,
+      questions: [
+        { ...input.questions[0]!, followUpPrompt: followUp },
+        input.questions[1]!,
+      ],
+    });
+
+    expect(result.ok).toBe(true);
+    const createCall = tx.interviewDraft.create.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+    expect(JSON.stringify(createCall?.data)).toContain(followUp);
   });
 });

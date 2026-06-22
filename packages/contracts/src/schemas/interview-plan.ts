@@ -36,6 +36,10 @@ export const interviewPlanQuestionSchema = z.object({
   id: z.string().min(1),
   prompt: z.string().trim().min(8).max(800),
   expectedSignal: z.string().trim().min(4).max(500).optional(),
+  // Recruiter-authored, signal-aware follow-up the live agent speaks verbatim
+  // when it needs one bounded probe. Optional: a question without one falls back
+  // to a category-derived prompt at generation time.
+  followUpPrompt: z.string().trim().min(8).max(800).optional(),
   category: liveInterviewQuestionCategorySchema.default("custom"),
   required: z.boolean().default(true),
   maxFollowups: z.number().int().min(0).max(1).default(1),
@@ -124,6 +128,19 @@ export const storedInterviewPlanSchema = z.preprocess((raw) => {
     const trimmedSignal = rawSignal?.trim();
     const expectedSignal =
       trimmedSignal && trimmedSignal.length >= 4 ? trimmedSignal : undefined;
+    const rawFollowUp =
+      typeof value.followUpPrompt === "string"
+        ? value.followUpPrompt
+        : typeof value.follow_up_prompt === "string"
+          ? value.follow_up_prompt
+          : undefined;
+    const trimmedFollowUp = rawFollowUp?.trim();
+    // Mirror the expectedSignal rule: a legacy follow-up shorter than the
+    // canonical minimum drops to undefined rather than rejecting the row.
+    const followUpPrompt =
+      trimmedFollowUp && trimmedFollowUp.length >= 8
+        ? trimmedFollowUp
+        : undefined;
     const category =
       typeof value.category === "string"
         ? value.category
@@ -133,6 +150,7 @@ export const storedInterviewPlanSchema = z.preprocess((raw) => {
       id: value.id,
       prompt: value.prompt,
       expectedSignal,
+      followUpPrompt,
       category,
       required: typeof value.required === "boolean" ? value.required : true,
       maxFollowups:
@@ -193,6 +211,7 @@ export function toLiveInterviewPlan(args: {
       prompt: question.prompt,
       category: question.category,
       expectedSignal: question.expectedSignal,
+      followUpPrompt: question.followUpPrompt,
       required: question.required,
       maxFollowups: question.maxFollowups,
     })),

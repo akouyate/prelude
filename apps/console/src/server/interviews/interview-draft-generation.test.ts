@@ -62,6 +62,25 @@ describe("interview draft generation", () => {
     }
   });
 
+  it("authors a non-telegraphing follow-up prompt for every question", async () => {
+    const generator = createDeterministicInterviewDraftGenerator();
+    const draft = await generator.generateDraft(input());
+
+    for (const question of draft.questions) {
+      // Every published question carries a bounded follow-up the live agent can
+      // speak verbatim — so the live path never has to synthesize one blindly.
+      expect(question.followUpPrompt?.length ?? 0).toBeGreaterThanOrEqual(8);
+      // It must elicit, never telegraph: the follow-up never restates the
+      // recruiter's expected signal.
+      expect(question.followUpPrompt).not.toBe(question.expectedSignal);
+      expect(
+        question.followUpPrompt
+          ?.toLowerCase()
+          .includes(question.expectedSignal.toLowerCase()),
+      ).toBe(false);
+    }
+  });
+
   it("adds and refines questions through deterministic provider methods", async () => {
     const generator = createDeterministicInterviewDraftGenerator();
     const draft = await generator.generateDraft(input());
@@ -128,6 +147,7 @@ describe("interview draft generation", () => {
     expect(schemaJson).toContain("required");
     expect(schemaJson).toContain("maxFollowups");
     expect(schemaJson).toContain("category");
+    expect(schemaJson).toContain("followUpPrompt");
     const promptInput = JSON.parse(requestBody.input[1].content);
 
     expect(promptInput.targetQuestionCount).toBe(4);
@@ -353,6 +373,79 @@ describe("interview draft generation", () => {
     expect(dropped).toBeDefined();
     expect(Number(dropped?.droppedQuestions)).toBeGreaterThanOrEqual(1);
     expect(Number(dropped?.droppedCriteria)).toBeGreaterThanOrEqual(1);
+  });
+
+  it("keeps a model-authored follow-up prompt on the generated question", async () => {
+    const authored =
+      "What did you personally decide, and what changed afterward?";
+    const generator = createOpenAIInterviewDraftGenerator({
+      apiKey: "sk-test",
+      fetcher: async () => ({
+        json: async () => ({
+          output_text: JSON.stringify({
+            ...sampleDraft,
+            questions: [
+              { ...sampleDraft.questions[0], followUpPrompt: authored },
+              ...sampleDraft.questions.slice(1),
+            ],
+          }),
+        }),
+        ok: true,
+        status: 200,
+        text: async () => "",
+      }),
+      model: "gpt-test",
+      timeoutMs: 1000,
+    });
+
+    const draft = await generator.generateDraft(input());
+    const match = draft.questions.find((question) => question.id === "motivation");
+
+    expect(match?.followUpPrompt).toBe(authored);
+  });
+
+  it("drops a generated question whose follow-up smuggles a protected topic", async () => {
+    const { events, telemetry } = captureTelemetry();
+    const generator = createOpenAIInterviewDraftGenerator({
+      apiKey: "sk-test",
+      fetcher: async () => ({
+        json: async () => ({
+          output_text: JSON.stringify({
+            ...sampleDraft,
+            questions: [
+              ...sampleDraft.questions,
+              {
+                category: "experience",
+                durationSeconds: 75,
+                id: "smuggled",
+                maxFollowups: 1,
+                prompt: "Tell us about a project you delivered recently.",
+                expectedSignal: "Relevant delivery evidence",
+                followUpPrompt: "And what is your date of birth?",
+                required: true,
+                source: "agent",
+              },
+            ],
+          }),
+        }),
+        ok: true,
+        status: 200,
+        text: async () => "",
+      }),
+      model: "gpt-test",
+      telemetry,
+      timeoutMs: 1000,
+    });
+
+    const draft = await generator.generateDraft(input());
+    const content = JSON.stringify(draft).toLowerCase();
+
+    // The clean prompt/signal must not be enough to ship a protected follow-up.
+    expect(content).not.toContain("date of birth");
+    const dropped = events.find(
+      (event) => event.event === "policy_violation_dropped",
+    );
+    expect(Number(dropped?.droppedQuestions)).toBeGreaterThanOrEqual(1);
   });
 });
 
