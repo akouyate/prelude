@@ -391,14 +391,51 @@ func TestServiceGetAgentConfigUsesRepositoryPlan(t *testing.T) {
 		t.Fatalf("GetAgentConfig returned error: %v", err)
 	}
 
-	if config.Provider != "repository" {
-		t.Fatalf("expected repository provider, got %s", config.Provider)
+	// The provider is config-driven and defaults to "mock" (a valid
+	// liveInterviewProviderSchema member) — never the bogus "repository" the
+	// Python worker / canonical enum would reject.
+	if config.Provider != "mock" {
+		t.Fatalf("expected mock provider, got %s", config.Provider)
 	}
 	if config.InterviewPlan.RoleTitle != plan.RoleTitle {
 		t.Fatalf("expected role title %q, got %q", plan.RoleTitle, config.InterviewPlan.RoleTitle)
 	}
 	if got := config.InterviewPlan.Questions[0].Prompt; got != plan.Questions[0].Prompt {
 		t.Fatalf("expected repository question %q, got %q", plan.Questions[0].Prompt, got)
+	}
+}
+
+func TestServiceGetAgentConfigProviderIsConfigurable(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	plan := application.InterviewPlan{
+		ID:             "interview_real_provider",
+		RoleTitle:      "Line Cook",
+		AllowAudioOnly: true,
+		Questions: []application.InterviewQuestion{
+			{ID: "q1", Prompt: "Tell me about a busy service you handled.", Category: "experience"},
+		},
+	}
+	service := application.NewService(
+		newMemoryStoreWithPlans(map[string]application.InterviewPlan{plan.ID: plan}),
+		fakeLiveKit{},
+		clock,
+	)
+	service.SetProvider("openai_realtime")
+
+	created, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: plan.ID,
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	config, err := service.GetAgentConfig(context.Background(), created.Session.ID)
+	if err != nil {
+		t.Fatalf("GetAgentConfig returned error: %v", err)
+	}
+	if config.Provider != "openai_realtime" {
+		t.Fatalf("expected configured provider openai_realtime, got %s", config.Provider)
 	}
 }
 

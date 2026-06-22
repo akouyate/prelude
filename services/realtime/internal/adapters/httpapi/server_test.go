@@ -24,6 +24,28 @@ func TestServerHealth(t *testing.T) {
 	}
 }
 
+func TestWriteServiceErrorMapsPlanNotFoundTo404(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	writeServiceError(recorder, application.ErrPlanNotFound)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for ErrPlanNotFound, got %d", recorder.Code)
+	}
+
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+		t.Fatalf("failed to decode error body: %v", err)
+	}
+	if body.Error.Code != "plan_not_found" {
+		t.Fatalf("expected error code plan_not_found, got %q", body.Error.Code)
+	}
+}
+
 func TestServerCreateGetAndIngestEvent(t *testing.T) {
 	server := newTestServer()
 

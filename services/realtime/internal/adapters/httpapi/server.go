@@ -196,6 +196,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_event", err.Error())
 	case errors.Is(err, application.ErrSessionNotFound):
 		writeError(w, http.StatusNotFound, "session_not_found", err.Error())
+	case errors.Is(err, application.ErrPlanNotFound):
+		writeError(w, http.StatusNotFound, "plan_not_found", err.Error())
 	case errors.Is(err, application.ErrEventConflict):
 		writeError(w, http.StatusConflict, "event_conflict", err.Error())
 	default:

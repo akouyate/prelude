@@ -458,6 +458,19 @@ export const liveInterviewAgentConfigSchema = z.object({
   provider: liveInterviewProviderSchema,
 });
 
+// The Python live worker binds InterviewQuestion.category to a strict StrEnum
+// {motivation, experience, logistics, role_fit}; any other value crashes its
+// AgentConfig validation and the agent never joins. The Go control plane clamps
+// the recruiter category onto this set, so the worker WIRE contract is this strict
+// enum — NOT the broader liveInterviewQuestionCategorySchema. Tightening it here
+// makes JS CI fail if Go can ever emit an out-of-range category.
+export const liveInterviewWorkerQuestionCategorySchema = z.enum([
+  "motivation",
+  "experience",
+  "logistics",
+  "role_fit",
+]);
+
 export const liveInterviewWorkerAgentConfigSchema = z.object({
   session: z.object({
     id: z.string().min(1),
@@ -485,7 +498,7 @@ export const liveInterviewWorkerAgentConfigSchema = z.object({
         z.object({
           id: z.string().min(1),
           prompt: z.string().trim().min(8).max(800),
-          category: z.string().min(1),
+          category: liveInterviewWorkerQuestionCategorySchema,
           follow_up_prompt: z.string().trim().min(8).max(800).optional(),
         }),
       )

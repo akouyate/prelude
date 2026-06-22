@@ -384,10 +384,10 @@ func decodeModalities(value []byte) []domain.Modality {
 }
 
 type persistedQuestion struct {
-	ID     string `json:"id"`
-	Prompt string `json:"prompt"`
-	Signal string `json:"signal"`
-	Source string `json:"source"`
+	ID       string `json:"id"`
+	Prompt   string `json:"prompt"`
+	Category string `json:"category"`
+	Source   string `json:"source"`
 }
 
 func decodeInterviewQuestions(value []byte) []application.InterviewQuestion {
@@ -407,11 +407,12 @@ func decodeInterviewQuestions(value []byte) []application.InterviewQuestion {
 			id = "q" + strconv.Itoa(index+1)
 		}
 
+		category := clampQuestionCategory(question.Category)
 		questions = append(questions, application.InterviewQuestion{
 			ID:             id,
 			Prompt:         prompt,
-			Category:       questionCategory(question),
-			FollowUpPrompt: followUpPrompt(question),
+			Category:       category,
+			FollowUpPrompt: followUpPrompt(category),
 		})
 	}
 
@@ -445,36 +446,34 @@ func containsString(values []string, target string) bool {
 	return false
 }
 
-func questionCategory(question persistedQuestion) string {
-	signal := strings.ToLower(question.Signal + " " + question.Source)
-	switch {
-	case strings.Contains(signal, "motivation"):
+// clampQuestionCategory maps the recruiter-approved category (the canonical
+// interview-plan set: motivation/experience/skills/logistics/availability/
+// compensation/custom) onto the live worker's strict QuestionCategory StrEnum
+// {motivation, experience, logistics, role_fit}. The Python agent binds this
+// field to that enum, so any out-of-set value (skills/availability/compensation/
+// custom, or a legacy heuristic value) crashes its AgentConfig validation and the
+// agent never joins — so everything outside the three shared values clamps to
+// role_fit.
+func clampQuestionCategory(category string) string {
+	switch strings.TrimSpace(strings.ToLower(category)) {
+	case "motivation":
 		return "motivation"
-	case strings.Contains(signal, "communication") || strings.Contains(signal, "clarity"):
-		return "communication"
-	case strings.Contains(signal, "judgment") || strings.Contains(signal, "ambiguity"):
-		return "judgment"
-	case strings.Contains(signal, "constraint") ||
-		strings.Contains(signal, "alignment") ||
-		strings.Contains(signal, "location"):
+	case "experience":
+		return "experience"
+	case "logistics":
 		return "logistics"
 	default:
-		return "experience"
+		return "role_fit"
 	}
 }
 
-func followUpPrompt(question persistedQuestion) string {
-	category := questionCategory(question)
+func followUpPrompt(category string) string {
 	switch category {
 	case "motivation":
 		return "What makes this opportunity specifically relevant for your next step?"
-	case "communication":
-		return "Can you make that example more concrete for the recruiter?"
-	case "judgment":
-		return "What trade-off did you consider before choosing that action?"
 	case "logistics":
 		return "Is there any practical constraint the recruiter should know now?"
-	default:
+	default: // experience, role_fit
 		return "Can you share the context, your action, and the result?"
 	}
 }

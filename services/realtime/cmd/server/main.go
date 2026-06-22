@@ -49,6 +49,10 @@ func main() {
 	}
 	slog.Info("using livekit gateway", "mode", livekitMode)
 	service := application.NewService(repository, livekitGateway, application.SystemClock{})
+	if provider := os.Getenv("LIVE_INTERVIEW_PROVIDER"); provider != "" {
+		service.SetProvider(provider)
+		slog.Info("using live interview provider", "provider", provider)
+	}
 	if redisURL := os.Getenv("REDIS_URL"); redisURL != "" {
 		dispatcher, err := redisqueue.NewAgentJoinDispatcher(context.Background(), redisqueue.AgentJoinDispatcherConfig{
 			URL:       redisURL,

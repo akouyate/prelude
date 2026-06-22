@@ -86,6 +86,7 @@ type Service struct {
 	agentQueue     AgentDispatchQueue
 	livekit        LiveKitGateway
 	clock          Clock
+	provider       string
 }
 
 func NewService(repository SessionRepository, livekit LiveKitGateway, clock Clock) *Service {
@@ -107,6 +108,20 @@ func NewService(repository SessionRepository, livekit LiveKitGateway, clock Cloc
 
 func (s *Service) SetAgentDispatchQueue(queue AgentDispatchQueue) {
 	s.agentQueue = queue
+}
+
+// SetProvider configures the live voice provider reported to the agent worker.
+// It must be a valid liveInterviewProviderSchema member; defaults to "mock".
+func (s *Service) SetProvider(provider string) {
+	s.provider = strings.TrimSpace(provider)
+}
+
+func (s *Service) providerName() string {
+	if s.provider == "" {
+		return "mock"
+	}
+
+	return s.provider
 }
 
 type CreateSessionInput struct {
@@ -249,7 +264,7 @@ func (s *Service) resolveInterviewPlan(ctx context.Context, planID string) (Inte
 		return InterviewPlan{}, "", err
 	}
 
-	return plan, "repository", nil
+	return plan, s.providerName(), nil
 }
 
 type IngestEventInput struct {
