@@ -11,13 +11,9 @@ export const interviewPlanPolicy = {
   minQuestionsToPublish: 3,
 } as const;
 
-export type PolicyInterviewResponseMode = "audio" | "video" | "text";
+export type PolicyInterviewResponseMode = "audio" | "text";
 
-const allowedModes = new Set<PolicyInterviewResponseMode>([
-  "audio",
-  "text",
-  "video",
-]);
+const allowedModes = new Set<PolicyInterviewResponseMode>(["audio", "text"]);
 const requiredGuardrails = [
   "same questions",
   ...aiGuardrails.map((guardrail) => guardrail.toLowerCase()),

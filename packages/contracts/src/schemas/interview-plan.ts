@@ -16,7 +16,7 @@ export const interviewQuestionSourceSchema = z.enum([
   "agent",
 ]);
 
-export const interviewResponseModeSchema = z.enum(["audio", "video", "text"]);
+export const interviewResponseModeSchema = z.enum(["audio", "text"]);
 
 // Mirror @prelude/core InterviewSeniority + InterviewFocus exactly.
 export const interviewSeniorityCanonicalSchema = z.enum([
@@ -152,7 +152,11 @@ export const storedInterviewPlanSchema = z.preprocess((raw) => {
     roleBrief: typeof raw.roleBrief === "string" ? raw.roleBrief : "",
     seniority: typeof raw.seniority === "string" ? raw.seniority : null,
     focus: asArray(focus),
-    responseModes: asArray(raw.responseModes),
+    // "video" was dropped as a selectable/publishable mode. Filter it out of
+    // legacy rows so a previously-persisted plan never rejects on read.
+    responseModes: asArray(raw.responseModes).filter(
+      (mode) => mode !== "video",
+    ),
     questions,
     criteria: asArray(raw.criteria),
     guardrails: asArray(raw.guardrails),

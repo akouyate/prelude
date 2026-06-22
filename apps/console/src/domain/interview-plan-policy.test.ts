@@ -89,6 +89,32 @@ describe("interview plan publication policy", () => {
     expect(issues).toContain("Approve at least 3 evaluation criteria.");
   });
 
+  it("rejects a plan whose only response mode is the dropped video mode", () => {
+    const issues = getInterviewPlanPublicationIssues({
+      ...publishablePlan,
+      // A legacy row could still carry "video"; the policy no longer treats it
+      // as a valid mode, so a video-only plan has no publishable mode left.
+      responseModes: ["video"] as unknown as PublishableInterviewPlanInput["responseModes"],
+    });
+
+    expect(issues).toContain("Choose at least one candidate response mode.");
+    expect(
+      isInterviewPlanPublishable({
+        ...publishablePlan,
+        responseModes: ["video"] as unknown as PublishableInterviewPlanInput["responseModes"],
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps a plan publishable when audio survives alongside a legacy video mode", () => {
+    const issues = getInterviewPlanPublicationIssues({
+      ...publishablePlan,
+      responseModes: ["audio", "video"] as unknown as PublishableInterviewPlanInput["responseModes"],
+    });
+
+    expect(issues).not.toContain("Choose at least one candidate response mode.");
+  });
+
   it("rejects plans without compliance guardrails", () => {
     const issues = getInterviewPlanPublicationIssues({
       ...publishablePlan,

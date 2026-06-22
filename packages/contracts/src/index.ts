@@ -49,14 +49,6 @@ export {
   type LiveInterviewTranscriptTurn,
 } from "./schemas/live-interview";
 export {
-  evaluationCriterionSchema,
-  generatePreInterviewInputSchema,
-  preInterviewQuestionSchema,
-  publicCandidatePayloadSchema,
-  type GeneratePreInterviewInput,
-  type PublicCandidatePayload,
-} from "./schemas/pre-interview";
-export {
   organizationOnboardingJobSourceSchema,
   organizationOnboardingStateSchema,
   organizationOnboardingStepSchema,

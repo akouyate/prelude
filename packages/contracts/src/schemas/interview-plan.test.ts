@@ -6,6 +6,7 @@ import {
   interviewPlanQuestionSchema,
   interviewPlanSchema,
   interviewQuestionSourceSchema,
+  interviewResponseModeSchema,
   parseStoredInterviewPlan,
   toLiveInterviewPlan,
 } from "./interview-plan";
@@ -241,6 +242,26 @@ describe("parseStoredInterviewPlan (legacy upgrader)", () => {
 
   it("does not throw on a previously-valid canonical row", () => {
     expect(() => parseStoredInterviewPlan(canonicalPlan())).not.toThrow();
+  });
+
+  it("drops a legacy 'video' response mode instead of rejecting the row", () => {
+    const legacyVideoRow = {
+      ...canonicalPlan(),
+      responseModes: ["audio", "video", "text"],
+    };
+
+    expect(() => parseStoredInterviewPlan(legacyVideoRow)).not.toThrow();
+    const parsed = parseStoredInterviewPlan(legacyVideoRow);
+    expect(parsed.responseModes).toEqual(["audio", "text"]);
+    expect(parsed.responseModes).not.toContain("video");
+  });
+});
+
+describe("interviewResponseModeSchema (video dropped)", () => {
+  it("accepts audio and text but rejects the dropped video mode", () => {
+    expect(interviewResponseModeSchema.safeParse("audio").success).toBe(true);
+    expect(interviewResponseModeSchema.safeParse("text").success).toBe(true);
+    expect(interviewResponseModeSchema.safeParse("video").success).toBe(false);
   });
 });
 

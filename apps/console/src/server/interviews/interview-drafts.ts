@@ -36,7 +36,7 @@ import {
   type ProtectedTopicClassifier,
 } from "./protected-topic-classifier";
 
-export type InterviewResponseMode = "audio" | "video" | "text";
+export type InterviewResponseMode = "audio" | "text";
 
 export type SaveInterviewDraftInput = {
   draftId?: string;
@@ -95,7 +95,7 @@ const allowedFocus = new Set<InterviewFocus>([
   "role_skills",
   "situational_judgment",
 ]);
-const allowedModes = new Set<InterviewResponseMode>(["audio", "text", "video"]);
+const allowedModes = new Set<InterviewResponseMode>(["audio", "text"]);
 
 export async function saveInterviewDraft(
   input: SaveInterviewDraftInput,

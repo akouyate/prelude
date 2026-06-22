@@ -68,7 +68,6 @@ model Job {
   organization      Organization       @relation(fields: [organizationId], references: [id])
   interviewDrafts   InterviewDraft[]
   interviews        Interview[]
-  preInterviews     PreInterview[]
   candidates        Candidate[]
   candidateSessions CandidateSession[]
 
@@ -228,59 +227,14 @@ model JobSourceConnection {
   @@index([provider])
 }
 
-model PreInterview {
-  id          String       @id @default(cuid())
-  jobId       String
-  status      String       @default("draft")
-  publicToken String       @unique
-  createdAt   DateTime     @default(now())
-  job         Job          @relation(fields: [jobId], references: [id])
-  questions   Question[]
-  submissions Submission[]
-}
-
-model Question {
-  id                 String       @id @default(cuid())
-  preInterviewId     String
-  prompt             String
-  expectedSignal     String
-  maxDurationSeconds Int          @default(90)
-  position           Int
-  preInterview       PreInterview @relation(fields: [preInterviewId], references: [id])
-  answers            Answer[]
-}
-
 model Candidate {
-  id          String       @id @default(cuid())
-  jobId       String
-  fullName    String
-  email       String
-  status      String       @default("to_review")
-  createdAt   DateTime     @default(now())
-  job         Job          @relation(fields: [jobId], references: [id])
-  submissions Submission[]
-}
-
-model Submission {
-  id             String       @id @default(cuid())
-  candidateId    String
-  preInterviewId String
-  submittedAt    DateTime     @default(now())
-  candidate      Candidate    @relation(fields: [candidateId], references: [id])
-  preInterview   PreInterview @relation(fields: [preInterviewId], references: [id])
-  answers        Answer[]
-}
-
-model Answer {
-  id           String     @id @default(cuid())
-  submissionId String
-  questionId   String
-  mode         String
-  transcript   String?
-  text         String?
-  mediaUrl     String?
-  submission   Submission @relation(fields: [submissionId], references: [id])
-  question     Question   @relation(fields: [questionId], references: [id])
+  id        String   @id @default(cuid())
+  jobId     String
+  fullName  String
+  email     String
+  status    String   @default("to_review")
+  createdAt DateTime @default(now())
+  job       Job      @relation(fields: [jobId], references: [id])
 }
 
 model LiveInterviewSession {

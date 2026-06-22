@@ -520,7 +520,10 @@ function readFocus(value: unknown): InterviewFocus[] {
 }
 
 function readResponseModes(value: unknown): InterviewResponseMode[] {
-  const modes = new Set<InterviewResponseMode>(["audio", "text", "video"]);
+  // "video" was dropped as a selectable mode. It is intentionally absent from
+  // the allowlist so a legacy persisted row carrying it loads cleanly with the
+  // video entry filtered out rather than surfacing an unsupported mode.
+  const modes = new Set<InterviewResponseMode>(["audio", "text"]);
   const selected = readStringArray(value).filter(
     (item): item is InterviewResponseMode =>
       modes.has(item as InterviewResponseMode),
