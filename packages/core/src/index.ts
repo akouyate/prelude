@@ -11,6 +11,14 @@ export {
 } from "./domain/interview-agent";
 export { suggestReviewStatus } from "./domain/review";
 export {
+  complianceMessages,
+  consoleLocales,
+  protectedTopicCategoryLabel,
+  resolveConsoleLocale,
+  type ComplianceMessages,
+  type ConsoleLocale,
+} from "./i18n/compliance-copy";
+export {
   aiGuardrails,
   aiCompliancePolicyVersion,
   buildAiCompliancePromptContext,

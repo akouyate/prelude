@@ -3,12 +3,15 @@
 import { randomBytes } from "node:crypto";
 
 import { prisma, type Prisma } from "@prelude/db";
-import type {
-  InterviewAgentDraft,
-  InterviewCriterionDraft,
-  InterviewFocus,
-  InterviewQuestionDraft,
-  InterviewSeniority,
+import {
+  complianceMessages,
+  protectedTopicCategoryLabel,
+  resolveConsoleLocale,
+  type InterviewAgentDraft,
+  type InterviewCriterionDraft,
+  type InterviewFocus,
+  type InterviewQuestionDraft,
+  type InterviewSeniority,
 } from "@prelude/core";
 import {
   INTERVIEW_PLAN_SCHEMA_VERSION,
@@ -325,9 +328,13 @@ export async function publishInterviewDraft(
   );
 
   if (flagged) {
+    const locale = resolveConsoleLocale();
     return {
       ok: false,
-      error: `Remove a protected or disallowed topic from your interview (${flagged.category}): ${flagged.reason}`,
+      error: complianceMessages(locale).classifierDisallowedTopicBlock(
+        protectedTopicCategoryLabel(flagged.category, locale),
+        flagged.reason,
+      ),
     };
   }
 
@@ -503,8 +510,7 @@ function normalizeDraftInput(input: SaveInterviewDraftInput):
   if (planReferencesDisallowedTopic({ criteria, questions })) {
     return {
       ok: false,
-      error:
-        "Remove protected or disallowed topics from your questions and evaluation criteria.",
+      error: complianceMessages(resolveConsoleLocale()).planDisallowedTopicBlock,
     };
   }
 

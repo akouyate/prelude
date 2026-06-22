@@ -5,6 +5,8 @@ import {
   candidateConsentCopyVersion,
   candidateDisclosureCopy,
   candidateDisclosureCopyVersion,
+  complianceMessages,
+  resolveConsoleLocale,
   textViolatesPolicy,
   type InterviewAgentDraft,
   type InterviewFocus,
@@ -70,6 +72,11 @@ type ResponseMode = InterviewResponseMode;
 // provider the generate action reports when the AI request fell back to
 // Prelude's built-in deterministic templates.
 const DETERMINISTIC_GENERATOR_PROVIDER = "deterministic";
+
+// N6c: recruiter-facing compliance copy. The builder is a client component, so
+// the locale is resolved from NEXT_PUBLIC_CONSOLE_LOCALE (resolveConsoleLocale
+// reads it). Resolve once at module load — locale is fixed per build.
+const complianceCopy = complianceMessages(resolveConsoleLocale());
 
 const steps: Array<{ id: StepId; label: string; title: string }> = [
   { id: "brief", label: "Brief", title: "Start with the role" },
@@ -1404,9 +1411,7 @@ function QuestionsStep({
                         `${question.prompt} ${question.expectedSignal}`
                       ) ? (
                         <p className="rounded-2xl border border-coral-200 bg-coral-50 px-3 py-2 text-sm font-medium text-coral-800">
-                          This question references a protected or disallowed
-                          topic and can&apos;t be published. Rephrase it to stay
-                          job-related.
+                          {complianceCopy.questionDisallowedTopicWarning}
                         </p>
                       ) : null}
                       <div className="flex flex-wrap gap-2">
@@ -1593,8 +1598,7 @@ function EvaluationStep({
                 />
                 {flagged ? (
                   <p className="mt-2 text-sm font-medium text-coral-800">
-                    This criterion references a protected or disallowed topic and
-                    can&apos;t be published. Keep it job-related.
+                    {complianceCopy.criterionDisallowedTopicWarning}
                   </p>
                 ) : null}
                 <div className="mt-2 flex justify-end">

@@ -2,7 +2,12 @@ import type {
   InterviewCriterionDraft,
   InterviewQuestionDraft,
 } from "@prelude/core";
-import { aiGuardrails, textViolatesPolicy } from "@prelude/core";
+import {
+  aiGuardrails,
+  complianceMessages,
+  resolveConsoleLocale,
+  textViolatesPolicy,
+} from "@prelude/core";
 
 export const interviewPlanPolicy = {
   maxCriteria: 5,
@@ -99,7 +104,7 @@ export function getInterviewPlanPublicationIssues(
 
   if (planReferencesDisallowedTopic(input)) {
     issues.push(
-      "Remove protected or disallowed topics from your questions and evaluation criteria.",
+      complianceMessages(resolveConsoleLocale()).planDisallowedTopicBlock,
     );
   }
 
