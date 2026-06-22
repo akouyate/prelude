@@ -16,11 +16,22 @@ import {
 import { interviewPlanQuestionSchema } from "@prelude/contracts";
 
 import { interviewPlanPolicy } from "../../domain/interview-plan-policy";
+import {
+  logInterviewGenerationEvent,
+  type InterviewGenerationFallbackReason,
+  type InterviewGenerationTelemetrySink,
+} from "./interview-generation-telemetry";
 import type { InterviewResponseMode } from "./interview-drafts";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 export const interviewDraftPromptVersion = "interview-draft-v1";
 export const defaultInterviewDraftLlmModel = "gpt-4.1-mini";
+// Provenance label persisted when a draft is produced by Prelude's built-in
+// deterministic templates (either the deterministic generator, or the OpenAI
+// generator after an AI->deterministic fallback). Mirrors the candidate-brief
+// modelProvider convention.
+export const openAiGeneratorProvider = "openai_responses";
+export const deterministicGeneratorProvider = "deterministic";
 
 type FetchResponse = {
   json: () => Promise<unknown>;
@@ -60,6 +71,12 @@ export type InterviewQuestionAdditionInput = InterviewDraftGenerationInput & {
   topic: string;
 };
 
+export type InterviewDraftProvenance = {
+  draft: InterviewAgentDraft;
+  modelName: string;
+  provider: string;
+};
+
 export type InterviewDraftGenerator = {
   addQuestion: (
     input: InterviewQuestionAdditionInput,
@@ -67,6 +84,15 @@ export type InterviewDraftGenerator = {
   generateDraft: (
     input: InterviewDraftGenerationInput,
   ) => Promise<InterviewAgentDraft>;
+  /**
+   * N9: returns the draft together with the provenance of the engine that
+   * actually produced it. For the OpenAI generator this reflects whether the
+   * request fell back to the deterministic templates, which `provider` (a
+   * static label) cannot express.
+   */
+  generateDraftWithProvenance: (
+    input: InterviewDraftGenerationInput,
+  ) => Promise<InterviewDraftProvenance>;
   modelName: string;
   provider: string;
   refineQuestion: (
@@ -78,6 +104,7 @@ export type OpenAIInterviewDraftGeneratorOptions = {
   apiKey: string;
   fetcher?: Fetcher;
   model: string;
+  telemetry?: InterviewGenerationTelemetrySink;
   timeoutMs: number;
 };
 
@@ -115,8 +142,57 @@ export function createOpenAIInterviewDraftGenerator({
   apiKey,
   fetcher = defaultFetcher,
   model,
+  telemetry,
   timeoutMs,
 }: OpenAIInterviewDraftGeneratorOptions): InterviewDraftGenerator {
+  const generateDraftWithProvenance = async (
+    input: InterviewDraftGenerationInput,
+  ): Promise<InterviewDraftProvenance> => {
+    let reason: InterviewGenerationFallbackReason = "openai_error";
+
+    try {
+      const payload = await createOpenAICompletion({
+        apiKey,
+        fetcher,
+        input: buildDraftPromptInput(input),
+        model,
+        schema: interviewDraftJsonSchema,
+        schemaName: "interview_draft",
+        systemInstructions: openAIDraftInstructions(),
+        timeoutMs,
+      });
+
+      reason = "openai_incomplete_payload";
+
+      return {
+        draft: normalizeDraft(payload, input, telemetry),
+        modelName: model,
+        provider: openAiGeneratorProvider,
+      };
+    } catch {
+      // N9: the AI request (or its normalization) failed; record the
+      // AI->deterministic fallback so the recruiter notice and audit log can
+      // both reflect that AI tailoring was unavailable.
+      logInterviewGenerationEvent(
+        {
+          event: "ai_draft_fallback",
+          model,
+          provider: openAiGeneratorProvider,
+          reason,
+        },
+        telemetry,
+      );
+
+      return {
+        draft: await createDeterministicInterviewDraftGenerator().generateDraft(
+          input,
+        ),
+        modelName: interviewDraftPromptVersion,
+        provider: deterministicGeneratorProvider,
+      };
+    }
+  };
+
   return {
     addQuestion: async (input) => {
       try {
@@ -148,26 +224,11 @@ export function createOpenAIInterviewDraftGenerator({
         topic: input.topic,
       });
     },
-    generateDraft: async (input) => {
-      try {
-        const payload = await createOpenAICompletion({
-          apiKey,
-          fetcher,
-          input: buildDraftPromptInput(input),
-          model,
-          schema: interviewDraftJsonSchema,
-          schemaName: "interview_draft",
-          systemInstructions: openAIDraftInstructions(),
-          timeoutMs,
-        });
-
-        return normalizeDraft(payload, input);
-      } catch {
-        return createDeterministicInterviewDraftGenerator().generateDraft(input);
-      }
-    },
+    generateDraft: async (input) =>
+      (await generateDraftWithProvenance(input)).draft,
+    generateDraftWithProvenance,
     modelName: model,
-    provider: "openai_responses",
+    provider: openAiGeneratorProvider,
     refineQuestion: async (input) => {
       try {
         const payload = await createOpenAICompletion({
@@ -206,44 +267,51 @@ export function createOpenAIInterviewDraftGenerator({
 }
 
 export function createDeterministicInterviewDraftGenerator(): InterviewDraftGenerator {
+  const generateDraft = async (input: InterviewDraftGenerationInput) => {
+    const draft = generateDeterministicInterviewDraft({
+      attachmentName: input.sourceAttachmentName,
+      companyName: input.companyName,
+      focus: input.focus,
+      jobDescription: input.roleBrief,
+      jobTitle: input.roleTitle,
+      seniority: input.seniority,
+    });
+    const targetCount = resolveTargetQuestionCount(input);
+    const questions = [...draft.questions];
+
+    while (
+      questions.length < targetCount &&
+      questions.length < interviewPlanPolicy.maxQuestions
+    ) {
+      const next = createDeterministicQuestion({
+        index: questions.length + 1,
+        topic: missingFocusTopic(input.focus, questions),
+      });
+      questions.push(next);
+    }
+
+    return normalizeDraft(
+      {
+        ...draft,
+        questions,
+        rationale: `Prelude prepared ${questions.length} focused first-screening questions from the role brief, seniority, and selected hiring signals.`,
+      },
+      input,
+    );
+  };
+
   return {
     addQuestion: async (input) =>
       createDeterministicQuestion({
         index: input.draft.questions.length + 1,
         topic: input.topic,
       }),
-    generateDraft: async (input) => {
-      const draft = generateDeterministicInterviewDraft({
-        attachmentName: input.sourceAttachmentName,
-        companyName: input.companyName,
-        focus: input.focus,
-        jobDescription: input.roleBrief,
-        jobTitle: input.roleTitle,
-        seniority: input.seniority,
-      });
-      const targetCount = resolveTargetQuestionCount(input);
-      const questions = [...draft.questions];
-
-      while (
-        questions.length < targetCount &&
-        questions.length < interviewPlanPolicy.maxQuestions
-      ) {
-        const next = createDeterministicQuestion({
-          index: questions.length + 1,
-          topic: missingFocusTopic(input.focus, questions),
-        });
-        questions.push(next);
-      }
-
-      return normalizeDraft(
-        {
-          ...draft,
-          questions,
-          rationale: `Prelude prepared ${questions.length} focused first-screening questions from the role brief, seniority, and selected hiring signals.`,
-        },
-        input,
-      );
-    },
+    generateDraft,
+    generateDraftWithProvenance: async (input) => ({
+      draft: await generateDraft(input),
+      modelName: interviewDraftPromptVersion,
+      provider: deterministicGeneratorProvider,
+    }),
     modelName: interviewDraftPromptVersion,
     provider: "deterministic_test_generator",
     refineQuestion: async (input) => {
@@ -272,6 +340,7 @@ function createUnavailableInterviewDraftGenerator(): InterviewDraftGenerator {
   return {
     addQuestion: fail,
     generateDraft: fail,
+    generateDraftWithProvenance: fail,
     modelName: "unavailable",
     provider: "unavailable",
     refineQuestion: fail,
@@ -413,29 +482,55 @@ function openAIQuestionInstructions() {
 function normalizeDraft(
   value: unknown,
   input: InterviewDraftGenerationInput,
+  telemetry?: InterviewGenerationTelemetrySink,
 ): InterviewAgentDraft {
   if (!isRecord(value)) {
     throw new Error("Role draft generation returned an invalid payload.");
   }
 
   const targetCount = resolveTargetQuestionCount(input);
-  const questions = readArray(value.questions)
+  // Normalize first, then split out the policy filter so the keyword gate's
+  // drops can be counted and reported (N9 telemetry).
+  const normalizedQuestions = readArray(value.questions)
     .map((question, index) =>
       safeNormalizeQuestion(question, {
         fallbackId: `q-${index + 1}`,
         fallbackSource: "agent",
       }),
     )
-    .filter((question): question is InterviewQuestionDraft => Boolean(question))
+    .filter((question): question is InterviewQuestionDraft => Boolean(question));
+  const droppedQuestions = normalizedQuestions.filter((question) =>
+    questionViolatesPolicy(question),
+  ).length;
+  const questions = normalizedQuestions
     .filter((question) => !questionViolatesPolicy(question))
     .slice(0, targetCount);
-  const criteria = readArray(value.criteria)
+
+  const normalizedCriteria = readArray(value.criteria)
     .map((criterion, index) =>
       safeNormalizeCriterion(criterion, `criterion-${index + 1}`),
     )
-    .filter((criterion): criterion is InterviewCriterionDraft => Boolean(criterion))
+    .filter((criterion): criterion is InterviewCriterionDraft =>
+      Boolean(criterion),
+    );
+  const droppedCriteria = normalizedCriteria.filter((criterion) =>
+    criterionViolatesPolicy(criterion),
+  ).length;
+  const criteria = normalizedCriteria
     .filter((criterion) => !criterionViolatesPolicy(criterion))
     .slice(0, interviewPlanPolicy.maxCriteria);
+
+  if (droppedQuestions > 0 || droppedCriteria > 0) {
+    logInterviewGenerationEvent(
+      {
+        event: "policy_violation_dropped",
+        droppedCriteria,
+        droppedQuestions,
+      },
+      telemetry,
+    );
+  }
+
   const fallbackDraft = generateDeterministicInterviewDraft({
     attachmentName: input.sourceAttachmentName,
     companyName: input.companyName,

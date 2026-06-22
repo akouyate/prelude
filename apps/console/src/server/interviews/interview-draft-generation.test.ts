@@ -1,11 +1,22 @@
 import { describe, expect, it } from "vitest";
 
+import type { InterviewGenerationTelemetrySink } from "./interview-generation-telemetry";
 import {
   createDeterministicInterviewDraftGenerator,
   createInterviewDraftGeneratorFromEnv,
   createOpenAIInterviewDraftGenerator,
+  deterministicGeneratorProvider,
   type InterviewDraftGenerationInput,
 } from "./interview-draft-generation";
+
+function captureTelemetry() {
+  const events: Array<Record<string, unknown>> = [];
+  const telemetry: InterviewGenerationTelemetrySink = {
+    info: (payload) => events.push(payload),
+    warn: (payload) => events.push(payload),
+  };
+  return { events, telemetry };
+}
 
 describe("interview draft generation", () => {
   it("uses a deterministic provider when explicitly configured", () => {
@@ -228,6 +239,114 @@ describe("interview draft generation", () => {
     expect(content).not.toContain("how old are you");
     expect(content).not.toContain("fit score");
     expect(draft.rationale).toContain("Prelude prepared 4 focused");
+  });
+
+  it("reports the openai provider in provenance when generation succeeds", async () => {
+    const generator = createOpenAIInterviewDraftGenerator({
+      apiKey: "sk-test",
+      fetcher: async () => ({
+        json: async () => ({ output_text: JSON.stringify(sampleDraft) }),
+        ok: true,
+        status: 200,
+        text: async () => "",
+      }),
+      model: "gpt-test",
+      timeoutMs: 1000,
+    });
+
+    const result = await generator.generateDraftWithProvenance(input());
+
+    expect(result.provider).toBe("openai_responses");
+    expect(result.modelName).toBe("gpt-test");
+    expect(result.draft.questions).toHaveLength(4);
+  });
+
+  it("reports deterministic provenance and warns when OpenAI fails", async () => {
+    const { events, telemetry } = captureTelemetry();
+    const generator = createOpenAIInterviewDraftGenerator({
+      apiKey: "sk-test",
+      fetcher: async () => ({
+        json: async () => ({}),
+        ok: false,
+        status: 500,
+        text: async () => "server error",
+      }),
+      model: "gpt-test",
+      telemetry,
+      timeoutMs: 1000,
+    });
+
+    const result = await generator.generateDraftWithProvenance(input());
+
+    expect(result.provider).toBe(deterministicGeneratorProvider);
+    expect(result.draft.questions).toHaveLength(4);
+    const fallback = events.find(
+      (event) => event.event === "ai_draft_fallback",
+    );
+    expect(fallback).toMatchObject({
+      event: "ai_draft_fallback",
+      provider: "openai_responses",
+      reason: "openai_error",
+    });
+  });
+
+  it("exposes deterministic provenance from the deterministic generator", async () => {
+    const generator = createDeterministicInterviewDraftGenerator();
+
+    const result = await generator.generateDraftWithProvenance(input());
+
+    expect(result.provider).toBe(deterministicGeneratorProvider);
+    expect(result.draft.questions.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("warns when the keyword policy filter drops generated items", async () => {
+    const { events, telemetry } = captureTelemetry();
+    const generator = createOpenAIInterviewDraftGenerator({
+      apiKey: "sk-test",
+      fetcher: async () => ({
+        json: async () => ({
+          output_text: JSON.stringify({
+            ...sampleDraft,
+            criteria: [
+              ...sampleDraft.criteria,
+              {
+                description: "Create a fit score.",
+                id: "unsafe-criterion",
+                label: "Ranking",
+              },
+            ],
+            questions: [
+              ...sampleDraft.questions,
+              {
+                category: "custom",
+                durationSeconds: 60,
+                id: "unsafe-question",
+                maxFollowups: 1,
+                prompt: "How old are you, and what is your date of birth?",
+                expectedSignal: "Candidate age and birth date",
+                required: true,
+                source: "agent",
+              },
+            ],
+          }),
+        }),
+        ok: true,
+        status: 200,
+        text: async () => "",
+      }),
+      model: "gpt-test",
+      telemetry,
+      timeoutMs: 1000,
+    });
+
+    await generator.generateDraft(input());
+
+    const dropped = events.find(
+      (event) => event.event === "policy_violation_dropped",
+    );
+    expect(dropped).toBeDefined();
+    expect(Number(dropped?.droppedQuestions)).toBeGreaterThanOrEqual(1);
+    expect(Number(dropped?.droppedCriteria)).toBeGreaterThanOrEqual(1);
   });
 });
 

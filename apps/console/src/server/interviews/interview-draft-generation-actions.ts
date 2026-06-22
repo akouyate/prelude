@@ -67,11 +67,18 @@ export async function generateInterviewDraftAction(
   const generator = createInterviewDraftGeneratorFromEnv();
 
   try {
+    // N9: use the provenance-aware path so the returned provider/model reflect
+    // the engine that actually produced the draft (e.g. a deterministic
+    // fallback when OpenAI was unavailable), not the generator's static label.
+    const generated = await generator.generateDraftWithProvenance(
+      normalized.input,
+    );
+
     return {
-      draft: await generator.generateDraft(normalized.input),
-      modelName: generator.modelName,
+      draft: generated.draft,
+      modelName: generated.modelName,
       ok: true,
-      provider: generator.provider,
+      provider: generated.provider,
     };
   } catch (error) {
     return { error: toPublicGenerationError(error), ok: false };

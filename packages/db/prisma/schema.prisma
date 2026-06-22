@@ -91,6 +91,9 @@ model InterviewDraft {
   estimatedMinutes     Int?
   rationale            String?
   sourceAttachmentName String?
+  schemaVersion        Int          @default(1)
+  generatorProvider    String?
+  generatorModel       String?
   createdAt            DateTime     @default(now())
   updatedAt            DateTime     @updatedAt
   organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -118,6 +121,9 @@ model Interview {
   guardrails        Json               @default("[]")
   estimatedMinutes  Int?
   rationale         String?
+  schemaVersion     Int                @default(1)
+  generatorProvider String?
+  generatorModel    String?
   publishedAt       DateTime           @default(now())
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt

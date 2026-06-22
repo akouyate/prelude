@@ -115,7 +115,21 @@ const publishableDraft = () => ({
   roleTitle: "Backend Engineer",
   seniority: "mid",
   status: "draft",
+  schemaVersion: 1,
+  generatorProvider: "openai_responses",
+  generatorModel: "gpt-test",
 });
+
+function captureTelemetry() {
+  const events: Array<Record<string, unknown>> = [];
+  return {
+    events,
+    telemetry: {
+      info: (payload: Record<string, unknown>) => events.push(payload),
+      warn: (payload: Record<string, unknown>) => events.push(payload),
+    },
+  };
+}
 
 const passThroughClassifier = (): ProtectedTopicClassifier => ({
   classify: vi.fn(async (texts: string[]) =>
@@ -272,5 +286,102 @@ describe("publishInterviewDraft N6 classifier wiring", () => {
     expect(result.ok).toBe(false);
     // Keyword layer is authoritative and runs first; classifier is not consulted.
     expect(classifier.classify).not.toHaveBeenCalled();
+  });
+});
+
+describe("publishInterviewDraft N9 provenance + telemetry", () => {
+  it("copies the draft provenance onto the published interview snapshot", async () => {
+    await publishInterviewDraft("draft_1", passThroughClassifier());
+
+    const createCall = tx.interview.create.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+
+    expect(createCall?.data.schemaVersion).toBe(1);
+    expect(createCall?.data.generatorProvider).toBe("openai_responses");
+    expect(createCall?.data.generatorModel).toBe("gpt-test");
+  });
+
+  it("logs the N6 classifier outcome as clean when nothing is flagged", async () => {
+    const { events, telemetry } = captureTelemetry();
+
+    await publishInterviewDraft("draft_1", passThroughClassifier(), telemetry);
+
+    const outcome = events.find(
+      (event) => event.event === "protected_topic_classification",
+    );
+    expect(outcome).toMatchObject({
+      event: "protected_topic_classification",
+      outcome: "clean",
+    });
+  });
+
+  it("logs the N6 classifier outcome as flagged when a segment is flagged", async () => {
+    const { events, telemetry } = captureTelemetry();
+    const classifier: ProtectedTopicClassifier = {
+      classify: vi.fn(async (texts: string[]) =>
+        texts.map((_text, index) =>
+          index === 1
+            ? {
+                flagged: true,
+                category: "age" as const,
+                reason: "indirect age proxy",
+              }
+            : { flagged: false, category: "none" as const, reason: "" },
+        ),
+      ),
+      modelName: "gpt-test",
+      provider: "openai_responses",
+    };
+
+    await publishInterviewDraft("draft_1", classifier, telemetry);
+
+    const outcome = events.find(
+      (event) => event.event === "protected_topic_classification",
+    );
+    expect(outcome).toMatchObject({
+      event: "protected_topic_classification",
+      outcome: "flagged",
+    });
+  });
+
+  it("logs the N6 classifier outcome as disabled when the classifier is off", async () => {
+    const { events, telemetry } = captureTelemetry();
+    const disabled: ProtectedTopicClassifier = {
+      classify: vi.fn(async (texts: string[]) =>
+        texts.map(() => ({ flagged: false, category: "none" as const, reason: "" })),
+      ),
+      modelName: "disabled",
+      provider: "disabled",
+    };
+
+    const result = await publishInterviewDraft("draft_1", disabled, telemetry);
+
+    expect(result.ok).toBe(true);
+    const outcome = events.find(
+      (event) => event.event === "protected_topic_classification",
+    );
+    expect(outcome).toMatchObject({ outcome: "disabled" });
+  });
+
+  it("fails open and logs skipped_error when the classifier throws", async () => {
+    const { events, telemetry } = captureTelemetry();
+    const throwing: ProtectedTopicClassifier = {
+      classify: vi.fn(async () => {
+        throw new Error("classifier exploded");
+      }),
+      modelName: "gpt-test",
+      provider: "openai_responses",
+    };
+
+    const result = await publishInterviewDraft("draft_1", throwing, telemetry);
+
+    // Fails OPEN: the keyword gate already ran and is authoritative.
+    expect(result.ok).toBe(true);
+    expect(tx.interview.create).toHaveBeenCalledTimes(1);
+    const outcome = events.find(
+      (event) => event.event === "protected_topic_classification",
+    );
+    expect(outcome).toMatchObject({ outcome: "skipped_error" });
   });
 });

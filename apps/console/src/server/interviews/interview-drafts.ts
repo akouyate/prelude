@@ -11,6 +11,7 @@ import type {
   InterviewSeniority,
 } from "@prelude/core";
 import {
+  INTERVIEW_PLAN_SCHEMA_VERSION,
   interviewPlanSchema,
   parseStoredInterviewPlan,
   toLiveInterviewPlan,
@@ -25,7 +26,13 @@ import {
 } from "../../domain/interview-plan-policy";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import {
+  logInterviewGenerationEvent,
+  type InterviewGenerationTelemetrySink,
+  type ProtectedTopicClassificationOutcome,
+} from "./interview-generation-telemetry";
+import {
   createProtectedTopicClassifierFromEnv,
+  type ProtectedTopicClassification,
   type ProtectedTopicClassifier,
 } from "./protected-topic-classifier";
 
@@ -45,6 +52,11 @@ export type SaveInterviewDraftInput = {
   estimatedMinutes: number;
   rationale: string;
   sourceAttachmentName?: string;
+  // N9: provenance of the engine that produced this draft. Optional so manual
+  // edits (no generation) and legacy callers keep working; schemaVersion is
+  // always stamped on write regardless.
+  generatorProvider?: string;
+  generatorModel?: string;
 };
 
 export type SaveInterviewDraftResult =
@@ -171,6 +183,7 @@ export async function saveInterviewDraft(
 export async function publishInterviewDraft(
   draftId: string,
   classifier: ProtectedTopicClassifier = createProtectedTopicClassifierFromEnv(),
+  telemetry?: InterviewGenerationTelemetrySink,
 ): Promise<PublishInterviewDraftResult> {
   const normalizedDraftId = draftId.trim();
 
@@ -271,8 +284,40 @@ export async function publishInterviewDraft(
     ),
     ...criteria.map((criterion) => `${criterion.label} ${criterion.description}`),
   ];
-  const classifications = await classifier.classify(segments);
+
+  // N9: wrap the classifier so a thrown error fails OPEN (the keyword gate is
+  // authoritative) while still being recorded as a skipped_error outcome.
+  let classifications: ProtectedTopicClassification[] = [];
+  let classifierThrew = false;
+
+  try {
+    classifications = await classifier.classify(segments);
+  } catch {
+    classifierThrew = true;
+  }
+
   const flagged = classifications.find((classification) => classification.flagged);
+
+  const classificationOutcome: ProtectedTopicClassificationOutcome =
+    classifierThrew
+      ? "skipped_error"
+      : classifier.provider === "disabled"
+        ? "disabled"
+        : flagged
+          ? "flagged"
+          : "clean";
+
+  logInterviewGenerationEvent(
+    {
+      event: "protected_topic_classification",
+      category: flagged?.category,
+      model: classifier.modelName,
+      outcome: classificationOutcome,
+      provider: classifier.provider,
+      segmentCount: segments.length,
+    },
+    telemetry,
+  );
 
   if (flagged) {
     return {
@@ -325,6 +370,10 @@ export async function publishInterviewDraft(
       criteria: criteria as unknown as Prisma.InputJsonValue,
       estimatedMinutes: draft.estimatedMinutes,
       focus: draft.focus as Prisma.InputJsonValue,
+      // N9: the published snapshot inherits the draft's generator provenance and
+      // schema version so every Interview row records how its plan was produced.
+      generatorModel: draft.generatorModel,
+      generatorProvider: draft.generatorProvider,
       guardrails: guardrails as unknown as Prisma.InputJsonValue,
       jobId: draft.jobId,
       organizationId: scope.organizationId,
@@ -334,6 +383,7 @@ export async function publishInterviewDraft(
       responseModes: responseModes as unknown as Prisma.InputJsonValue,
       roleBrief: draft.roleBrief,
       roleTitle: draft.roleTitle,
+      schemaVersion: draft.schemaVersion ?? INTERVIEW_PLAN_SCHEMA_VERSION,
       seniority: draft.seniority,
       status: "published",
     };
@@ -484,6 +534,8 @@ function normalizeDraftInput(input: SaveInterviewDraftInput):
       draftId: input.draftId,
       estimatedMinutes,
       focus,
+      generatorModel: input.generatorModel?.trim() || undefined,
+      generatorProvider: input.generatorProvider?.trim() || undefined,
       guardrails,
       jobId: input.jobId,
       questions: plan.data.questions as InterviewQuestionDraft[],
@@ -551,6 +603,8 @@ function toDraftPersistenceData(
     criteria: input.criteria as unknown as Prisma.InputJsonValue,
     estimatedMinutes: input.estimatedMinutes,
     focus: input.focus as unknown as Prisma.InputJsonValue,
+    generatorModel: input.generatorModel ?? null,
+    generatorProvider: input.generatorProvider ?? null,
     guardrails: input.guardrails as unknown as Prisma.InputJsonValue,
     jobId: input.jobId,
     organizationId: input.organizationId,
@@ -559,6 +613,7 @@ function toDraftPersistenceData(
     responseModes: input.responseModes as unknown as Prisma.InputJsonValue,
     roleBrief: input.roleBrief,
     roleTitle: input.roleTitle,
+    schemaVersion: INTERVIEW_PLAN_SCHEMA_VERSION,
     seniority: input.seniority,
     sourceAttachmentName: input.sourceAttachmentName,
     status: "draft",

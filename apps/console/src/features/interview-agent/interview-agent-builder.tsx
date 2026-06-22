@@ -62,6 +62,11 @@ type StepId = "brief" | "calibrate" | "questions" | "evaluation" | "share";
 type QuestionAction = "sharper" | "replace";
 type ResponseMode = InterviewResponseMode;
 
+// Mirrors `deterministicGeneratorProvider` in interview-draft-generation: the
+// provider the generate action reports when the AI request fell back to
+// Prelude's built-in deterministic templates.
+const DETERMINISTIC_GENERATOR_PROVIDER = "deterministic";
+
 const steps: Array<{ id: StepId; label: string; title: string }> = [
   { id: "brief", label: "Brief", title: "Start with the role" },
   { id: "calibrate", label: "Calibrate", title: "Calibrate the role screen" },
@@ -200,6 +205,12 @@ export function InterviewAgentBuilder({
   const [isPublishingDraft, setIsPublishingDraft] = React.useState(false);
   const [saveMessage, setSaveMessage] = React.useState<string>();
   const [saveError, setSaveError] = React.useState<string>();
+  // N9: provenance of the generated draft. `usedDeterministicFallback` drives a
+  // non-blocking recruiter notice when AI tailoring was unavailable.
+  const [generatorProvider, setGeneratorProvider] = React.useState<string>();
+  const [generatorModel, setGeneratorModel] = React.useState<string>();
+  const [usedDeterministicFallback, setUsedDeterministicFallback] =
+    React.useState(false);
   const [publishedInterview, setPublishedInterview] =
     React.useState<Extract<PublishInterviewDraftResult, { ok: true }>>();
   const generationTimers = React.useRef<Array<ReturnType<typeof setTimeout>>>(
@@ -242,6 +253,11 @@ export function InterviewAgentBuilder({
     setPublishedInterview(undefined);
     setSaveMessage(undefined);
     setSaveError(undefined);
+    setGeneratorProvider(result.provider);
+    setGeneratorModel(result.modelName);
+    // Mirrors `deterministicGeneratorProvider`: the action reports this provider
+    // when OpenAI was unavailable and the draft came from Prelude's templates.
+    setUsedDeterministicFallback(result.provider === DETERMINISTIC_GENERATOR_PROVIDER);
     return result.draft;
   }, [
     attachmentName,
@@ -272,6 +288,7 @@ export function InterviewAgentBuilder({
     setIsGeneratingDraft(true);
     setGenerationPhase(0);
     setSaveError(undefined);
+    setUsedDeterministicFallback(false);
     setDraft(undefined);
 
     generationTimers.current = [
@@ -312,6 +329,8 @@ export function InterviewAgentBuilder({
           draftId: persistedDraftId,
           estimatedMinutes: draftToSave.estimatedMinutes,
           focus,
+          generatorModel,
+          generatorProvider,
           guardrails: draftToSave.guardrails,
           jobId,
           questions: draftToSave.questions,
@@ -349,6 +368,8 @@ export function InterviewAgentBuilder({
       attachmentName,
       draft,
       focus,
+      generatorModel,
+      generatorProvider,
       jobDescription,
       jobId,
       jobTitle,
@@ -790,6 +811,16 @@ export function InterviewAgentBuilder({
               onPublish={publishCurrentDraft}
               onSave={() => void saveCurrentDraft()}
             />
+          ) : null}
+
+          {usedDeterministicFallback && draft && currentStep !== "share" ? (
+            <p
+              className="mt-5 rounded-2xl border border-gold-800/20 bg-gold-100 px-4 py-3 text-sm font-medium text-gold-800"
+              role="status"
+            >
+              Generated with Prelude&apos;s built-in templates — AI tailoring was
+              unavailable. You can edit every question before publishing.
+            </p>
           ) : null}
 
           {saveError && currentStep !== "share" ? (
