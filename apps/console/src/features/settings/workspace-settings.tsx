@@ -151,7 +151,9 @@ function ProfileSection({ data }: { data: WorkspaceSettingsData }) {
           </AvatarToken>
           <div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary">Change photo</Button>
+              <Button variant="secondary">
+                {t("settings.profile.changePhoto")}
+              </Button>
               <Button variant="ghost">{t("settings.profile.remove")}</Button>
             </div>
             <p className="mt-2 text-xs text-ink-400">

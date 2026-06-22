@@ -44,6 +44,7 @@
         "jobTitle": "Intitulé du poste",
         "email": "E-mail",
         "language": "Langue",
+        "changePhoto": "Changer la photo",
         "remove": "Retirer",
         "avatarHint": "JPG ou PNG, au moins 256x256px."
       },
