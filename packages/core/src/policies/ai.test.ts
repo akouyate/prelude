@@ -88,3 +88,39 @@ describe("textViolatesPolicy", () => {
     ).toBe(false);
   });
 });
+
+describe("protected-topic proxy coverage (EU + US)", () => {
+  const cases: Array<[string, boolean]> = [
+    // Real-world protected-class proxies that the bare category labels miss.
+    ["How old are you and when did you graduate?", true],
+    ["What's your date of birth for our records?", true],
+    ["Are you a digital native?", true],
+    ["When did you graduate from university?", true],
+    ["Do you have children or plan to start a family?", true],
+    ["Are you pregnant or planning maternity leave soon?", true],
+    ["Do you have childcare arranged for early shifts?", true],
+    ["How many sick days did you take last year?", true],
+    ["Do you have any medical condition we should know about?", true],
+    ["Where are you really from? Are you a US citizen?", true],
+    ["Is English your first language, or are you a native speaker?", true],
+    ["Does heart disease run in your family?", true],
+    ["Have you ever been arrested or convicted of a crime?", true],
+    ["What is your credit score?", true],
+    // Legitimate, job-related look-alikes that must NOT be flagged.
+    ["Are you legally authorized to work in this country?", false],
+    [
+      "Can you perform the essential functions of the job with or without reasonable accommodation?",
+      false,
+    ],
+    ["Do you meet the minimum years of experience for this role?", false],
+    ["Can you work the required schedule, including occasional weekends?", false],
+    ["Describe your experience building cloud-native applications.", false],
+    ["Tell me about supporting a family of products at scale.", false],
+    ["Walk me through your credit risk modeling track record.", false],
+    ["Will you now or in the future require visa sponsorship?", false],
+  ];
+
+  it.each(cases)("textViolatesPolicy(%j) === %s", (text, shouldFlag) => {
+    expect(textViolatesPolicy(text)).toBe(shouldFlag);
+  });
+});

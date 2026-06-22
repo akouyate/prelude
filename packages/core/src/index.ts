@@ -19,6 +19,7 @@ export {
   candidateDisclosureCopyVersion,
   complianceFlagCodes,
   defaultComplianceFlags,
+  disallowedProxyPhrases,
   disallowedQuestionTopics,
   findForbiddenAutomatedDecisionPhrases,
   forbiddenAutomatedDecisionPhrases,

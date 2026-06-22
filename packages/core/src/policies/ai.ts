@@ -42,6 +42,157 @@ export const disallowedQuestionTopics = [
   "biometric or face analysis",
 ] as const;
 
+// Real-world proxy phrases recruiters actually type that the broad category
+// labels above miss. Matched as literal word-boundary phrases (no " or " split),
+// covering EU protected classes and US EEOC/ADA/ADEA/GINA. Deliberately avoids
+// ambiguous bare tokens (citizen, authorized, native, family, record, credit) —
+// only multi-word phrases — to limit over-blocking of legitimate job questions.
+export const disallowedProxyPhrases = [
+  // age (EU age + US ADEA 40+)
+  "how old are you",
+  "how old are",
+  "what is your age",
+  "your age",
+  "date of birth",
+  "year of birth",
+  "birth year",
+  "when were you born",
+  "graduation year",
+  "when did you graduate",
+  "year you graduated",
+  "digital native",
+  "recent graduate",
+  "years until retirement",
+  "when do you plan to retire",
+  "nearing retirement",
+  "overqualified for",
+  "how many years until you retire",
+  // family / pregnancy / caregiving
+  "how many children",
+  "do you have children",
+  "do you have kids",
+  "any kids",
+  "how many kids",
+  "are you pregnant",
+  "planning to have children",
+  "plan to start a family",
+  "family plans",
+  "planning a family",
+  "are you married",
+  "marital status",
+  "your spouse",
+  "husband or wife",
+  "maternity leave",
+  "paternity leave",
+  "who takes care of",
+  "childcare arrangements",
+  "do you have childcare",
+  "arrange childcare",
+  "dependents do you have",
+  "trying to conceive",
+  "expecting a child",
+  "on birth control",
+  // disability / health (US ADA)
+  "medical condition",
+  "health condition",
+  "chronic illness",
+  "mental health",
+  "mental illness",
+  "disability do you have",
+  "are you disabled",
+  "have a disability",
+  "how many sick days",
+  "sick days did you take",
+  "currently taking any medication",
+  "prescription medication",
+  "seen a therapist",
+  "psychiatric",
+  "workers comp",
+  "workers compensation claim",
+  "how is your health",
+  "any health problems",
+  "have you been hospitalized",
+  "do you smoke",
+  // national origin / citizenship / race
+  "where are you from originally",
+  "where are you really from",
+  "what is your nationality",
+  "your nationality",
+  "country of origin",
+  "country of birth",
+  "where were you born",
+  "are you a us citizen",
+  "what is your citizenship",
+  "your citizenship status",
+  "do you have a green card",
+  "is english your first language",
+  "native speaker",
+  "native english speaker",
+  "mother tongue",
+  "your accent",
+  "where is your accent from",
+  "your ethnicity",
+  "what race",
+  "your race",
+  "do you have an accent",
+  "is english your native",
+  "your native language",
+  // religion
+  "what religion",
+  "your religion",
+  "religious holidays",
+  "which church",
+  "do you go to church",
+  "what is your faith",
+  "do you observe",
+  "religious observance",
+  "do you pray",
+  "your religious",
+  "do you celebrate christmas",
+  "wear a head covering",
+  // gender identity / sexual orientation
+  "your sexual orientation",
+  "are you gay",
+  "are you straight",
+  "your gender identity",
+  "are you transgender",
+  "do you have a girlfriend",
+  "do you have a boyfriend",
+  "husband or a wife",
+  "what are your pronouns",
+  "were you born a",
+  "your preferred gender",
+  // genetic information (US GINA)
+  "family medical history",
+  "genetic condition",
+  "genetic test",
+  "run in your family",
+  "inherited condition",
+  "family history of",
+  "hereditary",
+  "predisposed to",
+  // arrest / conviction history
+  "have you ever been arrested",
+  "ever been arrested",
+  "arrest record",
+  "criminal record",
+  "ever been convicted",
+  "any convictions",
+  "your criminal history",
+  "spent time in jail",
+  "been to prison",
+  "on probation",
+  "on parole",
+  // credit / financial history
+  "your credit score",
+  "your credit history",
+  "filed for bankruptcy",
+  "declared bankruptcy",
+  "been in debt",
+  "wages garnished",
+  "your financial situation",
+] as const;
+
 export const aiGuardrails = [
   "Analyze only candidate response content.",
   "Do not analyze face, accent, tone, emotion, or protected attributes.",
@@ -83,10 +234,15 @@ export function textViolatesPolicy(value: string) {
     return true;
   }
 
+  const matchesPhrase = (phrase: string) =>
+    new RegExp(`\\b${escapeRegExp(phrase)}\\b`, "u").test(text);
+
+  if (disallowedProxyPhrases.some((phrase) => matchesPhrase(phrase))) {
+    return true;
+  }
+
   return disallowedQuestionTopics.some((topic) => {
     const normalizedTopic = topic.toLowerCase();
-    const matchesPhrase = (phrase: string) =>
-      new RegExp(`\\b${escapeRegExp(phrase)}\\b`, "u").test(text);
 
     return (
       matchesPhrase(normalizedTopic) ||
