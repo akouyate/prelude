@@ -118,6 +118,41 @@ describe("protected-topic proxy coverage (EU + US)", () => {
     ["Tell me about supporting a family of products at scale.", false],
     ["Walk me through your credit risk modeling track record.", false],
     ["Will you now or in the future require visa sponsorship?", false],
+    // Unicode-boundary equivalence: a proxy must not match mid-word (race ⊄ racecar).
+    ["Tell me about your racecar telemetry project.", false],
+  ];
+
+  it.each(cases)("textViolatesPolicy(%j) === %s", (text, shouldFlag) => {
+    expect(textViolatesPolicy(text)).toBe(shouldFlag);
+  });
+});
+
+describe("French protected-topic proxy coverage", () => {
+  const cases: Array<[string, boolean]> = [
+    // Real proxies that must be flagged (several start/end with accents).
+    ["Pour finir, quel âge avez-vous ?", true],
+    ["Avez-vous des enfants en bas âge ?", true],
+    ["Êtes-vous enceinte ou prévoyez-vous de l'être ?", true],
+    ["Quelle est votre nationalité ?", true],
+    ["Êtes-vous français ?", true],
+    ["Avez-vous une RQTH ou un problème de santé ?", true],
+    ["Combien d'arrêts maladie avez-vous eus l'an dernier ?", true],
+    ["Êtes-vous syndiqué ?", true],
+    ["Quelles sont vos opinions politiques ?", true],
+    ["Avez-vous déjà été condamné ?", true],
+    ["Quelle est votre langue maternelle ?", true],
+    // Feminine inflection is a separate entry and must also flag.
+    ["Êtes-vous mariée ?", true],
+    // Legitimate, job-related look-alikes that must NOT be flagged.
+    ["Parlez-vous couramment français ?", false],
+    // Domain vocabulary must not collide with personal-health/finance proxies.
+    ["Quel est l'état de santé du système en production ?", false],
+    ["Comment gérez-vous la dette technique du projet ?", false],
+    ["Êtes-vous autorisé à travailler en France ?", false],
+    ["Avez-vous le permis de conduire B requis pour ce poste ?", false],
+    ["Êtes-vous disponible le week-end ?", false],
+    ["Décrivez l'origine d'une panne que vous avez diagnostiquée.", false],
+    ["Avez-vous déjà configuré une enceinte connectée en production ?", false],
   ];
 
   it.each(cases)("textViolatesPolicy(%j) === %s", (text, shouldFlag) => {

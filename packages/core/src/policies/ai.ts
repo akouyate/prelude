@@ -193,6 +193,174 @@ export const disallowedProxyPhrases = [
   "your financial situation",
 ] as const;
 
+// French-language proxy phrases (launch locale: FR). Matched with the same
+// Unicode-aware word boundaries as the English list. Masculine/feminine forms
+// are listed separately because matching is literal (no lemmatization). Avoids
+// ambiguous bare tokens (français = nationality vs language; permis = driving
+// vs work; enceinte = pregnant vs speaker) — only multi-word phrases.
+// Residual risk: a few personal-health phrases ("problème de santé", "maladie
+// chronique") can still collide with domain vocabulary for health-sector roles;
+// resolving self-vs-domain ambiguity is deferred to the N6 LLM classifier.
+export const disallowedProxyPhrasesFr = [
+  // âge
+  "quel âge avez-vous",
+  "quel âge as-tu",
+  "votre âge",
+  "votre date de naissance",
+  "date de naissance",
+  "année de naissance",
+  "en quelle année êtes-vous né",
+  "en quelle année êtes-vous née",
+  "quand êtes-vous né",
+  "quand êtes-vous née",
+  "année d'obtention du diplôme",
+  "année d'obtention de votre diplôme",
+  "en quelle année avez-vous obtenu",
+  "jeune diplômé",
+  "jeune diplômée",
+  "proche de la retraite",
+  "bientôt à la retraite",
+  "départ à la retraite",
+  "dans combien d'années comptez-vous partir à la retraite",
+  "quand comptez-vous partir à la retraite",
+  "surqualifié pour ce poste",
+  "surqualifiée pour ce poste",
+  // situation familiale / grossesse / garde d'enfants
+  "avez-vous des enfants",
+  "as-tu des enfants",
+  "combien d'enfants avez-vous",
+  "combien d'enfants",
+  "vous avez des enfants",
+  "êtes-vous enceinte",
+  "es-tu enceinte",
+  "comptez-vous avoir des enfants",
+  "comptez-vous fonder une famille",
+  "désirez-vous des enfants",
+  "projet de grossesse",
+  "congé maternité",
+  "congé de maternité",
+  "congé paternité",
+  "congé parental",
+  "êtes-vous marié",
+  "êtes-vous mariée",
+  "êtes-vous pacsé",
+  "êtes-vous pacsée",
+  "êtes-vous en couple",
+  "situation de famille",
+  "situation familiale",
+  "votre situation matrimoniale",
+  "votre conjoint",
+  "votre conjointe",
+  "votre mari",
+  "votre épouse",
+  "mode de garde",
+  "garde de vos enfants",
+  "qui garde vos enfants",
+  "qui s'occupe de vos enfants",
+  "personnes à charge avez-vous",
+  // handicap / santé
+  "problème de santé",
+  "problèmes de santé",
+  "votre état de santé",
+  "comment va votre santé",
+  "maladie chronique",
+  "maladie de longue durée",
+  "affection de longue durée",
+  "travailleur handicapé",
+  "travailleuse handicapée",
+  "reconnaissance de la qualité de travailleur handicapé",
+  "avez-vous une rqth",
+  "êtes-vous en situation de handicap",
+  "avez-vous un handicap",
+  "êtes-vous handicapé",
+  "êtes-vous handicapée",
+  "taux d'incapacité",
+  "arrêt maladie",
+  "arrêts maladie",
+  "combien d'arrêts maladie",
+  "combien de jours d'arrêt",
+  "suivez-vous un traitement médical",
+  "traitement médical en cours",
+  "prenez-vous des médicaments",
+  "santé mentale",
+  "suivi psychologique",
+  "suivi psychiatrique",
+  "avez-vous consulté un psychologue",
+  "avez-vous été hospitalisé",
+  "avez-vous été hospitalisée",
+  "accident du travail",
+  // origine / nationalité / prétendue race
+  "d'où venez-vous vraiment",
+  "d'où venez-vous à l'origine",
+  "quelles sont vos origines",
+  "quelle est votre origine",
+  "votre pays d'origine",
+  "pays d'origine",
+  "quelle est votre nationalité",
+  "votre nationalité",
+  "êtes-vous français",
+  "êtes-vous française",
+  "êtes-vous de nationalité française",
+  "où êtes-vous né",
+  "où êtes-vous née",
+  "votre pays de naissance",
+  "quelle est votre origine ethnique",
+  "votre origine ethnique",
+  "votre langue maternelle",
+  "quelle est votre langue maternelle",
+  "avez-vous un accent",
+  "d'où vient votre accent",
+  "votre nom est d'origine",
+  // religion / convictions
+  "quelle est votre religion",
+  "votre religion",
+  "êtes-vous croyant",
+  "êtes-vous croyante",
+  "allez-vous à l'église",
+  "allez-vous à la mosquée",
+  "allez-vous à la synagogue",
+  "fréquentez-vous une église",
+  "fêtes religieuses",
+  "pratiques religieuses",
+  "portez-vous le voile",
+  "faites-vous le ramadan",
+  // opinions politiques / activité syndicale
+  "vos opinions politiques",
+  "quelles sont vos opinions politiques",
+  "pour qui votez-vous",
+  "êtes-vous syndiqué",
+  "êtes-vous syndiquée",
+  "appartenance syndicale",
+  "activité syndicale",
+  "êtes-vous engagé politiquement",
+  "êtes-vous engagée politiquement",
+  // orientation sexuelle / identité de genre
+  "votre orientation sexuelle",
+  "quelle est votre orientation sexuelle",
+  "êtes-vous homosexuel",
+  "êtes-vous homosexuelle",
+  "avez-vous un petit ami",
+  "avez-vous une petite amie",
+  "êtes-vous marié à un homme",
+  "êtes-vous mariée à une femme",
+  "votre identité de genre",
+  "êtes-vous transgenre",
+  // casier judiciaire / antécédents
+  "casier judiciaire",
+  "votre casier judiciaire",
+  "avez-vous un casier",
+  "avez-vous déjà été condamné",
+  "avez-vous déjà été condamnée",
+  "antécédents judiciaires",
+  "avez-vous fait de la prison",
+  "avez-vous été incarcéré",
+  "avez-vous été incarcérée",
+  // situation financière
+  "êtes-vous surendetté",
+  "êtes-vous surendettée",
+  "interdit bancaire",
+] as const;
+
 export const aiGuardrails = [
   "Analyze only candidate response content.",
   "Do not analyze face, accent, tone, emotion, or protected attributes.",
@@ -234,10 +402,20 @@ export function textViolatesPolicy(value: string) {
     return true;
   }
 
+  // Unicode-aware word boundaries: JS \b is ASCII-only, so it silently fails to
+  // match phrases that start/end with accented letters (e.g. "êtes-vous
+  // enceinte", "congé maternité"). Lookarounds on \p{L}\p{N} fix accented
+  // boundaries and also avoid over-matching inflected forms (marié ⊄ mariée).
   const matchesPhrase = (phrase: string) =>
-    new RegExp(`\\b${escapeRegExp(phrase)}\\b`, "u").test(text);
+    new RegExp(
+      `(?<![\\p{L}\\p{N}])${escapeRegExp(phrase)}(?![\\p{L}\\p{N}])`,
+      "u",
+    ).test(text);
 
-  if (disallowedProxyPhrases.some((phrase) => matchesPhrase(phrase))) {
+  if (
+    disallowedProxyPhrases.some((phrase) => matchesPhrase(phrase)) ||
+    disallowedProxyPhrasesFr.some((phrase) => matchesPhrase(phrase))
+  ) {
     return true;
   }
 

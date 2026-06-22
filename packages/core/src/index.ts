@@ -20,6 +20,7 @@ export {
   complianceFlagCodes,
   defaultComplianceFlags,
   disallowedProxyPhrases,
+  disallowedProxyPhrasesFr,
   disallowedQuestionTopics,
   findForbiddenAutomatedDecisionPhrases,
   forbiddenAutomatedDecisionPhrases,
