@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  textViolatesPolicy,
   type InterviewAgentDraft,
   type InterviewFocus,
   type InterviewQuestionDraft,
@@ -557,6 +558,69 @@ export function InterviewAgentBuilder({
     setSaveMessage(undefined);
   }, []);
 
+  const updateCriterion = React.useCallback(
+    (criterionId: string, field: "label" | "description", value: string) => {
+      setDraft((current) => {
+        if (!current) {
+          return current;
+        }
+
+        return {
+          ...current,
+          criteria: current.criteria.map((criterion) =>
+            criterion.id === criterionId
+              ? { ...criterion, [field]: value }
+              : criterion
+          )
+        };
+      });
+      setPublishedInterview(undefined);
+      setSaveMessage(undefined);
+    },
+    []
+  );
+
+  const addCriterion = React.useCallback(() => {
+    setDraft((current) => {
+      if (
+        !current ||
+        current.criteria.length >= interviewPlanPolicy.maxCriteria
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        criteria: [
+          ...current.criteria,
+          { id: crypto.randomUUID(), label: "", description: "" }
+        ]
+      };
+    });
+    setPublishedInterview(undefined);
+    setSaveMessage(undefined);
+  }, []);
+
+  const removeCriterion = React.useCallback((criterionId: string) => {
+    setDraft((current) => {
+      if (
+        !current ||
+        current.criteria.length <= interviewPlanPolicy.minCriteriaToPublish
+      ) {
+        return current;
+      }
+
+      return {
+        ...current,
+        criteria: current.criteria.filter(
+          (criterion) => criterion.id !== criterionId
+        )
+      };
+    });
+    setPublishedInterview(undefined);
+    setSaveMessage(undefined);
+  }, []);
+
   const next = React.useCallback(() => {
     if (currentStep === "brief") {
       if (trimmedJobTitle.length < 2) {
@@ -701,7 +765,12 @@ export function InterviewAgentBuilder({
           ) : null}
 
           {currentStep === "evaluation" && draft ? (
-            <EvaluationStep draft={draft} />
+            <EvaluationStep
+              draft={draft}
+              onAddCriterion={addCriterion}
+              onRemoveCriterion={removeCriterion}
+              onUpdateCriterion={updateCriterion}
+            />
           ) : null}
 
           {currentStep === "share" && draft ? (
@@ -1222,6 +1291,13 @@ function QuestionsStep({
                       <span className="rounded-full bg-[#eef0e3] px-2 py-0.5 text-xs font-medium text-olive-800">
                         {meta.label}
                       </span>
+                      {textViolatesPolicy(
+                        `${question.prompt} ${question.signal}`
+                      ) ? (
+                        <span className="rounded-full bg-coral-50 px-2 py-0.5 text-xs font-medium text-coral-800">
+                          Protected topic
+                        </span>
+                      ) : null}
                     </span>
                     <span className="block text-base font-semibold leading-6 text-ink-900">
                       {question.prompt}
@@ -1238,6 +1314,15 @@ function QuestionsStep({
                           onUpdateQuestion(question.id, event.target.value)
                         }
                       />
+                      {textViolatesPolicy(
+                        `${question.prompt} ${question.signal}`
+                      ) ? (
+                        <p className="rounded-2xl border border-coral-200 bg-coral-50 px-3 py-2 text-sm font-medium text-coral-800">
+                          This question references a protected or disallowed
+                          topic and can&apos;t be published. Rephrase it to stay
+                          job-related.
+                        </p>
+                      ) : null}
                       <div className="flex flex-wrap gap-2">
                         <Button
                           onClick={() => setEditingQuestionId(undefined)}
@@ -1354,7 +1439,26 @@ function QuestionsStep({
   );
 }
 
-function EvaluationStep({ draft }: { draft: InterviewAgentDraft }) {
+function EvaluationStep({
+  draft,
+  onAddCriterion,
+  onRemoveCriterion,
+  onUpdateCriterion
+}: {
+  draft: InterviewAgentDraft;
+  onAddCriterion: () => void;
+  onRemoveCriterion: (criterionId: string) => void;
+  onUpdateCriterion: (
+    criterionId: string,
+    field: "label" | "description",
+    value: string
+  ) => void;
+}) {
+  const canAddCriterion =
+    draft.criteria.length < interviewPlanPolicy.maxCriteria;
+  const canRemoveCriterion =
+    draft.criteria.length > interviewPlanPolicy.minCriteriaToPublish;
+
   return (
     <div className="grid gap-5 lg:grid-cols-[1fr_0.85fr]">
       <div>
@@ -1362,18 +1466,82 @@ function EvaluationStep({ draft }: { draft: InterviewAgentDraft }) {
           <FileText aria-hidden="true" className="h-4 w-4 text-ink-700" />
           Review criteria
         </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          {draft.criteria.map((criterion) => (
-            <div
-              key={criterion.id}
-              className="rounded-3xl border border-ink-100 bg-white/76 p-4"
+        <p className="mt-1 text-sm leading-5 text-ink-600">
+          Edit how a reviewer should judge answers. Keep 3 to 5 job-related
+          criteria.
+        </p>
+        <div className="mt-3 space-y-3">
+          {draft.criteria.map((criterion) => {
+            const flagged = textViolatesPolicy(
+              `${criterion.label} ${criterion.description}`
+            );
+
+            return (
+              <div
+                key={criterion.id}
+                className={`rounded-3xl border bg-white/76 p-4 ${
+                  flagged ? "border-coral-300" : "border-ink-100"
+                }`}
+              >
+                <input
+                  aria-label="Criterion label"
+                  className="w-full rounded-2xl border border-ink-200 bg-white/88 px-3 py-2 text-sm font-semibold text-ink-900 outline-none focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
+                  value={criterion.label}
+                  placeholder="What to evaluate (e.g. Relevant evidence)"
+                  onChange={(event) =>
+                    onUpdateCriterion(criterion.id, "label", event.target.value)
+                  }
+                />
+                <Textarea
+                  aria-label="Criterion description"
+                  className="mt-2 min-h-16 bg-white/88 text-sm leading-5 focus:border-olive-800 focus:ring-[#e5e8d6]"
+                  value={criterion.description}
+                  placeholder="How a reviewer should judge it"
+                  onChange={(event) =>
+                    onUpdateCriterion(
+                      criterion.id,
+                      "description",
+                      event.target.value
+                    )
+                  }
+                />
+                {flagged ? (
+                  <p className="mt-2 text-sm font-medium text-coral-800">
+                    This criterion references a protected or disallowed topic and
+                    can&apos;t be published. Keep it job-related.
+                  </p>
+                ) : null}
+                <div className="mt-2 flex justify-end">
+                  <Button
+                    variant="ghost"
+                    disabled={!canRemoveCriterion}
+                    onClick={() => onRemoveCriterion(criterion.id)}
+                  >
+                    <Trash2 aria-hidden="true" className="h-4 w-4" />
+                    Remove
+                  </Button>
+                </div>
+              </div>
+            );
+          })}
+          {canAddCriterion ? (
+            <button
+              className="flex w-full cursor-pointer items-center gap-3 rounded-3xl border border-dashed border-ink-200 bg-white/60 p-4 text-left outline-none transition hover:border-olive-800 focus-visible:ring-2 focus-visible:ring-[#e5e8d6]"
+              type="button"
+              onClick={onAddCriterion}
             >
-              <p className="text-sm font-semibold text-ink-900">{criterion.label}</p>
-              <p className="mt-1 text-sm leading-5 text-ink-600">
-                {criterion.description}
-              </p>
-            </div>
-          ))}
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ink-900 text-white">
+                <Plus aria-hidden="true" className="h-4 w-4" />
+              </span>
+              <span className="text-sm font-semibold text-ink-900">
+                Add criterion
+              </span>
+            </button>
+          ) : (
+            <p className="text-sm leading-6 text-ink-600">
+              Keep the evaluation matrix to 5 criteria or fewer.
+            </p>
+          )}
         </div>
       </div>
 
@@ -1389,6 +1557,9 @@ function EvaluationStep({ draft }: { draft: InterviewAgentDraft }) {
               {guardrail}
             </div>
           ))}
+          <p className="text-xs leading-5 text-ink-500">
+            Compliance guardrails are required and can&apos;t be edited.
+          </p>
         </div>
       </div>
     </div>
