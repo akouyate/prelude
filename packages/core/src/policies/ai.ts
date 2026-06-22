@@ -76,6 +76,31 @@ export function findForbiddenAutomatedDecisionPhrases(value: string) {
   );
 }
 
+export function textViolatesPolicy(value: string) {
+  const text = value.toLowerCase();
+
+  if (findForbiddenAutomatedDecisionPhrases(text).length > 0) {
+    return true;
+  }
+
+  return disallowedQuestionTopics.some((topic) => {
+    const normalizedTopic = topic.toLowerCase();
+    const matchesPhrase = (phrase: string) =>
+      new RegExp(`\\b${escapeRegExp(phrase)}\\b`, "u").test(text);
+
+    return (
+      matchesPhrase(normalizedTopic) ||
+      normalizedTopic
+        .split(" or ")
+        .some((part) => part.length > 4 && matchesPhrase(part))
+    );
+  });
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 export function buildAiCompliancePromptContext() {
   return [
     `Policy version: ${aiCompliancePolicyVersion}.`,

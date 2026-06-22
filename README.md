@@ -120,9 +120,8 @@ The readiness gate expects both `candidate_joined` and `candidate_media_ready`.
 microphone/camera tracks. The report prints session status, event counts,
 transcript coverage, readiness gate checks, completion metrics, warnings,
 anomalies, and a `Pass`, `Retry needed`, or `Blocker` decision. It exits
-successfully when the report is generated; use
-`node scripts/live-smoke-report.mjs --strict` later if this needs to become a CI
-gate. The full enterprise dashboard view belongs to issue #21.
+successfully when the report is generated. Use the strict variant (below) to fail
+the build on lifecycle anomalies.
 
 Use the strict variant after a real LiveKit/OpenAI mobile test when the result
 should block release:
@@ -169,15 +168,11 @@ To run the explicit paid provider smoke locally:
 ALLOW_LIVE_LLM_TESTS=1 pnpm --dir apps/console exec vitest run src/server/interviews/interview-draft-generation.live.test.ts
 ```
 
-The step-by-step release workflow and remaining slice risks are documented in
-[`docs/architecture/v1-e2e-release-workflow.md`](docs/architecture/v1-e2e-release-workflow.md).
-The live IA commercial POC checklist is documented in
-[`docs/operations/live-ia-commercial-poc-checklist.md`](docs/operations/live-ia-commercial-poc-checklist.md).
-Compliance and candidate trust guardrails are documented in
-[`docs/operations/compliance-trust-guardrails.md`](docs/operations/compliance-trust-guardrails.md).
-Evaluation matrix implementation sources are tracked in
-[`docs/sources/evaluation-matrix.md`](docs/sources/evaluation-matrix.md).
-Role draft generation sources are tracked in
-[`docs/sources/role-draft-generation.md`](docs/sources/role-draft-generation.md).
-Compliance guardrail source rationale is tracked in
-[`docs/sources/compliance-guardrails.md`](docs/sources/compliance-guardrails.md).
+## Further documentation
+
+- [`docs/architecture/v1-e2e-release-workflow.md`](docs/architecture/v1-e2e-release-workflow.md) — V1 end-to-end release workflow.
+- [`docs/operations/live-ia-commercial-poc-checklist.md`](docs/operations/live-ia-commercial-poc-checklist.md) — live IA commercial POC checklist.
+- [`docs/operations/compliance-trust-guardrails.md`](docs/operations/compliance-trust-guardrails.md) — compliance and candidate trust guardrails.
+- [`docs/sources/evaluation-matrix.md`](docs/sources/evaluation-matrix.md) — evaluation matrix sources.
+- [`docs/sources/role-draft-generation.md`](docs/sources/role-draft-generation.md) — role draft generation sources.
+- [`docs/sources/compliance-guardrails.md`](docs/sources/compliance-guardrails.md) — compliance guardrail source rationale.

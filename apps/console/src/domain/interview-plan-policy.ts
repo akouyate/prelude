@@ -2,7 +2,7 @@ import type {
   InterviewCriterionDraft,
   InterviewQuestionDraft,
 } from "@prelude/core";
-import { aiGuardrails } from "@prelude/core";
+import { aiGuardrails, textViolatesPolicy } from "@prelude/core";
 
 export const interviewPlanPolicy = {
   maxCriteria: 5,
@@ -36,6 +36,20 @@ export type InterviewDraftPublicationMode =
   | "create_initial_snapshot"
   | "create_republished_snapshot"
   | "return_existing_snapshot";
+
+export function planReferencesDisallowedTopic(input: {
+  criteria: Pick<InterviewCriterionDraft, "description" | "label">[];
+  questions: Pick<InterviewQuestionDraft, "prompt" | "signal">[];
+}): boolean {
+  return (
+    input.questions.some((question) =>
+      textViolatesPolicy(`${question.prompt} ${question.signal}`),
+    ) ||
+    input.criteria.some((criterion) =>
+      textViolatesPolicy(`${criterion.label} ${criterion.description}`),
+    )
+  );
+}
 
 export function getInterviewPlanPublicationIssues(
   input: PublishableInterviewPlanInput,
@@ -85,6 +99,12 @@ export function getInterviewPlanPublicationIssues(
       issues.push("Keep the required compliance guardrails before publishing.");
       break;
     }
+  }
+
+  if (planReferencesDisallowedTopic(input)) {
+    issues.push(
+      "Remove protected or disallowed topics from your questions and evaluation criteria.",
+    );
   }
 
   return issues;

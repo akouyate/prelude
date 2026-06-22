@@ -15,6 +15,7 @@ import { revalidatePath } from "next/cache";
 import {
   getInterviewPlanPublicationIssues,
   interviewPlanPolicy,
+  planReferencesDisallowedTopic,
   resolveInterviewDraftPublicationMode,
 } from "../../domain/interview-plan-policy";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
@@ -184,11 +185,16 @@ export async function publishInterviewDraft(
       return null;
     }
 
+    const criteria = readCriteria(draft.criteria);
+    const guardrails = readStringArray(draft.guardrails);
+    const questions = readQuestions(draft.questions);
+    const responseModes = readResponseModes(draft.responseModes);
+
     const publicationIssues = getInterviewPlanPublicationIssues({
-      criteria: readCriteria(draft.criteria),
-      guardrails: readStringArray(draft.guardrails),
-      questions: readQuestions(draft.questions),
-      responseModes: readResponseModes(draft.responseModes),
+      criteria,
+      guardrails,
+      questions,
+      responseModes,
       roleBrief: draft.roleBrief,
       roleTitle: draft.roleTitle,
     });
@@ -210,16 +216,16 @@ export async function publishInterviewDraft(
         : await createPublicToken(tx);
 
     const interviewData = {
-      criteria: draft.criteria as Prisma.InputJsonValue,
+      criteria: criteria as unknown as Prisma.InputJsonValue,
       estimatedMinutes: draft.estimatedMinutes,
       focus: draft.focus as Prisma.InputJsonValue,
-      guardrails: draft.guardrails as Prisma.InputJsonValue,
+      guardrails: guardrails as unknown as Prisma.InputJsonValue,
       jobId: draft.jobId,
       organizationId: scope.organizationId,
       publicToken,
-      questions: draft.questions as Prisma.InputJsonValue,
+      questions: questions as unknown as Prisma.InputJsonValue,
       rationale: draft.rationale,
-      responseModes: draft.responseModes as Prisma.InputJsonValue,
+      responseModes: responseModes as unknown as Prisma.InputJsonValue,
       roleBrief: draft.roleBrief,
       roleTitle: draft.roleTitle,
       seniority: draft.seniority,
@@ -336,6 +342,14 @@ function normalizeDraftInput(input: SaveInterviewDraftInput):
 
   if (responseModes.length === 0) {
     return { ok: false, error: "Choose at least one candidate answer mode." };
+  }
+
+  if (planReferencesDisallowedTopic({ criteria, questions })) {
+    return {
+      ok: false,
+      error:
+        "Remove protected or disallowed topics from your questions and evaluation criteria.",
+    };
   }
 
   return {

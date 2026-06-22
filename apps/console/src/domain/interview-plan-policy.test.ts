@@ -5,6 +5,7 @@ import { aiGuardrails } from "@prelude/core";
 import {
   getInterviewPlanPublicationIssues,
   isInterviewPlanPublishable,
+  planReferencesDisallowedTopic,
   resolveInterviewDraftPublicationMode,
   type PublishableInterviewPlanInput,
 } from "./interview-plan-policy";
@@ -88,6 +89,75 @@ describe("interview plan publication policy", () => {
     expect(issues).toContain(
       "Keep the required compliance guardrails before publishing.",
     );
+  });
+
+  it("rejects plans whose questions reference a protected topic", () => {
+    const issues = getInterviewPlanPublicationIssues({
+      ...publishablePlan,
+      questions: [
+        {
+          durationSeconds: 75,
+          id: "age",
+          prompt: "What is your age?",
+          signal: "Role motivation",
+          source: "agent",
+        },
+        ...publishablePlan.questions.slice(1),
+      ],
+    });
+
+    expect(issues).toContain(
+      "Remove protected or disallowed topics from your questions and evaluation criteria.",
+    );
+  });
+
+  it("rejects plans whose criteria reference a protected topic", () => {
+    const issues = getInterviewPlanPublicationIssues({
+      ...publishablePlan,
+      criteria: [
+        {
+          description: "Rate the candidate's age and overall energy.",
+          id: "age",
+          label: "Age fit",
+        },
+        ...publishablePlan.criteria.slice(1),
+      ],
+    });
+
+    expect(issues).toContain(
+      "Remove protected or disallowed topics from your questions and evaluation criteria.",
+    );
+  });
+
+  it("flags a plan whose question references a protected topic", () => {
+    expect(
+      planReferencesDisallowedTopic({
+        criteria: [],
+        questions: [{ prompt: "What is your age?", signal: "Experience" }],
+      }),
+    ).toBe(true);
+  });
+
+  it("flags a plan whose criterion references a protected topic", () => {
+    expect(
+      planReferencesDisallowedTopic({
+        criteria: [
+          { description: "Rate the candidate's age.", label: "Age fit" },
+        ],
+        questions: [],
+      }),
+    ).toBe(true);
+  });
+
+  it("passes a plan with only job-related text", () => {
+    expect(
+      planReferencesDisallowedTopic({
+        criteria: [{ description: "Structured, concrete answers.", label: "Clarity" }],
+        questions: [
+          { prompt: "Describe a project you led under deadline.", signal: "Delivery" },
+        ],
+      }),
+    ).toBe(false);
   });
 
   it("creates the first immutable snapshot when no interview exists", () => {

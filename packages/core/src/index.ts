@@ -26,5 +26,6 @@ export {
   recruiterLimitationCopy,
   recruiterLimitationCopyVersion,
   sensitiveInformationHandlingRule,
+  textViolatesPolicy,
   type ComplianceFlagCode,
 } from "./policies/ai";

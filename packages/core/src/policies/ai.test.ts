@@ -15,6 +15,7 @@ import {
   recruiterLimitationCopy,
   recruiterLimitationCopyVersion,
   sensitiveInformationHandlingRule,
+  textViolatesPolicy,
 } from "./ai";
 
 describe("AI compliance policy", () => {
@@ -67,5 +68,23 @@ describe("AI compliance policy", () => {
         "Prelude supports human screening review only.",
       ),
     ).toHaveLength(0);
+  });
+});
+
+describe("textViolatesPolicy", () => {
+  it("flags text that references a protected topic", () => {
+    expect(textViolatesPolicy("What is your age?")).toBe(true);
+  });
+
+  it("flags text with a forbidden automated-decision phrase", () => {
+    expect(
+      textViolatesPolicy("We compute a fit score for each candidate."),
+    ).toBe(true);
+  });
+
+  it("allows a job-related, behavior-anchored question", () => {
+    expect(
+      textViolatesPolicy("Describe a project you led under a tight deadline."),
+    ).toBe(false);
   });
 });
