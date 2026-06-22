@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { ArrowRight } from "iconoir-react";
 
+import { getServerT } from "../../libs/i18n-server";
+import { getAuthenticatedUserLocale } from "../../server/users/user-locale";
+
 export type DashboardNextAction = {
   description: string;
   href: string;
@@ -14,17 +17,19 @@ export type DashboardNextActionMetrics = {
   published: number;
 };
 
-export function DashboardNextActionCard({
+export async function DashboardNextActionCard({
   action,
   metrics,
 }: {
   action: DashboardNextAction;
   metrics: DashboardNextActionMetrics;
 }) {
+  const t = getServerT(await getAuthenticatedUserLocale());
+
   return (
     <section className="overflow-hidden rounded-[24px] bg-ink-900 p-5 text-white">
       <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-mint-200">
-        Next best action
+        {t("dashboard.nextBestAction")}
       </p>
       <h2 className="mt-3 text-2xl font-semibold leading-tight">
         {action.title}
@@ -33,9 +38,18 @@ export function DashboardNextActionCard({
         {action.description}
       </p>
       <dl className="mt-5 grid grid-cols-3 gap-2">
-        <DarkFact label="Review" value={metrics.needsReview.toString()} />
-        <DarkFact label="Live" value={metrics.published.toString()} />
-        <DarkFact label="Drafts" value={metrics.drafts.toString()} />
+        <DarkFact
+          label={t("dashboard.nextActionReview")}
+          value={metrics.needsReview.toString()}
+        />
+        <DarkFact
+          label={t("dashboard.nextActionLive")}
+          value={metrics.published.toString()}
+        />
+        <DarkFact
+          label={t("dashboard.nextActionDrafts")}
+          value={metrics.drafts.toString()}
+        />
       </dl>
       <Link
         aria-label={action.label}

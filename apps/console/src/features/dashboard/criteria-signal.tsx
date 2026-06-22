@@ -1,3 +1,8 @@
+"use client";
+
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
+
 export type CriteriaDistribution = {
   "Not assessable": number;
   Medium: number;
@@ -21,22 +26,26 @@ export function CriteriaSignal({
   distribution: CriteriaDistribution;
   hasCompletedBrief: boolean;
 }) {
+  const { t } = useTranslation();
   const state = getCriteriaSignalState({
     analysisStatus,
     distribution,
     hasCompletedBrief,
   });
-  const label = getCriteriaSignalLabel({
-    analysisStatus,
-    distribution,
-    hasCompletedBrief,
-    state,
-  });
+  const label = getCriteriaSignalLabel(
+    {
+      analysisStatus,
+      distribution,
+      hasCompletedBrief,
+      state,
+    },
+    t,
+  );
 
   return (
     <>
       <span
-        aria-label={`Criteria signal: ${label}`}
+        aria-label={t("dashboard.criteriaSignalAria", { label })}
         className="flex h-2 overflow-hidden rounded-full bg-ink-100"
         role="img"
       >
@@ -147,59 +156,75 @@ function buildSignalSegments(distribution: CriteriaDistribution) {
   }));
 }
 
-function getCriteriaSignalLabel({
-  analysisStatus,
-  distribution,
-  hasCompletedBrief,
-  state,
-}: {
-  analysisStatus: string;
-  distribution: CriteriaDistribution;
-  hasCompletedBrief: boolean;
-  state: CriteriaSignalState;
-}) {
+function getCriteriaSignalLabel(
+  {
+    analysisStatus,
+    distribution,
+    hasCompletedBrief,
+    state,
+  }: {
+    analysisStatus: string;
+    distribution: CriteriaDistribution;
+    hasCompletedBrief: boolean;
+    state: CriteriaSignalState;
+  },
+  t: TFunction,
+) {
   if (state === "available") {
-    return formatCriteriaDistribution(distribution);
+    return formatCriteriaDistribution(distribution, t);
   }
 
   if (state === "empty") {
-    return "No signal captured";
+    return t("dashboard.criteriaNoSignal");
   }
 
   if (state === "failed") {
-    return "Analysis failed";
+    return t("dashboard.criteriaAnalysisFailed");
   }
 
   if (state === "pending") {
-    return "Analysis pending";
+    return t("dashboard.criteriaAnalysisPending");
   }
 
   if (!hasCompletedBrief) {
-    return "Brief pending";
+    return t("dashboard.criteriaBriefPending");
   }
 
-  return formatAnalysisStatus(analysisStatus);
+  return formatAnalysisStatus(analysisStatus, t);
 }
 
-function formatAnalysisStatus(status: string) {
+function formatAnalysisStatus(status: string, t: TFunction) {
   if (status === "available") {
-    return "Analysis ready";
+    return t("dashboard.criteriaAnalysisReady");
   }
 
-  return "Not ready";
+  return t("dashboard.criteriaNotReady");
 }
 
-function formatCriteriaDistribution(distribution: CriteriaDistribution) {
+function formatCriteriaDistribution(
+  distribution: CriteriaDistribution,
+  t: TFunction,
+) {
   const labels = [
-    distribution.Strong > 0 ? `Strong ${distribution.Strong}` : null,
-    distribution.Medium > 0 ? `Medium ${distribution.Medium}` : null,
-    distribution.Weak > 0 ? `Weak ${distribution.Weak}` : null,
+    distribution.Strong > 0
+      ? t("dashboard.criteriaStrong", { count: distribution.Strong })
+      : null,
+    distribution.Medium > 0
+      ? t("dashboard.criteriaMedium", { count: distribution.Medium })
+      : null,
+    distribution.Weak > 0
+      ? t("dashboard.criteriaWeak", { count: distribution.Weak })
+      : null,
     distribution["Not assessable"] > 0
-      ? `Not assessable ${distribution["Not assessable"]}`
+      ? t("dashboard.criteriaNotAssessable", {
+          count: distribution["Not assessable"],
+        })
       : null,
   ].filter((value): value is string => Boolean(value));
 
-  return labels.length > 0 ? labels.join(" · ") : "No signal captured";
+  return labels.length > 0
+    ? labels.join(" · ")
+    : t("dashboard.criteriaNoSignal");
 }
 
 function getDistributionTotal(distribution: CriteriaDistribution) {

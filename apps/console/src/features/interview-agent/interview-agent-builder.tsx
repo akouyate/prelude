@@ -11,6 +11,10 @@ import {
   type InterviewQuestionDraft,
   type InterviewSeniority
 } from "@prelude/core";
+import {
+  COMPLIANCE_OVERRIDE_MIN_JUSTIFICATION,
+  COMPLIANCE_OVERRIDE_MIN_JUSTIFICATION_WORDS,
+} from "@prelude/contracts";
 import { Badge, Button, Textarea, cn } from "@prelude/ui";
 import {
   Attachment as Paperclip,
@@ -50,6 +54,7 @@ import {
 import {
   publishInterviewDraft,
   saveInterviewDraft,
+  type ComplianceReviewPrompt,
   type InterviewResponseMode,
   type PublishInterviewDraftResult,
   type SaveInterviewDraftResult,
@@ -242,6 +247,11 @@ export function InterviewAgentBuilder({
     React.useState(false);
   const [publishedInterview, setPublishedInterview] =
     React.useState<Extract<PublishInterviewDraftResult, { ok: true }>>();
+  // N6b: when the LLM flags an OVERRIDABLE category at publish, the server hands
+  // back a review affordance instead of a dead-end; this drives the two-step
+  // reviewable-override panel on the Share step.
+  const [complianceReview, setComplianceReview] =
+    React.useState<ComplianceReviewPrompt>();
 
   const currentStepIndex = steps.findIndex((step) => step.id === currentStep);
   const currentStepConfig = steps[currentStepIndex] ?? steps[0]!;
@@ -277,6 +287,7 @@ export function InterviewAgentBuilder({
     setDraft(result.draft);
     setSelectedQuestionId(undefined);
     setPublishedInterview(undefined);
+    setComplianceReview(undefined);
     setSaveMessage(undefined);
     setSaveError(undefined);
     setGeneratorProvider(result.provider);
@@ -307,6 +318,9 @@ export function InterviewAgentBuilder({
   const markDraftDirty = React.useCallback(() => {
     setSaveMessage(undefined);
     setPublishedInterview(undefined);
+    // N6b: editing the plan invalidates any pending override review — the next
+    // publish re-classifies the new content from scratch.
+    setComplianceReview(undefined);
   }, []);
 
   const startDraftGeneration = React.useCallback(() => {
@@ -412,37 +426,57 @@ export function InterviewAgentBuilder({
     }
   }, [goToStep, saveCurrentDraft]);
 
-  const publishCurrentDraft = React.useCallback(async () => {
-    const saved = await saveCurrentDraft();
+  const publishCurrentDraft = React.useCallback(
+    async (override?: { justification: string }) => {
+      const saved = await saveCurrentDraft();
 
-    if (!saved) {
-      return;
-    }
+      if (!saved) {
+        return;
+      }
 
-    setIsPublishingDraft(true);
-    setSaveError(undefined);
+      setIsPublishingDraft(true);
+      setSaveError(undefined);
 
-    let result: PublishInterviewDraftResult;
+      let result: PublishInterviewDraftResult;
 
-    try {
-      result = await publishInterviewDraft(saved.draftId);
-    } catch {
+      try {
+        result = await publishInterviewDraft(
+          saved.draftId,
+          undefined,
+          undefined,
+          override,
+        );
+      } catch {
+        setIsPublishingDraft(false);
+        setSaveError(
+          "The role screen could not be published. Please try again.",
+        );
+        return;
+      }
+
       setIsPublishingDraft(false);
-      setSaveError("The role screen could not be published. Please try again.");
-      return;
-    }
 
-    setIsPublishingDraft(false);
+      if (!result.ok) {
+        // N6b: a reviewable LLM flag carries a `review` affordance — surface the
+        // two-step override panel instead of a dead-end. A hard block (keyword
+        // gate or non-overridable category) has no `review` and shows the error.
+        if (result.review) {
+          setComplianceReview(result.review);
+          setSaveError(override ? result.error : undefined);
+        } else {
+          setComplianceReview(undefined);
+          setSaveError(result.error);
+        }
+        return;
+      }
 
-    if (!result.ok) {
-      setSaveError(result.error);
-      return;
-    }
-
-    setPublishedInterview(result);
-    setSaveMessage("Role screen published");
-    router.refresh();
-  }, [router, saveCurrentDraft]);
+      setComplianceReview(undefined);
+      setPublishedInterview(result);
+      setSaveMessage("Role screen published");
+      router.refresh();
+    },
+    [router, saveCurrentDraft],
+  );
 
   const toggleFocus = React.useCallback(
     (value: InterviewFocus) => {
@@ -846,6 +880,7 @@ export function InterviewAgentBuilder({
           {currentStep === "share" && draft ? (
             <ShareStep
               companyName={companyName}
+              complianceReview={complianceReview}
               draft={draft}
               isPublishing={isPublishingDraft}
               isSaving={isSavingDraft}
@@ -855,9 +890,13 @@ export function InterviewAgentBuilder({
               roleTitle={jobTitle}
               saveError={saveError}
               saveMessage={saveMessage}
+              onDismissReview={() => setComplianceReview(undefined)}
               onEditDraft={() => goToStep("questions")}
+              onOverride={(justification) =>
+                void publishCurrentDraft({ justification })
+              }
               onPreview={() => setIsPreviewOpen(true)}
-              onPublish={publishCurrentDraft}
+              onPublish={() => void publishCurrentDraft()}
               onSave={() => void saveCurrentDraft()}
             />
           ) : null}
@@ -1654,6 +1693,7 @@ function EvaluationStep({
 
 function ShareStep({
   companyName,
+  complianceReview,
   draft,
   isPublishing,
   isSaving,
@@ -1663,12 +1703,15 @@ function ShareStep({
   roleTitle,
   saveError,
   saveMessage,
+  onDismissReview,
   onEditDraft,
+  onOverride,
   onPreview,
   onPublish,
   onSave
 }: {
   companyName: string;
+  complianceReview?: ComplianceReviewPrompt;
   draft: InterviewAgentDraft;
   isPublishing: boolean;
   isSaving: boolean;
@@ -1678,7 +1721,9 @@ function ShareStep({
   roleTitle: string;
   saveError?: string;
   saveMessage?: string;
+  onDismissReview: () => void;
   onEditDraft: () => void;
+  onOverride: (justification: string) => void;
   onPreview: () => void;
   onPublish: () => void;
   onSave: () => void;
@@ -1752,6 +1797,16 @@ function ShareStep({
 
       <CandidateTrustPanel />
 
+      {complianceReview ? (
+        <ComplianceOverridePanel
+          key={`${complianceReview.category}:${complianceReview.reason}`}
+          isPublishing={isPublishing}
+          review={complianceReview}
+          onDismiss={onDismissReview}
+          onOverride={onOverride}
+        />
+      ) : null}
+
       {saveError ? (
         <div className="rounded-2xl border border-coral-200 bg-coral-50 p-4 text-sm font-medium text-coral-800">
           {saveError}
@@ -1787,6 +1842,95 @@ function ShareStep({
           </a>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+// N6b: the two-step reviewable override for an OVERRIDABLE LLM protected-topic
+// flag. Step 1 states the flag + the recruiter's responsibility and forces an
+// explicit choice (reformulate vs override); step 2 requires a substantive,
+// multi-word justification before the override can be confirmed. The floor
+// mirrors the server-side @prelude/contracts schema, so the client never lets
+// through what the server would reject — and the server re-checks regardless.
+function ComplianceOverridePanel({
+  isPublishing,
+  review,
+  onDismiss,
+  onOverride,
+}: {
+  isPublishing: boolean;
+  review: ComplianceReviewPrompt;
+  onDismiss: () => void;
+  onOverride: (justification: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [step, setStep] = React.useState<"review" | "justify">("review");
+  const [justification, setJustification] = React.useState("");
+
+  const trimmed = justification.trim();
+  const wordCount = trimmed ? trimmed.split(/\s+/).filter(Boolean).length : 0;
+  const isJustificationValid =
+    trimmed.length >= COMPLIANCE_OVERRIDE_MIN_JUSTIFICATION &&
+    wordCount >= COMPLIANCE_OVERRIDE_MIN_JUSTIFICATION_WORDS;
+
+  return (
+    <div className="rounded-3xl border border-gold-800/30 bg-gold-100/70 p-5">
+      <div className="flex items-center gap-2 text-sm font-semibold text-gold-900">
+        <ShieldCheck aria-hidden="true" className="h-4 w-4 text-gold-800" />
+        {t("compliance.overrideTitle")}
+      </div>
+
+      <p className="mt-3 text-sm leading-6 text-gold-900">
+        {t("compliance.overrideFlagSummary", {
+          category: review.categoryLabel,
+          reason: review.reason,
+        })}
+      </p>
+
+      <p className="mt-2 text-sm leading-6 text-gold-800">
+        {t("compliance.overrideWarning")}
+      </p>
+
+      {step === "review" ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={onDismiss}>
+            {t("compliance.overrideReformulate")}
+          </Button>
+          <Button variant="secondary" onClick={() => setStep("justify")}>
+            {t("compliance.overrideStart")}
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-3">
+          <p className="text-sm font-medium text-gold-900">
+            {t("compliance.overrideJustificationLabel")}
+          </p>
+          <Textarea
+            className="min-h-20 bg-white/88 text-sm leading-6 focus:ring-[#e5e8d6]"
+            placeholder={t("compliance.overrideJustificationPlaceholder")}
+            value={justification}
+            onChange={(event) => setJustification(event.target.value)}
+          />
+          <p className="text-xs leading-5 text-gold-800">
+            {t("compliance.overrideJustificationHint", {
+              count: COMPLIANCE_OVERRIDE_MIN_JUSTIFICATION_WORDS,
+            })}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={onDismiss}>
+              {t("compliance.overrideCancel")}
+            </Button>
+            <Button
+              disabled={!isJustificationValid || isPublishing}
+              onClick={() => onOverride(trimmed)}
+            >
+              {isPublishing
+                ? t("compliance.overridePublishing")
+                : t("compliance.overrideConfirm")}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

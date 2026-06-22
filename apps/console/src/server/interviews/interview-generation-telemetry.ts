@@ -30,6 +30,7 @@ export type PolicyViolationDroppedEvent = {
 export type ProtectedTopicClassificationOutcome =
   | "clean"
   | "flagged"
+  | "overridden"
   | "skipped_error"
   | "disabled";
 
@@ -74,9 +75,15 @@ function isWarnEvent(event: InterviewGenerationTelemetryEvent): boolean {
     return event.droppedQuestions > 0 || event.droppedCriteria > 0;
   }
 
-  // protected_topic_classification: flags and hard errors are warnings; a clean
-  // pass (or a disabled classifier) is an informational audit breadcrumb.
-  return event.outcome === "flagged" || event.outcome === "skipped_error";
+  // protected_topic_classification: flags, hard errors, and a human override of a
+  // flag are warnings (the override especially — a recruiter consciously
+  // published flagged content, which the audit trail must surface). A clean pass
+  // (or a disabled classifier) is an informational audit breadcrumb.
+  return (
+    event.outcome === "flagged" ||
+    event.outcome === "overridden" ||
+    event.outcome === "skipped_error"
+  );
 }
 
 export function logInterviewGenerationEvent(

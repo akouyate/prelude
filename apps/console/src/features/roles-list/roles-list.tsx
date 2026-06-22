@@ -11,6 +11,8 @@ import {
   Search,
   Sort,
 } from "iconoir-react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import { SegmentedTabs, StatusBadge, cn } from "@prelude/ui";
 
 export type RoleScreenState =
@@ -43,6 +45,7 @@ export function RolesList({
   organizationName: string;
   roles: RoleListItem[];
 }) {
+  const { t } = useTranslation();
   const [filter, setFilter] = React.useState<RoleFilter>("all");
   const [query, setQuery] = React.useState("");
   const [sort, setSort] = React.useState<RoleSort>("recent");
@@ -59,13 +62,17 @@ export function RolesList({
           return true;
         }
 
-        return [role.title, role.location ?? "", formatProvider(role.sourceProvider)]
+        return [
+          role.title,
+          role.location ?? "",
+          formatProvider(role.sourceProvider, t),
+        ]
           .join(" ")
           .toLowerCase()
           .includes(normalizedQuery);
       })
       .sort((left, right) => sortRoles(left, right, sort));
-  }, [filter, query, roles, sort]);
+  }, [filter, query, roles, sort, t]);
 
   const handleCopy = React.useCallback(async (role: RoleListItem) => {
     if (!role.candidatePath) {
@@ -83,14 +90,16 @@ export function RolesList({
       <section className="flex flex-wrap items-end justify-between gap-5">
         <div className="min-w-0">
           <p className="text-[13px] font-medium text-ink-500">
-            {organizationName} · Hiring
+            {t("roles.headerEyebrow", { organizationName })}
           </p>
           <h1 className="mt-1.5 text-[clamp(28px,3.4vw,38px)] font-semibold leading-[1.08] tracking-[-0.025em] text-ink-950">
-            Your <span className="font-serif italic font-normal">roles</span>
+            {t("roles.title")}{" "}
+            <span className="font-serif italic font-normal">
+              {t("roles.titleEmphasis")}
+            </span>
           </h1>
           <p className="mt-2.5 max-w-[42rem] text-[15px] leading-[1.55] text-ink-600">
-            Each role owns one screening setup: questions, criteria, response
-            modes, guardrails, and the candidate link.
+            {t("roles.subtitle")}
           </p>
         </div>
 
@@ -99,7 +108,7 @@ export function RolesList({
           href="/roles/new"
         >
           <Plus aria-hidden={true} className="h-4 w-4" />
-          New role screen
+          {t("roles.newRoleScreen")}
         </Link>
       </section>
 
@@ -107,50 +116,59 @@ export function RolesList({
         <SummaryButton
           active={filter === "needs_review"}
           icon={<CheckCircle aria-hidden={true} className="h-4 w-4" />}
-          label="Needs review"
+          label={t("roles.summaryNeedsReviewLabel")}
           onClick={() => setFilter("needs_review")}
-          sub="Candidate screens waiting"
+          sub={t("roles.summaryNeedsReviewSub")}
           value={String(counts.needs_review)}
         />
         <SummaryButton
           active={filter === "live"}
           icon={<Microphone aria-hidden={true} className="h-4 w-4" />}
-          label="Live role screens"
+          label={t("roles.summaryLiveLabel")}
           onClick={() => setFilter("live")}
-          sub="Published & collecting"
+          sub={t("roles.summaryLiveSub")}
           value={String(counts.live)}
         />
         <SummaryButton
           active={filter === "draft"}
           icon={<EditPencil aria-hidden={true} className="h-4 w-4" />}
-          label="Draft setups"
+          label={t("roles.summaryDraftLabel")}
           onClick={() => setFilter("draft")}
-          sub="Not published yet"
+          sub={t("roles.summaryDraftSub")}
           value={String(counts.draft)}
         />
         <SummaryButton
           active={filter === "completed"}
           icon={<CheckCircle aria-hidden={true} className="h-4 w-4" />}
-          label="Completed"
+          label={t("roles.summaryCompletedLabel")}
           onClick={() => setFilter("completed")}
-          sub="Screening wrapped"
+          sub={t("roles.summaryCompletedSub")}
           value={String(counts.completed)}
         />
       </section>
 
       <section className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <SegmentedTabs
-          ariaLabel="Role status filter"
+          ariaLabel={t("roles.statusFilterAria")}
           onValueChange={setFilter}
           options={[
-            { label: `All ${counts.all}`, value: "all" },
-            { label: `Live ${counts.live}`, value: "live" },
+            { label: t("roles.tabAll", { count: counts.all }), value: "all" },
             {
-              label: `Needs review ${counts.needs_review}`,
+              label: t("roles.tabLive", { count: counts.live }),
+              value: "live",
+            },
+            {
+              label: t("roles.tabNeedsReview", { count: counts.needs_review }),
               value: "needs_review",
             },
-            { label: `Drafts ${counts.draft}`, value: "draft" },
-            { label: `Completed ${counts.completed}`, value: "completed" },
+            {
+              label: t("roles.tabDrafts", { count: counts.draft }),
+              value: "draft",
+            },
+            {
+              label: t("roles.tabCompleted", { count: counts.completed }),
+              value: "completed",
+            },
           ]}
           value={filter}
         />
@@ -158,11 +176,11 @@ export function RolesList({
         <div className="flex flex-wrap items-center gap-2">
           <label className="inline-flex h-[38px] items-center gap-2 rounded-full border border-ink-100 bg-white/70 px-3 text-ink-400 focus-within:border-ink-400 focus-within:bg-white">
             <Search aria-hidden={true} className="h-4 w-4 shrink-0" />
-            <span className="sr-only">Search roles</span>
+            <span className="sr-only">{t("roles.searchRoles")}</span>
             <input
               className="w-36 bg-transparent text-[13px] text-ink-950 outline-none placeholder:text-ink-400"
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search roles"
+              placeholder={t("roles.searchRoles")}
               value={query}
             />
           </label>
@@ -172,17 +190,17 @@ export function RolesList({
             type="button"
           >
             <Sort aria-hidden={true} className="h-4 w-4" />
-            {formatSort(sort)}
+            {formatSort(sort, t)}
           </button>
         </div>
       </section>
 
       <section className="mt-4 overflow-hidden rounded-[24px] border border-ink-100 bg-white/74 backdrop-blur">
         <div className="hidden grid-cols-[minmax(0,1.55fr)_150px_minmax(0,1fr)_150px] gap-4 border-b border-ink-100 px-[22px] py-3 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-400 md:grid">
-          <span>Role</span>
-          <span>Setup</span>
-          <span>Candidate screens</span>
-          <span className="text-right">Updated</span>
+          <span>{t("roles.columnRole")}</span>
+          <span>{t("roles.columnSetup")}</span>
+          <span>{t("roles.columnCandidateScreens")}</span>
+          <span className="text-right">{t("roles.columnUpdated")}</span>
         </div>
 
         {rows.length > 0 ? (
@@ -193,6 +211,7 @@ export function RolesList({
                 key={role.id}
                 onCopy={() => handleCopy(role)}
                 role={role}
+                t={t}
               />
             ))}
           </div>
@@ -202,10 +221,10 @@ export function RolesList({
               <Microphone aria-hidden={true} className="h-5 w-5" />
             </span>
             <p className="mt-4 text-sm font-semibold text-ink-950">
-              No roles here
+              {t("roles.emptyTitle")}
             </p>
             <p className="mt-2 text-sm leading-6 text-ink-500">
-              Try another filter or clear your search.
+              {t("roles.emptyBody")}
             </p>
           </div>
         )}
@@ -272,18 +291,18 @@ function RoleRow({
   copied,
   onCopy,
   role,
+  t,
 }: {
   copied: boolean;
   onCopy: () => void;
   role: RoleListItem;
+  t: TFunction;
 }) {
-  const source = sourceMeta(role.sourceProvider);
+  const source = sourceMeta(role.sourceProvider, t);
   const candidateLine =
     role.candidateCount === 0
-      ? "No candidate screens yet"
-      : `${role.candidateCount} candidate screen${
-          role.candidateCount > 1 ? "s" : ""
-        }`;
+      ? t("roles.candidateScreensNone")
+      : t("roles.candidateScreensCount", { count: role.candidateCount });
 
   return (
     <div
@@ -307,14 +326,14 @@ function RoleRow({
             {role.title}
           </span>
           <span className="mt-1 block truncate text-[12.5px] text-ink-500">
-            {role.location ?? "Location not set"} · {source.name}
+            {role.location ?? t("roles.locationNotSet")} · {source.name}
           </span>
         </span>
       </Link>
 
       <span>
         <StatusBadge tone={statusTone(role.state)}>
-          {formatState(role.state)}
+          {formatState(role.state, t)}
         </StatusBadge>
       </span>
 
@@ -323,18 +342,20 @@ function RoleRow({
           {candidateLine}
         </span>
         <span className="mt-1 block text-[11.5px] text-ink-400">
-          {candidateHint(role)}
+          {candidateHint(role, t)}
         </span>
       </span>
 
       <span className="flex items-center justify-between gap-3 md:justify-end">
         <span className="text-[12.5px] text-ink-500">
-          {formatRelativeDate(role.updatedAt)}
+          {formatRelativeDate(role.updatedAt, t)}
         </span>
         <span className="flex items-center gap-1.5">
           {role.candidatePath ? (
             <button
-              aria-label={copied ? "Candidate link copied" : "Copy candidate link"}
+              aria-label={
+                copied ? t("roles.copyLinkCopied") : t("roles.copyLink")
+              }
               className={cn(
                 "grid h-[30px] w-[30px] cursor-pointer place-items-center rounded-[10px] border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
                 copied
@@ -348,7 +369,7 @@ function RoleRow({
             </button>
           ) : null}
           <Link
-            aria-label="Open role"
+            aria-label={t("roles.openRole")}
             className="grid h-[30px] w-[30px] cursor-pointer place-items-center rounded-[10px] border border-ink-100 bg-white text-ink-600 transition hover:border-ink-900 hover:text-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
             href={role.href}
           >
@@ -422,32 +443,47 @@ function nextSort(sort: RoleSort): RoleSort {
   return "recent";
 }
 
-function formatSort(sort: RoleSort) {
+function formatSort(sort: RoleSort, t: TFunction) {
   if (sort === "candidates") {
-    return "Most screens";
+    return t("roles.sortMostScreens");
   }
 
   if (sort === "alpha") {
-    return "A-Z";
+    return t("roles.sortAlpha");
   }
 
-  return "Recent";
+  return t("roles.sortRecent");
 }
 
-function sourceMeta(provider: string | null) {
+function sourceMeta(provider: string | null, t: TFunction) {
   if (provider === "linkedin") {
-    return { bg: "#0a66c2", fg: "#ffffff", mono: "in", name: "LinkedIn" };
+    return {
+      bg: "#0a66c2",
+      fg: "#ffffff",
+      mono: "in",
+      name: t("roles.providerLinkedin"),
+    };
   }
 
   if (provider === "indeed") {
-    return { bg: "#2557a7", fg: "#ffffff", mono: "Id", name: "Indeed" };
+    return {
+      bg: "#2557a7",
+      fg: "#ffffff",
+      mono: "Id",
+      name: t("roles.providerIndeed"),
+    };
   }
 
-  return { bg: "#eef0e3", fg: "#4b5f18", mono: "M", name: "Manual" };
+  return {
+    bg: "#eef0e3",
+    fg: "#4b5f18",
+    mono: "M",
+    name: t("roles.providerManual"),
+  };
 }
 
-function formatProvider(provider: string | null) {
-  return sourceMeta(provider).name;
+function formatProvider(provider: string | null, t: TFunction) {
+  return sourceMeta(provider, t).name;
 }
 
 function statusTone(status: RoleScreenState) {
@@ -474,59 +510,59 @@ function statusTone(status: RoleScreenState) {
   return "olive";
 }
 
-function formatState(status: RoleScreenState) {
+function formatState(status: RoleScreenState, t: TFunction) {
   if (status === "candidate_started") {
-    return "In progress";
+    return t("roles.stateInProgress");
   }
 
   if (status === "needs_review") {
-    return "Needs review";
+    return t("roles.stateNeedsReview");
   }
 
   if (status === "published") {
-    return "Published";
+    return t("roles.statePublished");
   }
 
   if (status === "paused") {
-    return "Paused";
+    return t("roles.statePaused");
   }
 
   return status.replace(/_/g, " ");
 }
 
-function candidateHint(role: RoleListItem) {
+function candidateHint(role: RoleListItem, t: TFunction) {
   if (role.state === "draft") {
-    return "Setup not published";
+    return t("roles.hintSetupNotPublished");
   }
 
   if (role.state === "needs_review") {
-    return "Candidate screen waiting";
+    return t("roles.hintScreenWaiting");
   }
 
   if (role.candidateCount === 0) {
-    return "Waiting for first screen";
+    return t("roles.hintWaitingFirstScreen");
   }
 
-  return "Screening signals available";
+  return t("roles.hintSignalsAvailable");
 }
 
-function formatRelativeDate(value: string) {
+function formatRelativeDate(value: string, t: TFunction) {
   const timestamp = new Date(value).getTime();
   const deltaMs = Date.now() - timestamp;
   const minutes = Math.max(1, Math.round(deltaMs / 60000));
 
   if (minutes < 60) {
-    return `${minutes}m ago`;
+    return t("roles.relativeMinutes", { count: minutes });
   }
 
   const hours = Math.round(minutes / 60);
   if (hours < 24) {
-    return `${hours}h ago`;
+    return t("roles.relativeHours", { count: hours });
   }
 
   const days = Math.round(hours / 24);
   if (days < 7) {
-    return `${days}d ago`;
+    return t("roles.relativeDays", { count: days });
   }
 
   return new Intl.DateTimeFormat("en", {

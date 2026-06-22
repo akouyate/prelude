@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { ShieldCheck } from "iconoir-react";
+import { useTranslation } from "react-i18next";
 import { SegmentedTabs } from "@prelude/ui";
 
 import {
@@ -20,6 +21,7 @@ export function DashboardReviewQueue({
   guardrailCopy: string;
   rows: DashboardReviewQueueRow[];
 }) {
+  const { t } = useTranslation();
   const [filter, setFilter] = React.useState<ReviewQueueFilter>("all");
   const visibleRows = React.useMemo(() => {
     if (filter === "all") {
@@ -28,6 +30,17 @@ export function DashboardReviewQueue({
 
     return rows.filter((row) => row.reviewStatus === filter);
   }, [filter, rows]);
+
+  const reviewQueueFilters = React.useMemo(
+    () =>
+      [
+        { label: t("dashboard.reviewQueueFilterAll"), value: "all" },
+        { label: t("dashboard.reviewQueueFilterToReview"), value: "to_review" },
+        { label: t("dashboard.reviewQueueFilterToCall"), value: "to_call" },
+        { label: t("dashboard.reviewQueueFilterArchived"), value: "archived" },
+      ] satisfies Array<{ label: string; value: ReviewQueueFilter }>,
+    [t],
+  );
 
   return (
     <section
@@ -38,15 +51,14 @@ export function DashboardReviewQueue({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold tracking-normal text-ink-950">
-              Review queue
+              {t("dashboard.reviewQueueTitle")}
             </h2>
             <p className="mt-1 text-sm text-ink-500">
-              Completed and in-progress live screens, ready for recruiter
-              review.
+              {t("dashboard.reviewQueueSubtitle")}
             </p>
           </div>
           <SegmentedTabs
-            ariaLabel="Review queue filter"
+            ariaLabel={t("dashboard.reviewQueueFilterAria")}
             onValueChange={setFilter}
             options={reviewQueueFilters}
             value={filter}
@@ -65,16 +77,9 @@ export function DashboardReviewQueue({
       <CandidateScreensTable
         candidates={visibleRows}
         className="mt-2 rounded-none border-x-0 border-b-0 bg-transparent"
-        emptyDescription="Try another review queue filter."
-        emptyTitle="No sessions match"
+        emptyDescription={t("dashboard.reviewQueueEmptyDescription")}
+        emptyTitle={t("dashboard.reviewQueueEmptyTitle")}
       />
     </section>
   );
 }
-
-const reviewQueueFilters = [
-  { label: "All", value: "all" },
-  { label: "To review", value: "to_review" },
-  { label: "To call", value: "to_call" },
-  { label: "Archived", value: "archived" },
-] satisfies Array<{ label: string; value: ReviewQueueFilter }>;

@@ -124,6 +124,9 @@ model Interview {
   schemaVersion     Int                @default(1)
   generatorProvider String?
   generatorModel    String?
+  // N6b: immutable audit record of a recruiter override of an LLM protected-topic
+  // flag at publish (null on a clean publish). Append-only; never edited.
+  complianceOverride Json?
   publishedAt       DateTime           @default(now())
   createdAt         DateTime           @default(now())
   updatedAt         DateTime           @updatedAt

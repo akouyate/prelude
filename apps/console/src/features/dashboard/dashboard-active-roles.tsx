@@ -1,5 +1,9 @@
 import Link from "next/link";
 import { StatusBadge } from "@prelude/ui";
+import type { TFunction } from "i18next";
+
+import { getServerT } from "../../libs/i18n-server";
+import { getAuthenticatedUserLocale } from "../../server/users/user-locale";
 
 export type DashboardActiveRoleState =
   | "candidate_started"
@@ -19,11 +23,13 @@ export type DashboardActiveRole = {
   title: string;
 };
 
-export function DashboardActiveRoles({
+export async function DashboardActiveRoles({
   roles,
 }: {
   roles: DashboardActiveRole[];
 }) {
+  const t = getServerT(await getAuthenticatedUserLocale());
+
   return (
     <section
       className="rounded-[24px] border border-ink-100 bg-white/74 p-4 backdrop-blur"
@@ -31,16 +37,18 @@ export function DashboardActiveRoles({
     >
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h2 className="text-base font-semibold text-ink-950">Active roles</h2>
+          <h2 className="text-base font-semibold text-ink-950">
+            {t("dashboard.activeRolesTitle")}
+          </h2>
           <p className="mt-1 text-sm text-ink-500">
-            Draft, publish, and inspect each role setup.
+            {t("dashboard.activeRolesSubtitle")}
           </p>
         </div>
         <Link
           className="shrink-0 cursor-pointer text-[12.5px] font-medium text-ink-500 transition hover:text-ink-950"
           href="/roles"
         >
-          View all
+          {t("dashboard.viewAll")}
         </Link>
       </div>
 
@@ -57,25 +65,27 @@ export function DashboardActiveRoles({
                   {role.title}
                 </span>
                 <span className="mt-1 block truncate text-xs text-ink-500">
-                  {role.location ?? "Location not set"} ·{" "}
-                  {formatProvider(role.sourceProvider)} · {role.candidateCount}{" "}
-                  candidate{role.candidateCount > 1 ? "s" : ""}
+                  {role.location ?? t("dashboard.locationNotSet")} ·{" "}
+                  {formatProvider(role.sourceProvider, t)} ·{" "}
+                  {t("dashboard.candidateCount", { count: role.candidateCount })}
                 </span>
               </span>
               <StatusBadge
                 className="shrink-0 whitespace-nowrap"
                 tone={statusTone(role.state)}
               >
-                {formatInterviewState(role.state)}
+                {formatInterviewState(role.state, t)}
               </StatusBadge>
             </Link>
           ))}
         </div>
       ) : (
         <div className="mt-4 rounded-2xl border border-dashed border-ink-100 bg-white/54 p-5">
-          <p className="text-sm font-semibold text-ink-950">No role yet</p>
+          <p className="text-sm font-semibold text-ink-950">
+            {t("dashboard.activeRolesEmptyTitle")}
+          </p>
           <p className="mt-2 text-sm leading-6 text-ink-500">
-            Create the first role screen to add a role to this workspace.
+            {t("dashboard.activeRolesEmptyBody")}
           </p>
         </div>
       )}
@@ -83,29 +93,45 @@ export function DashboardActiveRoles({
   );
 }
 
-function formatProvider(provider: string | null) {
+function formatProvider(provider: string | null, t: TFunction) {
   if (!provider || provider === "manual") {
-    return "Manual";
+    return t("dashboard.providerManual");
   }
 
   if (provider === "linkedin") {
-    return "LinkedIn";
+    return t("dashboard.providerLinkedin");
   }
 
   if (provider === "indeed") {
-    return "Indeed";
+    return t("dashboard.providerIndeed");
   }
 
   return humanize(provider);
 }
 
-function formatInterviewState(status: DashboardActiveRoleState) {
+function formatInterviewState(status: DashboardActiveRoleState, t: TFunction) {
   if (status === "candidate_started") {
-    return "In progress";
+    return t("dashboard.stateInProgress");
   }
 
   if (status === "needs_review") {
-    return "Needs review";
+    return t("dashboard.stateNeedsReview");
+  }
+
+  if (status === "completed") {
+    return t("dashboard.stateCompleted");
+  }
+
+  if (status === "published") {
+    return t("dashboard.statePublished");
+  }
+
+  if (status === "paused") {
+    return t("dashboard.statePaused");
+  }
+
+  if (status === "draft") {
+    return t("dashboard.stateDraft");
   }
 
   return humanize(status);

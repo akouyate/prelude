@@ -303,3 +303,73 @@ describe("openai protected topic classifier", () => {
     expect(defaultProtectedTopicModel).toBe("gpt-4.1-mini");
   });
 });
+
+// N6d — the recruiter-facing `reason` must follow the user's UI language so the
+// compliance block / override prompt is not an EN/FR hybrid.
+describe("N6d localized classifier reason", () => {
+  const cannedFetcher = (capture: { body?: string }) =>
+    async (_url: string, init: { body: string }) => {
+      capture.body = init.body;
+      return {
+        json: async () => ({
+          output_text: JSON.stringify({
+            results: [{ index: 0, flagged: false, category: "none", reason: "" }],
+          }),
+        }),
+        ok: true,
+        status: 200,
+        text: async () => "",
+      };
+    };
+
+  it("deterministic classifier returns a French reason when locale is fr", async () => {
+    const classifier = createDeterministicProtectedTopicClassifier();
+    const [result] = await classifier.classify(["What is your age?"], {
+      locale: "fr",
+    });
+
+    expect(result?.flagged).toBe(true);
+    expect(result?.reason).toBe("règle de mots-clés déclenchée");
+  });
+
+  it("deterministic classifier keeps the English reason by default", async () => {
+    const classifier = createDeterministicProtectedTopicClassifier();
+    const [result] = await classifier.classify(["What is your age?"]);
+
+    expect(result?.reason).toBe("matched keyword policy");
+  });
+
+  it("OpenAI classifier asks the model to write the reason in French when locale is fr", async () => {
+    const capture: { body?: string } = {};
+    const classifier = createOpenAIProtectedTopicClassifier({
+      apiKey: "sk-test",
+      model: "gpt-test",
+      timeoutMs: 1000,
+      fetcher: cannedFetcher(capture),
+    });
+
+    await classifier.classify(["Describe a project you are proud of."], {
+      locale: "fr",
+    });
+
+    const body = JSON.parse(capture.body ?? "{}");
+    const systemPrompt = String(body.input?.[0]?.content ?? "");
+    expect(systemPrompt).toContain("Write the reason field in French");
+  });
+
+  it("OpenAI classifier defaults to an English reason instruction", async () => {
+    const capture: { body?: string } = {};
+    const classifier = createOpenAIProtectedTopicClassifier({
+      apiKey: "sk-test",
+      model: "gpt-test",
+      timeoutMs: 1000,
+      fetcher: cannedFetcher(capture),
+    });
+
+    await classifier.classify(["Describe a project you are proud of."]);
+
+    const body = JSON.parse(capture.body ?? "{}");
+    const systemPrompt = String(body.input?.[0]?.content ?? "");
+    expect(systemPrompt).toContain("Write the reason field in English");
+  });
+});

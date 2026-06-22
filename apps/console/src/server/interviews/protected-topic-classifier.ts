@@ -6,7 +6,39 @@ import {
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 export const protectedTopicClassifierPromptVersion = "protected-topic-v1";
+// Pin the json_schema shape independently of the prompt: the schema can change
+// (categories, fields) and silently alter verdict semantics, so an audit record
+// must record which schema produced the verdict it captured.
+export const protectedTopicClassifierSchemaVersion = "protected-topic-schema-v1";
 export const defaultProtectedTopicModel = "gpt-4.1-mini";
+
+// N6b — categories that can NEVER be overridden by a recruiter. These are the
+// gravest protected classes where there is essentially no legitimate, job-related
+// reason to ask, plus the generic fallback (if the model could not even name a
+// specific class, an override would be a blind dismissal) and the
+// emotion/biometric/automated-decision scoring categories the product forbids
+// outright. A flag in any of these stays a hard block with no recourse; the
+// recruiter must reformulate. Every other category is overridable WITH a
+// substantive justification and a persisted audit record.
+export const nonOverridableProtectedTopicCategories = new Set<ProtectedTopicCategory>(
+  [
+    "disability_or_health",
+    "genetic_information",
+    "biometric_or_face_analysis",
+    "emotion",
+    "automated_decision",
+    "protected_topic",
+    "none",
+  ],
+);
+
+export function isOverridableProtectedTopicCategory(
+  category: string,
+): boolean {
+  return !nonOverridableProtectedTopicCategories.has(
+    category as ProtectedTopicCategory,
+  );
+}
 
 export type ProtectedTopicClassification = {
   flagged: boolean;
@@ -14,10 +46,19 @@ export type ProtectedTopicClassification = {
   reason: string;
 };
 
+export type ProtectedTopicClassifyOptions = {
+  // N6d: recruiter UI language so the model writes `reason` in the same language
+  // as the rest of the compliance message/override prompt. Defaults to English.
+  locale?: string;
+};
+
 export type ProtectedTopicClassifier = {
   provider: string;
   modelName: string;
-  classify: (texts: string[]) => Promise<ProtectedTopicClassification[]>;
+  classify: (
+    texts: string[],
+    options?: ProtectedTopicClassifyOptions,
+  ) => Promise<ProtectedTopicClassification[]>;
 };
 
 type FetchResponse = {
@@ -93,7 +134,7 @@ function createDisabledProtectedTopicClassifier(): ProtectedTopicClassifier {
 
 export function createDeterministicProtectedTopicClassifier(): ProtectedTopicClassifier {
   return {
-    classify: async (texts) =>
+    classify: async (texts, options) =>
       texts.map((text) => {
         const flagged = textViolatesPolicy(text);
 
@@ -101,7 +142,10 @@ export function createDeterministicProtectedTopicClassifier(): ProtectedTopicCla
           ? {
               flagged: true,
               category: "protected_topic" as ProtectedTopicCategory,
-              reason: "matched keyword policy",
+              reason:
+                options?.locale === "fr"
+                  ? "règle de mots-clés déclenchée"
+                  : "matched keyword policy",
             }
           : cleanResult();
       }),
@@ -117,7 +161,7 @@ export function createOpenAIProtectedTopicClassifier({
   timeoutMs,
 }: OpenAIProtectedTopicClassifierOptions): ProtectedTopicClassifier {
   return {
-    classify: async (texts) => {
+    classify: async (texts, options) => {
       if (texts.length === 0) {
         return [];
       }
@@ -126,6 +170,7 @@ export function createOpenAIProtectedTopicClassifier({
         const payload = await createOpenAIClassification({
           apiKey,
           fetcher,
+          locale: options?.locale,
           model,
           texts,
           timeoutMs,
@@ -170,12 +215,14 @@ const classificationJsonSchema = {
 async function createOpenAIClassification({
   apiKey,
   fetcher,
+  locale,
   model,
   texts,
   timeoutMs,
 }: {
   apiKey: string;
   fetcher: Fetcher;
+  locale?: string;
   model: string;
   texts: string[];
   timeoutMs: number;
@@ -188,7 +235,7 @@ async function createOpenAIClassification({
       body: JSON.stringify({
         input: [
           {
-            content: protectedTopicSystemInstructions(),
+            content: protectedTopicSystemInstructions(locale),
             role: "system",
           },
           {
@@ -311,7 +358,14 @@ function readCategory(value: unknown): ProtectedTopicCategory {
   return "none";
 }
 
-function protectedTopicSystemInstructions() {
+function protectedTopicSystemInstructions(locale?: string) {
+  // N6d: the verdict `reason` is shown verbatim to the recruiter, so it must be
+  // written in their UI language (the categories/messages around it already are).
+  const reasonLanguageInstruction =
+    locale === "fr"
+      ? "Write the reason field in French."
+      : "Write the reason field in English.";
+
   return [
     "You are a recruiting-compliance classifier for first-screen interview content.",
     "You receive a JSON array of segments (each a question or evaluation criterion) with a numeric index.",
@@ -333,6 +387,7 @@ function protectedTopicSystemInstructions() {
     "Flag emotion, biometric, appearance, or on-camera-composure scoring of the candidate.",
     "Return one result per segment, preserving its index. Use category=\"none\" and reason=\"\" when not flagged.",
     "Keep reason under 120 characters. Respond with JSON only.",
+    reasonLanguageInstruction,
     `Prompt version: ${protectedTopicClassifierPromptVersion}.`,
   ].join(" ");
 }

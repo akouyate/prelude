@@ -12,9 +12,13 @@ import {
 } from "@prelude/core";
 import {
   INTERVIEW_PLAN_SCHEMA_VERSION,
+  complianceOverrideRecordSchema,
+  complianceOverrideRequestSchema,
   interviewPlanSchema,
   parseStoredInterviewPlan,
   toLiveInterviewPlan,
+  type ComplianceOverrideRecord,
+  type ComplianceOverrideRequest,
 } from "@prelude/contracts";
 import { revalidatePath } from "next/cache";
 
@@ -34,6 +38,9 @@ import {
 } from "./interview-generation-telemetry";
 import {
   createProtectedTopicClassifierFromEnv,
+  isOverridableProtectedTopicCategory,
+  protectedTopicClassifierPromptVersion,
+  protectedTopicClassifierSchemaVersion,
   type ProtectedTopicClassification,
   type ProtectedTopicClassifier,
 } from "./protected-topic-classifier";
@@ -77,6 +84,15 @@ export type SaveInterviewDraftResult =
       error: string;
     };
 
+// N6b: when the second-layer LLM classifier flags an OVERRIDABLE category, the
+// publish fails but carries a review affordance so the recruiter can consciously
+// override it. Absent on a hard keyword block or a non-overridable category.
+export type ComplianceReviewPrompt = {
+  category: string;
+  categoryLabel: string;
+  reason: string;
+};
+
 export type PublishInterviewDraftResult =
   | {
       ok: true;
@@ -88,6 +104,7 @@ export type PublishInterviewDraftResult =
   | {
       ok: false;
       error: string;
+      review?: ComplianceReviewPrompt;
     };
 
 const allowedSeniorities = new Set<InterviewSeniority>([
@@ -195,6 +212,10 @@ export async function publishInterviewDraft(
   draftId: string,
   classifier: ProtectedTopicClassifier = createProtectedTopicClassifierFromEnv(),
   telemetry?: InterviewGenerationTelemetrySink,
+  // N6b: a recruiter-supplied conscious override of an OVERRIDABLE LLM flag. The
+  // server re-reads + re-classifies the current draft, so this can never apply
+  // to a stale verdict, the keyword gate, or a non-overridable category.
+  override?: ComplianceOverrideRequest,
 ): Promise<PublishInterviewDraftResult> {
   const normalizedDraftId = draftId.trim();
 
@@ -204,8 +225,10 @@ export async function publishInterviewDraft(
 
   const scope = await getCompletedOrganizationScope();
   // Recruiter-facing compliance copy follows the authenticated user's UI
-  // language (User.preferredLanguage). Defaults to English.
-  const t = getServerT(await getAuthenticatedUserLocale());
+  // language (User.preferredLanguage). Defaults to English. N6d: the same locale
+  // is handed to the classifier so the LLM `reason` is written in that language.
+  const locale = await getAuthenticatedUserLocale();
+  const t = getServerT(locale);
 
   // Phase 1: read the draft and run the authoritative keyword gate.
   const validation = await prisma.$transaction(async (tx) => {
@@ -308,26 +331,76 @@ export async function publishInterviewDraft(
   let classifierThrew = false;
 
   try {
-    classifications = await classifier.classify(segments);
+    classifications = await classifier.classify(segments, { locale });
   } catch {
     classifierThrew = true;
   }
 
-  const flagged = classifications.find((classification) => classification.flagged);
+  const flaggedSegments = classifications
+    .map((classification, index) => ({
+      ...classification,
+      segment: segments[index] ?? "",
+    }))
+    .filter((classification) => classification.flagged);
+
+  // N6b: an override only applies to a GENUINE materialized LLM flag. A fail-open
+  // (classifierThrew) or a disabled classifier yields NO flags here, so the
+  // override path is structurally unreachable for them — a silent fail-open can
+  // never be laundered into an audited human decision. Only flags whose category
+  // is overridable can be waived, and the publish proceeds only when EVERY flag
+  // is overridable (one non-overridable flag keeps the whole publish a hard
+  // block). The verdict is computed on the freshly-read draft, so it can never be
+  // stale relative to the content being published.
+  const everyFlagOverridable =
+    flaggedSegments.length > 0 &&
+    flaggedSegments.every((flag) =>
+      isOverridableProtectedTopicCategory(flag.category),
+    );
+  const parsedOverride =
+    override && everyFlagOverridable
+      ? complianceOverrideRequestSchema.safeParse(override)
+      : null;
+  const overrideApplied = Boolean(parsedOverride?.success);
+
+  let overrideRecord: ComplianceOverrideRecord | null = null;
+  if (parsedOverride?.success) {
+    // Validate the server-constructed audit record through its contract before it
+    // is persisted: defense-in-depth so a future refactor can never silently write
+    // a malformed compliance record (every field here is already server-sourced
+    // from the authenticated session and the live classifier verdict).
+    overrideRecord = complianceOverrideRecordSchema.parse({
+      justification: parsedOverride.data.justification,
+      overriddenByUserId: scope.userId,
+      organizationId: scope.organizationId,
+      overriddenAt: new Date().toISOString(),
+      classifierProvider: classifier.provider,
+      classifierModel: classifier.modelName,
+      classifierPromptVersion: protectedTopicClassifierPromptVersion,
+      classifierSchemaVersion: protectedTopicClassifierSchemaVersion,
+      keywordGatePassed: true,
+      flags: flaggedSegments.map((flag) => ({
+        category: flag.category,
+        reason: flag.reason,
+        segment: flag.segment,
+      })),
+    });
+  }
 
   const classificationOutcome: ProtectedTopicClassificationOutcome =
     classifierThrew
       ? "skipped_error"
       : classifier.provider === "disabled"
         ? "disabled"
-        : flagged
-          ? "flagged"
-          : "clean";
+        : overrideApplied
+          ? "overridden"
+          : flaggedSegments.length > 0
+            ? "flagged"
+            : "clean";
 
   logInterviewGenerationEvent(
     {
       event: "protected_topic_classification",
-      category: flagged?.category,
+      category: flaggedSegments[0]?.category,
       model: classifier.modelName,
       outcome: classificationOutcome,
       provider: classifier.provider,
@@ -336,13 +409,24 @@ export async function publishInterviewDraft(
     telemetry,
   );
 
-  if (flagged) {
+  const firstFlag = flaggedSegments[0];
+  if (firstFlag && !overrideApplied) {
     return {
       ok: false,
       error: t("compliance.classifierDisallowedTopicBlock", {
-        category: t(`category.${flagged.category}`),
-        reason: flagged.reason,
+        category: t(`category.${firstFlag.category}`),
+        reason: firstFlag.reason,
       }),
+      // Offer an override affordance ONLY when every flag is overridable. A
+      // non-overridable category (disability/health, genetic, biometric, ...) is
+      // a hard block with no recourse — the recruiter must reformulate.
+      review: everyFlagOverridable
+        ? {
+            category: firstFlag.category,
+            categoryLabel: t(`category.${firstFlag.category}`),
+            reason: firstFlag.reason,
+          }
+        : undefined,
     };
   }
 
@@ -406,6 +490,14 @@ export async function publishInterviewDraft(
       schemaVersion: draft.schemaVersion ?? INTERVIEW_PLAN_SCHEMA_VERSION,
       seniority: draft.seniority,
       status: "published",
+      // N6b: persist the immutable override audit record only when a flag was
+      // actually overridden. Omitted (column stays NULL) on a clean publish.
+      ...(overrideRecord
+        ? {
+            complianceOverride:
+              overrideRecord as unknown as Prisma.InputJsonValue,
+          }
+        : {}),
     };
 
     if (publicationMode === "return_existing_snapshot" && draft.interview) {

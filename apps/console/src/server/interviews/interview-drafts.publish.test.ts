@@ -41,6 +41,7 @@ vi.mock("next/cache", () => ({
 vi.mock("../organizations/organization-scope", () => ({
   getCompletedOrganizationScope: vi.fn(async () => ({
     organizationId: "org_123",
+    userId: "user_123",
   })),
 }));
 
@@ -477,5 +478,186 @@ describe("publishInterviewDraft N9 provenance + telemetry", () => {
       (event) => event.event === "protected_topic_classification",
     );
     expect(outcome).toMatchObject({ outcome: "skipped_error" });
+  });
+});
+
+// N6b — reviewable override for the second-layer (LLM) classifier. Only a
+// genuine, materialized LLM flag on an OVERRIDABLE category can be consciously
+// overridden, with a substantive justification, persisted as an immutable audit
+// record. The deterministic keyword gate and the gravest categories are never
+// overridable; a fail-open/disabled classifier never reaches the override path.
+describe("publishInterviewDraft N6b reviewable override", () => {
+  const flaggingClassifier = (
+    category: string,
+    atIndex = 0,
+  ): ProtectedTopicClassifier => ({
+    classify: vi.fn(async (texts: string[]) =>
+      texts.map((_text, index) =>
+        index === atIndex
+          ? {
+              flagged: true,
+              category: category as never,
+              reason: `flagged as ${category} proxy`,
+            }
+          : { flagged: false, category: "none" as const, reason: "" },
+      ),
+    ),
+    modelName: "gpt-test",
+    provider: "openai_responses",
+  });
+
+  const validJustification =
+    "Weekend availability is a bona-fide scheduling requirement for this role.";
+
+  it("returns an override affordance (no snapshot) when an overridable category is flagged without an override", async () => {
+    const result = await publishInterviewDraft(
+      "draft_1",
+      flaggingClassifier("age", 0),
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.review).toBeDefined();
+      expect(result.review?.category).toBe("age");
+      expect(result.review?.categoryLabel).toBeTruthy();
+      expect(result.review?.reason).toContain("age");
+    }
+    expect(tx.interview.create).not.toHaveBeenCalled();
+  });
+
+  it("publishes when a valid override is supplied for an overridable flag", async () => {
+    const result = await publishInterviewDraft(
+      "draft_1",
+      flaggingClassifier("age", 0),
+      undefined,
+      { justification: validJustification },
+    );
+
+    expect(result.ok).toBe(true);
+    expect(tx.interview.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists an immutable audit record on the published snapshot", async () => {
+    await publishInterviewDraft(
+      "draft_1",
+      flaggingClassifier("age", 0),
+      undefined,
+      { justification: validJustification },
+    );
+
+    const createCall = tx.interview.create.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+    const override = createCall?.data.complianceOverride as
+      | Record<string, unknown>
+      | undefined;
+
+    expect(override).toBeDefined();
+    expect(override?.overriddenByUserId).toBe("user_123");
+    expect(override?.organizationId).toBe("org_123");
+    expect(override?.justification).toBe(validJustification);
+    expect(override?.keywordGatePassed).toBe(true);
+    expect(override?.classifierProvider).toBe("openai_responses");
+    expect(override?.classifierModel).toBe("gpt-test");
+    expect(typeof override?.classifierPromptVersion).toBe("string");
+    expect(typeof override?.classifierSchemaVersion).toBe("string");
+
+    const flags = (override?.flags ?? []) as Array<Record<string, unknown>>;
+    expect(flags).toHaveLength(1);
+    expect(flags[0]?.category).toBe("age");
+    expect(String(flags[0]?.segment)).toContain(
+      "Describe a production incident",
+    );
+  });
+
+  it("rejects an override whose justification is too thin (server-side friction)", async () => {
+    const result = await publishInterviewDraft(
+      "draft_1",
+      flaggingClassifier("age", 0),
+      undefined,
+      { justification: "ok" },
+    );
+
+    expect(result.ok).toBe(false);
+    expect(tx.interview.create).not.toHaveBeenCalled();
+  });
+
+  it("never allows overriding the gravest categories (e.g. disability/health)", async () => {
+    const result = await publishInterviewDraft(
+      "draft_1",
+      flaggingClassifier("disability_or_health", 0),
+      undefined,
+      { justification: validJustification },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // No override affordance is offered for a non-overridable category.
+      expect(result.review).toBeUndefined();
+    }
+    expect(tx.interview.create).not.toHaveBeenCalled();
+  });
+
+  it("logs a distinct `overridden` telemetry outcome", async () => {
+    const { events, telemetry } = captureTelemetry();
+
+    await publishInterviewDraft(
+      "draft_1",
+      flaggingClassifier("age", 0),
+      telemetry,
+      { justification: validJustification },
+    );
+
+    const outcome = events.find(
+      (event) => event.event === "protected_topic_classification",
+    );
+    expect(outcome).toMatchObject({ outcome: "overridden" });
+  });
+
+  it("does not let an override bypass the authoritative keyword gate", async () => {
+    draftRecord.current = {
+      ...publishableDraft(),
+      questions: [
+        {
+          category: "custom",
+          durationSeconds: 75,
+          expectedSignal: "Age",
+          id: "q1",
+          maxFollowups: 1,
+          prompt: "How old are you?",
+          required: true,
+          source: "agent",
+        },
+      ],
+    };
+
+    const classifier = flaggingClassifier("age", 0);
+    const result = await publishInterviewDraft(
+      "draft_1",
+      classifier,
+      undefined,
+      { justification: validJustification },
+    );
+
+    expect(result.ok).toBe(false);
+    // The keyword layer is authoritative and non-overridable: the classifier is
+    // never even consulted, and no override is recorded.
+    expect(classifier.classify).not.toHaveBeenCalled();
+    expect(tx.interview.create).not.toHaveBeenCalled();
+  });
+
+  it("records no override when an override is supplied but nothing is flagged", async () => {
+    const result = await publishInterviewDraft(
+      "draft_1",
+      passThroughClassifier(),
+      undefined,
+      { justification: validJustification },
+    );
+
+    expect(result.ok).toBe(true);
+    const createCall = tx.interview.create.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+    expect(createCall?.data.complianceOverride ?? null).toBeNull();
   });
 });
