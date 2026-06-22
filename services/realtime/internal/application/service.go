@@ -165,6 +165,7 @@ type InterviewQuestion struct {
 	ID             string `json:"id"`
 	Prompt         string `json:"prompt"`
 	Category       string `json:"category"`
+	ExpectedSignal string `json:"expected_signal,omitempty"`
 	FollowUpPrompt string `json:"follow_up_prompt,omitempty"`
 }
 

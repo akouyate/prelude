@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -9,7 +10,13 @@ from app.adapters.answer_inference import (
     OpenAIAnswerInferenceConfig,
     OpenAIAnswerInferenceProvider,
 )
-from app.domain.models import CandidateTurn, CandidateTurnIntent, create_demo_plan
+from app.domain.models import (
+    CandidateTurn,
+    CandidateTurnIntent,
+    InterviewQuestion,
+    QuestionCategory,
+    create_demo_plan,
+)
 from app.domain.orchestrator import AnswerClassification
 
 
@@ -72,6 +79,53 @@ async def test_openai_answer_inference_parses_llm_matrix_without_network() -> No
     assert assessment.evaluation_matrix.challenge_needed is True
     assert client.calls[0]["model"] == "gpt-test"
     assert client.calls[0]["temperature"] == 0
+
+
+@pytest.mark.asyncio
+async def test_answer_inference_input_includes_recruiter_expected_signal() -> None:
+    client = FakeResponsesClient(
+        """
+        {
+          "classification": "complete",
+          "reason_codes": [],
+          "confidence": 0.9,
+          "scores": {"clarity": 3, "relevance": 3, "concreteness": 3, "coherence": 3, "role_signal": 3},
+          "challenge_needed": false,
+          "challenge_reason": null,
+          "challenge_prompt": null
+        }
+        """
+    )
+    plan = create_demo_plan()
+    question = InterviewQuestion(
+        id="q1",
+        prompt="Describe a hard tradeoff you owned end to end.",
+        category=QuestionCategory.EXPERIENCE,
+        expected_signal="ownership and decision-making under constraints",
+    )
+    provider = OpenAIAnswerInferenceProvider(
+        config=OpenAIAnswerInferenceConfig(model="gpt-test", timeout_seconds=1),
+        client=client,
+    )
+
+    await provider.assess_answer(
+        plan=plan,
+        question=question,
+        turn=CandidateTurn(
+            question_id="q1",
+            transcript=(
+                "J'ai arbitre une roadmap en coupant une feature pour tenir le "
+                "delai, et je l'ai explique aux parties prenantes."
+            ),
+        ),
+    )
+
+    assert client.calls, "expected the LLM evaluator to run for a complete answer"
+    payload = json.loads(client.calls[0]["input"])
+    assert (
+        payload["active_question"]["expected_signal"]
+        == "ownership and decision-making under constraints"
+    )
 
 
 @pytest.mark.asyncio

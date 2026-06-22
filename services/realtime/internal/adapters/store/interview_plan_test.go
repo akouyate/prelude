@@ -54,3 +54,16 @@ func TestDecodeInterviewQuestionsHonorsStoredCategory(t *testing.T) {
 		t.Fatalf("expected stored category experience, got %+v", questions)
 	}
 }
+
+// The recruiter's per-question expectedSignal must reach the agent so the live
+// interviewer/evaluator is not blind to the intended evaluation signal.
+func TestDecodeInterviewQuestionsThreadsExpectedSignalToTheAgent(t *testing.T) {
+	raw := []byte(`[{"id":"q1","prompt":"Describe a hard tradeoff you owned.","category":"experience","expectedSignal":"ownership and decision-making under constraints","source":"agent"}]`)
+	questions := decodeInterviewQuestions(raw)
+	if len(questions) != 1 {
+		t.Fatalf("expected 1 question, got %d", len(questions))
+	}
+	if questions[0].ExpectedSignal != "ownership and decision-making under constraints" {
+		t.Fatalf("expected the recruiter expected signal to reach the agent, got %q", questions[0].ExpectedSignal)
+	}
+}

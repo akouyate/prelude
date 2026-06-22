@@ -19,6 +19,8 @@ class InterviewQuestion(BaseModel):
     id: str
     prompt: str
     category: QuestionCategory = QuestionCategory.ROLE_FIT
+    # The recruiter-authored evaluation signal the interviewer should probe for.
+    expected_signal: str | None = None
     follow_up_prompt: str | None = None
 
 

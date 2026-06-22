@@ -384,10 +384,11 @@ func decodeModalities(value []byte) []domain.Modality {
 }
 
 type persistedQuestion struct {
-	ID       string `json:"id"`
-	Prompt   string `json:"prompt"`
-	Category string `json:"category"`
-	Source   string `json:"source"`
+	ID             string `json:"id"`
+	Prompt         string `json:"prompt"`
+	Category       string `json:"category"`
+	ExpectedSignal string `json:"expectedSignal"`
+	Source         string `json:"source"`
 }
 
 func decodeInterviewQuestions(value []byte) []application.InterviewQuestion {
@@ -412,6 +413,7 @@ func decodeInterviewQuestions(value []byte) []application.InterviewQuestion {
 			ID:             id,
 			Prompt:         prompt,
 			Category:       category,
+			ExpectedSignal: strings.TrimSpace(question.ExpectedSignal),
 			FollowUpPrompt: followUpPrompt(category),
 		})
 	}

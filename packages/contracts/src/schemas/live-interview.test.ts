@@ -631,6 +631,7 @@ describe("liveInterviewWorkerAgentConfigSchema", () => {
           id: "q1",
           prompt: "Pouvez-vous vous presenter brievement ?",
           category,
+          expected_signal: "ownership under constraints",
         },
       ],
       allow_video: true,
@@ -662,6 +663,19 @@ describe("liveInterviewWorkerAgentConfigSchema", () => {
         validWorkerConfig("skills"),
       ).success,
     ).toBe(false);
+  });
+
+  it("threads the recruiter expected_signal through to the agent", () => {
+    const result = liveInterviewWorkerAgentConfigSchema.safeParse(
+      validWorkerConfig("experience"),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.interview_plan.questions[0]?.expected_signal).toBe(
+        "ownership under constraints",
+      );
+    }
   });
 });
 

@@ -218,6 +218,7 @@ def _answer_inference_input(
                 "id": question.id,
                 "prompt": question.prompt,
                 "category": question.category.value,
+                "expected_signal": question.expected_signal,
             },
             "candidate_turn": {
                 "transcript": turn.transcript,

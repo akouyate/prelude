@@ -499,6 +499,7 @@ export const liveInterviewWorkerAgentConfigSchema = z.object({
           id: z.string().min(1),
           prompt: z.string().trim().min(8).max(800),
           category: liveInterviewWorkerQuestionCategorySchema,
+          expected_signal: z.string().trim().min(1).max(400).optional(),
           follow_up_prompt: z.string().trim().min(8).max(800).optional(),
         }),
       )
