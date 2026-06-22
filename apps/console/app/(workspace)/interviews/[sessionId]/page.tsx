@@ -97,7 +97,7 @@ function CandidateSessionReview({
     questions: Array<{
       id: string;
       prompt: string;
-      signal: string;
+      expectedSignal: string;
     }>;
     questionCompletionRate: number | null;
     realtimeSessionId: string | null;
@@ -714,7 +714,7 @@ function QuestionAnswerCard({
   questions: Array<{
     id: string;
     prompt: string;
-    signal: string;
+    expectedSignal: string;
   }>;
 }) {
   const unplannedGroups = evidence.questionAnswerSequence.filter(
@@ -763,7 +763,7 @@ function QuestionAnswerCard({
                       {answered ? "Answered" : "No answer"}
                     </span>
                     <span className="text-[11.5px] font-medium text-[#a29b8d]">
-                      {question.signal}
+                      {question.expectedSignal}
                     </span>
                   </div>
                   <span className="mt-1.5 block text-[14.5px] font-semibold leading-[1.45] text-ink-950">
@@ -1215,7 +1215,7 @@ function getCriterionEvidenceCards(session: CandidateSessionReviewSession) {
   return session.questions.map((question) => ({
     dot: "#ddd8cc",
     id: question.id,
-    label: question.signal,
+    label: question.expectedSignal,
     note:
       "AI synthesis has not been persisted yet. Review the transcript before making a decision.",
     quote: null,
@@ -1247,7 +1247,7 @@ function getNextCallPrep(session: CandidateSessionReviewSession) {
               group.candidateTurns.length === 0,
           ),
         )
-        .map((question) => `Clarify ${question.signal.toLowerCase()}.`),
+        .map((question) => `Clarify ${question.expectedSignal.toLowerCase()}.`),
     ]).slice(0, 2),
     worthProbing: uniqueNonEmpty([
       ...risks,

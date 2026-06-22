@@ -69,6 +69,40 @@ describe("interview agent draft policy", () => {
       "Ask every candidate the same questions",
     );
     expect(draft.rationale).toContain("Prelude generated 5 focused questions");
+
+    for (const question of draft.questions) {
+      expect(question.expectedSignal.length).toBeGreaterThan(0);
+      expect(question.required).toBe(true);
+      expect(question.maxFollowups).toBe(1);
+      expect([
+        "motivation",
+        "experience",
+        "skills",
+        "logistics",
+        "availability",
+        "compensation",
+        "custom",
+      ]).toContain(question.category);
+    }
+  });
+
+  it("emits the Hybrid question shape from the question library focus mapping", () => {
+    const draft = generateDeterministicInterviewDraft({
+      companyName: "Prelude",
+      focus: ["motivation", "role_skills", "situational_judgment", "communication"],
+      jobDescription:
+        "Hire a mid-level customer success manager to own onboarding and reduce churn risk.",
+      jobTitle: "Customer Success Manager",
+      seniority: "mid",
+    });
+
+    const motivation = draft.questions.find((q) => q.id === "motivation");
+    expect(motivation?.category).toBe("motivation");
+    expect(motivation?.expectedSignal).toBe(
+      "Role motivation and clarity of expectations",
+    );
+    expect(motivation?.required).toBe(true);
+    expect(motivation?.maxFollowups).toBe(1);
   });
 
   it.each([
@@ -130,7 +164,7 @@ describe("interview agent draft policy", () => {
         seniority,
       });
       const content = draft.questions
-        .map((question) => `${question.prompt} ${question.signal}`)
+        .map((question) => `${question.prompt} ${question.expectedSignal}`)
         .join(" ")
         .toLowerCase();
       const genericQuestionIds = [

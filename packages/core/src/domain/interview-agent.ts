@@ -8,6 +8,15 @@ export type InterviewFocus =
   | "situational_judgment"
   | "communication";
 
+export type InterviewQuestionCategory =
+  | "motivation"
+  | "experience"
+  | "skills"
+  | "logistics"
+  | "availability"
+  | "compensation"
+  | "custom";
+
 export type InterviewDraftInput = {
   jobTitle: string;
   companyName: string;
@@ -20,7 +29,10 @@ export type InterviewDraftInput = {
 export type InterviewQuestionDraft = {
   id: string;
   prompt: string;
-  signal: string;
+  expectedSignal: string;
+  category: InterviewQuestionCategory;
+  required: boolean;
+  maxFollowups: number;
   source: "job_description" | "attachment" | "agent";
   durationSeconds: number;
 };
@@ -50,7 +62,10 @@ const questionLibrary: Record<InterviewFocus, InterviewQuestionDraft> = {
     id: "motivation",
     prompt:
       "What made you interested in this role, and what would make this opportunity a strong next step for you?",
-    signal: "Role motivation and clarity of expectations",
+    expectedSignal: "Role motivation and clarity of expectations",
+    category: "motivation",
+    required: true,
+    maxFollowups: 1,
     source: "agent",
     durationSeconds: 75,
   },
@@ -58,7 +73,10 @@ const questionLibrary: Record<InterviewFocus, InterviewQuestionDraft> = {
     id: "role-skills",
     prompt:
       "Tell us about a recent project or situation that shows you can handle the core responsibilities of this role.",
-    signal: "Relevant experience connected to the job description",
+    expectedSignal: "Relevant experience connected to the job description",
+    category: "skills",
+    required: true,
+    maxFollowups: 1,
     source: "job_description",
     durationSeconds: 90,
   },
@@ -66,7 +84,10 @@ const questionLibrary: Record<InterviewFocus, InterviewQuestionDraft> = {
     id: "situational-judgment",
     prompt:
       "Imagine you join the team and discover a priority is unclear but the deadline is close. What would you do first?",
-    signal: "Judgment, prioritization, and communication under ambiguity",
+    expectedSignal: "Judgment, prioritization, and communication under ambiguity",
+    category: "experience",
+    required: true,
+    maxFollowups: 1,
     source: "job_description",
     durationSeconds: 90,
   },
@@ -74,7 +95,10 @@ const questionLibrary: Record<InterviewFocus, InterviewQuestionDraft> = {
     id: "communication",
     prompt:
       "Explain a complex topic from your work to someone who does not share your background.",
-    signal: "Clarity, structure, and audience awareness",
+    expectedSignal: "Clarity, structure, and audience awareness",
+    category: "custom",
+    required: true,
+    maxFollowups: 1,
     source: "agent",
     durationSeconds: 75,
   },
@@ -315,7 +339,10 @@ function roleSkillsQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "ai-orchestration-role-skills",
       prompt:
         "Tell us about a workflow you automated or orchestrated with AI tools. What problem did it solve, and how did you validate it worked?",
-      signal: "AI workflow design, orchestration judgment, and validation discipline",
+      expectedSignal: "AI workflow design, orchestration judgment, and validation discipline",
+      category: "skills",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -323,7 +350,10 @@ function roleSkillsQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "marketing-strategy-role-skills",
       prompt:
         "Tell us about a marketing strategy you owned that changed pipeline, revenue, brand position, or customer acquisition.",
-      signal: "Marketing strategy ownership and measurable business impact",
+      expectedSignal: "Marketing strategy ownership and measurable business impact",
+      category: "skills",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -331,7 +361,10 @@ function roleSkillsQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "hospitality-operations-role-skills",
       prompt:
         "Tell us about a shift, service period, or guest situation you managed where operations needed to stay smooth under pressure.",
-      signal: "Service operations, team coordination, and guest-facing execution",
+      expectedSignal: "Service operations, team coordination, and guest-facing execution",
+      category: "skills",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -339,7 +372,10 @@ function roleSkillsQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "hr-screening-role-skills",
       prompt:
         "Tell us about a hiring process you improved, from intake with the hiring manager through candidate follow-up.",
-      signal: "Structured recruiting process, stakeholder intake, and candidate experience",
+      expectedSignal: "Structured recruiting process, stakeholder intake, and candidate experience",
+      category: "skills",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -347,7 +383,10 @@ function roleSkillsQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "logistics-coordination-role-skills",
       prompt:
         "Tell us about a shipment, carrier, warehouse, or delivery issue you coordinated from problem detection to resolution.",
-      signal: "Logistics coordination, exception handling, and operational follow-through",
+      expectedSignal: "Logistics coordination, exception handling, and operational follow-through",
+      category: "skills",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -355,7 +394,10 @@ function roleSkillsQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "procurement-role-skills",
       prompt:
         "Tell us about a supplier, category, or purchasing decision where you balanced cost, quality, risk, and delivery constraints.",
-      signal: "Procurement judgment, supplier management, and tradeoff clarity",
+      expectedSignal: "Procurement judgment, supplier management, and tradeoff clarity",
+      category: "skills",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -371,7 +413,10 @@ function judgmentQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "ai-orchestration-judgment",
       prompt:
         "If an AI workflow gives inconsistent outputs in production, what would you check first before expanding its use?",
-      signal: "Failure handling, human-in-the-loop judgment, and production caution",
+      expectedSignal: "Failure handling, human-in-the-loop judgment, and production caution",
+      category: "experience",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -379,7 +424,10 @@ function judgmentQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "marketing-judgment",
       prompt:
         "Imagine growth is slowing but budget is constrained. How would you decide what to protect, cut, or test first?",
-      signal: "Marketing prioritization, budget tradeoffs, and executive judgment",
+      expectedSignal: "Marketing prioritization, budget tradeoffs, and executive judgment",
+      category: "experience",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -387,7 +435,10 @@ function judgmentQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "hospitality-judgment",
       prompt:
         "A guest issue escalates during a busy service period while the team is short-staffed. What would you do first?",
-      signal: "Guest recovery, prioritization, and team judgment under pressure",
+      expectedSignal: "Guest recovery, prioritization, and team judgment under pressure",
+      category: "experience",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -395,7 +446,10 @@ function judgmentQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "hr-judgment",
       prompt:
         "A hiring manager asks to screen candidates using a criterion that is not job-related. How would you handle it?",
-      signal: "Recruiting fairness, stakeholder coaching, and structured process judgment",
+      expectedSignal: "Recruiting fairness, stakeholder coaching, and structured process judgment",
+      category: "experience",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -403,7 +457,10 @@ function judgmentQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "logistics-judgment",
       prompt:
         "A critical delivery is delayed and several teams need updates. What would you verify and communicate first?",
-      signal: "Exception handling, prioritization, and operational communication",
+      expectedSignal: "Exception handling, prioritization, and operational communication",
+      category: "experience",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -411,7 +468,10 @@ function judgmentQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "procurement-judgment",
       prompt:
         "A low-cost supplier creates delivery or compliance risk. How would you decide whether to proceed, renegotiate, or escalate?",
-      signal: "Supplier risk judgment, negotiation discipline, and escalation clarity",
+      expectedSignal: "Supplier risk judgment, negotiation discipline, and escalation clarity",
+      category: "experience",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     },
@@ -431,7 +491,10 @@ function communicationQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "ai-orchestration-communication",
       prompt:
         "Tell us about how you explained AI workflow limitations, risks, or tradeoffs to non-technical stakeholders.",
-      signal: "AI risk communication and cross-functional translation",
+      expectedSignal: "AI risk communication and cross-functional translation",
+      category: "custom",
+      required: true,
+      maxFollowups: 1,
       source: "agent",
       durationSeconds: 75,
     },
@@ -439,7 +502,10 @@ function communicationQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "marketing-communication",
       prompt:
         "Tell us about a time you aligned sales, product, and marketing around a market, brand, or pipeline priority.",
-      signal: "Executive alignment and marketing communication across functions",
+      expectedSignal: "Executive alignment and marketing communication across functions",
+      category: "custom",
+      required: true,
+      maxFollowups: 1,
       source: "agent",
       durationSeconds: 75,
     },
@@ -447,7 +513,10 @@ function communicationQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "hospitality-communication",
       prompt:
         "Tell us about how you coached a team member or aligned the team during a difficult service period.",
-      signal: "Team coaching, service communication, and pressure management",
+      expectedSignal: "Team coaching, service communication, and pressure management",
+      category: "custom",
+      required: true,
+      maxFollowups: 1,
       source: "agent",
       durationSeconds: 75,
     },
@@ -455,7 +524,10 @@ function communicationQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "hr-communication",
       prompt:
         "Tell us about a time you helped interviewers use a more structured or fair evaluation process.",
-      signal: "Structured hiring communication and stakeholder coaching",
+      expectedSignal: "Structured hiring communication and stakeholder coaching",
+      category: "custom",
+      required: true,
+      maxFollowups: 1,
       source: "agent",
       durationSeconds: 75,
     },
@@ -463,7 +535,10 @@ function communicationQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "logistics-communication",
       prompt:
         "Tell us about how you kept stakeholders aligned during a shipment exception, delay, or schedule change.",
-      signal: "Logistics communication during operational exceptions",
+      expectedSignal: "Logistics communication during operational exceptions",
+      category: "custom",
+      required: true,
+      maxFollowups: 1,
       source: "agent",
       durationSeconds: 75,
     },
@@ -471,7 +546,10 @@ function communicationQuestion(domain: RoleDomain): InterviewQuestionDraft {
       id: "procurement-communication",
       prompt:
         "Tell us about a negotiation where you improved terms without damaging supplier reliability or trust.",
-      signal: "Supplier communication, negotiation judgment, and relationship management",
+      expectedSignal: "Supplier communication, negotiation judgment, and relationship management",
+      category: "custom",
+      required: true,
+      maxFollowups: 1,
       source: "agent",
       durationSeconds: 75,
     },
@@ -548,7 +626,10 @@ function getSupplementalQuestions(
       id: "executive-marketing-ownership",
       prompt:
         "Tell us about a cross-functional revenue, brand, or market outcome you led. What changed because of your decisions?",
-      signal: "Executive marketing ownership, cross-functional leadership, and measurable impact",
+      expectedSignal: "Executive marketing ownership, cross-functional leadership, and measurable impact",
+      category: "experience",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     });
@@ -562,7 +643,10 @@ function getSupplementalQuestions(
       id: "ownership-impact",
       prompt:
         "Tell us about a time you owned an important outcome end to end. What changed because of your work?",
-      signal: "Ownership, measurable impact, and seniority alignment",
+      expectedSignal: "Ownership, measurable impact, and seniority alignment",
+      category: "experience",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     });
@@ -582,7 +666,10 @@ function getSupplementalQuestions(
       id: "customer-facing-judgment",
       prompt:
         "Describe a situation where you had to handle a difficult customer or stakeholder conversation. What did you do?",
-      signal: "Customer-facing judgment and communication under pressure",
+      expectedSignal: "Customer-facing judgment and communication under pressure",
+      category: "experience",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 90,
     });
@@ -603,7 +690,10 @@ function getSupplementalQuestions(
       id: "logistics-alignment",
       prompt:
         "What work setup, location, travel, or availability constraints should the recruiter know before moving forward?",
-      signal: "Job-related logistics alignment for the hiring process",
+      expectedSignal: "Job-related logistics alignment for the hiring process",
+      category: "logistics",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 60,
     });
@@ -614,7 +704,10 @@ function getSupplementalQuestions(
       id: "compensation-alignment",
       prompt:
         "If the role's compensation range has been shared, does it align with your expectations for a next step?",
-      signal: "Compensation alignment only when the range is part of the hiring process",
+      expectedSignal: "Compensation alignment only when the range is part of the hiring process",
+      category: "compensation",
+      required: true,
+      maxFollowups: 1,
       source: "job_description",
       durationSeconds: 60,
     });
@@ -624,7 +717,10 @@ function getSupplementalQuestions(
     id: "recruiter-context",
     prompt:
       "What should the recruiter understand about your fit for this role that may not be obvious from your resume?",
-    signal: "Additional recruiter-facing context grounded in the role",
+    expectedSignal: "Additional recruiter-facing context grounded in the role",
+    category: "custom",
+    required: true,
+    maxFollowups: 1,
     source: "agent",
     durationSeconds: 75,
   });
@@ -633,7 +729,10 @@ function getSupplementalQuestions(
     questions.push({
       id: "attachment-context",
       prompt: `Based on ${input.attachmentName}, which part of the role context feels most familiar to you, and where would you need more information?`,
-      signal: "Ability to connect attached context to role expectations",
+      expectedSignal: "Ability to connect attached context to role expectations",
+      category: "skills",
+      required: true,
+      maxFollowups: 1,
       source: "attachment",
       durationSeconds: 90,
     });

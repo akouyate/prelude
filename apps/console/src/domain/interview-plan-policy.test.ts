@@ -37,24 +37,33 @@ const publishablePlan: PublishableInterviewPlanInput = {
   ],
   questions: [
     {
+      category: "motivation",
       durationSeconds: 75,
+      expectedSignal: "Role motivation",
       id: "motivation",
+      maxFollowups: 1,
       prompt: "What made this role a strong next step for you?",
-      signal: "Role motivation",
+      required: true,
       source: "agent",
     },
     {
+      category: "experience",
       durationSeconds: 90,
+      expectedSignal: "Relevant experience",
       id: "experience",
+      maxFollowups: 1,
       prompt: "Tell us about relevant experience for this role.",
-      signal: "Relevant experience",
+      required: true,
       source: "job_description",
     },
     {
+      category: "experience",
       durationSeconds: 90,
+      expectedSignal: "Practical judgment",
       id: "judgment",
+      maxFollowups: 1,
       prompt: "How would you handle a realistic ambiguous work situation?",
-      signal: "Practical judgment",
+      required: true,
       source: "job_description",
     },
   ],
@@ -96,10 +105,13 @@ describe("interview plan publication policy", () => {
       ...publishablePlan,
       questions: [
         {
+          category: "motivation",
           durationSeconds: 75,
+          expectedSignal: "Role motivation",
           id: "age",
+          maxFollowups: 1,
           prompt: "What is your age?",
-          signal: "Role motivation",
+          required: true,
           source: "agent",
         },
         ...publishablePlan.questions.slice(1),
@@ -133,7 +145,9 @@ describe("interview plan publication policy", () => {
     expect(
       planReferencesDisallowedTopic({
         criteria: [],
-        questions: [{ prompt: "What is your age?", signal: "Experience" }],
+        questions: [
+          { prompt: "What is your age?", expectedSignal: "Experience" },
+        ],
       }),
     ).toBe(true);
   });
@@ -154,7 +168,10 @@ describe("interview plan publication policy", () => {
       planReferencesDisallowedTopic({
         criteria: [{ description: "Structured, concrete answers.", label: "Clarity" }],
         questions: [
-          { prompt: "Describe a project you led under deadline.", signal: "Delivery" },
+          {
+            prompt: "Describe a project you led under deadline.",
+            expectedSignal: "Delivery",
+          },
         ],
       }),
     ).toBe(false);

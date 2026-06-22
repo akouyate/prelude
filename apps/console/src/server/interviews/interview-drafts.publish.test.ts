@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  parseStoredInterviewPlan,
+  toLiveInterviewPlan,
+} from "@prelude/contracts";
+
 import type { ProtectedTopicClassifier } from "./protected-topic-classifier";
 
 const draftRecord = vi.hoisted(() => ({
@@ -73,24 +78,33 @@ const publishableDraft = () => ({
   jobId: "job_1",
   questions: [
     {
+      category: "experience",
       durationSeconds: 75,
+      expectedSignal: "Problem solving",
       id: "q1",
+      maxFollowups: 1,
       prompt: "Describe a production incident you debugged end to end.",
-      signal: "Problem solving",
+      required: true,
       source: "agent",
     },
     {
+      category: "custom",
       durationSeconds: 75,
+      expectedSignal: "Communication",
       id: "q2",
+      maxFollowups: 1,
       prompt: "Tell me about a time you communicated a tricky tradeoff.",
-      signal: "Communication",
+      required: true,
       source: "agent",
     },
     {
+      category: "experience",
       durationSeconds: 75,
+      expectedSignal: "Ownership",
       id: "q3",
+      maxFollowups: 1,
       prompt: "How do you keep a long project on track?",
-      signal: "Ownership",
+      required: true,
       source: "agent",
     },
   ],
@@ -131,6 +145,31 @@ describe("publishInterviewDraft N6 classifier wiring", () => {
 
     expect(result.ok).toBe(true);
     expect(tx.interview.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists a canonical Hybrid snapshot that forms a valid live plan", async () => {
+    await publishInterviewDraft("draft_1", passThroughClassifier());
+
+    const createCall = tx.interview.create.mock.calls[0]?.[0] as
+      | { data: { questions: unknown; responseModes: unknown } }
+      | undefined;
+    const questions = (createCall?.data.questions ?? []) as Array<
+      Record<string, unknown>
+    >;
+
+    expect(questions).toHaveLength(3);
+    for (const question of questions) {
+      expect(question.expectedSignal).toBeTruthy();
+      expect(question.required).toBe(true);
+      expect(question.maxFollowups).toBe(1);
+      expect(typeof question.category).toBe("string");
+    }
+
+    // The persisted snapshot must be able to form a valid live interview plan.
+    const plan = parseStoredInterviewPlan(createCall?.data);
+    expect(() =>
+      toLiveInterviewPlan({ plan, planId: "plan_1", jobId: "job_1" }),
+    ).not.toThrow();
   });
 
   it("runs the classifier OUTSIDE the prisma transaction", async () => {
@@ -215,10 +254,13 @@ describe("publishInterviewDraft N6 classifier wiring", () => {
       ...publishableDraft(),
       questions: [
         {
+          category: "custom",
           durationSeconds: 75,
+          expectedSignal: "Age",
           id: "q1",
+          maxFollowups: 1,
           prompt: "How old are you?",
-          signal: "Age",
+          required: true,
           source: "agent",
         },
       ],

@@ -57,7 +57,7 @@ export function InterviewOverview({
     id: question.id,
     numberLabel: String(index + 1).padStart(2, "0"),
     prompt: question.prompt,
-    signal: question.signal,
+    signal: question.expectedSignal,
     sourceLabel: formatQuestionSource(question.source),
   })) satisfies InterviewOverviewQuestion[];
   const criteria = interview.criteria.map((criterion) => ({

@@ -36,6 +36,13 @@ describe("interview draft generation", () => {
     expect(draft.guardrails.join(" ")).toContain(
       "Ask every candidate the same questions",
     );
+
+    for (const question of draft.questions) {
+      expect(question.expectedSignal.length).toBeGreaterThan(0);
+      expect(question.required).toBe(true);
+      expect(question.maxFollowups).toBe(1);
+      expect(typeof question.category).toBe("string");
+    }
   });
 
   it("adds and refines questions through deterministic provider methods", async () => {
@@ -85,6 +92,11 @@ describe("interview draft generation", () => {
     expect(draft.questions).toHaveLength(4);
     expect(draft.criteria).toHaveLength(3);
     expect(calls[0]?.headers.Authorization).toBe("Bearer sk-test");
+    for (const question of draft.questions) {
+      expect(question.required).toBe(true);
+      expect(question.maxFollowups).toBe(1);
+      expect(question.expectedSignal.length).toBeGreaterThan(0);
+    }
 
     const requestBody = JSON.parse(calls[0]?.body ?? "{}");
 
@@ -93,6 +105,12 @@ describe("interview draft generation", () => {
       store: false,
     });
     expect(requestBody.text.format.strict).toBe(true);
+    // The OpenAI schema must request the Hybrid fields.
+    const schemaJson = JSON.stringify(requestBody.text.format.schema);
+    expect(schemaJson).toContain("expectedSignal");
+    expect(schemaJson).toContain("required");
+    expect(schemaJson).toContain("maxFollowups");
+    expect(schemaJson).toContain("category");
     const promptInput = JSON.parse(requestBody.input[1].content);
 
     expect(promptInput.targetQuestionCount).toBe(4);
@@ -109,7 +127,7 @@ describe("interview draft generation", () => {
             durationSeconds: 60,
             id: "unsafe",
             prompt: "How old are you?",
-            signal: "Age",
+            expectedSignal: "Age",
             source: "agent",
           }),
         }),
@@ -181,12 +199,12 @@ describe("interview draft generation", () => {
               },
             ],
             questions: [
-              { id: "bad", prompt: "", signal: "", source: "agent" },
+              { id: "bad", prompt: "", expectedSignal: "", source: "agent" },
               {
                 durationSeconds: 60,
                 id: "unsafe",
                 prompt: "How old are you?",
-                signal: "Age",
+                expectedSignal: "Age",
                 source: "agent",
               },
               sampleDraft.questions[0],
@@ -256,35 +274,47 @@ const sampleDraft = {
   ],
   questions: [
     {
+      category: "motivation",
       durationSeconds: 75,
       id: "motivation",
+      maxFollowups: 1,
       prompt:
         "What made this Customer Success Manager role interesting to you?",
-      signal: "Role motivation and clarity of expectations",
+      expectedSignal: "Role motivation and clarity of expectations",
+      required: true,
       source: "agent",
     },
     {
+      category: "skills",
       durationSeconds: 90,
       id: "onboarding",
+      maxFollowups: 1,
       prompt:
         "Tell us about a customer onboarding project you handled and what changed because of your work.",
-      signal: "Relevant customer onboarding evidence",
+      expectedSignal: "Relevant customer onboarding evidence",
+      required: true,
       source: "job_description",
     },
     {
+      category: "experience",
       durationSeconds: 90,
       id: "judgment",
+      maxFollowups: 1,
       prompt:
         "Describe how you would handle an at-risk customer after a difficult implementation.",
-      signal: "Customer judgment and prioritization",
+      expectedSignal: "Customer judgment and prioritization",
+      required: true,
       source: "job_description",
     },
     {
+      category: "custom",
       durationSeconds: 75,
       id: "communication",
+      maxFollowups: 1,
       prompt:
         "Share an example of how you explained a customer issue clearly to another team.",
-      signal: "Communication clarity",
+      expectedSignal: "Communication clarity",
+      required: true,
       source: "agent",
     },
   ],

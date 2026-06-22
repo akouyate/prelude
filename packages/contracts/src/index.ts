@@ -1,5 +1,21 @@
 export { createJobInputSchema, type CreateJobInput } from "./schemas/job";
 export {
+  INTERVIEW_PLAN_SCHEMA_VERSION,
+  interviewFocusCanonicalSchema,
+  interviewPlanCriterionSchema,
+  interviewPlanQuestionSchema,
+  interviewPlanSchema,
+  interviewQuestionSourceSchema,
+  interviewResponseModeSchema,
+  interviewSeniorityCanonicalSchema,
+  parseStoredInterviewPlan,
+  storedInterviewPlanSchema,
+  toLiveInterviewPlan,
+  type InterviewPlan,
+  type InterviewPlanCriterion,
+  type InterviewPlanQuestion,
+} from "./schemas/interview-plan";
+export {
   createLiveInterviewSessionInputSchema,
   createLiveInterviewSessionResponseSchema,
   liveInterviewComplianceFlagSchema,

@@ -1134,7 +1134,7 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
   iconClass: string;
   label: string;
 } {
-  const signal = question.signal.toLowerCase();
+  const signal = question.expectedSignal.toLowerCase();
 
   if (question.source === "attachment") {
     return {
@@ -1292,7 +1292,7 @@ function QuestionsStep({
                         {meta.label}
                       </span>
                       {textViolatesPolicy(
-                        `${question.prompt} ${question.signal}`
+                        `${question.prompt} ${question.expectedSignal}`
                       ) ? (
                         <span className="rounded-full bg-coral-50 px-2 py-0.5 text-xs font-medium text-coral-800">
                           Protected topic
@@ -1315,7 +1315,7 @@ function QuestionsStep({
                         }
                       />
                       {textViolatesPolicy(
-                        `${question.prompt} ${question.signal}`
+                        `${question.prompt} ${question.expectedSignal}`
                       ) ? (
                         <p className="rounded-2xl border border-coral-200 bg-coral-50 px-3 py-2 text-sm font-medium text-coral-800">
                           This question references a protected or disallowed

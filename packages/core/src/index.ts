@@ -5,6 +5,7 @@ export {
   type InterviewCriterionDraft,
   type InterviewDraftInput,
   type InterviewFocus,
+  type InterviewQuestionCategory,
   type InterviewQuestionDraft,
   type InterviewSeniority,
 } from "./domain/interview-agent";

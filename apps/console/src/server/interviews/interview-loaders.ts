@@ -1,11 +1,16 @@
 import "server-only";
 
-import { type CandidateBriefDto } from "@prelude/contracts";
+import {
+  type CandidateBriefDto,
+  interviewPlanCriterionSchema,
+  interviewPlanQuestionSchema,
+} from "@prelude/contracts";
 import { prisma } from "@prelude/db";
 import type {
   InterviewAgentDraft,
   InterviewCriterionDraft,
   InterviewFocus,
+  InterviewQuestionCategory,
   InterviewQuestionDraft,
   InterviewSeniority,
 } from "@prelude/core";
@@ -428,7 +433,54 @@ function readQuestions(value: unknown): InterviewQuestionDraft[] {
     return [];
   }
 
-  return value.filter(isQuestionDraft);
+  return value
+    .map(upgradeStoredQuestion)
+    .filter((question): question is InterviewQuestionDraft =>
+      Boolean(question),
+    );
+}
+
+function upgradeStoredQuestion(value: unknown): InterviewQuestionDraft | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  // Coerce legacy rows (signal -> expectedSignal, missing Hybrid fields)
+  // through the canonical question contract.
+  const parsed = interviewPlanQuestionSchema.safeParse({
+    id: value.id,
+    prompt: value.prompt,
+    expectedSignal:
+      typeof value.expectedSignal === "string"
+        ? value.expectedSignal
+        : typeof value.signal === "string"
+          ? value.signal
+          : undefined,
+    category: typeof value.category === "string" ? value.category : undefined,
+    required: typeof value.required === "boolean" ? value.required : undefined,
+    maxFollowups:
+      typeof value.maxFollowups === "number" ? value.maxFollowups : undefined,
+    durationSeconds:
+      typeof value.durationSeconds === "number"
+        ? value.durationSeconds
+        : undefined,
+    source: typeof value.source === "string" ? value.source : undefined,
+  });
+
+  if (!parsed.success) {
+    return null;
+  }
+
+  return {
+    category: parsed.data.category as InterviewQuestionCategory,
+    durationSeconds: parsed.data.durationSeconds,
+    expectedSignal: parsed.data.expectedSignal ?? "Job-related screening signal",
+    id: parsed.data.id,
+    maxFollowups: parsed.data.maxFollowups,
+    prompt: parsed.data.prompt,
+    required: parsed.data.required,
+    source: parsed.data.source,
+  };
 }
 
 function readCriteria(value: unknown): InterviewCriterionDraft[] {
@@ -436,7 +488,14 @@ function readCriteria(value: unknown): InterviewCriterionDraft[] {
     return [];
   }
 
-  return value.filter(isCriterionDraft);
+  return value
+    .map((criterion) => {
+      const parsed = interviewPlanCriterionSchema.safeParse(criterion);
+      return parsed.success ? parsed.data : null;
+    })
+    .filter((criterion): criterion is InterviewCriterionDraft =>
+      Boolean(criterion),
+    );
 }
 
 function readStringArray(value: unknown): string[] {
@@ -476,34 +535,6 @@ function readSeniority(value: string | null): InterviewSeniority {
   }
 
   return "mid";
-}
-
-function isQuestionDraft(value: unknown): value is InterviewQuestionDraft {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return (
-    typeof value.id === "string" &&
-    typeof value.prompt === "string" &&
-    typeof value.signal === "string" &&
-    typeof value.durationSeconds === "number" &&
-    (value.source === "agent" ||
-      value.source === "attachment" ||
-      value.source === "job_description")
-  );
-}
-
-function isCriterionDraft(value: unknown): value is InterviewCriterionDraft {
-  if (!isRecord(value)) {
-    return false;
-  }
-
-  return (
-    typeof value.id === "string" &&
-    typeof value.label === "string" &&
-    typeof value.description === "string"
-  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

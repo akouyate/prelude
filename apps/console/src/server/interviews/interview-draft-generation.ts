@@ -2,6 +2,7 @@ import type {
   InterviewAgentDraft,
   InterviewCriterionDraft,
   InterviewFocus,
+  InterviewQuestionCategory,
   InterviewQuestionDraft,
   InterviewSeniority,
 } from "@prelude/core";
@@ -12,6 +13,7 @@ import {
   resolveTargetInterviewQuestionCount,
   textViolatesPolicy,
 } from "@prelude/core";
+import { interviewPlanQuestionSchema } from "@prelude/contracts";
 
 import { interviewPlanPolicy } from "../../domain/interview-plan-policy";
 import type { InterviewResponseMode } from "./interview-drafts";
@@ -194,7 +196,7 @@ export function createOpenAIInterviewDraftGenerator({
       if (input.action === "replace") {
         return createDeterministicQuestion({
           index: resolveQuestionIndex(input.draft, input.question.id),
-          topic: input.question.signal,
+          topic: input.question.expectedSignal,
         });
       }
 
@@ -251,7 +253,7 @@ export function createDeterministicInterviewDraftGenerator(): InterviewDraftGene
             input.draft.questions.findIndex(
               (question) => question.id === input.question.id,
             ) + 1 || 1,
-          topic: input.question.signal,
+          topic: input.question.expectedSignal,
         });
       }
 
@@ -388,6 +390,7 @@ function openAIDraftInstructions() {
     "The recruiter does not choose the question count; use the provided target count.",
     "Ask questions that invite concrete job-related examples, judgment, motivation, and communication signals.",
     "Keep every question short enough for a live voice interview and natural for the candidate.",
+    "For each question, set expectedSignal (what a strong answer reveals), required true (every candidate is asked the same verbatim question), maxFollowups 1 (at most one bounded follow-up), and a category from motivation, experience, skills, logistics, availability, compensation, or custom.",
     "Do not ask about protected traits, appearance, accent, tone, emotion, personality, or biometric attributes.",
     "Do not frame output as a hire, reject, ranking, or automated decision.",
     "Include evaluation criteria that map to the questions and can be reviewed by a human recruiter.",
@@ -400,6 +403,7 @@ function openAIQuestionInstructions() {
     "You improve one Prelude.ai first-screen interview question.",
     "Return only JSON for one question.",
     "Keep the question job-related, concise, natural in live voice, and suitable for the same candidate screen.",
+    "Set expectedSignal (what a strong answer reveals), required true, maxFollowups 1, and a category from motivation, experience, skills, logistics, availability, compensation, or custom.",
     "Do not ask about protected traits, appearance, accent, tone, emotion, personality, or biometric attributes.",
     "Do not introduce hire/reject/ranking language.",
     buildAiCompliancePromptContext(),
@@ -561,13 +565,69 @@ function normalizeQuestion(
     throw new Error("Role draft generation returned an empty question.");
   }
 
-  return {
+  const source = readQuestionSource(value.source) ?? fallbackSource;
+  const expectedSignal =
+    readString(value.expectedSignal) ||
+    readString(value.signal) ||
+    "Job-related screening signal";
+  const category =
+    readQuestionCategory(value.category) ?? inferCategory(source);
+
+  const candidate: InterviewQuestionDraft = {
+    category,
     durationSeconds: clampNumber(value.durationSeconds, 45, 150, 75),
+    expectedSignal,
     id: readString(value.id) || fallbackId,
+    maxFollowups: clampNumber(value.maxFollowups, 0, 1, 1),
     prompt,
-    signal: readString(value.signal) || "Job-related screening signal",
-    source: readQuestionSource(value.source) ?? fallbackSource,
+    required: typeof value.required === "boolean" ? value.required : true,
+    source,
   };
+
+  // Route normalized output through the canonical question contract so the
+  // generator can never emit a question that the persisted plan would reject.
+  const parsed = interviewPlanQuestionSchema.parse(candidate);
+
+  return {
+    category: parsed.category as InterviewQuestionCategory,
+    durationSeconds: parsed.durationSeconds,
+    expectedSignal: parsed.expectedSignal ?? expectedSignal,
+    id: parsed.id,
+    maxFollowups: parsed.maxFollowups,
+    prompt: parsed.prompt,
+    required: parsed.required,
+    source: parsed.source,
+  };
+}
+
+function inferCategory(
+  source: InterviewQuestionDraft["source"],
+): InterviewQuestionCategory {
+  if (source === "job_description") {
+    return "experience";
+  }
+  if (source === "attachment") {
+    return "skills";
+  }
+  return "custom";
+}
+
+function readQuestionCategory(
+  value: unknown,
+): InterviewQuestionCategory | null {
+  const categories: InterviewQuestionCategory[] = [
+    "motivation",
+    "experience",
+    "skills",
+    "logistics",
+    "availability",
+    "compensation",
+    "custom",
+  ];
+
+  return categories.includes(value as InterviewQuestionCategory)
+    ? (value as InterviewQuestionCategory)
+    : null;
 }
 
 function safeNormalizeQuestion(
@@ -673,43 +733,55 @@ function createDeterministicQuestion({
 
   if (normalizedTopic.includes("location") || normalizedTopic.includes("mobility")) {
     return {
+      category: "logistics",
       durationSeconds: 60,
+      expectedSignal: "Availability and work setup alignment",
       id: `ai-location-${index}`,
+      maxFollowups: 1,
       prompt:
         "What availability, location, or work setup constraints should the recruiter know before a next call?",
-      signal: "Availability and work setup alignment",
+      required: true,
       source: "agent",
     };
   }
 
   if (normalizedTopic.includes("communication")) {
     return {
+      category: "custom",
       durationSeconds: 75,
+      expectedSignal: "Communication clarity in a realistic work situation",
       id: `ai-communication-${index}`,
+      maxFollowups: 1,
       prompt:
         "Share one example of how you explained a complex customer or internal issue clearly to another person.",
-      signal: "Communication clarity in a realistic work situation",
+      required: true,
       source: "agent",
     };
   }
 
   if (normalizedTopic.includes("motivation")) {
     return {
+      category: "motivation",
       durationSeconds: 75,
+      expectedSignal: "Role motivation and expectations",
       id: `ai-motivation-${index}`,
+      maxFollowups: 1,
       prompt:
         "What made this role stand out to you, and what would make it a strong next step?",
-      signal: "Role motivation and expectations",
+      required: true,
       source: "agent",
     };
   }
 
   return {
+    category: "experience",
     durationSeconds: 75,
+    expectedSignal: "Relevant role evidence",
     id: `ai-signal-${index}`,
+    maxFollowups: 1,
     prompt:
       "Tell us about one recent work situation that best shows how you would succeed in this role.",
-    signal: "Relevant role evidence",
+    required: true,
     source: "job_description",
   };
 }
@@ -738,7 +810,9 @@ function missingFocusTopic(
   focus: InterviewFocus[],
   questions: InterviewQuestionDraft[],
 ) {
-  const questionText = questions.map((question) => question.signal).join(" ");
+  const questionText = questions
+    .map((question) => question.expectedSignal)
+    .join(" ");
   const missing = focus.find(
     (item) => !questionText.toLowerCase().includes(item.replace("_", " ")),
   );
@@ -747,7 +821,7 @@ function missingFocusTopic(
 }
 
 function questionViolatesPolicy(question: InterviewQuestionDraft) {
-  return textViolatesPolicy(`${question.prompt} ${question.signal}`);
+  return textViolatesPolicy(`${question.prompt} ${question.expectedSignal}`);
 }
 
 function criterionViolatesPolicy(criterion: InterviewCriterionDraft) {
@@ -859,16 +933,39 @@ function toTimeoutMs(value: string | undefined) {
 const interviewQuestionJsonSchema = {
   additionalProperties: false,
   properties: {
+    category: {
+      enum: [
+        "motivation",
+        "experience",
+        "skills",
+        "logistics",
+        "availability",
+        "compensation",
+        "custom",
+      ],
+      type: "string",
+    },
     durationSeconds: { type: "number" },
+    expectedSignal: { type: "string" },
     id: { type: "string" },
+    maxFollowups: { maximum: 1, minimum: 0, type: "integer" },
     prompt: { type: "string" },
-    signal: { type: "string" },
+    required: { type: "boolean" },
     source: {
       enum: ["job_description", "attachment", "agent"],
       type: "string",
     },
   },
-  required: ["id", "prompt", "signal", "source", "durationSeconds"],
+  required: [
+    "id",
+    "prompt",
+    "expectedSignal",
+    "category",
+    "required",
+    "maxFollowups",
+    "source",
+    "durationSeconds",
+  ],
   type: "object",
 } as const;
 

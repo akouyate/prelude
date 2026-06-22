@@ -10,6 +10,11 @@ import type {
   InterviewQuestionDraft,
   InterviewSeniority,
 } from "@prelude/core";
+import {
+  interviewPlanSchema,
+  parseStoredInterviewPlan,
+  toLiveInterviewPlan,
+} from "@prelude/contracts";
 import { revalidatePath } from "next/cache";
 
 import {
@@ -191,10 +196,33 @@ export async function publishInterviewDraft(
       return null;
     }
 
-    const criteria = readCriteria(draft.criteria);
-    const guardrails = readStringArray(draft.guardrails);
-    const questions = readQuestions(draft.questions);
-    const responseModes = readResponseModes(draft.responseModes);
+    // Coerce-on-read through the canonical contract: this upgrades legacy rows
+    // (signal -> expectedSignal, missing required/maxFollowups/category) and
+    // never throws on a previously-valid row.
+    const stored = parseStoredInterviewPlanSafe({
+      criteria: draft.criteria,
+      estimatedMinutes: draft.estimatedMinutes,
+      focus: draft.focus,
+      guardrails: draft.guardrails,
+      questions: draft.questions,
+      rationale: draft.rationale ?? "",
+      responseModes: draft.responseModes,
+      roleBrief: draft.roleBrief,
+      roleTitle: draft.roleTitle,
+      seniority: draft.seniority,
+    });
+
+    if (!stored) {
+      return {
+        error: "Interview plan is incomplete.",
+        kind: "error" as const,
+      };
+    }
+
+    const criteria = stored.criteria as InterviewCriterionDraft[];
+    const guardrails = stored.guardrails;
+    const questions = stored.questions as InterviewQuestionDraft[];
+    const responseModes = stored.responseModes;
 
     const publicationIssues = getInterviewPlanPublicationIssues({
       criteria,
@@ -238,7 +266,9 @@ export async function publishInterviewDraft(
   // LLM error/timeout/malformed result (the keyword layer already ran and is
   // authoritative; an OpenAI hiccup must not block every publish).
   const segments = [
-    ...questions.map((question) => `${question.prompt} ${question.signal}`),
+    ...questions.map(
+      (question) => `${question.prompt} ${question.expectedSignal ?? ""}`,
+    ),
     ...criteria.map((criterion) => `${criterion.label} ${criterion.description}`),
   ];
   const classifications = await classifier.classify(segments);
@@ -248,6 +278,35 @@ export async function publishInterviewDraft(
     return {
       ok: false,
       error: `Remove a protected or disallowed topic from your interview (${flagged.category}): ${flagged.reason}`,
+    };
+  }
+
+  // Phase 2b: confirm the validated snapshot can form a valid live interview
+  // plan against the authoritative live contract before we persist it. This is
+  // a drift guard: if the canonical plan cannot map to the live worker shape,
+  // the publish is blocked rather than producing an un-runnable interview.
+  try {
+    const canonicalPlan = parseStoredInterviewPlan({
+      criteria,
+      estimatedMinutes: draft.estimatedMinutes,
+      focus: draft.focus,
+      guardrails,
+      questions,
+      rationale: draft.rationale ?? "",
+      responseModes,
+      roleBrief: draft.roleBrief,
+      roleTitle: draft.roleTitle,
+      seniority: draft.seniority,
+    });
+    toLiveInterviewPlan({
+      plan: canonicalPlan,
+      planId: draft.id,
+      jobId: draft.jobId,
+    });
+  } catch {
+    return {
+      ok: false,
+      error: "Interview plan cannot be prepared for a live interview.",
     };
   }
 
@@ -346,7 +405,7 @@ function normalizeDraftInput(input: SaveInterviewDraftInput):
     allowedModes.has(mode),
   );
   const questions = input.questions
-    .map(normalizeQuestion)
+    .map(coerceQuestion)
     .filter((question): question is InterviewQuestionDraft =>
       Boolean(question),
     );
@@ -391,27 +450,54 @@ function normalizeDraftInput(input: SaveInterviewDraftInput):
     };
   }
 
+  const estimatedMinutes = Math.max(
+    1,
+    Math.min(45, input.estimatedMinutes || 1),
+  );
+  const rationale = input.rationale.trim();
+  const sourceAttachmentName = input.sourceAttachmentName?.trim() || undefined;
+
+  // Validate the whole plan through the canonical contract. This is the single
+  // authoritative SAVE gate: it normalizes every question to the Hybrid shape
+  // (required/maxFollowups/category/expectedSignal) and enforces the caps.
+  const plan = interviewPlanSchema.safeParse({
+    roleTitle,
+    roleBrief,
+    seniority,
+    focus,
+    responseModes,
+    questions,
+    criteria,
+    guardrails,
+    estimatedMinutes,
+    rationale,
+  });
+
+  if (!plan.success) {
+    return { ok: false, error: "Interview plan is incomplete." };
+  }
+
   return {
     ok: true,
     data: {
-      criteria,
+      criteria: plan.data.criteria,
       draftId: input.draftId,
-      estimatedMinutes: Math.max(1, Math.min(45, input.estimatedMinutes || 1)),
+      estimatedMinutes,
       focus,
       guardrails,
       jobId: input.jobId,
-      questions,
-      rationale: input.rationale.trim(),
+      questions: plan.data.questions as InterviewQuestionDraft[],
+      rationale,
       responseModes,
       roleBrief,
       roleTitle,
       seniority,
-      sourceAttachmentName: input.sourceAttachmentName?.trim() || undefined,
+      sourceAttachmentName,
     },
   };
 }
 
-function normalizeQuestion(
+function coerceQuestion(
   question: InterviewQuestionDraft,
 ): InterviewQuestionDraft | null {
   const prompt = question.prompt.trim();
@@ -421,13 +507,18 @@ function normalizeQuestion(
   }
 
   return {
+    category: question.category,
     durationSeconds: Math.max(
       30,
       Math.min(180, question.durationSeconds || 75),
     ),
+    expectedSignal:
+      question.expectedSignal?.trim() || "Job-related screening signal",
     id: question.id.trim() || slugify(prompt).slice(0, 48),
+    maxFollowups:
+      typeof question.maxFollowups === "number" ? question.maxFollowups : 1,
     prompt,
-    signal: question.signal.trim() || "Job-related screening signal",
+    required: typeof question.required === "boolean" ? question.required : true,
     source: question.source,
   };
 }
@@ -474,81 +565,12 @@ function toDraftPersistenceData(
   };
 }
 
-function readQuestions(value: unknown): InterviewQuestionDraft[] {
-  if (!Array.isArray(value)) {
-    return [];
+function parseStoredInterviewPlanSafe(raw: unknown) {
+  try {
+    return parseStoredInterviewPlan(raw);
+  } catch {
+    return null;
   }
-
-  return value
-    .map((question) => {
-      if (!question || typeof question !== "object") {
-        return null;
-      }
-
-      const input = question as Partial<InterviewQuestionDraft>;
-      return normalizeQuestion({
-        durationSeconds:
-          typeof input.durationSeconds === "number"
-            ? input.durationSeconds
-            : 75,
-        id: typeof input.id === "string" ? input.id : "",
-        prompt: typeof input.prompt === "string" ? input.prompt : "",
-        signal: typeof input.signal === "string" ? input.signal : "",
-        source:
-          input.source === "attachment" ||
-          input.source === "agent" ||
-          input.source === "job_description"
-            ? input.source
-            : "agent",
-      });
-    })
-    .filter((question): question is InterviewQuestionDraft =>
-      Boolean(question),
-    );
-}
-
-function readCriteria(value: unknown): InterviewCriterionDraft[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value
-    .map((criterion) => {
-      if (!criterion || typeof criterion !== "object") {
-        return null;
-      }
-
-      const input = criterion as Partial<InterviewCriterionDraft>;
-      return normalizeCriterion({
-        description:
-          typeof input.description === "string" ? input.description : "",
-        id: typeof input.id === "string" ? input.id : "",
-        label: typeof input.label === "string" ? input.label : "",
-      });
-    })
-    .filter((criterion): criterion is InterviewCriterionDraft =>
-      Boolean(criterion),
-    );
-}
-
-function readResponseModes(value: unknown): InterviewResponseMode[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter(
-    (mode): mode is InterviewResponseMode =>
-      typeof mode === "string" &&
-      allowedModes.has(mode as InterviewResponseMode),
-  );
-}
-
-function readStringArray(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter((item): item is string => typeof item === "string");
 }
 
 async function createPublicToken(

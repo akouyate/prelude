@@ -39,11 +39,11 @@ export type InterviewDraftPublicationMode =
 
 export function planReferencesDisallowedTopic(input: {
   criteria: Pick<InterviewCriterionDraft, "description" | "label">[];
-  questions: Pick<InterviewQuestionDraft, "prompt" | "signal">[];
+  questions: Pick<InterviewQuestionDraft, "prompt" | "expectedSignal">[];
 }): boolean {
   return (
     input.questions.some((question) =>
-      textViolatesPolicy(`${question.prompt} ${question.signal}`),
+      textViolatesPolicy(`${question.prompt} ${question.expectedSignal ?? ""}`),
     ) ||
     input.criteria.some((criterion) =>
       textViolatesPolicy(`${criterion.label} ${criterion.description}`),
