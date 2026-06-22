@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.adapters.livekit_openai_worker import (
+    CandidateTurnClassifier,
     FIRST_REPLY_INSTRUCTIONS,
     LiveKitAgentEventBridge,
     LiveInterviewOrchestrationController,
@@ -27,6 +28,7 @@ from app.adapters.livekit_openai_worker import (
     _transition_leadin,
     _wait_for_candidate_ready,
     _wait_for_playout_with_timeout,
+    _withdrawal_closing_message,
 )
 from app.domain.orchestrator import AnswerClassification, InterviewOrchestrator
 from app.domain.models import (
@@ -773,6 +775,41 @@ async def test_live_orchestration_controller_routes_initial_silence_to_soft_repr
     assert evaluated.payload["policy_action"] == "soft_reprompt"
 
 
+@pytest.mark.asyncio
+async def test_controller_closes_gracefully_on_candidate_withdrawal() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+    await controller.start()
+
+    await controller.handle_candidate_transcript(
+        "Je veux arrêter l'entretien.",
+        occurred_at=datetime.now(timezone.utc),
+    )
+
+    event_types = [event.type for event in events]
+    # Duty of care: an explicit stop request ends the screen gracefully...
+    assert EventType.SESSION_CLOSING in event_types
+    assert EventType.SESSION_COMPLETED in event_types
+    # ...flagged as a candidate-initiated stop for recruiter follow-up...
+    completed = next(
+        event for event in events if event.type == EventType.SESSION_COMPLETED
+    )
+    assert completed.payload["completed_reason"] == "candidate_requested_stop"
+    # ...and with NO answer evaluated (no scoring on the way out).
+    assert EventType.ANSWER_EVALUATED not in event_types
+
+
 def test_live_worker_config_reads_max_duration_from_env() -> None:
     config = OpenAILiveWorkerConfig.from_env(
         {
@@ -1152,6 +1189,71 @@ def test_soft_reprompt_lines_are_warm_rotating_and_localized() -> None:
         questions=[InterviewQuestion(id="q1", prompt="Tell me about yourself.")],
     )
     assert _soft_reprompt_line(plan_en, 0) in SOFT_REPROMPT_LINES["en"]
+
+
+def test_classifier_detects_explicit_withdrawal_requests() -> None:
+    classifier = CandidateTurnClassifier()
+    occurred = datetime.now(timezone.utc)
+    for phrase in [
+        "Je veux arrêter l'entretien, désolé.",
+        "I want to stop the interview now.",
+        "Est-ce que je peux parler à un humain ?",
+        "Passez-moi au recruteur s'il vous plaît.",
+    ]:
+        turn = classifier.classify(
+            question_id="q1", transcript=phrase, occurred_at=occurred
+        )
+        assert turn.withdraw_requested is True, phrase
+        assert turn.candidate_intent == CandidateTurnIntent.WITHDRAW
+        assert turn.classifier_reason == "candidate_requested_stop"
+
+
+def test_classifier_does_not_treat_answer_content_as_withdrawal() -> None:
+    # A duty-of-care exit must fire only on an explicit request, never because an
+    # ordinary answer happens to mention stopping or a human — closing the screen
+    # by mistake is a worse failure than missing a borderline phrasing.
+    classifier = CandidateTurnClassifier()
+    occurred = datetime.now(timezone.utc)
+    for answer in [
+        "Je veux arrêter de procrastiner et mieux organiser mes journées de travail.",
+        "I had to stop the project midway last year when the priorities shifted.",
+        "Dans mon dernier poste je devais souvent parler à un humain au support "
+        "avant d'escalader un incident critique à l'équipe technique concernée.",
+    ]:
+        turn = classifier.classify(
+            question_id="q1", transcript=answer, occurred_at=occurred
+        )
+        assert turn.withdraw_requested is False, answer
+
+
+def test_withdrawal_closing_message_is_warm_and_offers_human_follow_up() -> None:
+    message = _withdrawal_closing_message(create_demo_plan())
+    lowered = message.lower()
+    assert "équipe" in lowered or "equipe" in lowered or "team" in lowered
+    # graceful exit, never an evaluation or verdict on the way out
+    assert all(
+        word not in lowered
+        for word in ("score", "note", "évaluation", "evaluation", "résultat")
+    )
+
+
+def test_live_interviewer_instructions_never_expose_the_expected_signal() -> None:
+    # The recruiter's expectedSignal stays in the evaluator path only; the
+    # candidate-facing session prompt must never contain it (no-reveal invariant).
+    plan = InterviewPlan(
+        id="p-signal",
+        role_title="Backend Engineer",
+        language="fr",
+        questions=[
+            InterviewQuestion(
+                id="q1",
+                prompt="Parlez-moi d'un arbitrage difficile que vous avez mené.",
+                expected_signal="ownership of a hard decision under constraint",
+            )
+        ],
+    )
+    instructions = build_live_interviewer_instructions(plan)
+    assert "ownership of a hard decision under constraint" not in instructions
 
 
 def test_realtime_reasoning_is_only_enabled_for_supported_models() -> None:

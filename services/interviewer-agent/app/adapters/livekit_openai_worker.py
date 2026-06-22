@@ -49,6 +49,49 @@ INITIAL_GREETING_RE = re.compile(
 )
 
 
+# Explicit, first-person duty-of-care exit requests. Detection is intentionally
+# high-precision (specific phrasing + a short-utterance guard) because closing the
+# screen by mistake is a worse failure than missing a borderline phrasing — a
+# false negative still gets a graceful verbal off-ramp from the persona.
+_WITHDRAW_MAX_WORDS = 16
+WITHDRAW_PHRASES: tuple[str, ...] = (
+    "arreter l entretien",
+    "arreter cet entretien",
+    "arreter cette conversation",
+    "je veux arreter maintenant",
+    "je veux arreter la",
+    "je veux m arreter",
+    "je veux tout arreter",
+    "je prefere arreter l entretien",
+    "je souhaite arreter l entretien",
+    "je me retire",
+    "je veux partir",
+    "je veux parler a un humain",
+    "je peux parler a un humain",
+    "je voudrais parler a un humain",
+    "je veux parler a une personne",
+    "je veux parler a quelqu un",
+    "parler a un vrai recruteur",
+    "passez moi au recruteur",
+    "passez moi un recruteur",
+    "stop the interview",
+    "stop this interview",
+    "end the interview",
+    "end this interview",
+    "i want to quit",
+    "i withdraw",
+    "i want to stop now",
+    "i want to stop here",
+    "i want to speak to a human",
+    "i want to talk to a human",
+    "can i speak to a human",
+    "let me talk to a human",
+    "pass me to the recruiter",
+    "pass me to a recruiter",
+    "speak to a real person",
+)
+
+
 @dataclass(frozen=True)
 class CandidateTurnDecision:
     intent: CandidateTurnIntent
@@ -57,6 +100,7 @@ class CandidateTurnDecision:
     repeat_requested: bool = False
     wait_requested: bool = False
     skip_requested: bool = False
+    withdraw_requested: bool = False
     reason: str | None = None
 
 
@@ -85,6 +129,7 @@ class CandidateTurnClassifier:
             repeat_requested=decision.repeat_requested,
             wait_requested=decision.wait_requested,
             skip_requested=decision.skip_requested,
+            withdraw_requested=decision.withdraw_requested,
             candidate_intent=decision.intent,
             is_answer_to_active_question=decision.is_answer_to_active_question,
             classifier_reason=decision.reason,
@@ -100,6 +145,18 @@ class CandidateTurnClassifier:
                 is_answer_to_active_question=False,
                 is_complete=False,
                 reason="empty_transcript",
+            )
+
+        words = normalized.split()
+        if len(words) <= _WITHDRAW_MAX_WORDS and _contains_any(
+            normalized, list(WITHDRAW_PHRASES)
+        ):
+            return CandidateTurnDecision(
+                intent=CandidateTurnIntent.WITHDRAW,
+                is_answer_to_active_question=False,
+                is_complete=True,
+                withdraw_requested=True,
+                reason="candidate_requested_stop",
             )
 
         if _contains_any(
@@ -727,6 +784,9 @@ class LiveInterviewOrchestrationController:
             self._candidate_turns += 1
             turn_id = f"{self._emitter._session_id}:candidate:{self._candidate_turns}"
             await self._emit_candidate_turn(turn, turn_id, occurred_at)
+            if turn.withdraw_requested:
+                await self._close_for_withdrawal()
+                return
             if turn.candidate_intent == CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED:
                 await self._resume_previous_answer(turn=turn, turn_ids=[turn_id])
                 return
@@ -1073,9 +1133,26 @@ class LiveInterviewOrchestrationController:
             self._agent_speech_in_progress = False
             self._agent_speech_payload = None
 
+    async def _close_for_withdrawal(self) -> None:
+        # Duty of care: an explicit stop/withdraw/human request ends the screen
+        # gracefully, with no evaluation, flagged for recruiter follow-up.
+        self._last_candidate_intent = CandidateTurnIntent.WITHDRAW
+        self._orchestrator.abort_session("candidate_requested_stop")
+        await self._close_session(
+            OrchestratorCommand(
+                type=OrchestratorCommandType.CLOSE_SESSION,
+                terminal_reason="candidate_requested_stop",
+                total_questions=len(self._plan.questions),
+            )
+        )
+
     async def _close_session(self, command: OrchestratorCommand) -> None:
         self._terminal = True
-        closing = _closing_message(self._plan)
+        closing = (
+            _withdrawal_closing_message(self._plan)
+            if command.terminal_reason == "candidate_requested_stop"
+            else _closing_message(self._plan)
+        )
         closing_utterance_id = f"{self._emitter._session_id}:live-openai:closing"
         await self._publish_transcript_turn(
             {
@@ -1550,6 +1627,21 @@ def _question_by_id(plan: InterviewPlan, question_id: str):
         if question.id == question_id:
             return question
     raise RuntimeError(f"unknown question {question_id}")
+
+
+def _withdrawal_closing_message(plan: InterviewPlan) -> str:
+    if plan.language.startswith("en"):
+        return (
+            "Of course, no problem — we can stop here. Someone from the recruiting "
+            "team can follow up with you about next steps if you'd like. Thank you "
+            "for your time, and take care."
+        )
+
+    return (
+        "Bien sûr, pas de souci, on peut s'arrêter là. Une personne de l'équipe "
+        "recrutement pourra revenir vers vous pour la suite si vous le souhaitez. "
+        "Merci d'avoir pris le temps, et prenez soin de vous."
+    )
 
 
 def _closing_message(plan: InterviewPlan) -> str:

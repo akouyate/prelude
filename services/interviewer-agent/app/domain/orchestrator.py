@@ -293,6 +293,13 @@ class InterviewOrchestrator:
         if self._terminal_reason is None:
             self._terminal_reason = "all_questions_completed"
 
+    def abort_session(self, reason: str) -> None:
+        # A candidate-initiated stop ends the interview early: clear any active
+        # question and record the reason so the session can close gracefully.
+        self._current_question_id = None
+        self._current_question_index = None
+        self._terminal_reason = reason
+
     def followups_used(self, question_id: str) -> int:
         return self._followups_by_question.get(question_id, 0)
 

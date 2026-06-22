@@ -1316,7 +1316,7 @@ func knownQuestionCompletionReason(reason string) bool {
 
 func knownSessionCompletionReason(reason string) bool {
 	switch reason {
-	case "all_questions_completed", "candidate_ended", "timeboxed":
+	case "all_questions_completed", "candidate_ended", "timeboxed", "candidate_requested_stop":
 		return true
 	default:
 		return false

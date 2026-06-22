@@ -57,6 +57,7 @@ class CandidateTurnIntent(StrEnum):
     TECHNICAL_ISSUE = "technical_issue"
     PREVIOUS_ANSWER_NOT_COMPLETED = "previous_answer_not_completed"
     SILENCE = "silence"
+    WITHDRAW = "withdraw"
 
 
 class CandidateTurn(BaseModel):
@@ -66,6 +67,7 @@ class CandidateTurn(BaseModel):
     repeat_requested: bool = False
     skip_requested: bool = False
     wait_requested: bool = False
+    withdraw_requested: bool = False
     candidate_intent: CandidateTurnIntent = CandidateTurnIntent.ANSWER_COMPLETE
     is_answer_to_active_question: bool = True
     classifier_reason: str | None = None
