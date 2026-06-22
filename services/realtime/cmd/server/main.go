@@ -42,6 +42,7 @@ func main() {
 		os.Getenv("LIVEKIT_URL"),
 		os.Getenv("LIVEKIT_API_KEY"),
 		os.Getenv("LIVEKIT_API_SECRET"),
+		os.Getenv("APP_ENV") == "production",
 	)
 	if err != nil {
 		slog.Error("failed to configure livekit gateway", "error", err)

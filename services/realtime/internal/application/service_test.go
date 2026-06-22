@@ -24,6 +24,10 @@ func (c fixedClock) Now() time.Time {
 
 type fakeLiveKit struct{}
 
+func (fakeLiveKit) EnsureRoom(_ context.Context, _ application.EnsureRoomInput) error {
+	return nil
+}
+
 func (fakeLiveKit) CreateJoin(_ context.Context, input application.LiveKitJoinInput) (application.LiveKitJoin, error) {
 	return application.LiveKitJoin{
 		RoomName:    input.RoomName,

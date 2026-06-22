@@ -19,6 +19,10 @@ func NewMockGateway(url string) *MockGateway {
 	return &MockGateway{URL: url}
 }
 
+func (g *MockGateway) EnsureRoom(_ context.Context, _ application.EnsureRoomInput) error {
+	return nil
+}
+
 func (g *MockGateway) CreateJoin(_ context.Context, input application.LiveKitJoinInput) (application.LiveKitJoin, error) {
 	return application.LiveKitJoin{
 		RoomName:    input.RoomName,

@@ -1,25 +1,36 @@
 package livekit
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
 	"github.com/akouyate/prelude/services/realtime/internal/application"
 )
 
-const joinTTL = 15 * time.Minute
+const (
+	joinTTL  = 15 * time.Minute
+	adminTTL = 5 * time.Minute
+)
+
+type httpDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
 
 type RealGateway struct {
-	url       string
-	apiKey    string
-	apiSecret string
-	now       func() time.Time
+	url        string
+	apiKey     string
+	apiSecret  string
+	now        func() time.Time
+	httpClient httpDoer
 }
 
 func NewRealGateway(url string, apiKey string, apiSecret string) (*RealGateway, error) {
@@ -37,15 +48,24 @@ func NewRealGateway(url string, apiKey string, apiSecret string) (*RealGateway, 
 	}
 
 	return &RealGateway{
-		url:       url,
-		apiKey:    apiKey,
-		apiSecret: apiSecret,
-		now:       func() time.Time { return time.Now().UTC() },
+		url:        url,
+		apiKey:     apiKey,
+		apiSecret:  apiSecret,
+		now:        func() time.Time { return time.Now().UTC() },
+		httpClient: http.DefaultClient,
 	}, nil
 }
 
-func NewGatewayFromEnv(url string, apiKey string, apiSecret string) (application.LiveKitGateway, string, error) {
+// NewGatewayFromEnv builds the live gateway. When requireReal is true (production)
+// and any credential is missing, it returns an error so the service fails fast
+// rather than silently degrading to the mock gateway — which fabricates
+// non-functional "mock_lk_" tokens and would let a candidate sit through a fake,
+// audio-less interview. Outside production, missing credentials fall back to mock.
+func NewGatewayFromEnv(url string, apiKey string, apiSecret string, requireReal bool) (application.LiveKitGateway, string, error) {
 	if strings.TrimSpace(apiKey) == "" || strings.TrimSpace(apiSecret) == "" {
+		if requireReal {
+			return nil, "", fmt.Errorf("livekit credentials are required in production")
+		}
 		return NewMockGateway(url), "mock", nil
 	}
 
@@ -78,6 +98,81 @@ func (g *RealGateway) CreateJoin(_ context.Context, input application.LiveKitJoi
 		Participant: participant,
 		ExpiresAt:   g.now().Add(joinTTL),
 	}, nil
+}
+
+func (g *RealGateway) EnsureRoom(ctx context.Context, input application.EnsureRoomInput) error {
+	roomName := strings.TrimSpace(input.RoomName)
+	if roomName == "" {
+		return fmt.Errorf("livekit room name is required")
+	}
+
+	token, err := g.mintAdminToken()
+	if err != nil {
+		return err
+	}
+
+	body, err := json.Marshal(map[string]any{
+		"name":             roomName,
+		"empty_timeout":    uint32(input.EmptyTimeout.Seconds()),
+		"max_participants": input.MaxParticipants,
+	})
+	if err != nil {
+		return err
+	}
+
+	endpoint := httpBaseURL(g.url) + "/twirp/livekit.RoomService/CreateRoom"
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Authorization", "Bearer "+token)
+	request.Header.Set("Content-Type", "application/json")
+
+	response, err := g.httpClient.Do(request)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = response.Body.Close() }()
+
+	// CreateRoom is idempotent server-side: an existing room returns 200, so a
+	// retry or duplicate session-creation attempt is safe.
+	if response.StatusCode >= 300 {
+		snippet, _ := io.ReadAll(io.LimitReader(response.Body, 512))
+		return fmt.Errorf("livekit create room failed with HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(snippet)))
+	}
+
+	return nil
+}
+
+// mintAdminToken signs a short-lived control-plane token granting roomCreate +
+// roomAdmin. Room creation is done with THIS admin credential, never with a
+// participant join token — candidate/agent tokens deliberately lack roomCreate.
+func (g *RealGateway) mintAdminToken() (string, error) {
+	now := g.now()
+	claims := map[string]any{
+		"iss": g.apiKey,
+		"sub": "prelude-realtime-control-plane",
+		"nbf": now.Unix(),
+		"exp": now.Add(adminTTL).Unix(),
+		"video": map[string]any{
+			"roomCreate": true,
+			"roomAdmin":  true,
+		},
+	}
+	return signJWT(claims, []byte(g.apiSecret))
+}
+
+// httpBaseURL converts a LiveKit client URL (wss://host / ws://host) to its HTTP
+// server-API base (https://host / http://host) for Twirp room-service calls.
+func httpBaseURL(rawURL string) string {
+	switch {
+	case strings.HasPrefix(rawURL, "wss://"):
+		return "https://" + strings.TrimPrefix(rawURL, "wss://")
+	case strings.HasPrefix(rawURL, "ws://"):
+		return "http://" + strings.TrimPrefix(rawURL, "ws://")
+	default:
+		return rawURL
+	}
 }
 
 func (g *RealGateway) mintJoinToken(participant string, roomName string) (string, error) {

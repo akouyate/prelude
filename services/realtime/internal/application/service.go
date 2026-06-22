@@ -23,6 +23,11 @@ var (
 	ErrRepositoryFailed = errors.New("repository failed")
 )
 
+const (
+	liveKitRoomEmptyTimeout    = 5 * time.Minute
+	liveKitRoomMaxParticipants = 2
+)
+
 type Clock interface {
 	Now() time.Time
 }
@@ -63,7 +68,17 @@ type AgentJoinDispatchResult struct {
 }
 
 type LiveKitGateway interface {
+	// EnsureRoom idempotently pre-provisions the room so it exists with controlled
+	// options before either participant is handed a join token. It is best-effort
+	// at the call site (LiveKit auto-creates on join as a fallback).
+	EnsureRoom(ctx context.Context, input EnsureRoomInput) error
 	CreateJoin(ctx context.Context, input LiveKitJoinInput) (LiveKitJoin, error)
+}
+
+type EnsureRoomInput struct {
+	RoomName        string
+	EmptyTimeout    time.Duration
+	MaxParticipants uint32
 }
 
 type LiveKitJoinInput struct {
@@ -198,6 +213,18 @@ func (s *Service) CreateSession(ctx context.Context, input CreateSessionInput) (
 
 	if err := s.repository.CreateSession(ctx, session); err != nil {
 		return CreateSessionOutput{}, fmt.Errorf("%w: %v", ErrRepositoryFailed, err)
+	}
+
+	// #95: pre-provision the LiveKit room with controlled options BEFORE handing
+	// out join tokens. Best-effort/non-fatal and idempotent — LiveKit auto-creates
+	// on join as a fallback, so a transient gateway error must not stop the
+	// candidate from receiving a token.
+	if err := s.livekit.EnsureRoom(ctx, EnsureRoomInput{
+		RoomName:        session.LiveKitRoomName,
+		EmptyTimeout:    liveKitRoomEmptyTimeout,
+		MaxParticipants: liveKitRoomMaxParticipants,
+	}); err != nil {
+		slog.Warn("failed to ensure livekit room", "session_id", session.ID, "room", session.LiveKitRoomName, "error", err)
 	}
 
 	join, err := s.livekit.CreateJoin(ctx, LiveKitJoinInput{
