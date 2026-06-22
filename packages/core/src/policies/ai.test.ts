@@ -9,6 +9,8 @@ import {
   candidateDisclosureCopyVersion,
   complianceFlagCodes,
   defaultComplianceFlags,
+  disallowedProxyPhrases,
+  disallowedProxyPhrasesFr,
   disallowedQuestionTopics,
   findForbiddenAutomatedDecisionPhrases,
   humanInLoopRule,
@@ -157,6 +159,85 @@ describe("protected-topic proxy coverage (EU + US)", () => {
 
   it.each(cases)("textViolatesPolicy(%j) === %s", (text, shouldFlag) => {
     expect(textViolatesPolicy(text)).toBe(shouldFlag);
+  });
+});
+
+// N10.B — every proxy phrase must be a live word-boundary entry. A phrase that
+// cannot even match itself (when padded with spaces) is dead weight that gives a
+// false sense of coverage; this catches a typo'd or stray-character entry.
+describe("N10 proxy phrases are all live word-boundary entries", () => {
+  it.each(disallowedProxyPhrases)(
+    "EN proxy %j matches itself when padded",
+    (phrase) => {
+      expect(textViolatesPolicy(` ${phrase} `)).toBe(true);
+    },
+  );
+
+  it.each(disallowedProxyPhrasesFr)(
+    "FR proxy %j matches itself when padded",
+    (phrase) => {
+      expect(textViolatesPolicy(` ${phrase} `)).toBe(true);
+    },
+  );
+
+  it("has no duplicate entries within either proxy list", () => {
+    expect(new Set(disallowedProxyPhrases).size).toBe(
+      disallowedProxyPhrases.length,
+    );
+    expect(new Set(disallowedProxyPhrasesFr).size).toBe(
+      disallowedProxyPhrasesFr.length,
+    );
+  });
+});
+
+// N10.B — the \b -> Unicode lookaround boundary change must keep EN behavior. A
+// small corpus pins expected booleans so a future tweak to the boundary logic
+// cannot silently change ASCII matching.
+describe("N10 EN word-boundary behavior is pinned", () => {
+  const cases: Array<[string, boolean]> = [
+    ["how old are you?", true],
+    ["what is your age", true],
+    ["date of birth", true],
+    ["do you have children", true],
+    ["are you a us citizen", true],
+    ["your credit score", true],
+    // Must NOT match mid-word (substring would, a boundary must not).
+    ["racecar telemetry", false],
+    ["the agecap config flag", false],
+    // Bare "citizenship" is deliberately not a proxy (only multi-word phrases
+    // like "your citizenship status"), so a token match must not over-block.
+    ["a citizenship-test parser", false],
+    ["passage of time", false],
+    ["managed a portfolio of accounts", false],
+  ];
+
+  it.each(cases)("textViolatesPolicy(%j) === %s", (text, expected) => {
+    expect(textViolatesPolicy(text)).toBe(expected);
+  });
+});
+
+// N10.B — mustNotFlag corpus: legitimate EN + FR domain questions that share
+// surface tokens with protected-topic proxies but are job-related and must all
+// return false. Guards against over-blocking regressions.
+describe("N10 mustNotFlag legitimate domain corpus", () => {
+  const mustNotFlag = [
+    // EN
+    "Are you legally authorized to work in this country?",
+    "Can you perform the essential functions of the job with or without reasonable accommodation?",
+    "Describe your experience building cloud-native applications.",
+    "How do you manage technical debt across a large codebase?",
+    "Walk me through your credit risk modeling track record.",
+    "Tell me about supporting a family of products at scale.",
+    // FR
+    "Quel est l'état de santé d'un système en production que vous avez stabilisé ?",
+    "Comment gérez-vous la dette technique du projet ?",
+    "Décrivez votre expérience avec une architecture cloud-native.",
+    "Êtes-vous autorisé à travailler en France ?",
+    "Comment assurez-vous la qualité des soins aux patients ?",
+  ];
+
+  it.each(mustNotFlag)("must NOT flag %j", (text) => {
+    expect(textViolatesPolicy(text)).toBe(false);
   });
 });
 

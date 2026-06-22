@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 
+import {
+  interviewQuestionSourceSchema,
+  liveInterviewQuestionCategorySchema,
+} from "@prelude/contracts";
+
 import type { InterviewGenerationTelemetrySink } from "./interview-generation-telemetry";
 import {
   createDeterministicInterviewDraftGenerator,
   createInterviewDraftGeneratorFromEnv,
   createOpenAIInterviewDraftGenerator,
   deterministicGeneratorProvider,
+  interviewQuestionJsonSchema,
   type InterviewDraftGenerationInput,
 } from "./interview-draft-generation";
 
@@ -440,3 +446,23 @@ const sampleDraft = {
   rationale:
     "Prelude prepared four focused questions for first-screen customer success evidence.",
 };
+
+// N10.D — the OpenAI structured-output json_schema enums must stay in lockstep
+// with the canonical Zod enums. If someone adds a category/source to one without
+// the other, the model could emit a value the contract rejects (or vice versa);
+// this pins the two together so the drift fails CI.
+describe("N10 interviewQuestionJsonSchema enums match the Zod contract", () => {
+  it("category enum members equal the live interview category enum", () => {
+    const jsonCategories = [...interviewQuestionJsonSchema.properties.category.enum].sort();
+    const zodCategories = [...liveInterviewQuestionCategorySchema.options].sort();
+
+    expect(jsonCategories).toEqual(zodCategories);
+  });
+
+  it("source enum members equal the interview question source enum", () => {
+    const jsonSources = [...interviewQuestionJsonSchema.properties.source.enum].sort();
+    const zodSources = [...interviewQuestionSourceSchema.options].sort();
+
+    expect(jsonSources).toEqual(zodSources);
+  });
+});

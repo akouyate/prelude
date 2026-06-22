@@ -149,3 +149,61 @@ describe("saveInterviewDraft N9 provenance", () => {
     expect(createCall?.data.generatorModel ?? null).toBeNull();
   });
 });
+
+// N10.C — the deferred N1 SAVE lock. saveInterviewDraft must hard-fail and write
+// nothing when any question or criterion references a disallowed/protected topic.
+describe("N10 saveInterviewDraft compliance gate", () => {
+  it("rejects and persists nothing when a question references a protected topic", async () => {
+    const result = await saveInterviewDraft({
+      ...baseInput(),
+      questions: [
+        {
+          category: "custom",
+          durationSeconds: 75,
+          expectedSignal: "Age",
+          id: "q1",
+          maxFollowups: 1,
+          prompt: "How old are you, and when did you graduate?",
+          required: true,
+          source: "agent",
+        },
+        baseInput().questions[1]!,
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toContain("protected or disallowed topics");
+    }
+    // The compliance gate runs before any write.
+    expect(tx.interviewDraft.create).not.toHaveBeenCalled();
+    expect(tx.interviewDraft.update).not.toHaveBeenCalled();
+    expect(tx.job.create).not.toHaveBeenCalled();
+    expect(tx.job.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects and persists nothing when a criterion references a protected topic", async () => {
+    const result = await saveInterviewDraft({
+      ...baseInput(),
+      criteria: [
+        {
+          id: "c1",
+          label: "Maternity leave plans",
+          description: "Whether the candidate is planning maternity leave soon.",
+        },
+        ...baseInput().criteria.slice(1),
+      ],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(tx.interviewDraft.create).not.toHaveBeenCalled();
+    expect(tx.interviewDraft.update).not.toHaveBeenCalled();
+  });
+
+  it("saves normally for a clean, job-related plan (gate is not over-blocking)", async () => {
+    const result = await saveInterviewDraft(baseInput());
+
+    expect(result.ok).toBe(true);
+    expect(tx.interviewDraft.create).toHaveBeenCalledTimes(1);
+  });
+});

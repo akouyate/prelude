@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  INTERVIEW_PLAN_SCHEMA_VERSION,
   parseStoredInterviewPlan,
   toLiveInterviewPlan,
 } from "@prelude/contracts";
@@ -286,6 +287,99 @@ describe("publishInterviewDraft N6 classifier wiring", () => {
     expect(result.ok).toBe(false);
     // Keyword layer is authoritative and runs first; classifier is not consulted.
     expect(classifier.classify).not.toHaveBeenCalled();
+  });
+});
+
+// N10.C — the deferred N1 PUBLISH lock. publishInterviewDraft must be blocked by
+// the authoritative keyword gate on a disallowed topic and write nothing, and the
+// published snapshot must persist the validated/normalized canonical arrays (not
+// the raw stored row) and stamp the schema version.
+describe("N10 publishInterviewDraft compliance + snapshot canonicalization", () => {
+  it("is blocked by the keyword gate on a disallowed topic and writes nothing", async () => {
+    draftRecord.current = {
+      ...publishableDraft(),
+      criteria: [
+        {
+          id: "c1",
+          label: "Pregnancy plans",
+          description: "Whether the candidate is pregnant or planning a family.",
+        },
+        ...publishableDraft().criteria.slice(1),
+      ],
+    };
+
+    const classifier = passThroughClassifier();
+    const result = await publishInterviewDraft("draft_1", classifier);
+
+    expect(result.ok).toBe(false);
+    // No snapshot, no status flip; keyword gate runs before the classifier.
+    expect(classifier.classify).not.toHaveBeenCalled();
+    expect(tx.interview.create).not.toHaveBeenCalled();
+    expect(tx.interviewDraft.update).not.toHaveBeenCalled();
+  });
+
+  it("persists the normalized canonical arrays (legacy signal -> expectedSignal) and stamps schemaVersion", async () => {
+    // A legacy-shaped stored row: questions use `signal`, lack category. The
+    // publish path coerces it through the canonical contract, so the persisted
+    // snapshot must carry the upgraded Hybrid fields, not the raw row.
+    draftRecord.current = {
+      ...publishableDraft(),
+      schemaVersion: undefined,
+      questions: [
+        {
+          id: "q1",
+          prompt: "Describe a production incident you debugged end to end.",
+          signal: "Problem solving",
+          source: "job_description",
+          durationSeconds: 75,
+        },
+        {
+          id: "q2",
+          prompt: "Tell me about a time you communicated a tricky tradeoff.",
+          signal: "Communication",
+          source: "agent",
+          durationSeconds: 75,
+        },
+        {
+          id: "q3",
+          prompt: "How do you keep a long project on track?",
+          signal: "Ownership",
+          source: "job_description",
+          durationSeconds: 75,
+        },
+      ],
+    };
+
+    const result = await publishInterviewDraft("draft_1", passThroughClassifier());
+    expect(result.ok).toBe(true);
+
+    const createCall = tx.interview.create.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+    const questions = (createCall?.data.questions ?? []) as Array<
+      Record<string, unknown>
+    >;
+
+    // Raw row had `signal`; the persisted snapshot must carry canonical
+    // `expectedSignal` + the Hybrid defaults, proving it is normalized not raw.
+    expect(questions).toHaveLength(3);
+    for (const question of questions) {
+      expect(question).not.toHaveProperty("signal");
+      expect(question.expectedSignal).toBeTruthy();
+      expect(question.required).toBe(true);
+      expect(question.maxFollowups).toBe(1);
+      expect(typeof question.category).toBe("string");
+    }
+    expect(questions[0]?.expectedSignal).toBe("Problem solving");
+
+    // schemaVersion is stamped even though the raw row omitted it.
+    expect(createCall?.data.schemaVersion).toBe(INTERVIEW_PLAN_SCHEMA_VERSION);
+
+    // The persisted snapshot must form a valid live interview plan.
+    const plan = parseStoredInterviewPlan(createCall?.data);
+    expect(() =>
+      toLiveInterviewPlan({ plan, planId: "plan_1", jobId: "job_1" }),
+    ).not.toThrow();
   });
 });
 

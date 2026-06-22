@@ -5,9 +5,11 @@ import {
   INTERVIEW_PLAN_SCHEMA_VERSION,
   interviewPlanQuestionSchema,
   interviewPlanSchema,
+  interviewQuestionSourceSchema,
   parseStoredInterviewPlan,
   toLiveInterviewPlan,
 } from "./interview-plan";
+import { liveInterviewQuestionCategorySchema } from "./live-interview";
 
 const canonicalPlan = () => ({
   roleTitle: "Customer Success Manager",
@@ -283,5 +285,175 @@ describe("toLiveInterviewPlan (live handoff mapper)", () => {
       jobId: "job_01",
     });
     expect(liveDefault.candidateModes).toEqual(["audio"]);
+  });
+});
+
+// N10.D — contract invariants. parseStoredInterviewPlan must never throw on a
+// representative spread of legacy persisted rows, and whatever it produces must
+// always map cleanly onto the real live interview plan schema.
+describe("N10 parseStoredInterviewPlan never throws on legacy rows", () => {
+  const baseRow = {
+    roleTitle: "Backend Engineer",
+    roleBrief:
+      "We are hiring a backend engineer to own services and debug incidents.",
+    responseModes: ["audio"],
+    criteria: [
+      {
+        id: "c1",
+        label: "Problem solving",
+        description: "Looks for concrete, job-related evidence.",
+      },
+    ],
+    guardrails: ["Ask every candidate the same questions in the same order."],
+    estimatedMinutes: 15,
+    rationale: "Prepared focused first-screen questions.",
+  };
+
+  const legacyRows: Array<[string, Record<string, unknown>]> = [
+    [
+      "signal-only question with no new fields",
+      {
+        ...baseRow,
+        focus: ["motivation"],
+        questions: [
+          {
+            id: "q1",
+            prompt: "What made this role a strong next step for you?",
+            signal: "Role motivation and clarity of expectations",
+            source: "agent",
+          },
+        ],
+      },
+    ],
+    [
+      "empty signal that must drop to undefined",
+      {
+        ...baseRow,
+        focus: ["role_skills"],
+        questions: [
+          {
+            id: "q1",
+            prompt: "Describe a production incident you debugged end to end.",
+            signal: "",
+            source: "job_description",
+          },
+        ],
+      },
+    ],
+    [
+      "too-short signal that must drop to undefined",
+      {
+        ...baseRow,
+        focus: [],
+        questions: [
+          {
+            id: "q1",
+            prompt: "Tell us about a system you designed under real constraints.",
+            signal: "ok",
+            source: "agent",
+          },
+        ],
+      },
+    ],
+    [
+      "missing required/maxFollowups/category/durationSeconds",
+      {
+        ...baseRow,
+        focus: ["role_skills"],
+        questions: [
+          {
+            id: "q1",
+            prompt: "Walk me through a recent project relevant to this role.",
+            source: "job_description",
+          },
+        ],
+      },
+    ],
+    [
+      "missing focus and missing seniority entirely",
+      {
+        ...baseRow,
+        questions: [
+          {
+            id: "q1",
+            prompt: "Walk me through a recent project relevant to this role.",
+            expectedSignal: "Relevant evidence",
+          },
+        ],
+      },
+    ],
+    [
+      "missing schemaVersion (legacy pre-N7 row)",
+      {
+        ...baseRow,
+        focus: ["motivation"],
+        questions: [
+          {
+            id: "q1",
+            prompt: "What made this role a strong next step for you?",
+            expectedSignal: "Role motivation",
+            source: "agent",
+          },
+        ],
+      },
+    ],
+  ];
+
+  it.each(legacyRows)("does not throw on a %s", (_label, row) => {
+    expect(() => parseStoredInterviewPlan(row)).not.toThrow();
+  });
+
+  it("always produces output that maps onto the live interview plan schema", () => {
+    for (const [, row] of legacyRows) {
+      const plan = parseStoredInterviewPlan(row);
+      const live = toLiveInterviewPlan({
+        plan,
+        planId: "plan_legacy",
+        jobId: "job_legacy",
+      });
+      expect(liveInterviewPlanSchema.safeParse(live).success).toBe(true);
+    }
+  });
+
+  it("always stamps the current schema version on a legacy row", () => {
+    for (const [, row] of legacyRows) {
+      expect(parseStoredInterviewPlan(row).schemaVersion).toBe(
+        INTERVIEW_PLAN_SCHEMA_VERSION,
+      );
+    }
+  });
+});
+
+// N10.D — the canonical plan-question category enum must stay in lockstep with
+// the live interview question category enum, since toLiveInterviewPlan copies the
+// category straight across. A drift would silently break the live handoff.
+describe("N10 question category enum stays in lockstep with the live schema", () => {
+  it("plan category options equal the live category options", () => {
+    const liveCategories = [...liveInterviewQuestionCategorySchema.options].sort();
+    // interviewPlanQuestionSchema.category defaults to liveInterviewQuestionCategorySchema.
+    const planQuestion = interviewPlanQuestionSchema.parse({
+      id: "q1",
+      prompt: "Tell us about a recent project relevant to this role.",
+    });
+    // Every live category must be an accepted plan category.
+    for (const category of liveInterviewQuestionCategorySchema.options) {
+      expect(
+        interviewPlanQuestionSchema.safeParse({
+          id: "q1",
+          prompt: "Tell us about a recent project relevant to this role.",
+          category,
+        }).success,
+      ).toBe(true);
+    }
+    expect(planQuestion.category).toBe("custom");
+    expect(liveCategories).toEqual(
+      ["availability", "compensation", "custom", "experience", "logistics", "motivation", "skills"].sort(),
+    );
+  });
+
+  it("exposes the source enum used by the stored draft contract", () => {
+    expect([...interviewQuestionSourceSchema.options].sort()).toEqual(
+      ["agent", "attachment", "job_description"].sort(),
+    );
   });
 });

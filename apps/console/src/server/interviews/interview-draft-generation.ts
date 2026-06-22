@@ -1025,7 +1025,11 @@ function toTimeoutMs(value: string | undefined) {
   return Math.max(2_000, Math.min(30_000, seconds * 1000));
 }
 
-const interviewQuestionJsonSchema = {
+// Exported for the N10 contract-lockstep test: the OpenAI structured-output
+// json_schema enums must stay identical to the canonical Zod enums (question
+// category + source). The test asserts the enum members match so a future edit
+// to one without the other fails CI rather than silently drifting.
+export const interviewQuestionJsonSchema = {
   additionalProperties: false,
   properties: {
     category: {
