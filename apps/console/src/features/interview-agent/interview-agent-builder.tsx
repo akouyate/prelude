@@ -67,6 +67,7 @@ import {
   InterviewBuilderStepHeader,
   InterviewBuilderStepRail,
 } from "./interview-builder-layout";
+import { buildCandidateInviteMailto } from "./candidate-invite";
 
 type StepId = "brief" | "calibrate" | "questions" | "evaluation" | "share";
 type QuestionAction = "sharper" | "replace";
@@ -1691,6 +1692,66 @@ function EvaluationStep({
   );
 }
 
+// #6: copy the candidate link + a zero-backend "invite by email" (mailto) right
+// from the builder's publish step, so the recruiter can share immediately after
+// publishing without leaving the flow. The copy target matches the existing
+// CopyCandidateLinkButton (origin + candidatePath).
+function CandidateLinkActions({
+  candidatePath,
+  roleTitle,
+}: {
+  candidatePath: string;
+  roleTitle: string;
+}) {
+  const { t } = useTranslation();
+  const [origin, setOrigin] = React.useState("");
+  const [copied, setCopied] = React.useState(false);
+
+  React.useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+
+  const candidateUrl = origin ? `${origin}${candidatePath}` : "";
+
+  const copyLink = React.useCallback(async () => {
+    if (!candidateUrl) {
+      return;
+    }
+    try {
+      await navigator.clipboard?.writeText(candidateUrl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard unavailable (permissions/older browser) — no-op.
+    }
+  }, [candidateUrl]);
+
+  const mailtoHref = candidateUrl
+    ? buildCandidateInviteMailto(
+        t("share.inviteSubject", { role: roleTitle }),
+        t("share.inviteBody", { role: roleTitle, url: candidateUrl }),
+      )
+    : undefined;
+
+  return (
+    <div className="mt-4 flex flex-wrap gap-2">
+      <Button disabled={!candidateUrl} variant="secondary" onClick={copyLink}>
+        <Link2 aria-hidden="true" className="h-4 w-4" />
+        {copied ? t("share.copyLinkCopied") : t("share.copyLink")}
+      </Button>
+      {mailtoHref ? (
+        <a
+          className="inline-flex h-10 cursor-pointer items-center justify-center gap-2 rounded-full border border-ink-200 bg-white/80 px-4 text-sm font-medium text-ink-900 transition hover:border-ink-900 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+          href={mailtoHref}
+        >
+          <Message aria-hidden="true" className="h-4 w-4" />
+          {t("share.inviteByEmail")}
+        </a>
+      ) : null}
+    </div>
+  );
+}
+
 function ShareStep({
   companyName,
   complianceReview,
@@ -1769,6 +1830,12 @@ function ShareStep({
           Drafts stay private. Publishing snapshots the current questions,
           criteria, and candidate formats into a shareable role screen.
         </p>
+        {publishedInterview ? (
+          <CandidateLinkActions
+            candidatePath={publishedInterview.candidatePath}
+            roleTitle={roleTitle}
+          />
+        ) : null}
       </div>
 
       <div className="rounded-3xl border border-ink-100 bg-white/72 p-5">

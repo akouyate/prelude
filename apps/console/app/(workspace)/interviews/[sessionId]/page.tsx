@@ -22,6 +22,8 @@ import {
 
 import { getConsoleAuthContext } from "../../../../src/server/auth/console-auth";
 import { generateCandidateBriefAction } from "../../../../src/server/interviews/candidate-brief-actions";
+import { AutoGenerateBrief } from "../../../../src/features/interview-detail/auto-generate-brief";
+import { shouldAutoGenerateBrief } from "../../../../src/features/interview-detail/brief-auto-generation";
 import { updateCandidateReviewAction } from "../../../../src/server/interviews/candidate-review-actions";
 import { getInterviewDetail } from "../../../../src/server/interviews/interview-loaders";
 import type { CandidateSessionEvidence } from "../../../../src/server/interviews/live-session-evidence";
@@ -207,11 +209,24 @@ function CandidateSessionReview({
             )}
             {session.evidence.status === "completed" &&
             session.brief?.status !== "completed" ? (
-              <GenerateBriefCard
-                detailPath={detailPath}
-                hasFailed={session.brief?.status === "failed"}
-                sessionId={session.id}
-              />
+              shouldAutoGenerateBrief(
+                session.evidence.status,
+                session.brief?.status,
+              ) ? (
+                // #5: evidence is ready and no usable brief yet — generate
+                // automatically instead of waiting for a manual click.
+                <AutoGenerateBrief
+                  detailPath={detailPath}
+                  sessionId={session.id}
+                />
+              ) : (
+                // Processing or failed — keep the manual (retry) affordance.
+                <GenerateBriefCard
+                  detailPath={detailPath}
+                  hasFailed={session.brief?.status === "failed"}
+                  sessionId={session.id}
+                />
+              )
             ) : null}
             <DataLimitationsCard
               brief={session.brief}

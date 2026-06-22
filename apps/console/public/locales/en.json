@@ -20,6 +20,13 @@
       "overrideRequiresAdmin": "Only a workspace owner or admin can override a compliance flag. Ask an admin to review and publish.",
       "overrideRateLimited": "You've reached the override limit for now — further overrides need a workspace admin to review."
     },
+    "share": {
+      "copyLink": "Copy candidate link",
+      "copyLinkCopied": "Link copied",
+      "inviteByEmail": "Invite by email",
+      "inviteSubject": "Your interview for {{role}}",
+      "inviteBody": "Hello,\n\nYou're invited to a short AI-guided interview for {{role}}.\n\nStart here: {{url}}\n\nThank you!"
+    },
     "category": {
       "age": "Age",
       "appearance": "Appearance",
@@ -152,6 +159,8 @@
       "relativeDays": "{{count}}d ago"
     },
     "interviewDetail": {
+      "briefAutoGenerating": "Generating the recruiter brief…",
+      "briefAutoGeneratingBody": "Analyzing the persisted interview transcript. This page refreshes when the brief is ready.",
       "backToRoles": "Roles",
       "editButton": "Edit",
       "headerMeta": "{{mode}} · {{count}} questions · ~{{minutes}} min",

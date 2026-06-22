@@ -20,6 +20,13 @@
       "overrideRequiresAdmin": "Seul un propriétaire ou un administrateur de l'espace peut passer outre un signalement de conformité. Demandez à un administrateur de revoir et publier.",
       "overrideRateLimited": "Vous avez atteint la limite de dérogations pour le moment — les suivantes doivent être revues par un administrateur de l'espace."
     },
+    "share": {
+      "copyLink": "Copier le lien candidat",
+      "copyLinkCopied": "Lien copié",
+      "inviteByEmail": "Inviter par email",
+      "inviteSubject": "Votre entretien pour {{role}}",
+      "inviteBody": "Bonjour,\n\nVous êtes invité·e à un court entretien guidé par IA pour {{role}}.\n\nDémarrez ici : {{url}}\n\nMerci !"
+    },
     "category": {
       "age": "Âge",
       "appearance": "Apparence physique",
@@ -152,6 +159,8 @@
       "relativeDays": "il y a {{count}} j"
     },
     "interviewDetail": {
+      "briefAutoGenerating": "Génération du compte-rendu recruteur…",
+      "briefAutoGeneratingBody": "Analyse de la transcription persistée de l'entretien. La page se rafraîchit dès que le compte-rendu est prêt.",
       "backToRoles": "Postes",
       "editButton": "Modifier",
       "headerMeta": "{{mode}} · {{count}} questions · ~{{minutes}} min",
