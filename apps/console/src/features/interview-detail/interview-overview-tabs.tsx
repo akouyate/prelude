@@ -8,6 +8,8 @@ import {
   Pause,
   WarningTriangle,
 } from "iconoir-react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import { UnderlineTabs, cn } from "@prelude/ui";
 
 import { updateInterviewPublicationStatusAction } from "../../server/interviews/interview-actions";
@@ -70,13 +72,33 @@ export type InterviewOverviewTabsProps = {
   summaryLine: string;
 };
 
-const filterOptions = [
-  { label: "All", value: "all" },
-  { label: "To review", value: "to_review" },
-  { label: "To call", value: "to_call" },
-  { label: "In progress", value: "in_progress" },
-  { label: "Archived", value: "archived" },
-] satisfies Array<{ label: string; value: ReviewFilter }>;
+const filterValues: ReviewFilter[] = [
+  "all",
+  "to_review",
+  "to_call",
+  "in_progress",
+  "archived",
+];
+
+function filterLabel(value: ReviewFilter, t: TFunction) {
+  if (value === "all") {
+    return t("interviewDetail.candidatesFilterAll");
+  }
+
+  if (value === "to_review") {
+    return t("interviewDetail.candidatesFilterToReview");
+  }
+
+  if (value === "to_call") {
+    return t("interviewDetail.candidatesFilterToCall");
+  }
+
+  if (value === "in_progress") {
+    return t("interviewDetail.candidatesFilterInProgress");
+  }
+
+  return t("interviewDetail.candidatesFilterArchived");
+}
 
 export function InterviewOverviewTabs({
   candidatePath,
@@ -93,6 +115,7 @@ export function InterviewOverviewTabs({
   stats,
   summaryLine,
 }: InterviewOverviewTabsProps) {
+  const { t } = useTranslation();
   const [tab, setTab] = React.useState<OverviewTab>("overview");
   const needsReviewCount = React.useMemo(
     () =>
@@ -107,17 +130,21 @@ export function InterviewOverviewTabs({
   return (
     <section className="mt-[26px]">
       <UnderlineTabs
-        ariaLabel="Role detail sections"
+        ariaLabel={t("interviewDetail.tabsAria")}
         onValueChange={setTab}
         options={[
-          { label: "Overview", value: "overview" },
+          { label: t("interviewDetail.tabOverview"), value: "overview" },
           {
             count: needsReviewCount > 0 ? needsReviewCount : undefined,
-            label: "Candidates",
+            label: t("interviewDetail.tabCandidates"),
             value: "candidates",
           },
-          { count: questions.length, label: "Questions", value: "questions" },
-          { label: "Settings", value: "settings" },
+          {
+            count: questions.length,
+            label: t("interviewDetail.tabQuestions"),
+            value: "questions",
+          },
+          { label: t("interviewDetail.tabSettings"), value: "settings" },
         ]}
         value={tab}
       />
@@ -157,6 +184,7 @@ export function CopyCandidateLinkButton({
   candidatePath: string;
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
 
   const handleCopy = React.useCallback(async () => {
@@ -183,7 +211,7 @@ export function CopyCandidateLinkButton({
         <Copy aria-hidden={true} className="h-[15px] w-[15px] text-[#8a8178]" />
       )}
       <span className="truncate text-[#5b574f]">
-        {copied ? "Link copied" : children}
+        {copied ? t("interviewDetail.copyLinkCopied") : children}
       </span>
     </button>
   );
@@ -200,6 +228,8 @@ function OverviewPanel({
   source: InterviewOverviewSource | null;
   stats: InterviewOverviewStat[];
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="mt-6 flex flex-col gap-[30px]">
       <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -243,7 +273,7 @@ function OverviewPanel({
             className="inline-flex h-[38px] cursor-pointer items-center gap-[7px] rounded-full border border-[#ddd8cc] bg-white px-[15px] text-[13px] font-semibold text-ink-950 transition hover:border-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
             type="button"
           >
-            View original offer
+            {t("interviewDetail.viewOriginalOffer")}
             <LinkIcon aria-hidden={true} className="h-3.5 w-3.5" />
           </button>
         </section>
@@ -251,17 +281,17 @@ function OverviewPanel({
 
       <section>
         <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-[#a29b8d]">
-          Role brief
+          {t("interviewDetail.roleBriefLabel")}
         </p>
         <p className="mt-[9px] max-w-[62ch] text-[15px] leading-[1.6] text-[#5b574f]">
-          {roleBrief || "No role brief has been added yet."}
+          {roleBrief || t("interviewDetail.roleBriefEmpty")}
         </p>
       </section>
 
       <section>
         <SectionTitle
-          description="What reviewers compare after the screen."
-          title="Evaluation criteria"
+          description={t("interviewDetail.criteriaDescription")}
+          title={t("interviewDetail.criteriaTitle")}
         />
         <div className="mt-3.5 grid gap-2 md:grid-cols-2">
           {criteria.length > 0 ? (
@@ -279,7 +309,7 @@ function OverviewPanel({
               </article>
             ))
           ) : (
-            <EmptyInlineState text="No evaluation criteria have been generated yet." />
+            <EmptyInlineState text={t("interviewDetail.criteriaEmpty")} />
           )}
         </div>
       </section>
@@ -294,6 +324,7 @@ function CandidatesPanel({
   candidates: CandidateScreenListItem[];
   summaryLine: string;
 }) {
+  const { t } = useTranslation();
   const [filter, setFilter] = React.useState<ReviewFilter>("all");
   const visibleCandidates = React.useMemo(
     () =>
@@ -308,10 +339,10 @@ function CandidatesPanel({
       </p>
 
       <div className="mb-4 flex flex-wrap gap-2">
-        {filterOptions.map((option) => {
-          const active = option.value === filter;
+        {filterValues.map((value) => {
+          const active = value === filter;
           const count = candidates.filter((candidate) =>
-            matchesFilter(candidate, option.value),
+            matchesFilter(candidate, value),
           ).length;
 
           return (
@@ -322,11 +353,11 @@ function CandidatesPanel({
                   ? "border-[#e2e6d3] bg-[#eef0e3] text-olive-950"
                   : "border-[#e7e2d8] bg-white text-[#5b574f] hover:border-[#cbc4b6] hover:text-ink-950",
               )}
-              key={option.value}
-              onClick={() => setFilter(option.value)}
+              key={value}
+              onClick={() => setFilter(value)}
               type="button"
             >
-              {option.label}
+              {filterLabel(value, t)}
               <span
                 className={cn(
                   "text-[11.5px] font-bold",
@@ -343,8 +374,8 @@ function CandidatesPanel({
       <CandidateScreensTable
         candidates={visibleCandidates}
         className="mt-0 rounded-[18px] border-[#e7e2d8] bg-white"
-        emptyDescription="No candidate matches this filter yet."
-        emptyTitle="No candidates here"
+        emptyDescription={t("interviewDetail.candidatesEmptyDescription")}
+        emptyTitle={t("interviewDetail.candidatesEmptyTitle")}
       />
     </div>
   );
@@ -355,11 +386,13 @@ function QuestionsPanel({
 }: {
   questions: InterviewOverviewQuestion[];
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="mt-6">
       <SectionTitle
-        description="What the live interviewer asks, and the signal each answer reveals."
-        title="Interview script"
+        description={t("interviewDetail.scriptDescription")}
+        title={t("interviewDetail.scriptTitle")}
       />
       <div className="mt-4 flex flex-col gap-2.5">
         {questions.length > 0 ? (
@@ -376,7 +409,9 @@ function QuestionsPanel({
                   {question.prompt}
                 </p>
                 <p className="mt-1.5 text-[12.5px] leading-[1.5] text-[#8a8178]">
-                  <span className="font-semibold text-[#6f6a5f]">Signal · </span>
+                  <span className="font-semibold text-[#6f6a5f]">
+                    {t("interviewDetail.signalLabel")}
+                  </span>
                   {question.signal}
                   <span className="text-[#c0b9aa]"> · </span>
                   {question.sourceLabel}
@@ -385,7 +420,7 @@ function QuestionsPanel({
             </article>
           ))
         ) : (
-          <EmptyInlineState text="No questions have been generated yet." />
+          <EmptyInlineState text={t("interviewDetail.questionsEmpty")} />
         )}
       </div>
     </div>
@@ -407,6 +442,7 @@ function SettingsPanel({
   publicationStatus: string;
   roleTitle: string;
 }) {
+  const { t } = useTranslation();
   const isPaused = publicationStatus === "paused";
   const nextStatus = isPaused ? "published" : "paused";
 
@@ -414,8 +450,8 @@ function SettingsPanel({
     <div className="mt-6 flex flex-col gap-[30px]">
       <section>
         <SectionTitle
-          description="How this screen runs for every candidate."
-          title="Configuration"
+          description={t("interviewDetail.configDescription")}
+          title={t("interviewDetail.configTitle")}
         />
         <div className="mt-3.5 overflow-hidden rounded-2xl border border-[#e7e2d8] bg-white">
           {config.map((item) => (
@@ -437,21 +473,21 @@ function SettingsPanel({
       <section className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-[#e7e2d8] bg-white px-[18px] py-4">
         <div className="min-w-0">
           <p className="text-[14px] font-semibold text-ink-950">
-            Candidate link
+            {t("interviewDetail.candidateLinkTitle")}
           </p>
           <p className="mt-1 truncate text-[12.5px] text-[#8a8178]">
             {candidatePath}
           </p>
         </div>
         <CopyCandidateLinkButton candidatePath={candidatePath}>
-          Copy link
+          {t("interviewDetail.copyLink")}
         </CopyCandidateLinkButton>
       </section>
 
       <section>
         <SectionTitle
-          description="Rules the interviewer must preserve."
-          title="Guardrails"
+          description={t("interviewDetail.guardrailsDescription")}
+          title={t("interviewDetail.guardrailsTitle")}
         />
         <div className="mt-3.5 flex flex-col gap-[11px] px-0.5 py-1">
           {guardrails.length > 0 ? (
@@ -467,7 +503,7 @@ function SettingsPanel({
               </div>
             ))
           ) : (
-            <EmptyInlineState text="No guardrails have been configured yet." />
+            <EmptyInlineState text={t("interviewDetail.guardrailsEmpty")} />
           )}
         </div>
       </section>
@@ -487,7 +523,9 @@ function SettingsPanel({
               isPaused ? "text-olive-900" : "text-[#7a2d1c]",
             )}
           >
-            {isPaused ? "Resume this role" : "Pause this role"}
+            {isPaused
+              ? t("interviewDetail.resumeRoleTitle")
+              : t("interviewDetail.pauseRoleTitle")}
           </p>
           <p
             className={cn(
@@ -496,8 +534,8 @@ function SettingsPanel({
             )}
           >
             {isPaused
-              ? `Candidates will be able to start ${roleTitle} again. Existing sessions stay unchanged.`
-              : `New candidates won't be able to start ${roleTitle}. Existing sessions are kept.`}
+              ? t("interviewDetail.resumeRoleBody", { roleTitle })
+              : t("interviewDetail.pauseRoleBody", { roleTitle })}
           </p>
         </div>
         <form action={updateInterviewPublicationStatusAction}>
@@ -513,7 +551,9 @@ function SettingsPanel({
             type="submit"
           >
             <Pause aria-hidden={true} className="h-4 w-4" />
-            {isPaused ? "Resume role" : "Pause role"}
+            {isPaused
+              ? t("interviewDetail.resumeRoleButton")
+              : t("interviewDetail.pauseRoleButton")}
           </button>
         </form>
       </section>
@@ -523,10 +563,7 @@ function SettingsPanel({
           aria-hidden={true}
           className="mt-0.5 h-4 w-4 shrink-0 text-olive-800"
         />
-        <p>
-          The interview supports human screening only. It must not be used as an
-          automated hiring or rejection decision.
-        </p>
+        <p>{t("interviewDetail.humanReviewNotice")}</p>
       </section>
     </div>
   );

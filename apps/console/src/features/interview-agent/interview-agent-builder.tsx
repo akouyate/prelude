@@ -1873,6 +1873,33 @@ function ComplianceOverridePanel({
     trimmed.length >= COMPLIANCE_OVERRIDE_MIN_JUSTIFICATION &&
     wordCount >= COMPLIANCE_OVERRIDE_MIN_JUSTIFICATION_WORDS;
 
+  // N6b role-gate: a basic recruiter cannot override — show the flag and an
+  // escalation message instead of the override controls.
+  if (review.requiresElevatedRole) {
+    return (
+      <div className="rounded-3xl border border-gold-800/30 bg-gold-100/70 p-5">
+        <div className="flex items-center gap-2 text-sm font-semibold text-gold-900">
+          <ShieldCheck aria-hidden="true" className="h-4 w-4 text-gold-800" />
+          {t("compliance.overrideTitle")}
+        </div>
+        <p className="mt-3 text-sm leading-6 text-gold-900">
+          {t("compliance.overrideFlagSummary", {
+            category: review.categoryLabel,
+            reason: review.reason,
+          })}
+        </p>
+        <p className="mt-2 text-sm leading-6 text-gold-800">
+          {t("compliance.overrideRequiresAdmin")}
+        </p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button variant="secondary" onClick={onDismiss}>
+            {t("compliance.overrideReformulate")}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-3xl border border-gold-800/30 bg-gold-100/70 p-5">
       <div className="flex items-center gap-2 text-sm font-semibold text-gold-900">

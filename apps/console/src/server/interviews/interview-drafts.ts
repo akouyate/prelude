@@ -91,6 +91,9 @@ export type ComplianceReviewPrompt = {
   category: string;
   categoryLabel: string;
   reason: string;
+  // N6b role-gate: true when the current recruiter lacks the owner/admin role
+  // needed to override — the UI shows an escalation message, not the panel.
+  requiresElevatedRole: boolean;
 };
 
 export type PublishInterviewDraftResult =
@@ -119,6 +122,17 @@ const allowedFocus = new Set<InterviewFocus>([
   "situational_judgment",
 ]);
 const allowedModes = new Set<InterviewResponseMode>(["audio", "text"]);
+
+// N6b role-gate: only an owner or admin may consciously override an LLM
+// protected-topic flag. A basic recruiter/viewer must escalate to one of them.
+const overrideAllowedRoles = new Set<string>(["owner", "admin"]);
+
+// N6b rate-limit: a soft cap on APPLIED overrides per recruiter within a rolling
+// window. Beyond it, overrides are denied and must be escalated to an admin —
+// this bounds the "iteratively dodge the LLM via override" attack and is the
+// earliest internal signal of a disparate-impact pattern.
+const OVERRIDE_RATE_LIMIT_MAX = 10;
+const OVERRIDE_RATE_LIMIT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function saveInterviewDraft(
   input: SaveInterviewDraftInput,
@@ -314,10 +328,11 @@ export async function publishInterviewDraft(
   const { criteria, draft, guardrails, questions, responseModes } = validation;
 
   // Phase 2 (N6): the second-layer LLM classifier runs OUTSIDE the prisma
-  // transaction, AFTER the keyword gate, to catch semantic evasions the
-  // keyword layer misses. It is a hard block at publish but fails OPEN on any
-  // LLM error/timeout/malformed result (the keyword layer already ran and is
-  // authoritative; an OpenAI hiccup must not block every publish).
+  // transaction, AFTER the keyword gate, to catch semantic evasions the keyword
+  // layer misses. N6e: it fails CLOSED — a genuine classifier failure blocks the
+  // publish with a retryable message rather than silently shipping unchecked
+  // content. Config issues degrade to the deterministic provider upstream and
+  // never block; only a configured-but-failing OpenAI call reaches the block.
   const segments = [
     ...questions.map(
       (question) => `${question.prompt} ${question.expectedSignal ?? ""}`,
@@ -325,8 +340,9 @@ export async function publishInterviewDraft(
     ...criteria.map((criterion) => `${criterion.label} ${criterion.description}`),
   ];
 
-  // N9: wrap the classifier so a thrown error fails OPEN (the keyword gate is
-  // authoritative) while still being recorded as a skipped_error outcome.
+  // N6e: a thrown error means the classifier could not run. It is recorded below
+  // as a skipped_error outcome and turned into a hard (retryable) block — never a
+  // silent pass. (This supersedes the earlier N9 fail-open behavior.)
   let classifications: ProtectedTopicClassification[] = [];
   let classifierThrew = false;
 
@@ -336,6 +352,27 @@ export async function publishInterviewDraft(
     classifierThrew = true;
   }
 
+  // N6e: fail CLOSED. If the second-layer classifier could not run at all, block
+  // the publish with a retryable message instead of silently shipping unchecked
+  // content. Config issues (missing key, non-openai provider) degrade to the
+  // deterministic provider upstream, so a throw here is a genuine runtime failure
+  // of a configured LLM classifier — the keyword gate already passed, but the
+  // semantic layer must not be silently skipped.
+  if (classifierThrew) {
+    logInterviewGenerationEvent(
+      {
+        event: "protected_topic_classification",
+        model: classifier.modelName,
+        outcome: "skipped_error",
+        provider: classifier.provider,
+        segmentCount: segments.length,
+      },
+      telemetry,
+    );
+
+    return { ok: false, error: t("compliance.classifierUnavailable") };
+  }
+
   const flaggedSegments = classifications
     .map((classification, index) => ({
       ...classification,
@@ -343,9 +380,9 @@ export async function publishInterviewDraft(
     }))
     .filter((classification) => classification.flagged);
 
-  // N6b: an override only applies to a GENUINE materialized LLM flag. A fail-open
-  // (classifierThrew) or a disabled classifier yields NO flags here, so the
-  // override path is structurally unreachable for them — a silent fail-open can
+  // N6b: an override only applies to a GENUINE materialized LLM flag. A thrown
+  // classifier already blocked above (N6e), and a disabled classifier yields NO
+  // flags here, so the override path is structurally unreachable for them — it can
   // never be laundered into an audited human decision. Only flags whose category
   // is overridable can be waived, and the publish proceeds only when EVERY flag
   // is overridable (one non-overridable flag keeps the whole publish a hard
@@ -356,14 +393,34 @@ export async function publishInterviewDraft(
     flaggedSegments.every((flag) =>
       isOverridableProtectedTopicCategory(flag.category),
     );
+  // N6b role-gate: only an owner/admin may override; a basic recruiter/viewer
+  // must escalate. A non-elevated role can never produce an applied override.
+  const canOverrideByRole = overrideAllowedRoles.has(scope.role);
   const parsedOverride =
-    override && everyFlagOverridable
+    override && everyFlagOverridable && canOverrideByRole
       ? complianceOverrideRequestSchema.safeParse(override)
       : null;
-  const overrideApplied = Boolean(parsedOverride?.success);
+  // N6b rate-limit: even a valid override is denied once the recruiter exceeds
+  // the rolling per-user cap. Counts only previously-APPLIED overrides (the event
+  // log), so merely viewing flags never consumes the budget.
+  let overrideRateLimited = false;
+  if (parsedOverride?.success) {
+    const windowStart = new Date(Date.now() - OVERRIDE_RATE_LIMIT_WINDOW_MS);
+    const recentOverrides = await prisma.complianceOverrideEvent.count({
+      where: {
+        organizationId: scope.organizationId,
+        overriddenByUserId: scope.userId,
+        createdAt: { gte: windowStart },
+      },
+    });
+    overrideRateLimited = recentOverrides >= OVERRIDE_RATE_LIMIT_MAX;
+  }
+
+  const overrideApplied =
+    Boolean(parsedOverride?.success) && !overrideRateLimited;
 
   let overrideRecord: ComplianceOverrideRecord | null = null;
-  if (parsedOverride?.success) {
+  if (parsedOverride?.success && !overrideRateLimited) {
     // Validate the server-constructed audit record through its contract before it
     // is persisted: defense-in-depth so a future refactor can never silently write
     // a malformed compliance record (every field here is already server-sourced
@@ -371,6 +428,7 @@ export async function publishInterviewDraft(
     overrideRecord = complianceOverrideRecordSchema.parse({
       justification: parsedOverride.data.justification,
       overriddenByUserId: scope.userId,
+      overriddenByRole: scope.role,
       organizationId: scope.organizationId,
       overriddenAt: new Date().toISOString(),
       classifierProvider: classifier.provider,
@@ -382,20 +440,21 @@ export async function publishInterviewDraft(
         category: flag.category,
         reason: flag.reason,
         segment: flag.segment,
+        ...(typeof flag.confidence === "number"
+          ? { confidence: flag.confidence }
+          : {}),
       })),
     });
   }
 
   const classificationOutcome: ProtectedTopicClassificationOutcome =
-    classifierThrew
-      ? "skipped_error"
-      : classifier.provider === "disabled"
-        ? "disabled"
-        : overrideApplied
-          ? "overridden"
-          : flaggedSegments.length > 0
-            ? "flagged"
-            : "clean";
+    classifier.provider === "disabled"
+      ? "disabled"
+      : overrideApplied
+        ? "overridden"
+        : flaggedSegments.length > 0
+          ? "flagged"
+          : "clean";
 
   logInterviewGenerationEvent(
     {
@@ -413,20 +472,26 @@ export async function publishInterviewDraft(
   if (firstFlag && !overrideApplied) {
     return {
       ok: false,
-      error: t("compliance.classifierDisallowedTopicBlock", {
-        category: t(`category.${firstFlag.category}`),
-        reason: firstFlag.reason,
-      }),
-      // Offer an override affordance ONLY when every flag is overridable. A
-      // non-overridable category (disability/health, genetic, biometric, ...) is
-      // a hard block with no recourse — the recruiter must reformulate.
-      review: everyFlagOverridable
-        ? {
-            category: firstFlag.category,
-            categoryLabel: t(`category.${firstFlag.category}`),
+      error: overrideRateLimited
+        ? t("compliance.overrideRateLimited")
+        : t("compliance.classifierDisallowedTopicBlock", {
+            category: t(`category.${firstFlag.category}`),
             reason: firstFlag.reason,
-          }
-        : undefined,
+          }),
+      // Offer an override affordance ONLY when every flag is overridable and the
+      // recruiter is not rate-limited. A non-overridable category (disability/
+      // health, genetic, biometric, ...) is a hard block with no recourse.
+      // requiresElevatedRole tells the UI to show an escalation message instead
+      // of the override panel for a basic recruiter.
+      review:
+        !overrideRateLimited && everyFlagOverridable
+          ? {
+              category: firstFlag.category,
+              categoryLabel: t(`category.${firstFlag.category}`),
+              reason: firstFlag.reason,
+              requiresElevatedRole: !canOverrideByRole,
+            }
+          : undefined,
     };
   }
 
@@ -525,6 +590,25 @@ export async function publishInterviewDraft(
         draftId: draft.id,
       },
     });
+
+    if (overrideRecord) {
+      // N6b: append the queryable override event (the rate-limit + aggregation
+      // index) transactionally with the published snapshot it belongs to.
+      await tx.complianceOverrideEvent.create({
+        data: {
+          organizationId: scope.organizationId,
+          interviewId: interview.id,
+          overriddenByUserId: overrideRecord.overriddenByUserId,
+          overriddenByRole: overrideRecord.overriddenByRole,
+          // Denormalized so the event log is a self-sufficient audit/aggregation
+          // record (the justification is the load-bearing oversight artifact).
+          justification: overrideRecord.justification,
+          category: overrideRecord.flags[0]?.category ?? "protected_topic",
+          classifierProvider: overrideRecord.classifierProvider,
+          classifierModel: overrideRecord.classifierModel,
+        },
+      });
+    }
 
     await tx.interviewDraft.update({
       data: { status: "published" },

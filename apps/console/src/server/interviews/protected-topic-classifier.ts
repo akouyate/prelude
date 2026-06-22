@@ -44,6 +44,9 @@ export type ProtectedTopicClassification = {
   flagged: boolean;
   category: ProtectedTopicCategory;
   reason: string;
+  // Self-reported model confidence (0-1) for a flagged verdict, captured for the
+  // override audit trail. Absent on clean results and on the deterministic layer.
+  confidence?: number;
 };
 
 export type ProtectedTopicClassifyOptions = {
@@ -166,24 +169,21 @@ export function createOpenAIProtectedTopicClassifier({
         return [];
       }
 
-      try {
-        const payload = await createOpenAIClassification({
-          apiKey,
-          fetcher,
-          locale: options?.locale,
-          model,
-          texts,
-          timeoutMs,
-        });
+      // N6e: fail CLOSED. A genuine classifier failure (HTTP error, timeout,
+      // malformed/length-mismatched payload) propagates so the publish path can
+      // block with a retryable message instead of silently shipping unchecked
+      // content. Config issues (missing key, non-openai provider) never reach
+      // here — they degrade to the deterministic provider upstream.
+      const payload = await createOpenAIClassification({
+        apiKey,
+        fetcher,
+        locale: options?.locale,
+        model,
+        texts,
+        timeoutMs,
+      });
 
-        return parseClassifications(payload, texts.length);
-      } catch (error) {
-        console.warn(
-          "Protected-topic LLM classifier failed open (keyword layer remains authoritative).",
-          error,
-        );
-        return texts.map(() => cleanResult());
-      }
+      return parseClassifications(payload, texts.length);
     },
     modelName: model,
     provider: "openai_responses",
@@ -198,11 +198,12 @@ const classificationJsonSchema = {
         additionalProperties: false,
         properties: {
           category: { enum: [...protectedTopicCategories], type: "string" },
+          confidence: { type: "number" },
           flagged: { type: "boolean" },
           index: { type: "integer" },
           reason: { type: "string" },
         },
-        required: ["index", "flagged", "category", "reason"],
+        required: ["index", "flagged", "category", "reason", "confidence"],
         type: "object",
       },
       type: "array",
@@ -252,7 +253,7 @@ async function createOpenAIClassification({
         max_output_tokens: Math.min(2048, 64 * texts.length + 128),
         model,
         store: false,
-        temperature: 0.2,
+        temperature: 0,
         text: {
           format: {
             name: "protected_topic_classification",
@@ -286,24 +287,28 @@ function parseClassifications(
   payload: unknown,
   expectedLength: number,
 ): ProtectedTopicClassification[] {
-  const failOpen = () =>
-    Array.from({ length: expectedLength }, () => cleanResult());
+  // N6e: a malformed/mismatched payload is a classifier FAILURE, not a clean
+  // pass — throw so the publish path fails closed (blocks) rather than shipping
+  // unchecked content on a garbled response.
+  const fail = (detail: string): never => {
+    throw new Error(`Protected-topic classification ${detail}`);
+  };
 
   if (!isRecord(payload) || !Array.isArray(payload.results)) {
-    return failOpen();
+    return fail("returned no results array");
   }
 
   const results = payload.results;
 
   if (results.length !== expectedLength) {
-    return failOpen();
+    return fail("returned a mismatched result count");
   }
 
   const byIndex = new Map<number, ProtectedTopicClassification>();
 
   for (const entry of results) {
     if (!isRecord(entry) || typeof entry.index !== "number") {
-      return failOpen();
+      return fail("returned a malformed entry");
     }
 
     byIndex.set(entry.index, normalizeClassification(entry));
@@ -315,7 +320,7 @@ function parseClassifications(
     const result = byIndex.get(index);
 
     if (!result) {
-      return failOpen();
+      return fail("is missing a segment index");
     }
 
     ordered.push(result);
@@ -333,6 +338,8 @@ function normalizeClassification(
   // Hard-truncate server-side: never trust the model's "under 120 chars"
   // instruction to keep an odd/long justification out of the recruiter UI.
   const reason = rawReason.trim().slice(0, 200);
+  const confidence =
+    typeof entry.confidence === "number" ? entry.confidence : undefined;
 
   if (!flagged) {
     return cleanResult();
@@ -344,6 +351,7 @@ function normalizeClassification(
     // neutral "protected_topic" (not the misleading "automated_decision").
     category: category === "none" ? "protected_topic" : category,
     reason,
+    ...(confidence !== undefined ? { confidence } : {}),
   };
 }
 

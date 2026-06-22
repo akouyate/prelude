@@ -45,11 +45,18 @@ export const complianceOverrideFlagSchema = z.object({
   category: z.string().min(1),
   reason: z.string(),
   segment: z.string().min(1),
+  // Self-reported classifier confidence (0-1) captured at decision time, when
+  // available (the OpenAI layer reports it; the deterministic layer does not).
+  confidence: z.number().optional(),
 });
 
 export const complianceOverrideRecordSchema = z.object({
   justification: z.string().min(1),
   overriddenByUserId: z.string().min(1),
+  // Recruiter role at the time of the override (owner/admin) — supports the EU AI
+  // Act Art. 14 "competent person with authority" record and survives later role
+  // changes.
+  overriddenByRole: z.string().min(1),
   organizationId: z.string().min(1),
   overriddenAt: z.string().min(1),
   classifierProvider: z.string().min(1),

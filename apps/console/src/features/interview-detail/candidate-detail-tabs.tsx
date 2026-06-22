@@ -1,18 +1,16 @@
 "use client";
 
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 import { UnderlineTabs } from "@prelude/ui";
 
 type CandidateDetailTab = "answers" | "evidence" | "next-call" | "recording";
 
-const candidateDetailTabOptions: Array<{
-  label: string;
-  value: CandidateDetailTab;
-}> = [
-  { label: "Recording", value: "recording" },
-  { label: "Evidence", value: "evidence" },
-  { label: "Answers", value: "answers" },
-  { label: "Next call", value: "next-call" },
+const candidateDetailTabValues: CandidateDetailTab[] = [
+  "recording",
+  "evidence",
+  "answers",
+  "next-call",
 ];
 
 export function CandidateDetailTabs({
@@ -28,6 +26,16 @@ export function CandidateDetailTabs({
   rail: React.ReactNode;
   recording: React.ReactNode;
 }) {
+  const { t } = useTranslation();
+  const candidateDetailTabOptions = React.useMemo(
+    () => [
+      { label: t("interviewDetail.detailTabRecording"), value: "recording" as const },
+      { label: t("interviewDetail.detailTabEvidence"), value: "evidence" as const },
+      { label: t("interviewDetail.detailTabAnswers"), value: "answers" as const },
+      { label: t("interviewDetail.detailTabNextCall"), value: "next-call" as const },
+    ],
+    [t],
+  );
   const [tab, setTab] = React.useState<CandidateDetailTab>("recording");
   const sectionRefs = React.useRef<
     Partial<Record<CandidateDetailTab, HTMLElement | null>>
@@ -59,10 +67,10 @@ export function CandidateDetailTabs({
   }, []);
 
   React.useEffect(() => {
-    const sections = candidateDetailTabOptions
-      .map((option) => ({
-        element: sectionRefs.current[option.value],
-        value: option.value,
+    const sections = candidateDetailTabValues
+      .map((value) => ({
+        element: sectionRefs.current[value],
+        value,
       }))
       .filter(
         (section): section is { element: HTMLElement; value: CandidateDetailTab } =>
@@ -125,7 +133,7 @@ export function CandidateDetailTabs({
     <section className="mt-[22px]">
       <UnderlineTabs
         activeTabClassName="border-[#171715] text-[#171715]"
-        ariaLabel="Candidate review sections"
+        ariaLabel={t("interviewDetail.detailTabsAria")}
         className="sticky top-0 z-20 bg-[#F9F8F3]"
         inactiveTabClassName="text-[#8a8178] hover:border-[#171715] hover:text-[#171715]"
         listClassName="h-[46px] gap-0 border-[#e7e2d8]"

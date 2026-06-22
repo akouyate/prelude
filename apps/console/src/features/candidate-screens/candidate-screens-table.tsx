@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { ArrowRight, UserBadgeCheck } from "iconoir-react";
+import { useTranslation } from "react-i18next";
 import { StatusBadge, cn } from "@prelude/ui";
 
 import { CriteriaSignal } from "../dashboard/criteria-signal";
@@ -19,14 +20,16 @@ import type { CandidateScreenListItem } from "./candidate-screen-types";
 export function CandidateScreensTable({
   candidates,
   className,
-  emptyDescription = "Try another filter or clear your search.",
-  emptyTitle = "No candidate screens here",
+  emptyDescription,
+  emptyTitle,
 }: {
   candidates: CandidateScreenListItem[];
   className?: string;
   emptyDescription?: string;
   emptyTitle?: string;
 }) {
+  const { t } = useTranslation();
+
   return (
     <section
       className={cn(
@@ -35,10 +38,10 @@ export function CandidateScreensTable({
       )}
     >
       <div className="hidden grid-cols-[minmax(0,1.4fr)_minmax(0,1.05fr)_132px_96px] gap-4 border-b border-ink-100 px-[22px] py-3 text-[11px] font-semibold uppercase tracking-[0.07em] text-ink-400 md:grid">
-        <span>Candidate</span>
-        <span>Criteria signal</span>
-        <span>Coverage</span>
-        <span className="text-right">Updated</span>
+        <span>{t("candidateScreens.columnCandidate")}</span>
+        <span>{t("candidateScreens.columnCriteriaSignal")}</span>
+        <span>{t("candidateScreens.columnCoverage")}</span>
+        <span className="text-right">{t("candidateScreens.columnUpdated")}</span>
       </div>
 
       {candidates.length > 0 ? (
@@ -49,8 +52,10 @@ export function CandidateScreensTable({
         </div>
       ) : (
         <CandidateScreensEmptyState
-          description={emptyDescription}
-          title={emptyTitle}
+          description={
+            emptyDescription ?? t("candidateScreens.emptyDescriptionDefault")
+          }
+          title={emptyTitle ?? t("candidateScreens.emptyTitleDefault")}
         />
       )}
     </section>
@@ -62,6 +67,8 @@ function CandidateScreenRow({
 }: {
   candidate: CandidateScreenListItem;
 }) {
+  const { i18n, t } = useTranslation();
+
   return (
     <Link
       className="group grid cursor-pointer gap-4 px-[22px] py-4 transition hover:bg-white md:grid-cols-[minmax(0,1.4fr)_minmax(0,1.05fr)_132px_96px] md:items-center md:gap-4"
@@ -80,7 +87,7 @@ function CandidateScreenRow({
               className="shrink-0 whitespace-nowrap"
               tone={candidateReviewStatusTone(candidate.reviewStatus)}
             >
-              {formatCandidateReviewStatus(candidate.reviewStatus)}
+              {formatCandidateReviewStatus(candidate.reviewStatus, t)}
             </StatusBadge>
           </span>
           <span className="mt-1 block truncate text-sm text-ink-500">
@@ -99,10 +106,10 @@ function CandidateScreenRow({
 
       <span>
         <span className="block text-sm font-medium text-ink-700">
-          {formatQuestionCompletionLabel(candidate.questionCompletionRate)}
+          {formatQuestionCompletionLabel(candidate.questionCompletionRate, t)}
         </span>
         <span className="mt-1 block text-xs text-ink-400">
-          {formatClarificationCount(candidate.pointsToClarifyCount)}
+          {formatClarificationCount(candidate.pointsToClarifyCount, t)}
         </span>
       </span>
 
@@ -111,6 +118,8 @@ function CandidateScreenRow({
           <span className="block text-sm text-ink-500">
             {formatCandidateScreenDate(
               candidate.completedAt ?? candidate.startedAt,
+              i18n.language,
+              t("candidateScreens.dateNone"),
             )}
           </span>
           <span className="mt-1 block text-xs text-ink-400">

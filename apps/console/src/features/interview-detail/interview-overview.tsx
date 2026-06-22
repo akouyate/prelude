@@ -3,9 +3,12 @@ import {
   ArrowLeft,
   EditPencil,
 } from "iconoir-react";
+import type { TFunction } from "i18next";
 import { StatusBadge } from "@prelude/ui";
 import type { CandidateScreenListItem } from "../candidate-screens";
 
+import { getServerT } from "../../libs/i18n-server";
+import { getAuthenticatedUserLocale } from "../../server/users/user-locale";
 import type { getInterviewDetail } from "../../server/interviews/interview-loaders";
 import {
   InterviewOverviewTabs,
@@ -23,19 +26,24 @@ type InterviewOverviewDetail = NonNullable<
   kind: "interview";
 };
 
-export function InterviewOverview({
+export async function InterviewOverview({
   detail,
 }: {
   detail: InterviewOverviewDetail;
 }) {
+  const locale = await getAuthenticatedUserLocale();
+  const t = getServerT(locale);
   const { interview } = detail;
   const sessionStats = getSessionStats(interview.candidateSessions);
   const estimatedMinutes = getEstimatedMinutes(interview);
-  const source = getSourceMeta({
-    location: interview.location,
-    provider: interview.sourceProvider,
-    roleTitle: interview.roleTitle,
-  });
+  const source = getSourceMeta(
+    {
+      location: interview.location,
+      provider: interview.sourceProvider,
+      roleTitle: interview.roleTitle,
+    },
+    t,
+  );
   const candidateLinkLabel = `prelude.ai${interview.candidatePath}`;
   const candidates = interview.candidateSessions.map((session) => ({
     analysisStatus: session.analysisStatus,
@@ -58,7 +66,7 @@ export function InterviewOverview({
     numberLabel: String(index + 1).padStart(2, "0"),
     prompt: question.prompt,
     signal: question.expectedSignal,
-    sourceLabel: formatQuestionSource(question.source),
+    sourceLabel: formatQuestionSource(question.source, t),
   })) satisfies InterviewOverviewQuestion[];
   const criteria = interview.criteria.map((criterion) => ({
     description: criterion.description,
@@ -67,29 +75,44 @@ export function InterviewOverview({
   })) satisfies InterviewOverviewCriterion[];
   const stats = [
     {
-      label: "Candidates",
+      label: t("interviewDetail.statCandidates"),
       value: String(interview.candidateSessions.length),
     },
     {
-      label: "Need review",
+      label: t("interviewDetail.statNeedReview"),
       tone: sessionStats.needsReview > 0 ? "danger" : "default",
       value: String(sessionStats.needsReview),
     },
     {
-      label: "Questions",
+      label: t("interviewDetail.statQuestions"),
       value: String(interview.questions.length),
     },
     {
-      label: "Avg length",
-      value: `${estimatedMinutes}m`,
+      label: t("interviewDetail.statAvgLength"),
+      value: t("interviewDetail.statAvgLengthValue", { minutes: estimatedMinutes }),
     },
   ] satisfies InterviewOverviewStat[];
   const config = [
-    { label: "Format", value: formatModeSummary(interview.responseModes) },
-    { label: "Length cap", value: `~${estimatedMinutes} minutes` },
-    { label: "Language", value: "Auto-detect" },
-    { label: "Interviewer voice", value: "Default voice" },
-    { label: "Visibility", value: "Anyone with the link" },
+    {
+      label: t("interviewDetail.configFormat"),
+      value: formatModeSummary(interview.responseModes, t),
+    },
+    {
+      label: t("interviewDetail.configLengthCap"),
+      value: t("interviewDetail.configLengthCapValue", { minutes: estimatedMinutes }),
+    },
+    {
+      label: t("interviewDetail.configLanguage"),
+      value: t("interviewDetail.configLanguageValue"),
+    },
+    {
+      label: t("interviewDetail.configInterviewerVoice"),
+      value: t("interviewDetail.configInterviewerVoiceValue"),
+    },
+    {
+      label: t("interviewDetail.configVisibility"),
+      value: t("interviewDetail.configVisibilityValue"),
+    },
   ] satisfies InterviewOverviewConfigItem[];
   const editHref = interview.draftId
     ? `/roles/new?draftId=${interview.draftId}`
@@ -102,14 +125,14 @@ export function InterviewOverview({
         href="/roles"
       >
         <ArrowLeft aria-hidden={true} className="h-4 w-4" />
-        Roles
+        {t("interviewDetail.backToRoles")}
       </Link>
 
       <header className="mt-4 flex flex-wrap items-end justify-between gap-6">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge tone={statusTone(interview.status)}>
-              {formatStatus(interview.status)}
+              {formatStatus(interview.status, t)}
             </StatusBadge>
             {source ? (
               <a
@@ -130,8 +153,11 @@ export function InterviewOverview({
               </a>
             ) : null}
             <span className="text-[13px] text-[#8a8178]">
-              {formatModeSummary(interview.responseModes)} ·{" "}
-              {interview.questions.length} questions · ~{estimatedMinutes} min
+              {t("interviewDetail.headerMeta", {
+                count: interview.questions.length,
+                minutes: estimatedMinutes,
+                mode: formatModeSummary(interview.responseModes, t),
+              })}
             </span>
           </div>
 
@@ -153,7 +179,7 @@ export function InterviewOverview({
             href={editHref}
           >
             <EditPencil aria-hidden={true} className="h-4 w-4" />
-            Edit
+            {t("interviewDetail.editButton")}
           </Link>
         </div>
       </header>
@@ -171,26 +197,29 @@ export function InterviewOverview({
         roleTitle={interview.roleTitle}
         source={source}
         stats={stats}
-        summaryLine={buildSummaryLine(sessionStats)}
+        summaryLine={buildSummaryLine(sessionStats, t)}
       />
     </main>
   );
 }
 
-function buildSummaryLine({
-  completed,
-  needsReview,
-  started,
-}: {
-  completed: number;
-  needsReview: number;
-  started: number;
-}) {
+function buildSummaryLine(
+  {
+    completed,
+    needsReview,
+    started,
+  }: {
+    completed: number;
+    needsReview: number;
+    started: number;
+  },
+  t: TFunction,
+) {
   if (started === 0) {
-    return "No candidate has started this role screen yet.";
+    return t("interviewDetail.summaryNoneStarted");
   }
 
-  return `${needsReview} need review · ${started} started · ${completed} completed`;
+  return t("interviewDetail.summaryLine", { completed, needsReview, started });
 }
 
 function getSessionStats(
@@ -228,23 +257,26 @@ function getEstimatedMinutes(interview: {
   return Math.max(1, Math.round(totalSeconds / 60));
 }
 
-function getSourceMeta({
-  location,
-  provider,
-  roleTitle,
-}: {
-  location: string | null;
-  provider: string | null;
-  roleTitle: string;
-}): InterviewOverviewSource | null {
+function getSourceMeta(
+  {
+    location,
+    provider,
+    roleTitle,
+  }: {
+    location: string | null;
+    provider: string | null;
+    roleTitle: string;
+  },
+  t: TFunction,
+): InterviewOverviewSource | null {
   if (provider === "linkedin") {
     return {
       mono: "in",
       monoBg: "#0a66c2",
       monoFg: "#ffffff",
-      name: "LinkedIn",
+      name: t("interviewDetail.sourceLinkedinName"),
       sub: `“${roleTitle}${location ? ` — ${location}` : ""}”`,
-      title: "Imported from LinkedIn",
+      title: t("interviewDetail.sourceLinkedinTitle"),
     };
   }
 
@@ -253,61 +285,66 @@ function getSourceMeta({
       mono: "Id",
       monoBg: "#2557a7",
       monoFg: "#ffffff",
-      name: "Indeed",
+      name: t("interviewDetail.sourceIndeedName"),
       sub: `“${roleTitle}${location ? ` — ${location}` : ""}”`,
-      title: "Imported from Indeed",
+      title: t("interviewDetail.sourceIndeedTitle"),
     };
   }
 
   return null;
 }
 
-function formatStatus(status: string) {
+function formatStatus(status: string, t: TFunction) {
   if (status === "published") {
-    return "Live";
+    return t("interviewDetail.statusLive");
   }
 
   if (status === "paused") {
-    return "Paused";
+    return t("interviewDetail.statusPaused");
   }
 
   return status.replace(/_/g, " ");
 }
 
-function formatModeSummary(modes: string[]) {
+function formatModeSummary(modes: string[], t: TFunction) {
   if (modes.length === 0) {
-    return "Form + Audio";
+    return t("interviewDetail.modeFormAudio");
   }
 
+  const voiceLabel = t("interviewDetail.modeVoice");
   const labels = modes.map((mode) => {
     if (mode === "text") {
-      return "Form";
+      return t("interviewDetail.modeForm");
     }
 
     if (mode === "audio") {
-      return "Voice";
+      return voiceLabel;
     }
 
     return mode[0]!.toUpperCase() + mode.slice(1);
   });
 
-  if (labels.includes("Voice")) {
-    return `Voice first · ${labels.filter((label) => label !== "Voice").join(" + ") || "adaptive follow-ups"}`;
+  if (labels.includes(voiceLabel)) {
+    const rest =
+      labels.filter((label) => label !== voiceLabel).join(" + ") ||
+      t("interviewDetail.modeAdaptiveFollowups");
+
+    return t("interviewDetail.modeVoiceFirst", { rest });
   }
 
   return labels.join(" + ");
 }
 
-function formatQuestionSource(source: string) {
+function formatQuestionSource(source: string, t: TFunction) {
   if (source === "job_description") {
-    return "From role brief";
+    return t("interviewDetail.questionSourceRoleBrief");
   }
 
   if (source === "attachment") {
-    return "Attachment";
+    return t("interviewDetail.questionSourceAttachment");
   }
 
-  return "AI generated";
+  return t("interviewDetail.questionSourceAi");
 }
 
 function statusTone(status: string) {

@@ -22,10 +22,16 @@ const tx = vi.hoisted(() => ({
     findFirst: vi.fn(),
     update: vi.fn(),
   },
+  complianceOverrideEvent: {
+    create: vi.fn(),
+  },
 }));
 
 const prismaMock = vi.hoisted(() => ({
   $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+  complianceOverrideEvent: {
+    count: vi.fn(async () => 0),
+  },
 }));
 
 vi.mock("@prelude/db", () => ({
@@ -42,10 +48,12 @@ vi.mock("../organizations/organization-scope", () => ({
   getCompletedOrganizationScope: vi.fn(async () => ({
     organizationId: "org_123",
     userId: "user_123",
+    role: "owner",
   })),
 }));
 
 import { publishInterviewDraft } from "./interview-drafts";
+import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
 const publishableDraft = () => ({
   criteria: [
@@ -153,6 +161,8 @@ beforeEach(() => {
     publicToken: data.publicToken,
     status: "published",
   }));
+  tx.complianceOverrideEvent.create.mockResolvedValue({});
+  prismaMock.complianceOverrideEvent.count.mockResolvedValue(0);
 });
 
 describe("publishInterviewDraft N6 classifier wiring", () => {
@@ -459,7 +469,7 @@ describe("publishInterviewDraft N9 provenance + telemetry", () => {
     expect(outcome).toMatchObject({ outcome: "disabled" });
   });
 
-  it("fails open and logs skipped_error when the classifier throws", async () => {
+  it("fails CLOSED (blocks publish) and logs skipped_error when the classifier throws", async () => {
     const { events, telemetry } = captureTelemetry();
     const throwing: ProtectedTopicClassifier = {
       classify: vi.fn(async () => {
@@ -471,9 +481,10 @@ describe("publishInterviewDraft N9 provenance + telemetry", () => {
 
     const result = await publishInterviewDraft("draft_1", throwing, telemetry);
 
-    // Fails OPEN: the keyword gate already ran and is authoritative.
-    expect(result.ok).toBe(true);
-    expect(tx.interview.create).toHaveBeenCalledTimes(1);
+    // N6e: fails CLOSED — a genuine classifier failure blocks the publish
+    // (retryable) instead of silently shipping unchecked content. No snapshot.
+    expect(result.ok).toBe(false);
+    expect(tx.interview.create).not.toHaveBeenCalled();
     const outcome = events.find(
       (event) => event.event === "protected_topic_classification",
     );
@@ -498,6 +509,7 @@ describe("publishInterviewDraft N6b reviewable override", () => {
               flagged: true,
               category: category as never,
               reason: `flagged as ${category} proxy`,
+              confidence: 0.77,
             }
           : { flagged: false, category: "none" as const, reason: "" },
       ),
@@ -521,6 +533,8 @@ describe("publishInterviewDraft N6b reviewable override", () => {
       expect(result.review?.category).toBe("age");
       expect(result.review?.categoryLabel).toBeTruthy();
       expect(result.review?.reason).toContain("age");
+      // An owner can override directly — no escalation needed.
+      expect(result.review?.requiresElevatedRole).toBe(false);
     }
     expect(tx.interview.create).not.toHaveBeenCalled();
   });
@@ -559,15 +573,40 @@ describe("publishInterviewDraft N6b reviewable override", () => {
     expect(override?.keywordGatePassed).toBe(true);
     expect(override?.classifierProvider).toBe("openai_responses");
     expect(override?.classifierModel).toBe("gpt-test");
+    expect(override?.overriddenByRole).toBe("owner");
     expect(typeof override?.classifierPromptVersion).toBe("string");
     expect(typeof override?.classifierSchemaVersion).toBe("string");
 
     const flags = (override?.flags ?? []) as Array<Record<string, unknown>>;
     expect(flags).toHaveLength(1);
     expect(flags[0]?.category).toBe("age");
+    expect(flags[0]?.confidence).toBe(0.77);
     expect(String(flags[0]?.segment)).toContain(
       "Describe a production incident",
     );
+  });
+
+  it("blocks an override from a non-elevated role and flags it for escalation", async () => {
+    vi.mocked(getCompletedOrganizationScope).mockResolvedValueOnce({
+      organizationId: "org_123",
+      userId: "user_123",
+      role: "recruiter",
+    } as never);
+
+    const result = await publishInterviewDraft(
+      "draft_1",
+      flaggingClassifier("age", 0),
+      undefined,
+      { justification: validJustification },
+    );
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // A non-owner/admin recruiter cannot override — the affordance tells the
+      // UI to show an escalation message instead of the override panel.
+      expect(result.review?.requiresElevatedRole).toBe(true);
+    }
+    expect(tx.interview.create).not.toHaveBeenCalled();
   });
 
   it("rejects an override whose justification is too thin (server-side friction)", async () => {
@@ -659,5 +698,45 @@ describe("publishInterviewDraft N6b reviewable override", () => {
       | { data: Record<string, unknown> }
       | undefined;
     expect(createCall?.data.complianceOverride ?? null).toBeNull();
+  });
+
+  it("records a queryable ComplianceOverrideEvent for an applied override", async () => {
+    await publishInterviewDraft(
+      "draft_1",
+      flaggingClassifier("age", 0),
+      undefined,
+      { justification: validJustification },
+    );
+
+    expect(tx.complianceOverrideEvent.create).toHaveBeenCalledTimes(1);
+    const eventData = (
+      tx.complianceOverrideEvent.create.mock.calls[0]?.[0] as
+        | { data: Record<string, unknown> }
+        | undefined
+    )?.data;
+    expect(eventData?.organizationId).toBe("org_123");
+    expect(eventData?.overriddenByUserId).toBe("user_123");
+    expect(eventData?.overriddenByRole).toBe("owner");
+    expect(eventData?.category).toBe("age");
+    // The justification is denormalized onto the event so the audit/aggregation
+    // log is self-sufficient even if the Interview row is later removed.
+    expect(eventData?.justification).toBe(validJustification);
+  });
+
+  it("blocks an override once the per-recruiter rolling rate limit is exceeded", async () => {
+    prismaMock.complianceOverrideEvent.count.mockResolvedValueOnce(50);
+
+    const result = await publishInterviewDraft(
+      "draft_1",
+      flaggingClassifier("age", 0),
+      undefined,
+      { justification: validJustification },
+    );
+
+    expect(result.ok).toBe(false);
+    // Over the cap: the override is denied, nothing is published, and no event
+    // is recorded (the recruiter must escalate to an admin).
+    expect(tx.interview.create).not.toHaveBeenCalled();
+    expect(tx.complianceOverrideEvent.create).not.toHaveBeenCalled();
   });
 });

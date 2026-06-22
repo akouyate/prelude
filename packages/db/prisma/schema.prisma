@@ -139,6 +139,26 @@ model Interview {
   @@index([jobId, status])
 }
 
+// N6b anti-gaming: an append-only, queryable log of every applied LLM
+// protected-topic override. Powers the per-recruiter rolling-window rate limit
+// and is the foundation for an org-level override-frequency report. Standalone
+// (no FK relations) so it stays a pure audit index; rows are never edited.
+model ComplianceOverrideEvent {
+  id                 String   @id @default(cuid())
+  organizationId     String
+  interviewId        String?
+  overriddenByUserId String
+  overriddenByRole   String
+  justification      String
+  category           String
+  classifierProvider String
+  classifierModel    String
+  createdAt          DateTime @default(now())
+
+  @@index([organizationId, overriddenByUserId, createdAt])
+  @@index([organizationId, createdAt])
+}
+
 model CandidateSession {
   id                      String                        @id @default(cuid())
   organizationId          String

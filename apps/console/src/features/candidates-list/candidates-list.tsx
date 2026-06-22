@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { Search, Sort } from "iconoir-react";
+import type { TFunction } from "i18next";
+import { useTranslation } from "react-i18next";
 import { SegmentedTabs, cn } from "@prelude/ui";
 
 import {
@@ -22,6 +24,7 @@ export function CandidatesList({
   candidates: CandidateScreenListItem[];
   organizationName: string;
 }) {
+  const { t } = useTranslation();
   const [filter, setFilter] = React.useState<CandidateFilter>("all");
   const [query, setQuery] = React.useState("");
   const [sort, setSort] = React.useState<CandidateSort>("recent");
@@ -41,15 +44,16 @@ export function CandidatesList({
       <section className="flex flex-wrap items-end justify-between gap-5">
         <div className="min-w-0">
           <p className="text-[13px] font-medium text-ink-500">
-            {organizationName} · Candidate screens
+            {t("candidates.headerEyebrow", { organizationName })}
           </p>
           <h1 className="mt-1.5 text-[clamp(28px,3.4vw,38px)] font-semibold leading-[1.08] tracking-[-0.025em] text-ink-950">
-            Your{" "}
-            <span className="font-serif italic font-normal">candidates</span>
+            {t("candidates.titlePrefix")}{" "}
+            <span className="font-serif italic font-normal">
+              {t("candidates.titleEmphasis")}
+            </span>
           </h1>
           <p className="mt-2.5 max-w-[42rem] text-[15px] leading-[1.55] text-ink-600">
-            Each row is a candidate screen: one candidate answer session,
-            attached to a role and ready for human review.
+            {t("candidates.subtitle")}
           </p>
         </div>
       </section>
@@ -57,36 +61,45 @@ export function CandidatesList({
       <section className="mt-6 grid gap-3 sm:grid-cols-3">
         <SummaryCard
           active={filter === "to_review"}
-          label="To review"
+          label={t("candidates.summaryToReviewLabel")}
           onClick={() => setFilter("to_review")}
-          sub="Needs recruiter decision"
+          sub={t("candidates.summaryToReviewSub")}
           value={String(counts.to_review)}
         />
         <SummaryCard
           active={filter === "to_call"}
-          label="To call"
+          label={t("candidates.summaryToCallLabel")}
           onClick={() => setFilter("to_call")}
-          sub="Ready for follow-up"
+          sub={t("candidates.summaryToCallSub")}
           value={String(counts.to_call)}
         />
         <SummaryCard
           active={filter === "archived"}
-          label="Archived"
+          label={t("candidates.summaryArchivedLabel")}
           onClick={() => setFilter("archived")}
-          sub="No active next step"
+          sub={t("candidates.summaryArchivedSub")}
           value={String(counts.archived)}
         />
       </section>
 
       <section className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <SegmentedTabs
-          ariaLabel="Candidate screen review filter"
+          ariaLabel={t("candidates.filterAria")}
           onValueChange={setFilter}
           options={[
-            { label: `All ${counts.all}`, value: "all" },
-            { label: `To review ${counts.to_review}`, value: "to_review" },
-            { label: `To call ${counts.to_call}`, value: "to_call" },
-            { label: `Archived ${counts.archived}`, value: "archived" },
+            { label: t("candidates.tabAll", { count: counts.all }), value: "all" },
+            {
+              label: t("candidates.tabToReview", { count: counts.to_review }),
+              value: "to_review",
+            },
+            {
+              label: t("candidates.tabToCall", { count: counts.to_call }),
+              value: "to_call",
+            },
+            {
+              label: t("candidates.tabArchived", { count: counts.archived }),
+              value: "archived",
+            },
           ]}
           value={filter}
         />
@@ -94,11 +107,11 @@ export function CandidatesList({
         <div className="flex flex-wrap items-center gap-2">
           <label className="inline-flex h-[38px] items-center gap-2 rounded-full border border-ink-100 bg-white/70 px-3 text-ink-400 focus-within:border-ink-400 focus-within:bg-white">
             <Search aria-hidden={true} className="h-4 w-4 shrink-0" />
-            <span className="sr-only">Search candidates</span>
+            <span className="sr-only">{t("candidates.searchAria")}</span>
             <input
               className="w-40 bg-transparent text-[13px] text-ink-950 outline-none placeholder:text-ink-400"
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search candidates"
+              placeholder={t("candidates.searchPlaceholder")}
               value={query}
             />
           </label>
@@ -108,7 +121,7 @@ export function CandidatesList({
             type="button"
           >
             <Sort aria-hidden={true} className="h-4 w-4" />
-            {formatSort(sort)}
+            {formatSort(sort, t)}
           </button>
         </div>
       </section>
@@ -198,14 +211,14 @@ function nextSort(sort: CandidateSort): CandidateSort {
   return "recent";
 }
 
-function formatSort(sort: CandidateSort) {
+function formatSort(sort: CandidateSort, t: TFunction) {
   if (sort === "review") {
-    return "Review status";
+    return t("candidates.sortReviewStatus");
   }
 
   if (sort === "name") {
-    return "A-Z";
+    return t("candidates.sortAlpha");
   }
 
-  return "Recent";
+  return t("candidates.sortRecent");
 }

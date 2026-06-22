@@ -165,6 +165,41 @@ describe("openai protected topic classifier", () => {
     const requestBody = JSON.parse(calls[0]?.body ?? "{}");
     expect(requestBody).toMatchObject({ model: "gpt-test", store: false });
     expect(requestBody.text.format.strict).toBe(true);
+    // The gate runs at temperature 0 so a persisted audit verdict is reproducible.
+    expect(requestBody.temperature).toBe(0);
+  });
+
+  it("captures the model's confidence on a flagged verdict", async () => {
+    const classifier = createOpenAIProtectedTopicClassifier({
+      apiKey: "sk-test",
+      model: "gpt-test",
+      timeoutMs: 1000,
+      fetcher: async () => ({
+        json: async () => ({
+          output_text: JSON.stringify({
+            results: [
+              {
+                index: 0,
+                flagged: true,
+                category: "age",
+                reason: "age proxy",
+                confidence: 0.82,
+              },
+            ],
+          }),
+        }),
+        ok: true,
+        status: 200,
+        text: async () => "",
+      }),
+    });
+
+    const [result] = await classifier.classify([
+      "Which decade did you finish school in?",
+    ]);
+
+    expect(result?.flagged).toBe(true);
+    expect(result?.confidence).toBe(0.82);
   });
 
   it("coerces a flagged verdict with category 'none' to the neutral fallback", async () => {
@@ -219,7 +254,7 @@ describe("openai protected topic classifier", () => {
     expect(result?.reason.length).toBe(200);
   });
 
-  it("fails open when the results length does not match the input length", async () => {
+  it("throws (fail-closed) when the results length does not match the input length", async () => {
     const classifier = createOpenAIProtectedTopicClassifier({
       apiKey: "sk-test",
       model: "gpt-test",
@@ -236,15 +271,10 @@ describe("openai protected topic classifier", () => {
       }),
     });
 
-    const results = await classifier.classify(["one", "two"]);
-
-    expect(results).toEqual([
-      { flagged: false, category: "none", reason: "" },
-      { flagged: false, category: "none", reason: "" },
-    ]);
+    await expect(classifier.classify(["one", "two"])).rejects.toThrow();
   });
 
-  it("fails open on an HTTP error", async () => {
+  it("throws (fail-closed) on an HTTP error", async () => {
     const classifier = createOpenAIProtectedTopicClassifier({
       apiKey: "sk-test",
       model: "gpt-test",
@@ -257,12 +287,10 @@ describe("openai protected topic classifier", () => {
       }),
     });
 
-    const results = await classifier.classify(["What is your age?"]);
-
-    expect(results).toEqual([{ flagged: false, category: "none", reason: "" }]);
+    await expect(classifier.classify(["What is your age?"])).rejects.toThrow();
   });
 
-  it("fails open on malformed (non-JSON) output", async () => {
+  it("throws (fail-closed) on malformed (non-JSON) output", async () => {
     const classifier = createOpenAIProtectedTopicClassifier({
       apiKey: "sk-test",
       model: "gpt-test",
@@ -275,12 +303,10 @@ describe("openai protected topic classifier", () => {
       }),
     });
 
-    const results = await classifier.classify(["What is your age?"]);
-
-    expect(results).toEqual([{ flagged: false, category: "none", reason: "" }]);
+    await expect(classifier.classify(["What is your age?"])).rejects.toThrow();
   });
 
-  it("fails open on an aborted / timed-out request", async () => {
+  it("throws (fail-closed) on an aborted / timed-out request", async () => {
     const classifier = createOpenAIProtectedTopicClassifier({
       apiKey: "sk-test",
       model: "gpt-test",
@@ -293,9 +319,7 @@ describe("openai protected topic classifier", () => {
         }),
     });
 
-    const results = await classifier.classify(["What is your age?"]);
-
-    expect(results).toEqual([{ flagged: false, category: "none", reason: "" }]);
+    await expect(classifier.classify(["What is your age?"])).rejects.toThrow();
   });
 
   it("exposes a prompt version and default model", () => {

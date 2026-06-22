@@ -6,6 +6,7 @@ import {
   SignUpButton,
   UserButton,
 } from "@clerk/nextjs";
+import { useTranslation } from "react-i18next";
 import { Button } from "@prelude/ui";
 
 type ConsoleAuthControlsProps = {
@@ -13,6 +14,8 @@ type ConsoleAuthControlsProps = {
 };
 
 export function ConsoleAuthControls({ enabled }: ConsoleAuthControlsProps) {
+  const { t } = useTranslation();
+
   if (!enabled) {
     return null;
   }
@@ -22,11 +25,11 @@ export function ConsoleAuthControls({ enabled }: ConsoleAuthControlsProps) {
       <Show when="signed-out">
         <SignInButton mode="modal">
           <Button className="h-8 px-3" variant="secondary">
-            Sign in
+            {t("auth.signIn")}
           </Button>
         </SignInButton>
         <SignUpButton mode="modal">
-          <Button className="h-8 px-3">Sign up</Button>
+          <Button className="h-8 px-3">{t("auth.signUp")}</Button>
         </SignUpButton>
       </Show>
       <Show when="signed-in">

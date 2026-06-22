@@ -1,18 +1,27 @@
+import type { TFunction } from "i18next";
+
 import type {
   CandidateReviewStatus,
   CandidateScreenListItem,
 } from "./candidate-screen-types";
 
-export function formatCandidateReviewStatus(status: CandidateReviewStatus) {
+// These formatters are shared between a translated client table and a
+// server-rendered candidate page. The optional `t` keeps callers that pass a
+// translation function fully localized, while callers without one (the server
+// page that has not been migrated) keep the original English copy.
+export function formatCandidateReviewStatus(
+  status: CandidateReviewStatus,
+  t?: TFunction,
+) {
   if (status === "to_call") {
-    return "To call";
+    return t ? t("candidateScreens.reviewToCall") : "To call";
   }
 
   if (status === "to_review") {
-    return "To review";
+    return t ? t("candidateScreens.reviewToReview") : "To review";
   }
 
-  return "Archived";
+  return t ? t("candidateScreens.reviewArchived") : "Archived";
 }
 
 export function candidateReviewStatusTone(status: CandidateReviewStatus) {
@@ -39,36 +48,47 @@ export function candidateReviewRank(status: CandidateReviewStatus) {
   return 2;
 }
 
-export function formatQuestionCompletionLabel(value: number | null) {
+export function formatQuestionCompletionLabel(
+  value: number | null,
+  t?: TFunction,
+) {
   if (value === null) {
-    return "No script";
+    return t ? t("candidateScreens.completionNoScript") : "No script";
   }
 
   if (value >= 100) {
-    return "All answered";
+    return t ? t("candidateScreens.completionAllAnswered") : "All answered";
   }
 
   if (value > 0) {
-    return "Partial";
+    return t ? t("candidateScreens.completionPartial") : "Partial";
   }
 
-  return "Not answered";
+  return t ? t("candidateScreens.completionNotAnswered") : "Not answered";
 }
 
-export function formatClarificationCount(value: number | null) {
+export function formatClarificationCount(value: number | null, t?: TFunction) {
   if (value === null) {
-    return "Needs analysis";
+    return t ? t("candidateScreens.clarificationNeedsAnalysis") : "Needs analysis";
+  }
+
+  if (t) {
+    return t("candidateScreens.clarificationCount", { count: value });
   }
 
   return `${value} clarification${value > 1 ? "s" : ""}`;
 }
 
-export function formatCandidateScreenDate(value: string | null) {
+export function formatCandidateScreenDate(
+  value: string | null,
+  locale?: string,
+  noDateLabel?: string,
+) {
   if (!value) {
-    return "No date";
+    return noDateLabel ?? "No date";
   }
 
-  return new Intl.DateTimeFormat("en", {
+  return new Intl.DateTimeFormat(locale ?? "en", {
     day: "2-digit",
     month: "short",
   }).format(new Date(value));

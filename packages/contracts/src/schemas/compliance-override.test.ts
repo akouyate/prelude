@@ -68,6 +68,7 @@ describe("complianceOverrideRecordSchema", () => {
     justification:
       "Availability for weekend shifts is a bona-fide scheduling requirement.",
     overriddenByUserId: "user_1",
+    overriddenByRole: "owner",
     organizationId: "org_1",
     overriddenAt: "2026-06-22T10:00:00.000Z",
     classifierProvider: "openai_responses",
@@ -80,6 +81,7 @@ describe("complianceOverrideRecordSchema", () => {
         category: "family_or_pregnancy",
         reason: "asks about weekend availability",
         segment: "Are you available to work weekends?",
+        confidence: 0.83,
       },
     ],
   };
@@ -119,5 +121,32 @@ describe("complianceOverrideRecordSchema", () => {
     if (result.success) {
       expect(result.data.flags[0]?.segment).toContain("weekends");
     }
+  });
+
+  it("requires the recruiter role at the time of the override", () => {
+    const withoutRole: Record<string, unknown> = { ...base };
+    delete withoutRole.overriddenByRole;
+
+    expect(complianceOverrideRecordSchema.safeParse(withoutRole).success).toBe(
+      false,
+    );
+  });
+
+  it("preserves an optional per-flag classifier confidence", () => {
+    const result = complianceOverrideRecordSchema.safeParse(base);
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.flags[0]?.confidence).toBe(0.83);
+    }
+  });
+
+  it("accepts a flag without a confidence (deterministic-style verdict)", () => {
+    const result = complianceOverrideRecordSchema.safeParse({
+      ...base,
+      flags: [{ category: "age", reason: "x", segment: "y" }],
+    });
+
+    expect(result.success).toBe(true);
   });
 });
