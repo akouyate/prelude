@@ -43,6 +43,10 @@ export type SaveInterviewDraftInput = {
   jobId?: string;
   roleTitle: string;
   roleBrief: string;
+  // N14: where the job is. A ROLE attribute surfaced/searched in RolesList, not
+  // a candidate-screening field. Optional/nullable so manual briefs without a
+  // location keep saving.
+  location?: string | null;
   seniority: InterviewSeniority;
   focus: InterviewFocus[];
   responseModes: InterviewResponseMode[];
@@ -122,6 +126,7 @@ export async function saveInterviewDraft(
       ? await tx.job.update({
           data: {
             description: normalized.data.roleBrief,
+            location: normalized.data.location,
             title: normalized.data.roleTitle,
           },
           where: { id: job.id },
@@ -129,7 +134,7 @@ export async function saveInterviewDraft(
       : await tx.job.create({
           data: {
             description: normalized.data.roleBrief,
-            location: null,
+            location: normalized.data.location,
             organizationId: scope.organizationId,
             sourceExternalId: `manual:${slugify(normalized.data.roleTitle)}`,
             sourceProvider: "manual",
@@ -447,6 +452,9 @@ function normalizeDraftInput(input: SaveInterviewDraftInput):
     } {
   const roleTitle = input.roleTitle.trim();
   const roleBrief = input.roleBrief.trim();
+  // N14: optional role location. Empty/whitespace collapses to null so the Job
+  // column stays clean and RolesList search doesn't match on blank strings.
+  const location = input.location?.trim() || null;
   const seniority = allowedSeniorities.has(input.seniority)
     ? input.seniority
     : "mid";
@@ -538,6 +546,7 @@ function normalizeDraftInput(input: SaveInterviewDraftInput):
       generatorProvider: input.generatorProvider?.trim() || undefined,
       guardrails,
       jobId: input.jobId,
+      location,
       questions: plan.data.questions as InterviewQuestionDraft[],
       rationale,
       responseModes,

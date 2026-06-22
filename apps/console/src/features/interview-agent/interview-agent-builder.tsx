@@ -1,6 +1,10 @@
 "use client";
 
 import {
+  candidateConsentCopy,
+  candidateConsentCopyVersion,
+  candidateDisclosureCopy,
+  candidateDisclosureCopyVersion,
   textViolatesPolicy,
   type InterviewAgentDraft,
   type InterviewFocus,
@@ -116,11 +120,24 @@ const builderResponseModes = new Set<ResponseMode>(
   responseModes.map((mode) => mode.value),
 );
 
+// N16: the work the generate action actually performs in one async round trip.
+// These are labels for what is happening, not a timed progress bar — there is a
+// single real async boundary, so all steps are shown in-progress until the
+// action resolves, then all complete together. GENERATION_STEP_COUNT is the
+// "everything done" sentinel for generationPhase.
+const generationSteps = [
+  "Reading the role and job description",
+  "Mapping your selected hiring signals",
+  "Writing questions that ask for real examples",
+] as const;
+const GENERATION_STEP_COUNT = generationSteps.length;
+
 type InterviewAgentBuilderProps = {
   companyName?: string;
   initialDraft?: PersistedInterviewDraft;
   initialJobDescription?: string;
   initialJobId?: string;
+  initialJobLocation?: string;
   initialJobTitle?: string;
 };
 
@@ -129,6 +146,7 @@ type PersistedInterviewDraft = {
   jobId: string;
   roleTitle: string;
   roleBrief: string;
+  location: string | null;
   seniority: InterviewSeniority;
   focus: InterviewFocus[];
   responseModes: ResponseMode[];
@@ -159,6 +177,7 @@ export function InterviewAgentBuilder({
   initialDraft,
   initialJobDescription = "",
   initialJobId,
+  initialJobLocation = "",
   initialJobTitle = ""
 }: InterviewAgentBuilderProps) {
   const router = useRouter();
@@ -175,6 +194,11 @@ export function InterviewAgentBuilder({
   const [jobDescription, setJobDescription] = React.useState(
     initialDraft?.roleBrief ?? initialJobDescription
   );
+  // N14: role location (where the job is). Optional; threads into Job.location
+  // on save. Not a candidate-screening field.
+  const [location, setLocation] = React.useState(
+    initialDraft?.location ?? initialJobLocation
+  );
   const [seniority, setSeniority] = React.useState<InterviewSeniority>(
     initialDraft?.seniority ?? "mid"
   );
@@ -190,6 +214,10 @@ export function InterviewAgentBuilder({
   const [modes, setModes] = React.useState<ResponseMode[]>(
     normalizeBuilderResponseModes(initialDraft?.responseModes)
   );
+  // N14: `sourceAttachmentName` is intentionally read-only here. There is no
+  // upload UI or setter: a real upload -> blob storage -> parse pipeline needs
+  // blob storage and is deferred to a separate future flow. See
+  // docs/sources/role-draft-generation.md ("Attachment Ingestion (Deferred)").
   const [attachmentName] = React.useState<string | undefined>(
     initialDraft?.sourceAttachmentName
   );
@@ -213,9 +241,6 @@ export function InterviewAgentBuilder({
     React.useState(false);
   const [publishedInterview, setPublishedInterview] =
     React.useState<Extract<PublishInterviewDraftResult, { ok: true }>>();
-  const generationTimers = React.useRef<Array<ReturnType<typeof setTimeout>>>(
-    [],
-  );
 
   const currentStepIndex = steps.findIndex((step) => step.id === currentStep);
   const currentStepConfig = steps[currentStepIndex] ?? steps[0]!;
@@ -269,42 +294,38 @@ export function InterviewAgentBuilder({
     seniority
   ]);
 
-  React.useEffect(() => {
-    return () => {
-      generationTimers.current.forEach((timer) => clearTimeout(timer));
-      generationTimers.current = [];
-    };
-  }, []);
-
   const goToStep = React.useCallback((step: StepId) => {
     setCurrentStep(step);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
 
+  // N16: any edit after a save/publish invalidates the persisted snapshot, so
+  // the sticky "Draft saved" / "Role screen published" indicator must clear.
+  // Centralized so every edit path (questions, criteria, brief fields, and the
+  // calibrate toggles) drops the stale "saved" state consistently.
+  const markDraftDirty = React.useCallback(() => {
+    setSaveMessage(undefined);
+    setPublishedInterview(undefined);
+  }, []);
+
   const startDraftGeneration = React.useCallback(() => {
-    generationTimers.current.forEach((timer) => clearTimeout(timer));
-    generationTimers.current = [];
     goToStep("questions");
     setIsGeneratingDraft(true);
+    // N16: the progress steps are indeterminate while the generate action is in
+    // flight (isGeneratingDraft). We do NOT advance phases on decorative timers
+    // decoupled from real latency — that implied progress the provider hadn't
+    // made. `generationPhase` only moves to "complete" once the async action
+    // actually resolves below, so the UI never fakes completion early.
     setGenerationPhase(0);
     setSaveError(undefined);
     setUsedDeterministicFallback(false);
     setDraft(undefined);
 
-    generationTimers.current = [
-      setTimeout(() => setGenerationPhase(1), 520),
-      setTimeout(() => setGenerationPhase(2), 1040),
-    ];
-
     void (async () => {
-      const generated = await createDraft();
-      setGenerationPhase(3);
+      await createDraft();
+      // Mark every step done only after the provider has actually returned.
+      setGenerationPhase(GENERATION_STEP_COUNT);
       setIsGeneratingDraft(false);
-
-      if (!generated) {
-        generationTimers.current.forEach((timer) => clearTimeout(timer));
-        generationTimers.current = [];
-      }
     })();
   }, [createDraft, goToStep]);
 
@@ -333,6 +354,7 @@ export function InterviewAgentBuilder({
           generatorProvider,
           guardrails: draftToSave.guardrails,
           jobId,
+          location,
           questions: draftToSave.questions,
           rationale: draftToSave.rationale,
           responseModes: modes,
@@ -373,6 +395,7 @@ export function InterviewAgentBuilder({
       jobDescription,
       jobId,
       jobTitle,
+      location,
       modes,
       persistedDraftId,
       router,
@@ -420,25 +443,41 @@ export function InterviewAgentBuilder({
     router.refresh();
   }, [router, saveCurrentDraft]);
 
-  const toggleFocus = React.useCallback((value: InterviewFocus) => {
-    setFocus((current) => {
-      if (current.includes(value)) {
-        return current.filter((item) => item !== value);
-      }
+  const toggleFocus = React.useCallback(
+    (value: InterviewFocus) => {
+      setFocus((current) => {
+        if (current.includes(value)) {
+          return current.filter((item) => item !== value);
+        }
 
-      return [...current, value];
-    });
-  }, []);
+        return [...current, value];
+      });
+      markDraftDirty();
+    },
+    [markDraftDirty]
+  );
 
-  const toggleMode = React.useCallback((value: ResponseMode) => {
-    setModes((current) => {
-      if (current.includes(value)) {
-        return current.filter((item) => item !== value);
-      }
+  const toggleMode = React.useCallback(
+    (value: ResponseMode) => {
+      setModes((current) => {
+        if (current.includes(value)) {
+          return current.filter((item) => item !== value);
+        }
 
-      return [...current, value];
-    });
-  }, []);
+        return [...current, value];
+      });
+      markDraftDirty();
+    },
+    [markDraftDirty]
+  );
+
+  const changeSeniority = React.useCallback(
+    (value: InterviewSeniority) => {
+      setSeniority(value);
+      markDraftDirty();
+    },
+    [markDraftDirty]
+  );
 
   const refineQuestion = React.useCallback(
     async (questionId: string, action: QuestionAction) => {
@@ -470,8 +509,7 @@ export function InterviewAgentBuilder({
 
         setDraft(result.draft);
         setSelectedQuestionId(result.questionId);
-        setPublishedInterview(undefined);
-        setSaveMessage(undefined);
+        markDraftDirty();
       } catch {
         setSaveError("Prelude could not refine that question. Please retry.");
       } finally {
@@ -485,27 +523,30 @@ export function InterviewAgentBuilder({
       focus,
       jobDescription,
       jobTitle,
+      markDraftDirty,
       modes,
       seniority
     ]
   );
 
-  const updateQuestion = React.useCallback((questionId: string, prompt: string) => {
-    setDraft((current) => {
-      if (!current) {
-        return current;
-      }
+  const updateQuestion = React.useCallback(
+    (questionId: string, prompt: string) => {
+      setDraft((current) => {
+        if (!current) {
+          return current;
+        }
 
-      return {
-        ...current,
-        questions: current.questions.map((question) =>
-          question.id === questionId ? { ...question, prompt } : question
-        )
-      };
-    });
-    setPublishedInterview(undefined);
-    setSaveMessage(undefined);
-  }, []);
+        return {
+          ...current,
+          questions: current.questions.map((question) =>
+            question.id === questionId ? { ...question, prompt } : question
+          )
+        };
+      });
+      markDraftDirty();
+    },
+    [markDraftDirty]
+  );
 
   const addQuestion = React.useCallback(
     async (topic: string) => {
@@ -536,8 +577,7 @@ export function InterviewAgentBuilder({
 
         setDraft(result.draft);
         setSelectedQuestionId(result.questionId);
-        setPublishedInterview(undefined);
-        setSaveMessage(undefined);
+        markDraftDirty();
         return true;
       } catch {
         setSaveError("Prelude could not add that question. Please retry.");
@@ -553,31 +593,34 @@ export function InterviewAgentBuilder({
       focus,
       jobDescription,
       jobTitle,
+      markDraftDirty,
       modes,
       seniority
     ]
   );
 
-  const removeQuestion = React.useCallback((questionId: string) => {
-    setDraft((current) => {
-      if (!current) {
-        return current;
-      }
+  const removeQuestion = React.useCallback(
+    (questionId: string) => {
+      setDraft((current) => {
+        if (!current) {
+          return current;
+        }
 
-      const questions = current.questions.filter((question) => question.id !== questionId);
-      setSelectedQuestionId((selectedId) =>
-        selectedId === questionId ? questions[0]?.id : selectedId
-      );
+        const questions = current.questions.filter((question) => question.id !== questionId);
+        setSelectedQuestionId((selectedId) =>
+          selectedId === questionId ? questions[0]?.id : selectedId
+        );
 
-      return {
-        ...current,
-        questions,
-        rationale: `Prelude prepared ${questions.length} focused questions for this first-screening role screen.`
-      };
-    });
-    setPublishedInterview(undefined);
-    setSaveMessage(undefined);
-  }, []);
+        return {
+          ...current,
+          questions,
+          rationale: `Prelude prepared ${questions.length} focused questions for this first-screening role screen.`
+        };
+      });
+      markDraftDirty();
+    },
+    [markDraftDirty]
+  );
 
   const updateCriterion = React.useCallback(
     (criterionId: string, field: "label" | "description", value: string) => {
@@ -595,10 +638,9 @@ export function InterviewAgentBuilder({
           )
         };
       });
-      setPublishedInterview(undefined);
-      setSaveMessage(undefined);
+      markDraftDirty();
     },
-    []
+    [markDraftDirty]
   );
 
   const addCriterion = React.useCallback(() => {
@@ -618,9 +660,8 @@ export function InterviewAgentBuilder({
         ]
       };
     });
-    setPublishedInterview(undefined);
-    setSaveMessage(undefined);
-  }, []);
+    markDraftDirty();
+  }, [markDraftDirty]);
 
   const removeCriterion = React.useCallback((criterionId: string) => {
     setDraft((current) => {
@@ -638,9 +679,8 @@ export function InterviewAgentBuilder({
         )
       };
     });
-    setPublishedInterview(undefined);
-    setSaveMessage(undefined);
-  }, []);
+    markDraftDirty();
+  }, [markDraftDirty]);
 
   const next = React.useCallback(() => {
     if (currentStep === "brief") {
@@ -740,13 +780,21 @@ export function InterviewAgentBuilder({
             <BriefStep
               jobDescription={jobDescription}
               jobTitle={jobTitle}
+              location={location}
               onJobDescriptionChange={(value) => {
                 setJobDescription(value);
                 setSaveError(undefined);
+                markDraftDirty();
               }}
               onJobTitleChange={(value) => {
                 setJobTitle(value);
                 setSaveError(undefined);
+                markDraftDirty();
+              }}
+              onLocationChange={(value) => {
+                setLocation(value);
+                setSaveError(undefined);
+                markDraftDirty();
               }}
             />
           ) : null}
@@ -758,7 +806,7 @@ export function InterviewAgentBuilder({
               seniority={seniority}
               toggleFocus={toggleFocus}
               toggleMode={toggleMode}
-              onSeniorityChange={setSeniority}
+              onSeniorityChange={changeSeniority}
             />
           ) : null}
 
@@ -893,12 +941,12 @@ function GeneratingQuestionsStep({
   modes: ResponseMode[];
   seniority: InterviewSeniority;
 }) {
-  const generationSteps = [
-    "Reading the role and job description",
-    "Mapping your selected hiring signals",
-    "Writing questions that ask for real examples",
-  ];
   const skeletonWidths = ["74%", "88%", "64%", "81%"];
+  // N16: honest progress. The generate action is one async round trip, so every
+  // labeled step is genuinely in flight together until the action resolves
+  // (generationPhase reaches GENERATION_STEP_COUNT). We never tick steps to
+  // "done" on a timer ahead of the real provider response.
+  const allComplete = generationPhase >= GENERATION_STEP_COUNT;
 
   return (
     <div className="mt-6 rounded-[18px] border border-[#e7e2d8] bg-white px-[22px] py-5">
@@ -914,9 +962,8 @@ function GeneratingQuestionsStep({
       </div>
 
       <div className="mt-5 flex flex-col gap-3">
-        {generationSteps.map((label, index) => {
-          const done = index < generationPhase;
-          const active = index === generationPhase;
+        {generationSteps.map((label) => {
+          const done = allComplete;
 
           return (
             <div className="flex items-center gap-3" key={label}>
@@ -924,24 +971,16 @@ function GeneratingQuestionsStep({
                 className={`grid h-[22px] w-[22px] shrink-0 place-items-center rounded-full border ${
                   done
                     ? "border-ink-900 bg-ink-900 text-white"
-                    : active
-                      ? "border-[#cdd6b4] bg-white text-olive-700"
-                      : "border-[#e2ddd2] bg-white text-ink-300"
+                    : "border-[#cdd6b4] bg-white text-olive-700"
                 }`}
               >
                 {done ? (
                   <Check aria-hidden={true} className="h-3 w-3" />
-                ) : active ? (
+                ) : (
                   <span className="h-3 w-3 animate-spin rounded-full border-2 border-[#e2ddd2] border-t-olive-700" />
-                ) : null}
+                )}
               </span>
-              <span
-                className={`text-[13.5px] ${
-                  active || done
-                    ? "font-semibold text-ink-950"
-                    : "font-medium text-ink-400"
-                }`}
-              >
+              <span className="text-[13.5px] font-semibold text-ink-950">
                 {label}
               </span>
             </div>
@@ -950,7 +989,7 @@ function GeneratingQuestionsStep({
       </div>
 
       <div className="mt-[22px] flex flex-col gap-3.5 border-t border-[#f0ece1] pt-[18px]">
-        {skeletonWidths.map((width, index) => (
+        {skeletonWidths.map((width) => (
           <div className="flex items-center gap-3" key={width}>
             <span className="h-[38px] w-[38px] shrink-0 rounded-full bg-[#f1ede2]" />
             <span className="h-9 w-9 shrink-0 rounded-[10px] bg-[#f1ede2]" />
@@ -958,7 +997,7 @@ function GeneratingQuestionsStep({
               <span className="h-2.5 w-[30%] rounded-full bg-[#f0ece1]" />
               <span
                 className="h-[13px] rounded-full bg-[#efeadf]"
-                style={{ width: index <= generationPhase + 1 ? width : "46%" }}
+                style={{ width }}
               />
             </span>
           </div>
@@ -983,13 +1022,17 @@ function formatSeniorityLabel(value: InterviewSeniority) {
 function BriefStep({
   jobDescription,
   jobTitle,
+  location,
   onJobDescriptionChange,
-  onJobTitleChange
+  onJobTitleChange,
+  onLocationChange
 }: {
   jobDescription: string;
   jobTitle: string;
+  location: string;
   onJobDescriptionChange: (value: string) => void;
   onJobTitleChange: (value: string) => void;
+  onLocationChange: (value: string) => void;
 }) {
   return (
     <div className="min-w-0">
@@ -1015,6 +1058,18 @@ function BriefStep({
               value={jobTitle}
               onChange={(event) => onJobTitleChange(event.target.value)}
             />
+          </Field>
+
+          <Field label="Location">
+            <input
+              className="mt-2 h-12 w-full min-w-0 rounded-[13px] border border-[#ddd8cc] bg-white px-[15px] text-[15px] font-medium text-ink-950 outline-none transition focus:border-olive-700 focus:ring-2 focus:ring-[#e5e8d6]"
+              placeholder="Paris, France · Remote · Hybrid (optional)"
+              value={location}
+              onChange={(event) => onLocationChange(event.target.value)}
+            />
+            <span className="mt-1 block text-xs font-normal leading-5 text-ink-500">
+              Where the role is based. Shown and searchable on your roles list.
+            </span>
           </Field>
 
           <Field label="Job description">
@@ -1691,6 +1746,8 @@ function ShareStep({
         )}
       </div>
 
+      <CandidateTrustPanel />
+
       {saveError ? (
         <div className="rounded-2xl border border-coral-200 bg-coral-50 p-4 text-sm font-medium text-coral-800">
           {saveError}
@@ -1725,6 +1782,52 @@ function ShareStep({
             Open detail
           </a>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+// N15: read-only transparency panel. Shows the recruiter the exact AI
+// disclosure + consent copy the candidate is shown before they start, sourced
+// verbatim from @prelude/core (candidate-disclosure-v1 / candidate-consent-v1).
+// No new persistence — this is a confirmation surface only.
+function CandidateTrustPanel() {
+  return (
+    <div className="rounded-3xl border border-ink-100 bg-white/72 p-5">
+      <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
+        <ShieldCheck aria-hidden="true" className="h-4 w-4 text-ink-700" />
+        Candidate trust &amp; disclosure
+      </div>
+      <p className="mt-2 text-sm leading-6 text-ink-600">
+        Before publishing, confirm exactly what every candidate is told and
+        agrees to when they start this screen. This copy is shown to the
+        candidate and can&apos;t be edited here.
+      </p>
+
+      <div className="mt-4 space-y-3">
+        <div className="rounded-2xl border border-ink-100 bg-white/80 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.06em] text-ink-400">
+            AI disclosure
+          </p>
+          <p className="mt-2 text-sm leading-6 text-ink-700">
+            {candidateDisclosureCopy}
+          </p>
+          <p className="mt-2 text-[11.5px] font-medium text-ink-400">
+            {candidateDisclosureCopyVersion}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-ink-100 bg-white/80 p-4">
+          <p className="text-xs font-semibold uppercase tracking-[0.06em] text-ink-400">
+            Candidate consent
+          </p>
+          <p className="mt-2 text-sm leading-6 text-ink-700">
+            {candidateConsentCopy}
+          </p>
+          <p className="mt-2 text-[11.5px] font-medium text-ink-400">
+            {candidateConsentCopyVersion}
+          </p>
+        </div>
       </div>
     </div>
   );

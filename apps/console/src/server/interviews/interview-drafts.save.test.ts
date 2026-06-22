@@ -150,6 +150,66 @@ describe("saveInterviewDraft N9 provenance", () => {
   });
 });
 
+// N14 — role location is a Job attribute (where the job is), threaded from the
+// brief form into Job.location on both create and update. Optional/nullable.
+describe("N14 saveInterviewDraft location", () => {
+  it("writes the trimmed location to Job.location when creating a job", async () => {
+    const result = await saveInterviewDraft({
+      ...baseInput(),
+      location: "  Paris, France  ",
+    });
+
+    expect(result.ok).toBe(true);
+    const createCall = tx.job.create.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+
+    expect(createCall?.data.location).toBe("Paris, France");
+  });
+
+  it("updates Job.location when an existing job is re-saved", async () => {
+    tx.job.findFirst.mockResolvedValue({ id: "job_1" });
+
+    await saveInterviewDraft({
+      ...baseInput(),
+      jobId: "job_1",
+      location: "Remote",
+    });
+
+    const updateCall = tx.job.update.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+
+    expect(updateCall?.data.location).toBe("Remote");
+    expect(tx.job.create).not.toHaveBeenCalled();
+  });
+
+  it("collapses a blank or missing location to null", async () => {
+    await saveInterviewDraft({ ...baseInput(), location: "   " });
+
+    const blankCall = tx.job.create.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+    expect(blankCall?.data.location).toBeNull();
+
+    vi.clearAllMocks();
+    tx.job.findFirst.mockResolvedValue(null);
+    tx.job.create.mockResolvedValue({ id: "job_1" });
+    tx.interviewDraft.findFirst.mockResolvedValue(null);
+    tx.interviewDraft.create.mockResolvedValue({
+      id: "draft_1",
+      updatedAt: new Date("2026-01-01T00:00:00Z"),
+    });
+
+    await saveInterviewDraft(baseInput());
+
+    const missingCall = tx.job.create.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+    expect(missingCall?.data.location).toBeNull();
+  });
+});
+
 // N10.C — the deferred N1 SAVE lock. saveInterviewDraft must hard-fail and write
 // nothing when any question or criterion references a disallowed/protected topic.
 describe("N10 saveInterviewDraft compliance gate", () => {

@@ -37,6 +37,7 @@ export default async function NewRoleScreenPage({
         initialDraft={context.initialDraft}
         initialJobDescription={context.initialJob?.description}
         initialJobId={context.initialJob?.id}
+        initialJobLocation={context.initialJob?.location ?? undefined}
         initialJobTitle={context.initialJob?.title}
       />
     </>

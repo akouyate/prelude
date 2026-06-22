@@ -48,6 +48,7 @@ export type InterviewBuilderContext = {
   initialJob?: {
     description: string;
     id: string;
+    location: string | null;
     title: string;
   };
 };
@@ -57,6 +58,7 @@ export type PersistedInterviewBuilderDraft = {
   jobId: string;
   roleTitle: string;
   roleBrief: string;
+  location: string | null;
   seniority: InterviewSeniority;
   focus: InterviewFocus[];
   responseModes: InterviewResponseMode[];
@@ -165,6 +167,7 @@ export async function getInterviewBuilderContext({
           focus: readFocus(draft.focus),
           id: draft.id,
           jobId: draft.jobId,
+          location: draft.job.location,
           responseModes: readResponseModes(draft.responseModes),
           roleBrief: draft.roleBrief,
           roleTitle: draft.roleTitle,
@@ -190,6 +193,7 @@ export async function getInterviewBuilderContext({
       ? {
           description: job.description,
           id: job.id,
+          location: job.location,
           title: job.title,
         }
       : undefined,
