@@ -919,10 +919,11 @@ class LiveInterviewOrchestrationController:
                 EventType.SOFT_REPROMPTED,
                 command=command,
                 utterance_kind="soft_reprompt",
-                prompt="Je n'ai pas assez d'elements. Pouvez-vous preciser en une ou deux phrases ?",
+                prompt=_soft_reprompt_line(self._plan, command.attempt_index),
                 instructions=(
-                    "The candidate answer was incomplete or silent. Ask one brief, warm "
-                    "clarification prompt. Do not move to the next question."
+                    "The candidate answer was incomplete or silent. Say this "
+                    "clarification line exactly as provided, then stop. Do not "
+                    "move to the next question."
                 ),
                 extra_payload={
                     "reprompts_used": reprompts_used,
@@ -971,7 +972,9 @@ class LiveInterviewOrchestrationController:
             completion_reason,
         )
         if next_command.type == OrchestratorCommandType.ASK_QUESTION:
-            await self._execute_question_command(next_command)
+            await self._execute_question_command(
+                next_command, prior_answered=completion_reason == "answered"
+            )
         elif next_command.type == OrchestratorCommandType.CLOSE_SESSION:
             await self._close_session(next_command)
 
@@ -980,6 +983,7 @@ class LiveInterviewOrchestrationController:
         command: OrchestratorCommand,
         *,
         first: bool = False,
+        prior_answered: bool = True,
     ) -> None:
         question = _current_question(self._plan, command)
         await self._speak_question_control(
@@ -987,9 +991,13 @@ class LiveInterviewOrchestrationController:
             command=command,
             utterance_kind="question",
             prompt=question.prompt,
-            spoken_text=_first_question_spoken_prompt(self._plan, question.prompt)
-            if first
-            else _spoken_question_prompt(question.prompt),
+            spoken_text=_question_spoken_text(
+                self._plan,
+                question.prompt,
+                first=first,
+                index=command.question_index or 0,
+                lead_in=prior_answered,
+            ),
             instructions=FIRST_REPLY_INSTRUCTIONS
             if first
             else f"Ask only this planned question: {question.prompt}",
@@ -1448,6 +1456,63 @@ def _first_question_spoken_prompt(plan: InterviewPlan, prompt: str) -> str:
         "Bonjour, ceci est un entretien de présélection structuré. "
         f"{question}"
     )
+
+
+# Warmth lives in delivery, not in the standardized question text. These are
+# closed, hand-authored, valence-invariant sets: they never vary with answer
+# quality, so the agent's manner cannot leak its evaluation. Spoken verbatim.
+TRANSITION_LEADINS: dict[str, tuple[str, ...]] = {
+    "fr": ("D'accord.", "Merci.", "Entendu."),
+    "en": ("Alright.", "Thank you.", "Understood."),
+}
+
+SOFT_REPROMPT_LINES: dict[str, tuple[str, ...]] = {
+    "fr": (
+        "Pas de souci, prenez votre temps. En une phrase, qu'est-ce qui vous vient en premier ?",
+        "Je veux être sûr de bien vous comprendre. Pouvez-vous préciser en une ou deux phrases ?",
+        "Aucun souci. Un exemple concret m'aiderait à mieux saisir.",
+    ),
+    "en": (
+        "No problem, take your time. In one sentence, what comes to mind first?",
+        "I want to make sure I follow you. Could you say a bit more in one or two sentences?",
+        "That's alright. A concrete example would help me understand.",
+    ),
+}
+
+
+def _delivery_language_key(plan: InterviewPlan) -> str:
+    return "en" if plan.language.startswith("en") else "fr"
+
+
+def _transition_leadin(plan: InterviewPlan, index: int) -> str:
+    options = TRANSITION_LEADINS[_delivery_language_key(plan)]
+    return options[index % len(options)]
+
+
+def _soft_reprompt_line(plan: InterviewPlan, attempt_index: int | None) -> str:
+    options = SOFT_REPROMPT_LINES[_delivery_language_key(plan)]
+    return options[(attempt_index or 0) % len(options)]
+
+
+def _question_spoken_text(
+    plan: InterviewPlan,
+    prompt: str,
+    *,
+    first: bool,
+    index: int,
+    lead_in: bool = True,
+) -> str:
+    if first:
+        return _first_question_spoken_prompt(plan, prompt)
+    spoken = _spoken_question_prompt(prompt)
+    # A neutral, rotating acknowledgment before the verbatim question makes moving
+    # between questions feel human instead of abrupt — without editorializing the
+    # standardized question or reacting to the previous answer's quality. It is
+    # suppressed when the prior turn was NOT a real answer (silence/skip), so the
+    # agent never "thanks" a non-answer and its manner never varies with history.
+    if not lead_in:
+        return spoken
+    return f"{_transition_leadin(plan, index)} {spoken}"
 
 
 def _format_interview_style(style: InterviewStyle) -> str:

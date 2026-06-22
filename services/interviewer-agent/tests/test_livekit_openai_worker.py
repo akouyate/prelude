@@ -15,11 +15,16 @@ from app.adapters.livekit_openai_worker import (
     OpenAILiveWorkerConfig,
     PRELUDE_TRANSCRIPT_TOPIC,
     PreludeEventEmitter,
+    SOFT_REPROMPT_LINES,
+    TRANSITION_LEADINS,
     build_live_interviewer_instructions,
     _candidate_turn_from_live_transcript,
-    _spoken_question_prompt,
+    _question_spoken_text,
     _soft_prompt_after_initial_silence,
+    _soft_reprompt_line,
+    _spoken_question_prompt,
     _supports_realtime_reasoning,
+    _transition_leadin,
     _wait_for_candidate_ready,
     _wait_for_playout_with_timeout,
 )
@@ -1015,6 +1020,7 @@ def test_live_interviewer_instructions_strip_prompt_initial_greeting_for_speech(
         "Tell me about yourself."
     )
     assert "1. [motivation] pouvez-vous vous presenter brievement" in instructions
+    assert "1. [motivation] Bonjour, pouvez-vous" not in instructions
 
 
 def test_live_interviewer_instructions_keep_warmth_valence_invariant() -> None:
@@ -1071,7 +1077,81 @@ def test_live_interviewer_instructions_handle_volunteered_sensitive_info() -> No
         in instructions
     )
     assert "acknowledge only neutrally" in instructions
-    assert "1. [motivation] Bonjour, pouvez-vous" not in instructions
+
+
+def test_transition_leadins_rotate_neutral_and_localize() -> None:
+    plan = create_demo_plan()
+    leadins = [_transition_leadin(plan, i) for i in range(6)]
+
+    # Rotates through the closed set (no single robotic token), localized,
+    # and never a verdict on the answer (valence-invariant connective tissue).
+    assert set(leadins) == set(TRANSITION_LEADINS["fr"])
+    for line in leadins:
+        assert line in TRANSITION_LEADINS["fr"]
+        lowered = line.lower()
+        assert all(
+            word not in lowered
+            for word in ("bravo", "parfait", "excellent", "super")
+        )
+
+    plan_en = InterviewPlan(
+        id="p-en",
+        role_title="Support Agent",
+        language="en-US",
+        questions=[InterviewQuestion(id="q1", prompt="Tell me about yourself.")],
+    )
+    assert _transition_leadin(plan_en, 0) in TRANSITION_LEADINS["en"]
+
+
+def test_question_spoken_text_warms_transitions_but_not_the_first() -> None:
+    plan = create_demo_plan()
+
+    first_text = _question_spoken_text(
+        plan, plan.questions[0].prompt, first=True, index=0
+    )
+    # The first line keeps the structured-screen onboarding, with no
+    # transition acknowledgment in front of the greeting.
+    assert "présélection structuré" in first_text
+    assert not first_text.startswith(tuple(TRANSITION_LEADINS["fr"]))
+
+    later = _question_spoken_text(
+        plan, plan.questions[1].prompt, first=False, index=1
+    )
+    # A later question opens with a neutral lead-in, then the verbatim question.
+    assert later.startswith(_transition_leadin(plan, 1))
+    assert _spoken_question_prompt(plan.questions[1].prompt) in later
+
+    # After a non-answer (silence/skip), the lead-in is suppressed: the agent
+    # never thanks a non-answer, and its manner never varies with the prior turn.
+    suppressed = _question_spoken_text(
+        plan, plan.questions[1].prompt, first=False, index=1, lead_in=False
+    )
+    assert suppressed == _spoken_question_prompt(plan.questions[1].prompt)
+    assert not suppressed.startswith(tuple(TRANSITION_LEADINS["fr"]))
+
+
+def test_soft_reprompt_lines_are_warm_rotating_and_localized() -> None:
+    plan = create_demo_plan()
+    lines = [_soft_reprompt_line(plan, i) for i in range(6)]
+
+    assert set(lines) == set(SOFT_REPROMPT_LINES["fr"])
+    joined = " ".join(lines).lower()
+    # Warm + agency-giving (take your time / an example), never a verdict.
+    assert "temps" in joined or "exemple" in joined
+    for line in lines:
+        lowered = line.lower()
+        assert all(
+            word not in lowered
+            for word in ("insuffisant", "mauvais", "faux", "incorrect")
+        )
+
+    plan_en = InterviewPlan(
+        id="p-en",
+        role_title="Support Agent",
+        language="en-GB",
+        questions=[InterviewQuestion(id="q1", prompt="Tell me about yourself.")],
+    )
+    assert _soft_reprompt_line(plan_en, 0) in SOFT_REPROMPT_LINES["en"]
 
 
 def test_realtime_reasoning_is_only_enabled_for_supported_models() -> None:
