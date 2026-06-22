@@ -11,22 +11,23 @@ import {
   Usb,
   User,
 } from "iconoir-react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@prelude/ui";
 
 import type { SettingsSection } from "./settings-types";
 
 const settingsNavItems: Array<{
   icon: ReactNode;
-  label: string;
+  labelKey: string;
   value: SettingsSection;
 }> = [
-  { icon: <User aria-hidden={true} className="h-[17px] w-[17px]" />, label: "Profile", value: "profile" },
-  { icon: <Building aria-hidden={true} className="h-[17px] w-[17px]" />, label: "Workspace", value: "workspace" },
-  { icon: <Community aria-hidden={true} className="h-[17px] w-[17px]" />, label: "Team & roles", value: "team" },
-  { icon: <Microphone aria-hidden={true} className="h-[17px] w-[17px]" />, label: "Interview defaults", value: "interview" },
-  { icon: <Usb aria-hidden={true} className="h-[17px] w-[17px]" />, label: "Integrations", value: "integrations" },
-  { icon: <Bell aria-hidden={true} className="h-[17px] w-[17px]" />, label: "Notifications", value: "notifications" },
-  { icon: <CreditCard aria-hidden={true} className="h-[17px] w-[17px]" />, label: "Billing & usage", value: "billing" },
+  { icon: <User aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.profile", value: "profile" },
+  { icon: <Building aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.workspace", value: "workspace" },
+  { icon: <Community aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.team", value: "team" },
+  { icon: <Microphone aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.interview", value: "interview" },
+  { icon: <Usb aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.integrations", value: "integrations" },
+  { icon: <Bell aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.notifications", value: "notifications" },
+  { icon: <CreditCard aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.billing", value: "billing" },
 ];
 
 export function SettingsSectionNav({
@@ -36,6 +37,8 @@ export function SettingsSectionNav({
   onSectionChange: (section: SettingsSection) => void;
   section: SettingsSection;
 }) {
+  const { t } = useTranslation();
+
   return (
     <nav className="sticky top-6 hidden flex-col gap-px lg:flex">
       {settingsNavItems.map((item) => {
@@ -61,7 +64,7 @@ export function SettingsSectionNav({
             >
               {item.icon}
             </span>
-            <span className="flex-1">{item.label}</span>
+            <span className="flex-1">{t(item.labelKey)}</span>
           </button>
         );
       })}
@@ -73,7 +76,7 @@ export function SettingsSectionNav({
         <span className="grid h-5 w-5 place-items-center">
           <LogOut aria-hidden={true} className="h-[17px] w-[17px]" />
         </span>
-        <span className="flex-1">Sign out</span>
+        <span className="flex-1">{t("settings.nav.signOut")}</span>
       </button>
     </nav>
   );

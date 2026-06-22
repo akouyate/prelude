@@ -2,8 +2,10 @@
 
 import * as React from "react";
 import { CheckCircle, Plus, ThreePointsCircle } from "iconoir-react";
+import { useTranslation } from "react-i18next";
 import { Badge, Button, StatusBadge, cn } from "@prelude/ui";
 
+import { SettingsLanguageSelect } from "./settings-language-select";
 import { SettingsSectionNav } from "./settings-section-nav";
 import type { SettingsSection, WorkspaceSettingsData } from "./settings-types";
 import {
@@ -17,14 +19,14 @@ import {
   SettingsUrlField,
 } from "./settings-primitives";
 
-const sectionLabels: Record<SettingsSection, string> = {
-  profile: "Profile",
-  workspace: "Workspace",
-  team: "Team & roles",
-  interview: "Interview defaults",
-  integrations: "Integrations",
-  notifications: "Notifications",
-  billing: "Billing & usage",
+const sectionLabelKeys: Record<SettingsSection, string> = {
+  profile: "settings.nav.profile",
+  workspace: "settings.nav.workspace",
+  team: "settings.nav.team",
+  interview: "settings.nav.interview",
+  integrations: "settings.nav.integrations",
+  notifications: "settings.nav.notifications",
+  billing: "settings.nav.billing",
 };
 const settingsSectionOrder: SettingsSection[] = [
   "profile",
@@ -37,6 +39,7 @@ const settingsSectionOrder: SettingsSection[] = [
 ];
 
 export function WorkspaceSettings({ data }: { data: WorkspaceSettingsData }) {
+  const { t } = useTranslation();
   const [section, setSection] = React.useState<SettingsSection>("profile");
 
   return (
@@ -46,7 +49,7 @@ export function WorkspaceSettings({ data }: { data: WorkspaceSettingsData }) {
           {data.organization.name}
         </p>
         <h1 className="mt-1.5 text-[clamp(26px,3vw,34px)] font-semibold leading-[1.1] tracking-[-0.025em] text-ink-950">
-          Settings
+          {t("settings.title")}
         </h1>
       </div>
 
@@ -75,6 +78,8 @@ function SettingsMobileNav({
   onSectionChange: (section: SettingsSection) => void;
   section: SettingsSection;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex gap-2 overflow-x-auto pb-1 lg:hidden">
       {settingsSectionOrder.map((value) => (
@@ -89,7 +94,7 @@ function SettingsMobileNav({
           onClick={() => onSectionChange(value)}
           type="button"
         >
-          {sectionLabels[value]}
+          {t(sectionLabelKeys[value])}
         </button>
       ))}
     </div>
@@ -131,12 +136,14 @@ function SettingsSectionContent({
 }
 
 function ProfileSection({ data }: { data: WorkspaceSettingsData }) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex flex-col gap-[18px]">
       <SettingsPanel>
         <SettingsPanelHeading
-          description="How you appear to candidates and teammates."
-          title="Profile"
+          description={t("settings.profile.description")}
+          title={t("settings.profile.title")}
         />
         <div className="mt-5 flex items-center gap-[18px] border-b border-[#f1ede4] pb-5">
           <AvatarToken className="h-[66px] w-[66px] rounded-full text-[23px]">
@@ -145,23 +152,33 @@ function ProfileSection({ data }: { data: WorkspaceSettingsData }) {
           <div>
             <div className="flex flex-wrap gap-2">
               <Button variant="secondary">Change photo</Button>
-              <Button variant="ghost">Remove</Button>
+              <Button variant="ghost">{t("settings.profile.remove")}</Button>
             </div>
             <p className="mt-2 text-xs text-ink-400">
-              JPG or PNG, at least 256x256px.
+              {t("settings.profile.avatarHint")}
             </p>
           </div>
         </div>
 
         <div className="mt-5 grid gap-[18px] sm:grid-cols-2">
-          <SettingsField label="Full name" readOnly value={data.account.name} />
           <SettingsField
-            label="Job title"
+            label={t("settings.profile.fullName")}
+            readOnly
+            value={data.account.name}
+          />
+          <SettingsField
+            label={t("settings.profile.jobTitle")}
             readOnly
             value={formatRoleLabel(data.account.role)}
           />
-          <SettingsField label="Email" readOnly value={data.account.email} />
-          <SettingsSelectLike label="Language" value="English (US)" />
+          <SettingsField
+            label={t("settings.profile.email")}
+            readOnly
+            value={data.account.email}
+          />
+          <SettingsLanguageSelect
+            initialLanguage={data.account.preferredLanguage}
+          />
         </div>
       </SettingsPanel>
       <SettingsActionRow />

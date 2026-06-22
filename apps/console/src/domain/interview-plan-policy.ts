@@ -2,12 +2,23 @@ import type {
   InterviewCriterionDraft,
   InterviewQuestionDraft,
 } from "@prelude/core";
-import {
-  aiGuardrails,
-  complianceMessages,
-  resolveConsoleLocale,
-  textViolatesPolicy,
-} from "@prelude/core";
+import { aiGuardrails, textViolatesPolicy } from "@prelude/core";
+
+// Default (English) message for the disallowed-topic publish/save block. This is
+// byte-identical to the previous catalog/compliance-copy English string so the
+// pure policy tests and existing English behavior stay unchanged. Localized
+// callers pass `options.disallowedTopicMessage` (resolved via i18n) instead.
+const DEFAULT_DISALLOWED_TOPIC_MESSAGE =
+  "Remove protected or disallowed topics from your questions and evaluation criteria.";
+
+export type InterviewPlanPolicyOptions = {
+  /**
+   * Localized message used when the plan references a protected/disallowed
+   * topic. Defaults to the English copy so callers without a user locale (and
+   * the pure tests) keep the existing behavior.
+   */
+  disallowedTopicMessage?: string;
+};
 
 export const interviewPlanPolicy = {
   maxCriteria: 5,
@@ -54,6 +65,7 @@ export function planReferencesDisallowedTopic(input: {
 
 export function getInterviewPlanPublicationIssues(
   input: PublishableInterviewPlanInput,
+  options: InterviewPlanPolicyOptions = {},
 ) {
   const issues: string[] = [];
   const questions = input.questions.filter(
@@ -104,7 +116,7 @@ export function getInterviewPlanPublicationIssues(
 
   if (planReferencesDisallowedTopic(input)) {
     issues.push(
-      complianceMessages(resolveConsoleLocale()).planDisallowedTopicBlock,
+      options.disallowedTopicMessage ?? DEFAULT_DISALLOWED_TOPIC_MESSAGE,
     );
   }
 
@@ -113,8 +125,9 @@ export function getInterviewPlanPublicationIssues(
 
 export function isInterviewPlanPublishable(
   input: PublishableInterviewPlanInput,
+  options: InterviewPlanPolicyOptions = {},
 ) {
-  return getInterviewPlanPublicationIssues(input).length === 0;
+  return getInterviewPlanPublicationIssues(input, options).length === 0;
 }
 
 export function resolveInterviewDraftPublicationMode({

@@ -1,0 +1,60 @@
+{
+  "translation": {
+    "compliance": {
+      "planDisallowedTopicBlock": "Retirez les sujets protégés ou interdits de vos questions et de vos critères d'évaluation.",
+      "classifierDisallowedTopicBlock": "Retirez un sujet protégé ou interdit de votre entretien ({{category}}) : {{reason}}",
+      "questionWarning": "Cette question fait référence à un sujet protégé ou interdit et ne peut pas être publiée. Reformulez-la pour qu'elle reste liée au poste.",
+      "criterionWarning": "Ce critère fait référence à un sujet protégé ou interdit et ne peut pas être publié. Reformulez-le pour qu'il reste lié au poste."
+    },
+    "category": {
+      "age": "Âge",
+      "appearance": "Apparence physique",
+      "accent": "Accent",
+      "emotion": "Émotion",
+      "ethnicity_or_origin": "Origine ethnique ou nationale",
+      "disability_or_health": "Handicap ou état de santé",
+      "family_or_pregnancy": "Situation familiale ou grossesse",
+      "gender_or_sexual_orientation": "Genre ou orientation sexuelle",
+      "religion_or_political_opinion": "Religion ou opinion politique",
+      "biometric_or_face_analysis": "Analyse biométrique ou faciale",
+      "criminal_record": "Casier judiciaire",
+      "credit_or_financial": "Situation financière ou crédit",
+      "genetic_information": "Informations génétiques",
+      "union_or_political_activity": "Activité syndicale ou engagement politique",
+      "automated_decision": "Décision automatisée",
+      "protected_topic": "Sujet protégé",
+      "none": "Sujet protégé"
+    },
+    "settings": {
+      "title": "Paramètres",
+      "nav": {
+        "profile": "Profil",
+        "workspace": "Espace de travail",
+        "team": "Équipe et rôles",
+        "interview": "Réglages d'entretien",
+        "integrations": "Intégrations",
+        "notifications": "Notifications",
+        "billing": "Facturation et usage",
+        "signOut": "Se déconnecter"
+      },
+      "profile": {
+        "title": "Profil",
+        "description": "Comment vous apparaissez aux candidats et à vos collègues.",
+        "fullName": "Nom complet",
+        "jobTitle": "Intitulé du poste",
+        "email": "E-mail",
+        "language": "Langue",
+        "remove": "Retirer",
+        "avatarHint": "JPG ou PNG, au moins 256x256px."
+      },
+      "language": {
+        "english": "English",
+        "french": "Français"
+      },
+      "actions": {
+        "save": "Enregistrer",
+        "cancel": "Annuler"
+      }
+    }
+  }
+}

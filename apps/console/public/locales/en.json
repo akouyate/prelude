@@ -1,0 +1,60 @@
+{
+  "translation": {
+    "compliance": {
+      "planDisallowedTopicBlock": "Remove protected or disallowed topics from your questions and evaluation criteria.",
+      "classifierDisallowedTopicBlock": "Remove a protected or disallowed topic from your interview ({{category}}): {{reason}}",
+      "questionWarning": "This question references a protected or disallowed topic and can't be published. Rephrase it to stay job-related.",
+      "criterionWarning": "This criterion references a protected or disallowed topic and can't be published. Keep it job-related."
+    },
+    "category": {
+      "age": "Age",
+      "appearance": "Appearance",
+      "accent": "Accent",
+      "emotion": "Emotion",
+      "ethnicity_or_origin": "Ethnicity or origin",
+      "disability_or_health": "Disability or health",
+      "family_or_pregnancy": "Family or pregnancy",
+      "gender_or_sexual_orientation": "Gender or sexual orientation",
+      "religion_or_political_opinion": "Religion or political opinion",
+      "biometric_or_face_analysis": "Biometric or face analysis",
+      "criminal_record": "Criminal record",
+      "credit_or_financial": "Credit or financial",
+      "genetic_information": "Genetic information",
+      "union_or_political_activity": "Union or political activity",
+      "automated_decision": "Automated decision",
+      "protected_topic": "Protected topic",
+      "none": "Protected topic"
+    },
+    "settings": {
+      "title": "Settings",
+      "nav": {
+        "profile": "Profile",
+        "workspace": "Workspace",
+        "team": "Team & roles",
+        "interview": "Interview defaults",
+        "integrations": "Integrations",
+        "notifications": "Notifications",
+        "billing": "Billing & usage",
+        "signOut": "Sign out"
+      },
+      "profile": {
+        "title": "Profile",
+        "description": "How you appear to candidates and teammates.",
+        "fullName": "Full name",
+        "jobTitle": "Job title",
+        "email": "Email",
+        "language": "Language",
+        "remove": "Remove",
+        "avatarHint": "JPG or PNG, at least 256x256px."
+      },
+      "language": {
+        "english": "English",
+        "french": "Français"
+      },
+      "actions": {
+        "save": "Save changes",
+        "cancel": "Cancel"
+      }
+    }
+  }
+}

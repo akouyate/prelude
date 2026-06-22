@@ -33,6 +33,7 @@ model User {
   clerkUserId                         String                        @unique
   email                               String                        @unique
   name                                String?
+  preferredLanguage                   String                        @default("en")
   createdAt                           DateTime                      @default(now())
   candidateReviewEvents               CandidateSessionReviewEvent[] @relation("CandidateReviewEventAuthor")
   candidateSessionReviewNoteUpdates   CandidateSession[]            @relation("CandidateSessionReviewNoteAuthor")

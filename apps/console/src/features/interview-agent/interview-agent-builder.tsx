@@ -5,8 +5,6 @@ import {
   candidateConsentCopyVersion,
   candidateDisclosureCopy,
   candidateDisclosureCopyVersion,
-  complianceMessages,
-  resolveConsoleLocale,
   textViolatesPolicy,
   type InterviewAgentDraft,
   type InterviewFocus,
@@ -37,6 +35,7 @@ import {
 } from "iconoir-react";
 import { useRouter } from "next/navigation";
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   getInterviewPlanPublicationIssues,
@@ -72,11 +71,6 @@ type ResponseMode = InterviewResponseMode;
 // provider the generate action reports when the AI request fell back to
 // Prelude's built-in deterministic templates.
 const DETERMINISTIC_GENERATOR_PROVIDER = "deterministic";
-
-// N6c: recruiter-facing compliance copy. The builder is a client component, so
-// the locale is resolved from NEXT_PUBLIC_CONSOLE_LOCALE (resolveConsoleLocale
-// reads it). Resolve once at module load — locale is fixed per build.
-const complianceCopy = complianceMessages(resolveConsoleLocale());
 
 const steps: Array<{ id: StepId; label: string; title: string }> = [
   { id: "brief", label: "Brief", title: "Start with the role" },
@@ -1301,6 +1295,7 @@ function QuestionsStep({
   onSelectQuestion: (questionId: string) => void;
   onUpdateQuestion: (questionId: string, prompt: string) => void;
 }) {
+  const { t } = useTranslation();
   const [editingQuestionId, setEditingQuestionId] = React.useState<string>();
   const [playingQuestionId, setPlayingQuestionId] = React.useState<string>();
   const [isAddingQuestion, setIsAddingQuestion] = React.useState(false);
@@ -1411,7 +1406,7 @@ function QuestionsStep({
                         `${question.prompt} ${question.expectedSignal}`
                       ) ? (
                         <p className="rounded-2xl border border-coral-200 bg-coral-50 px-3 py-2 text-sm font-medium text-coral-800">
-                          {complianceCopy.questionDisallowedTopicWarning}
+                          {t("compliance.questionWarning")}
                         </p>
                       ) : null}
                       <div className="flex flex-wrap gap-2">
@@ -1545,6 +1540,7 @@ function EvaluationStep({
     value: string
   ) => void;
 }) {
+  const { t } = useTranslation();
   const canAddCriterion =
     draft.criteria.length < interviewPlanPolicy.maxCriteria;
   const canRemoveCriterion =
@@ -1598,7 +1594,7 @@ function EvaluationStep({
                 />
                 {flagged ? (
                   <p className="mt-2 text-sm font-medium text-coral-800">
-                    {complianceCopy.criterionDisallowedTopicWarning}
+                    {t("compliance.criterionWarning")}
                   </p>
                 ) : null}
                 <div className="mt-2 flex justify-end">
@@ -1687,17 +1683,21 @@ function ShareStep({
   onPublish: () => void;
   onSave: () => void;
 }) {
+  const { t } = useTranslation();
   const candidateLink = publishedInterview
     ? `prelude.ai${publishedInterview.candidatePath}`
     : "Publish to create the candidate link";
-  const publicationIssues = getInterviewPlanPublicationIssues({
-    criteria: draft.criteria,
-    guardrails: draft.guardrails,
-    questions: draft.questions,
-    responseModes: modes,
-    roleBrief,
-    roleTitle,
-  });
+  const publicationIssues = getInterviewPlanPublicationIssues(
+    {
+      criteria: draft.criteria,
+      guardrails: draft.guardrails,
+      questions: draft.questions,
+      responseModes: modes,
+      roleBrief,
+      roleTitle,
+    },
+    { disallowedTopicMessage: t("compliance.planDisallowedTopicBlock") },
+  );
   const canPublish = publicationIssues.length === 0;
 
   return (

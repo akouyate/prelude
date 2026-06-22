@@ -12,6 +12,7 @@ export type WorkspaceSettingsData = {
     email: string;
     name: string;
     role: string;
+    preferredLanguage: "en" | "fr";
   };
   connectors: Array<{
     provider: string;

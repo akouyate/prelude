@@ -1,5 +1,8 @@
+"use client";
+
 import type { ReactNode } from "react";
 import { NavArrowDown } from "iconoir-react";
+import { useTranslation } from "react-i18next";
 import { Button, Input, Switch, cn } from "@prelude/ui";
 
 export function SettingsPanel({
@@ -107,10 +110,12 @@ export function SettingsSelectLike({
 }
 
 export function SettingsActionRow() {
+  const { t } = useTranslation();
+
   return (
     <div className="flex justify-end gap-2.5">
-      <Button variant="secondary">Cancel</Button>
-      <Button>Save changes</Button>
+      <Button variant="secondary">{t("settings.actions.cancel")}</Button>
+      <Button>{t("settings.actions.save")}</Button>
     </div>
   );
 }

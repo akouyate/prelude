@@ -4,9 +4,6 @@ import { randomBytes } from "node:crypto";
 
 import { prisma, type Prisma } from "@prelude/db";
 import {
-  complianceMessages,
-  protectedTopicCategoryLabel,
-  resolveConsoleLocale,
   type InterviewAgentDraft,
   type InterviewCriterionDraft,
   type InterviewFocus,
@@ -27,6 +24,8 @@ import {
   planReferencesDisallowedTopic,
   resolveInterviewDraftPublicationMode,
 } from "../../domain/interview-plan-policy";
+import { getServerT } from "../../libs/i18n-server";
+import { getAuthenticatedUserLocale } from "../users/user-locale";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import {
   logInterviewGenerationEvent,
@@ -107,7 +106,11 @@ const allowedModes = new Set<InterviewResponseMode>(["audio", "text"]);
 export async function saveInterviewDraft(
   input: SaveInterviewDraftInput,
 ): Promise<SaveInterviewDraftResult> {
-  const normalized = normalizeDraftInput(input);
+  // Localized recruiter-facing reject copy follows the user's UI language.
+  const t = getServerT(await getAuthenticatedUserLocale());
+  const normalized = normalizeDraftInput(input, {
+    disallowedTopicMessage: t("compliance.planDisallowedTopicBlock"),
+  });
 
   if (!normalized.ok) {
     return normalized;
@@ -200,6 +203,9 @@ export async function publishInterviewDraft(
   }
 
   const scope = await getCompletedOrganizationScope();
+  // Recruiter-facing compliance copy follows the authenticated user's UI
+  // language (User.preferredLanguage). Defaults to English.
+  const t = getServerT(await getAuthenticatedUserLocale());
 
   // Phase 1: read the draft and run the authoritative keyword gate.
   const validation = await prisma.$transaction(async (tx) => {
@@ -245,14 +251,17 @@ export async function publishInterviewDraft(
     const questions = stored.questions as InterviewQuestionDraft[];
     const responseModes = stored.responseModes;
 
-    const publicationIssues = getInterviewPlanPublicationIssues({
-      criteria,
-      guardrails,
-      questions,
-      responseModes,
-      roleBrief: draft.roleBrief,
-      roleTitle: draft.roleTitle,
-    });
+    const publicationIssues = getInterviewPlanPublicationIssues(
+      {
+        criteria,
+        guardrails,
+        questions,
+        responseModes,
+        roleBrief: draft.roleBrief,
+        roleTitle: draft.roleTitle,
+      },
+      { disallowedTopicMessage: t("compliance.planDisallowedTopicBlock") },
+    );
 
     if (publicationIssues.length > 0) {
       return {
@@ -328,13 +337,12 @@ export async function publishInterviewDraft(
   );
 
   if (flagged) {
-    const locale = resolveConsoleLocale();
     return {
       ok: false,
-      error: complianceMessages(locale).classifierDisallowedTopicBlock(
-        protectedTopicCategoryLabel(flagged.category, locale),
-        flagged.reason,
-      ),
+      error: t("compliance.classifierDisallowedTopicBlock", {
+        category: t(`category.${flagged.category}`),
+        reason: flagged.reason,
+      }),
     };
   }
 
@@ -448,7 +456,10 @@ export async function publishInterviewDraft(
   };
 }
 
-function normalizeDraftInput(input: SaveInterviewDraftInput):
+function normalizeDraftInput(
+  input: SaveInterviewDraftInput,
+  options: { disallowedTopicMessage: string },
+):
   | {
       ok: true;
       data: SaveInterviewDraftInput;
@@ -510,7 +521,7 @@ function normalizeDraftInput(input: SaveInterviewDraftInput):
   if (planReferencesDisallowedTopic({ criteria, questions })) {
     return {
       ok: false,
-      error: complianceMessages(resolveConsoleLocale()).planDisallowedTopicBlock,
+      error: options.disallowedTopicMessage,
     };
   }
 
