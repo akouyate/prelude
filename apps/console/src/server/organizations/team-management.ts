@@ -101,20 +101,6 @@ export async function inviteTeamMember(
   return { ok: true, value: { invitationId: invitation.id } };
 }
 
-export async function listPendingTeamInvitations(
-  directory: OrganizationDirectory,
-  actor: TeamActor,
-): Promise<TeamResult<PendingInvitation[]>> {
-  const workspace = requireRealWorkspace(actor);
-  if (!workspace.ok) {
-    return workspace;
-  }
-  if (!canInviteMember(actor.role)) {
-    return { ok: false, error: "You do not have permission to view invitations." };
-  }
-  return { ok: true, value: await directory.listPendingInvitations(workspace.value) };
-}
-
 export async function revokeTeamInvitation(
   directory: OrganizationDirectory,
   actor: TeamActor,

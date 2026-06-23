@@ -1,23 +1,13 @@
 import type { OrganizationRole } from "@prelude/types";
 
-// The "Standard" workspace permission matrix:
-// - owner + admin: manage the team (invite / change roles / remove), publish,
-//   and override compliance.
-// - recruiter: create/edit/publish roles and review candidates, but no team
-//   management.
-// - viewer: read-only.
-// Guardrails on top: an admin can never act on an owner, and only an owner can
-// grant the owner role (ownership transfer).
+// Workspace team-management permissions (the "Standard" matrix): owner + admin
+// manage the team (invite / change roles / remove). Guardrails: an admin can
+// never act on an owner, and only an owner can grant the owner role (ownership
+// transfer).
 
 const TEAM_MANAGER_ROLES: ReadonlySet<OrganizationRole> = new Set<OrganizationRole>([
   "owner",
   "admin",
-]);
-
-const CONTENT_ROLES: ReadonlySet<OrganizationRole> = new Set<OrganizationRole>([
-  "owner",
-  "admin",
-  "recruiter",
 ]);
 
 // Roles a manager can pick from a normal role dropdown. Granting `owner` is an
@@ -86,20 +76,4 @@ export function canRemoveMember(
   targetRole: OrganizationRole,
 ): boolean {
   return canManageMember(actorRole, targetRole);
-}
-
-export function canManageContent(role: OrganizationRole): boolean {
-  return CONTENT_ROLES.has(role);
-}
-
-export function canReviewCandidates(role: OrganizationRole): boolean {
-  return CONTENT_ROLES.has(role);
-}
-
-export function canOverrideCompliance(role: OrganizationRole): boolean {
-  return TEAM_MANAGER_ROLES.has(role);
-}
-
-export function isReadOnlyRole(role: OrganizationRole): boolean {
-  return role === "viewer";
 }

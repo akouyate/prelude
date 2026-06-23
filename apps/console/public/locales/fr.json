@@ -337,8 +337,6 @@
         "title": "Équipe et rôles",
         "description_one": "{{count}} personne a accès à cet espace.",
         "description_other": "{{count}} personnes ont accès à cet espace.",
-        "invite": "Inviter un membre",
-        "openActions": "Ouvrir les actions pour {{name}}",
         "empty": "Aucun membre actif trouvé.",
         "inviteTitle": "Inviter un collaborateur",
         "inviteDescription": "Il recevra un e-mail pour rejoindre cet espace de travail.",

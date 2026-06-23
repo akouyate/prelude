@@ -5,12 +5,9 @@ import {
   canAssignRole,
   canChangeMemberRole,
   canInviteMember,
-  canManageContent,
   canManageMember,
   canManageTeam,
-  canOverrideCompliance,
   canRemoveMember,
-  isReadOnlyRole,
 } from "./organization-permissions";
 
 describe("organization permissions (Standard matrix)", () => {
@@ -47,15 +44,6 @@ describe("organization permissions (Standard matrix)", () => {
     expect(canChangeMemberRole("admin", "recruiter", "owner")).toBe(false);
     expect(canChangeMemberRole("admin", "owner", "admin")).toBe(false);
     expect(canChangeMemberRole("owner", "admin", "owner")).toBe(true);
-  });
-
-  it("gates content, compliance override, and read-only to the right roles", () => {
-    expect(canManageContent("recruiter")).toBe(true);
-    expect(canManageContent("viewer")).toBe(false);
-    expect(canOverrideCompliance("admin")).toBe(true);
-    expect(canOverrideCompliance("recruiter")).toBe(false);
-    expect(isReadOnlyRole("viewer")).toBe(true);
-    expect(isReadOnlyRole("recruiter")).toBe(false);
   });
 
   it("offers assignable role options without owner (transfer is explicit)", () => {

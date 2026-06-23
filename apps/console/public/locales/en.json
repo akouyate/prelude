@@ -337,8 +337,6 @@
         "title": "Team & roles",
         "description_one": "{{count}} person has access to this workspace.",
         "description_other": "{{count}} people have access to this workspace.",
-        "invite": "Invite member",
-        "openActions": "Open actions for {{name}}",
         "empty": "No active member found.",
         "inviteTitle": "Invite a teammate",
         "inviteDescription": "They'll receive an email to join this workspace.",
