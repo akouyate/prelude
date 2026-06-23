@@ -28,6 +28,10 @@ func main() {
 			slog.Error("refusing to start in production without required config", "missing", missing)
 			os.Exit(1)
 		}
+		if recordingRetentionDisabled(os.Getenv) {
+			slog.Error("refusing to start in production with recording enabled but retention disabled — RECORDING_RETENTION_DAYS=0 contradicts the 90-day consent promise")
+			os.Exit(1)
+		}
 	}
 
 	repository := application.SessionRepository(store.NewMemoryStore())

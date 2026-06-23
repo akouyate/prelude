@@ -7,6 +7,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	smithy "github.com/aws/smithy-go"
 )
 
 type fakeS3 struct {
@@ -54,6 +55,19 @@ func TestR2StoreDeleteObjectPropagatesRealErrors(t *testing.T) {
 
 	if err := store.DeleteObject(context.Background(), "recordings/is_1/1.ogg"); err == nil {
 		t.Fatal("expected a non-not-found error to propagate")
+	}
+}
+
+func TestR2StoreDeleteObjectPropagatesNonNoSuchKeyApiErrors(t *testing.T) {
+	// Only NoSuchKey is idempotency-safe. An auth or missing-bucket failure can
+	// carry a NotFound/404 code — it must NOT be mistaken for a successful delete,
+	// or the row would be tombstoned with the object still present.
+	for _, code := range []string{"AccessDenied", "NotFound", "404"} {
+		fake := &fakeS3{err: &smithy.GenericAPIError{Code: code, Message: "boom"}}
+		store := newR2Store(fake, "bucket")
+		if err := store.DeleteObject(context.Background(), "recordings/is_1/1.ogg"); err == nil {
+			t.Fatalf("APIError code %q must propagate, not be swallowed as success", code)
+		}
 	}
 }
 

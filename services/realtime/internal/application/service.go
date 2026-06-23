@@ -791,6 +791,20 @@ func (s *Service) EraseRecordingsForSession(ctx context.Context, sessionID strin
 		if recording.Status == domain.RecordingStatusDeleted {
 			continue
 		}
+		if recording.Status == domain.RecordingStatusRecording {
+			// In-flight: the audio object does not exist yet, so deleting now would
+			// no-op and the still-running egress would land an ORPHAN after we
+			// tombstone (object_key nulled, nothing ever revisits it). Stop the
+			// egress instead and leave the row to finalize -> available; the object
+			// that lands is then erased by a retry or the retention sweep. Never
+			// tombstone an in-flight row.
+			if recording.EgressID != "" && s.recorder != nil {
+				if err := s.recorder.StopEgress(ctx, recording.EgressID); err != nil {
+					slog.Warn("failed to stop egress during erasure", "recording_id", recording.ID, "egress_id", recording.EgressID, "error", err)
+				}
+			}
+			continue
+		}
 		if err := s.eraseRecording(ctx, recording, recordingErasureReason); err != nil {
 			slog.Warn("failed to erase recording", "recording_id", recording.ID, "error", err)
 			if firstErr == nil {

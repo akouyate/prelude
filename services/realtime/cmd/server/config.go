@@ -26,6 +26,15 @@ func recordingRetentionDays(getenv func(string) string) int {
 	return days
 }
 
+// recordingRetentionDisabled reports whether audio recording is enabled but the
+// retention sweep is turned off (RECORDING_RETENTION_DAYS=0). That combination
+// records candidate audio while never auto-deleting it, contradicting the
+// consent copy ("kept up to 90 days, then permanently deleted"), so production
+// must refuse to boot in that state. "0=off" stays available for local dev.
+func recordingRetentionDisabled(getenv func(string) string) bool {
+	return recordingEnabled(getenv) && recordingRetentionDays(getenv) == 0
+}
+
 // requiredProductionConfig lists the env vars the realtime service must have in
 // production. Without them it would silently degrade to an in-memory store (data
 // loss on restart), a mock LiveKit gateway, or no agent dispatch (agents never

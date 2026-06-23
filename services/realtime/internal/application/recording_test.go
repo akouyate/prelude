@@ -455,6 +455,55 @@ func TestEraseRecordingsForSession(t *testing.T) {
 	}
 }
 
+func TestEraseRecordingsForSessionStopsInFlightWithoutOrphaning(t *testing.T) {
+	// Erasing a session with a still-running egress must NOT tombstone the
+	// in-flight row: its object does not exist yet, so deleting + tombstoning now
+	// would let the egress land an orphan. Instead the egress is stopped and the
+	// row left to finalize, while finalized recordings are erased normally.
+	service, repo, clock := newPurgeService(t)
+	objects := &fakeObjectStore{}
+	service.SetObjectStore(objects)
+	egress := &fakeEgress{}
+	service.SetEgressGateway(egress)
+
+	const sessionID = "is_mix"
+	mustCreateRecording(t, repo, "done", sessionID, "recordings/is_mix/1.ogg", clock.now.Add(-10*time.Minute))
+	if err := repo.CreateRecording(context.Background(), domain.Recording{
+		ID:        "live",
+		SessionID: sessionID,
+		EgressID:  "eg_live",
+		ObjectKey: "recordings/is_mix/2.ogg",
+		Status:    domain.RecordingStatusRecording,
+		Format:    "audio/ogg",
+		StartedAt: clock.now.Add(-1 * time.Minute),
+		CreatedAt: clock.now,
+		UpdatedAt: clock.now,
+	}); err != nil {
+		t.Fatalf("seed in-flight recording: %v", err)
+	}
+
+	erased, err := service.EraseRecordingsForSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("EraseRecordingsForSession returned error: %v", err)
+	}
+	if erased != 1 {
+		t.Fatalf("expected only the finalized recording erased, got %d", erased)
+	}
+	if len(objects.deleted) != 1 || objects.deleted[0] != "recordings/is_mix/1.ogg" {
+		t.Fatalf("only the finalized object must be deleted, got %v", objects.deleted)
+	}
+	if len(egress.stopped) != 1 || egress.stopped[0] != "eg_live" {
+		t.Fatalf("expected the in-flight egress eg_live to be stopped, got %v", egress.stopped)
+	}
+	live, _, _ := repo.RecordingByEgressID(context.Background(), "eg_live")
+	if live.Status != domain.RecordingStatusRecording {
+		t.Fatalf("the in-flight row must stay 'recording' (not tombstoned), got %s", live.Status)
+	}
+	if live.ObjectKey != "recordings/is_mix/2.ogg" {
+		t.Fatalf("the in-flight object key must be preserved for a later purge, got %q", live.ObjectKey)
+	}
+}
+
 func TestEraseRecordingsForSessionReportsObjectFailure(t *testing.T) {
 	// A failed object delete must surface as an error so the caller retries, and
 	// must leave the row "available" (never tombstone audio that still exists).

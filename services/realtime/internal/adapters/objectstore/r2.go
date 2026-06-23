@@ -78,19 +78,18 @@ func (s *R2Store) DeleteObject(ctx context.Context, key string) error {
 	}
 
 	// Deletion is idempotent: an object that is already gone is success. S3
-	// DeleteObject normally returns 204 even for a missing key, but treat an
-	// explicit not-found (typed or by API error code) as success too, so retries
-	// of the retention sweep or an erasure request never wedge.
+	// DeleteObject already returns 204 (no error) for a missing key, so this only
+	// covers a backend that surfaces a missing OBJECT as NoSuchKey. Scope it
+	// tightly to NoSuchKey — NOT NotFound/404 — so an auth or missing-bucket
+	// failure (which can carry a 404) is never mistaken for a successful delete
+	// and tombstoned with the object still present.
 	var noSuchKey *types.NoSuchKey
 	if errors.As(err, &noSuchKey) {
 		return nil
 	}
 	var apiErr smithy.APIError
-	if errors.As(err, &apiErr) {
-		switch apiErr.ErrorCode() {
-		case "NoSuchKey", "NotFound", "404":
-			return nil
-		}
+	if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NoSuchKey" {
+		return nil
 	}
 
 	return err

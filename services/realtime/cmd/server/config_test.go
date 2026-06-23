@@ -94,6 +94,35 @@ func TestRecordingRetentionDays(t *testing.T) {
 	}
 }
 
+func TestRecordingRetentionDisabled(t *testing.T) {
+	withRecording := func(retention string) func(string) string {
+		return func(key string) string {
+			switch key {
+			case "RECORDING_ENABLED":
+				return "true"
+			case "RECORDING_RETENTION_DAYS":
+				return retention
+			default:
+				return ""
+			}
+		}
+	}
+
+	if !recordingRetentionDisabled(withRecording("0")) {
+		t.Error("recording enabled + retention 0 must be flagged as disabled (it must not boot in prod)")
+	}
+	if recordingRetentionDisabled(withRecording("90")) {
+		t.Error("recording enabled + an explicit retention window must be allowed")
+	}
+	if recordingRetentionDisabled(withRecording("")) {
+		t.Error("recording enabled + default (90) retention must be allowed")
+	}
+	// Recording off: "0" retention is irrelevant — never flagged.
+	if recordingRetentionDisabled(func(string) string { return "" }) {
+		t.Error("recording disabled must never be flagged regardless of retention")
+	}
+}
+
 func containsConfigKey(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {
