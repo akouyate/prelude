@@ -312,6 +312,92 @@
       "actions": {
         "save": "Enregistrer",
         "cancel": "Annuler"
+      },
+      "workspace": {
+        "title": "Espace de travail",
+        "description": "Les informations générales de votre organisation dans Prelude.",
+        "uploadLogo": "Importer un logo",
+        "logoHint": "Un SVG ou PNG carré fonctionne le mieux.",
+        "name": "Nom de l'espace",
+        "url": "URL de l'espace",
+        "hiringFocus": "Priorité de recrutement",
+        "hiringFocusPlaceholder": "Relation client, opérations, ventes...",
+        "companySize": "Taille de l'entreprise",
+        "companySizeOptions": {
+          "notSet": "Non renseigné"
+        },
+        "residency": "Résidence des données",
+        "residencyDescription": "Où les données candidats et les enregistrements sont stockés.",
+        "euResidency": "Union européenne",
+        "euResidencyDescription": "Francfort · conforme RGPD",
+        "usResidency": "États-Unis",
+        "usResidencyDescription": "Virginie · SOC 2 Type II"
+      },
+      "team": {
+        "title": "Équipe et rôles",
+        "description_one": "{{count}} personne a accès à cet espace.",
+        "description_other": "{{count}} personnes ont accès à cet espace.",
+        "invite": "Inviter un membre",
+        "openActions": "Ouvrir les actions pour {{name}}",
+        "empty": "Aucun membre actif trouvé."
+      },
+      "interview": {
+        "title": "Réglages d'entretien",
+        "description": "Appliqués à chaque nouvel entretien de présélection. Modifiables par rôle.",
+        "defaultLanguage": "Langue par défaut",
+        "interviewerVoice": "Voix de l'intervieweur",
+        "voices": {
+          "maya": "Maya · chaleureuse, posée",
+          "noah": "Noah · calme, direct",
+          "lea": "Léa · claire, naturelle"
+        },
+        "allowAudio": "Autoriser les entretiens audio",
+        "allowAudioDescription": "Les candidats peuvent répondre naturellement à l'oral quand le rôle est publié.",
+        "allowForm": "Autoriser le mode formulaire",
+        "allowFormDescription": "Les candidats peuvent écrire leurs réponses si l'audio n'est pas confortable ou disponible.",
+        "showReviewGuardrail": "Afficher la règle de revue",
+        "showReviewGuardrailDescription": "Afficher le rappel preuves, pas décisions, au-dessus de chaque file de revue.",
+        "autoGenerateTranscript": "Générer la transcription",
+        "autoGenerateTranscriptDescription": "Produire une transcription complète dès qu'une session se termine.",
+        "requireRecordingConsent": "Exiger le consentement d'enregistrement",
+        "requireRecordingConsentDescription": "Les candidats doivent accepter avant toute capture audio."
+      },
+      "integrations": {
+        "title": "Intégrations",
+        "description": "Sources candidats et outils synchronisés avec Prelude.",
+        "jobPosts": "Importer les offres actives",
+        "ats": "ATS · pousser les candidats qualifiés",
+        "calendar": "Planifier les appels de suivi",
+        "connected": "Connecté",
+        "comingSoon": "Bientôt"
+      },
+      "notifications": {
+        "title": "Notifications",
+        "description": "Choisissez les e-mails envoyés par Prelude.",
+        "screensReady": "Entretiens prêts à revoir",
+        "screensReadyDescription": "Quand un candidat termine et que les signaux sont prêts.",
+        "interviewCompleted": "Entretien terminé",
+        "interviewCompletedDescription": "Un entretien live s'est terminé correctement.",
+        "mentions": "Mentions et commentaires",
+        "mentionsDescription": "Quand un coéquipier vous mentionne sur un candidat.",
+        "weeklyDigest": "Résumé hebdomadaire",
+        "weeklyDigestDescription": "Un résumé le lundi de l'activité du pipeline.",
+        "productUpdates": "Nouveautés produit",
+        "productUpdatesDescription": "Quelques nouvelles sur les évolutions de Prelude."
+      },
+      "billing": {
+        "currentPlan": "Forfait actuel",
+        "planName": "Espace V1",
+        "planDescription": "Clerk Billing n'est pas encore connecté. L'usage vient des données de l'espace.",
+        "managePlan": "Gérer le forfait",
+        "interviewsThisMonth": "Entretiens ce mois-ci",
+        "activeRoles": "Rôles actifs",
+        "billingSetup": "Configuration de facturation",
+        "notConnected": "Clerk Billing n'est pas connecté",
+        "notConnectedDescription": "Clerk Billing pourra être connecté avant le lancement payant.",
+        "configure": "Configurer",
+        "billingHistory": "Historique de facturation",
+        "viewInvoices": "Voir les factures"
       }
     }
   }

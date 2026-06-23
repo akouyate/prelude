@@ -312,6 +312,92 @@
       "actions": {
         "save": "Save changes",
         "cancel": "Cancel"
+      },
+      "workspace": {
+        "title": "Workspace",
+        "description": "General details for your organization on Prelude.",
+        "uploadLogo": "Upload logo",
+        "logoHint": "Square SVG or PNG works best.",
+        "name": "Workspace name",
+        "url": "Workspace URL",
+        "hiringFocus": "Hiring focus",
+        "hiringFocusPlaceholder": "Customer-facing, operations, sales...",
+        "companySize": "Company size",
+        "companySizeOptions": {
+          "notSet": "Not set"
+        },
+        "residency": "Data residency",
+        "residencyDescription": "Where candidate data and recordings are stored.",
+        "euResidency": "European Union",
+        "euResidencyDescription": "Frankfurt · GDPR-compliant",
+        "usResidency": "United States",
+        "usResidencyDescription": "Virginia · SOC 2 Type II"
+      },
+      "team": {
+        "title": "Team & roles",
+        "description_one": "{{count}} person has access to this workspace.",
+        "description_other": "{{count}} people have access to this workspace.",
+        "invite": "Invite member",
+        "openActions": "Open actions for {{name}}",
+        "empty": "No active member found."
+      },
+      "interview": {
+        "title": "Interview defaults",
+        "description": "Applied to every new screening interview. Editable per role.",
+        "defaultLanguage": "Default language",
+        "interviewerVoice": "Interviewer voice",
+        "voices": {
+          "maya": "Maya · warm, measured",
+          "noah": "Noah · calm, direct",
+          "lea": "Lea · clear, natural"
+        },
+        "allowAudio": "Allow audio interviews",
+        "allowAudioDescription": "Candidates can answer naturally by voice when the role is published.",
+        "allowForm": "Allow form fallback",
+        "allowFormDescription": "Candidates can type answers when audio is not comfortable or not available.",
+        "showReviewGuardrail": "Show review guardrail",
+        "showReviewGuardrailDescription": "Display the evidence-not-decisions note above every review queue.",
+        "autoGenerateTranscript": "Auto-generate transcript",
+        "autoGenerateTranscriptDescription": "Produce a full text transcript as soon as a session ends.",
+        "requireRecordingConsent": "Require recording consent",
+        "requireRecordingConsentDescription": "Candidates must accept before any audio is captured."
+      },
+      "integrations": {
+        "title": "Integrations",
+        "description": "Sources for candidates and tools that sync with Prelude.",
+        "jobPosts": "Import active job posts",
+        "ats": "ATS · push qualified candidates",
+        "calendar": "Schedule follow-up calls",
+        "connected": "Connected",
+        "comingSoon": "Coming soon"
+      },
+      "notifications": {
+        "title": "Notifications",
+        "description": "Choose what Prelude emails you about.",
+        "screensReady": "Screens ready for review",
+        "screensReadyDescription": "When a candidate finishes and signals are ready.",
+        "interviewCompleted": "Interview completed",
+        "interviewCompletedDescription": "A live interview wrapped up successfully.",
+        "mentions": "Mentions & comments",
+        "mentionsDescription": "When a teammate mentions you on a candidate.",
+        "weeklyDigest": "Weekly digest",
+        "weeklyDigestDescription": "A Monday summary of pipeline activity.",
+        "productUpdates": "Product updates",
+        "productUpdatesDescription": "Occasional news about new Prelude features."
+      },
+      "billing": {
+        "currentPlan": "Current plan",
+        "planName": "V1 workspace",
+        "planDescription": "Clerk Billing is not connected yet. Usage is tracked from workspace data.",
+        "managePlan": "Manage plan",
+        "interviewsThisMonth": "Interviews this month",
+        "activeRoles": "Active roles",
+        "billingSetup": "Billing setup",
+        "notConnected": "Clerk Billing not connected",
+        "notConnectedDescription": "Clerk Billing can be connected before paid launch.",
+        "configure": "Configure",
+        "billingHistory": "Billing history",
+        "viewInvoices": "View invoices"
       }
     }
   }

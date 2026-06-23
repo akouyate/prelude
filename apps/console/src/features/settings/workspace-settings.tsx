@@ -5,6 +5,11 @@ import { CheckCircle, Plus, ThreePointsCircle } from "iconoir-react";
 import { useTranslation } from "react-i18next";
 import { Badge, Button, StatusBadge, cn } from "@prelude/ui";
 
+import {
+  updateInterviewPreferencesAction,
+  updateNotificationPreferencesAction,
+  updateWorkspaceSettingsAction,
+} from "../../server/settings/workspace-settings-actions";
 import { SettingsLanguageSelect } from "./settings-language-select";
 import { SettingsSectionNav } from "./settings-section-nav";
 import type { SettingsSection, WorkspaceSettingsData } from "./settings-types";
@@ -14,7 +19,7 @@ import {
   SettingsField,
   SettingsPanel,
   SettingsPanelHeading,
-  SettingsSelectLike,
+  SettingsSelectField,
   SettingsToggleRow,
   SettingsUrlField,
 } from "./settings-primitives";
@@ -55,6 +60,7 @@ export function WorkspaceSettings({ data }: { data: WorkspaceSettingsData }) {
 
       <div className="grid gap-7 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
         <SettingsSectionNav
+          authProvider={data.authProvider}
           onSectionChange={setSection}
           section={section}
         />
@@ -113,7 +119,7 @@ function SettingsSectionContent({
   }
 
   if (section === "team") {
-    return <TeamSection ownerName={data.account.name} />;
+    return <TeamSection team={data.team} />;
   }
 
   if (section === "interview") {
@@ -125,7 +131,7 @@ function SettingsSectionContent({
   }
 
   if (section === "notifications") {
-    return <NotificationsSection />;
+    return <NotificationsSection preferences={data.notificationPreferences} />;
   }
 
   if (section === "billing") {
@@ -151,10 +157,12 @@ function ProfileSection({ data }: { data: WorkspaceSettingsData }) {
           </AvatarToken>
           <div>
             <div className="flex flex-wrap gap-2">
-              <Button variant="secondary">
+              <Button type="button" variant="secondary">
                 {t("settings.profile.changePhoto")}
               </Button>
-              <Button variant="ghost">{t("settings.profile.remove")}</Button>
+              <Button type="button" variant="ghost">
+                {t("settings.profile.remove")}
+              </Button>
             </div>
             <p className="mt-2 text-xs text-ink-400">
               {t("settings.profile.avatarHint")}
@@ -183,93 +191,107 @@ function ProfileSection({ data }: { data: WorkspaceSettingsData }) {
           />
         </div>
       </SettingsPanel>
-      <SettingsActionRow />
     </div>
   );
 }
 
 function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
+  const { t } = useTranslation();
+  const companySizeOptions = [
+    { label: t("settings.workspace.companySizeOptions.notSet"), value: "" },
+    { label: "1-10", value: "1-10" },
+    { label: "11-50", value: "11-50" },
+    { label: "51-200", value: "51-200" },
+    { label: "201-500", value: "201-500" },
+    { label: "501-1000", value: "501-1000" },
+    { label: "1000+", value: "1000+" },
+  ];
+
   return (
-    <div className="flex flex-col gap-[18px]">
+    <form action={updateWorkspaceSettingsAction} className="flex flex-col gap-[18px]">
       <SettingsPanel>
         <SettingsPanelHeading
-          description="General details for your organization on Prelude."
-          title="Workspace"
+          description={t("settings.workspace.description")}
+          title={t("settings.workspace.title")}
         />
         <div className="mt-5 flex items-center gap-[18px] border-b border-[#f1ede4] pb-5">
           <AvatarToken className="h-[62px] w-[62px] rounded-[18px] bg-olive-800 text-xl text-white">
             {initialsFor(data.organization.name)}
           </AvatarToken>
           <div>
-            <Button variant="secondary">Upload logo</Button>
+            <Button type="button" variant="secondary">
+              {t("settings.workspace.uploadLogo")}
+            </Button>
             <p className="mt-2 text-xs text-ink-400">
-              Square SVG or PNG works best.
+              {t("settings.workspace.logoHint")}
             </p>
           </div>
         </div>
 
         <div className="mt-5 grid gap-[18px] sm:grid-cols-2">
           <SettingsField
-            label="Workspace name"
-            readOnly
+            label={t("settings.workspace.name")}
+            maxLength={80}
+            name="name"
+            required
             value={data.organization.name}
           />
           <SettingsUrlField
-            label="Workspace URL"
+            label={t("settings.workspace.url")}
             prefix="prelude.ai/"
             value={slugFor(data.organization.name)}
           />
           <SettingsField
-            label="Hiring focus"
-            readOnly
-            value={data.organization.hiringFocus ?? "Not set"}
+            label={t("settings.workspace.hiringFocus")}
+            maxLength={80}
+            name="hiringFocus"
+            placeholder={t("settings.workspace.hiringFocusPlaceholder")}
+            value={data.organization.hiringFocus ?? ""}
           />
-          <SettingsSelectLike
-            label="Company size"
-            value={data.organization.companySize ?? "Not set"}
+          <SettingsSelectField
+            label={t("settings.workspace.companySize")}
+            name="companySize"
+            options={companySizeOptions}
+            value={data.organization.companySize ?? ""}
           />
         </div>
       </SettingsPanel>
 
       <SettingsPanel>
         <SettingsPanelHeading
-          description="Where candidate data and recordings are stored."
-          title="Data residency"
+          description={t("settings.workspace.residencyDescription")}
+          title={t("settings.workspace.residency")}
         />
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <ResidencyChoice
             active
-            description="Frankfurt · GDPR-compliant"
-            label="European Union"
+            description={t("settings.workspace.euResidencyDescription")}
+            label={t("settings.workspace.euResidency")}
           />
           <ResidencyChoice
-            description="Virginia · SOC 2 Type II"
-            label="United States"
+            description={t("settings.workspace.usResidencyDescription")}
+            label={t("settings.workspace.usResidency")}
           />
         </div>
       </SettingsPanel>
-    </div>
+      <SettingsActionRow />
+    </form>
   );
 }
 
-function TeamSection({ ownerName }: { ownerName: string }) {
-  const team = [
-    { email: "adrien@prelude.local", name: ownerName, role: "Owner" },
-    { email: "talent@prelude.local", name: "Talent Partner", role: "Admin" },
-    { email: "recruiting@prelude.local", name: "Recruiter Seat", role: "Recruiter" },
-    { email: "hiring@prelude.local", name: "Hiring Manager", role: "Viewer" },
-  ];
+function TeamSection({ team }: { team: WorkspaceSettingsData["team"] }) {
+  const { t } = useTranslation();
 
   return (
     <SettingsPanel>
       <div className="flex flex-wrap items-start justify-between gap-4">
         <SettingsPanelHeading
-          description={`${team.length} people have access to this workspace.`}
-          title="Team & roles"
+          description={t("settings.team.description", { count: team.length })}
+          title={t("settings.team.title")}
         />
-        <Button className="h-[42px]">
+        <Button className="h-[42px]" type="button" variant="secondary">
           <Plus aria-hidden={true} className="h-4 w-4" />
-          Invite member
+          {t("settings.team.invite")}
         </Button>
       </div>
       <div className="mt-5">
@@ -291,12 +313,14 @@ function TeamSection({ ownerName }: { ownerName: string }) {
             </div>
             <StatusBadge
               className="shrink-0"
-              tone={member.role === "Owner" ? "dark" : "olive"}
+              tone={member.role === "owner" ? "dark" : "olive"}
             >
-              {member.role}
+              {formatRoleLabel(member.role)}
             </StatusBadge>
             <button
-              aria-label={`Open actions for ${member.name}`}
+              aria-label={t("settings.team.openActions", {
+                name: member.name,
+              })}
               className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-[10px] text-ink-400 transition hover:bg-[#f4f2ea] hover:text-ink-950"
               type="button"
             >
@@ -304,76 +328,121 @@ function TeamSection({ ownerName }: { ownerName: string }) {
             </button>
           </div>
         ))}
+        {team.length === 0 ? (
+          <p className="border-t border-[#f1ede4] px-1 py-4 text-sm text-ink-500">
+            {t("settings.team.empty")}
+          </p>
+        ) : null}
       </div>
     </SettingsPanel>
   );
 }
 
 function InterviewDefaultsSection({ data }: { data: WorkspaceSettingsData }) {
+  const { t } = useTranslation();
+  const [preferences, setPreferences] = React.useState(
+    data.interviewPreferences,
+  );
+  const languageOptions = [
+    { label: t("settings.language.english"), value: "en" },
+    { label: t("settings.language.french"), value: "fr" },
+  ];
+  const voiceOptions = [
+    { label: t("settings.interview.voices.maya"), value: "maya" },
+    { label: t("settings.interview.voices.noah"), value: "noah" },
+    { label: t("settings.interview.voices.lea"), value: "lea" },
+  ];
+  const setPreference = React.useCallback(
+    (key: keyof typeof preferences, checked: boolean) => {
+      setPreferences((current) => {
+        if (
+          !checked &&
+          ((key === "allowAudio" && !current.allowForm) ||
+            (key === "allowForm" && !current.allowAudio))
+        ) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [key]: checked,
+        };
+      });
+    },
+    [],
+  );
+
   return (
-    <div className="flex flex-col gap-[18px]">
+    <form
+      action={updateInterviewPreferencesAction}
+      className="flex flex-col gap-[18px]"
+    >
       <SettingsPanel>
         <SettingsPanelHeading
-          description="Applied to every new screening interview. Editable per role."
-          title="Interview defaults"
+          description={t("settings.interview.description")}
+          title={t("settings.interview.title")}
         />
         <div className="mt-5 grid gap-[18px] sm:grid-cols-2">
-          <SettingsSelectLike label="Default language" value="English (US)" />
-          <SettingsSelectLike
-            label="Interviewer voice"
-            value="Maya - warm, measured"
+          <SettingsSelectField
+            label={t("settings.interview.defaultLanguage")}
+            name="defaultLanguage"
+            options={languageOptions}
+            value={preferences.defaultLanguage}
           />
-        </div>
-        <div className="mt-5">
-          <p className="text-[12.5px] font-semibold text-ink-700">
-            Target duration
-          </p>
-          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {["10 min", "15 min", "20 min", "30 min"].map((duration) => {
-              const active = duration === "15 min";
-
-              return (
-                <button
-                  className={cn(
-                    "h-11 cursor-pointer rounded-[13px] border text-[13.5px] font-semibold transition",
-                    active
-                      ? "border-ink-900 bg-ink-900 text-white"
-                      : "border-[#e2ddd2] bg-white text-ink-700 hover:border-[#c8c1b2]",
-                  )}
-                  key={duration}
-                  type="button"
-                >
-                  {duration}
-                </button>
-              );
-            })}
-          </div>
+          <SettingsSelectField
+            label={t("settings.interview.interviewerVoice")}
+            name="interviewerVoice"
+            options={voiceOptions}
+            value={preferences.interviewerVoice}
+          />
         </div>
       </SettingsPanel>
 
       <SettingsPanel className="px-6 py-2">
         <SettingsToggleRow
-          defaultChecked
-          description="Display the evidence-not-decisions note above every review queue."
-          label="Show review guardrail"
+          checked={preferences.allowAudio}
+          description={t("settings.interview.allowAudioDescription")}
+          label={t("settings.interview.allowAudio")}
+          name="allowAudio"
+          onCheckedChange={(checked) => setPreference("allowAudio", checked)}
         />
         <SettingsToggleRow
-          defaultChecked
-          description="Produce a full text transcript as soon as a session ends."
-          label="Auto-generate transcript"
+          checked={preferences.allowForm}
+          description={t("settings.interview.allowFormDescription")}
+          label={t("settings.interview.allowForm")}
+          name="allowForm"
+          onCheckedChange={(checked) => setPreference("allowForm", checked)}
         />
         <SettingsToggleRow
-          defaultChecked
-          description="Candidates must accept before any audio is captured."
-          label="Require recording consent"
+          checked={preferences.showReviewGuardrail}
+          description={t("settings.interview.showReviewGuardrailDescription")}
+          label={t("settings.interview.showReviewGuardrail")}
+          name="showReviewGuardrail"
+          onCheckedChange={(checked) =>
+            setPreference("showReviewGuardrail", checked)
+          }
         />
         <SettingsToggleRow
-          defaultChecked={data.organization.defaultInterviewMode === "video"}
-          description="Allow video answers when the role needs stronger communication signals."
-          label="Enable video by default"
+          checked={preferences.autoGenerateTranscript}
+          description={t("settings.interview.autoGenerateTranscriptDescription")}
+          label={t("settings.interview.autoGenerateTranscript")}
+          name="autoGenerateTranscript"
+          onCheckedChange={(checked) =>
+            setPreference("autoGenerateTranscript", checked)
+          }
+        />
+        <SettingsToggleRow
+          checked={preferences.requireRecordingConsent}
+          description={t("settings.interview.requireRecordingConsentDescription")}
+          label={t("settings.interview.requireRecordingConsent")}
+          name="requireRecordingConsent"
+          onCheckedChange={(checked) =>
+            setPreference("requireRecordingConsent", checked)
+          }
         />
       </SettingsPanel>
-    </div>
+      <SettingsActionRow />
+    </form>
   );
 }
 
@@ -382,30 +451,31 @@ function IntegrationsSection({
 }: {
   connectors: WorkspaceSettingsData["connectors"];
 }) {
+  const { t } = useTranslation();
   const normalized = new Map(
     connectors.map((connector) => [connector.provider, connector.status]),
   );
   const integrations = [
     {
-      description: "Import active job posts",
+      description: t("settings.integrations.jobPosts"),
       logo: <LinkedInLogo />,
       name: "LinkedIn",
       provider: "linkedin",
     },
     {
-      description: "Import active job posts",
+      description: t("settings.integrations.jobPosts"),
       logo: <IndeedLogo />,
       name: "Indeed",
       provider: "indeed",
     },
     {
-      description: "ATS · push qualified candidates",
+      description: t("settings.integrations.ats"),
       logo: <GenericIntegrationLogo label="GH" />,
       name: "Greenhouse",
       provider: "greenhouse",
     },
     {
-      description: "Schedule follow-up calls",
+      description: t("settings.integrations.calendar"),
       logo: <GenericIntegrationLogo label="G" muted />,
       name: "Google Calendar",
       provider: "google_calendar",
@@ -415,8 +485,8 @@ function IntegrationsSection({
   return (
     <SettingsPanel>
       <SettingsPanelHeading
-        description="Sources for candidates and tools that sync with Prelude."
-        title="Integrations"
+        description={t("settings.integrations.description")}
+        title={t("settings.integrations.title")}
       />
       <div className="mt-5 flex flex-col gap-2.5">
         {integrations.map((integration) => {
@@ -448,7 +518,9 @@ function IntegrationsSection({
                     : "border border-ink-200 bg-white text-ink-900",
                 )}
               >
-                {connected ? "Connected" : "Connect"}
+                {connected
+                  ? t("settings.integrations.connected")
+                  : t("settings.integrations.comingSoon")}
               </Badge>
             </div>
           );
@@ -458,39 +530,78 @@ function IntegrationsSection({
   );
 }
 
-function NotificationsSection() {
+function NotificationsSection({
+  preferences,
+}: {
+  preferences: WorkspaceSettingsData["notificationPreferences"];
+}) {
+  const { t } = useTranslation();
+  const [values, setValues] = React.useState(preferences);
+  const setPreference = React.useCallback(
+    (key: keyof typeof values, checked: boolean) => {
+      setValues((current) => ({
+        ...current,
+        [key]: checked,
+      }));
+    },
+    [],
+  );
+
   return (
-    <SettingsPanel className="px-6 py-2">
+    <form action={updateNotificationPreferencesAction}>
+      <SettingsPanel className="px-6 py-2">
       <div className="py-5">
         <SettingsPanelHeading
-          description="Choose what Prelude emails you about."
-          title="Notifications"
+          description={t("settings.notifications.description")}
+          title={t("settings.notifications.title")}
         />
       </div>
       <SettingsToggleRow
-        defaultChecked
-        description="When a candidate finishes and signals are ready."
-        label="Screens ready for review"
+        checked={values.screensReadyForReview}
+        description={t("settings.notifications.screensReadyDescription")}
+        label={t("settings.notifications.screensReady")}
+        name="screensReadyForReview"
+        onCheckedChange={(checked) =>
+          setPreference("screensReadyForReview", checked)
+        }
       />
       <SettingsToggleRow
-        defaultChecked
-        description="A live interview wrapped up successfully."
-        label="Interview completed"
+        checked={values.interviewCompleted}
+        description={t("settings.notifications.interviewCompletedDescription")}
+        label={t("settings.notifications.interviewCompleted")}
+        name="interviewCompleted"
+        onCheckedChange={(checked) =>
+          setPreference("interviewCompleted", checked)
+        }
       />
       <SettingsToggleRow
-        defaultChecked
-        description="When a teammate mentions you on a candidate."
-        label="Mentions & comments"
+        checked={values.mentionsAndComments}
+        description={t("settings.notifications.mentionsDescription")}
+        label={t("settings.notifications.mentions")}
+        name="mentionsAndComments"
+        onCheckedChange={(checked) =>
+          setPreference("mentionsAndComments", checked)
+        }
       />
       <SettingsToggleRow
-        description="A Monday summary of pipeline activity."
-        label="Weekly digest"
+        checked={values.weeklyDigest}
+        description={t("settings.notifications.weeklyDigestDescription")}
+        label={t("settings.notifications.weeklyDigest")}
+        name="weeklyDigest"
+        onCheckedChange={(checked) => setPreference("weeklyDigest", checked)}
       />
       <SettingsToggleRow
-        description="Occasional news about new Prelude features."
-        label="Product updates"
+        checked={values.productUpdates}
+        description={t("settings.notifications.productUpdatesDescription")}
+        label={t("settings.notifications.productUpdates")}
+        name="productUpdates"
+        onCheckedChange={(checked) => setPreference("productUpdates", checked)}
       />
-    </SettingsPanel>
+      </SettingsPanel>
+      <div className="mt-[18px]">
+        <SettingsActionRow />
+      </div>
+    </form>
   );
 }
 
@@ -499,7 +610,8 @@ function BillingSection({
 }: {
   metrics: WorkspaceSettingsData["metrics"];
 }) {
-  const interviewsUsed = Math.max(metrics.published + metrics.needsReview, 1);
+  const { t } = useTranslation();
+  const interviewsUsed = metrics.published + metrics.needsReview;
 
   return (
     <div className="flex flex-col gap-[18px]">
@@ -507,28 +619,39 @@ function BillingSection({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-mint-200">
-              Current plan
+              {t("settings.billing.currentPlan")}
             </p>
             <h2 className="mt-2.5 text-2xl font-semibold tracking-[-0.015em]">
-              Scale
+              {t("settings.billing.planName")}
             </h2>
             <p className="mt-2 text-[13.5px] text-white/65">
-              EUR 499 / month · renews 1 July 2026
+              {t("settings.billing.planDescription")}
             </p>
           </div>
-          <Button className="bg-white text-ink-950 hover:bg-[#f6f3ec]">
-            Manage plan
+          <Button
+            className="bg-white text-ink-950 hover:bg-[#f6f3ec]"
+            type="button"
+          >
+            {t("settings.billing.managePlan")}
           </Button>
         </div>
         <div className="mt-6 grid gap-5 sm:grid-cols-2">
-          <UsageMeter label="Interviews this month" max={250} value={interviewsUsed} />
-          <UsageMeter label="Seats used" max={8} value={4} />
+          <UsageMeter
+            label={t("settings.billing.interviewsThisMonth")}
+            max={250}
+            value={interviewsUsed}
+          />
+          <UsageMeter
+            label={t("settings.billing.activeRoles")}
+            max={25}
+            value={metrics.activeRoles}
+          />
         </div>
       </section>
 
       <SettingsPanel>
         <h3 className="text-base font-semibold text-ink-950">
-          Payment method
+          {t("settings.billing.billingSetup")}
         </h3>
         <div className="mt-4 flex items-center gap-3 rounded-[15px] border border-[#f1ede4] bg-white/60 px-4 py-3.5">
           <span className="grid h-8 w-12 shrink-0 place-items-center rounded-lg bg-ink-900 text-white">
@@ -536,21 +659,25 @@ function BillingSection({
           </span>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-ink-950">
-              Visa ending 4291
+              {t("settings.billing.notConnected")}
             </p>
             <p className="mt-0.5 text-[12.5px] text-ink-500">
-              Expires 09 / 27
+              {t("settings.billing.notConnectedDescription")}
             </p>
           </div>
-          <Button variant="secondary">Update</Button>
+          <Button type="button" variant="secondary">
+            {t("settings.billing.configure")}
+          </Button>
         </div>
         <div className="mt-4 flex items-center justify-between">
-          <span className="text-[13.5px] text-ink-500">Billing history</span>
+          <span className="text-[13.5px] text-ink-500">
+            {t("settings.billing.billingHistory")}
+          </span>
           <button
             className="cursor-pointer text-[13px] font-semibold text-olive-900"
             type="button"
           >
-            View invoices
+            {t("settings.billing.viewInvoices")}
           </button>
         </div>
       </SettingsPanel>
@@ -682,7 +809,9 @@ function slugFor(value: string) {
 }
 
 function formatRoleLabel(role: string) {
-  return role.replace(/_/g, " ");
+  const normalized = role.replace(/_/g, " ");
+
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
 }
 
 function formatStatus(status: string) {

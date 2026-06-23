@@ -1,6 +1,8 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import { useClerk } from "@clerk/nextjs";
 import {
   Bell,
   Building,
@@ -31,9 +33,11 @@ const settingsNavItems: Array<{
 ];
 
 export function SettingsSectionNav({
+  authProvider,
   onSectionChange,
   section,
 }: {
+  authProvider: "clerk" | "mock";
   onSectionChange: (section: SettingsSection) => void;
   section: SettingsSection;
 }) {
@@ -69,15 +73,58 @@ export function SettingsSectionNav({
         );
       })}
       <div className="mx-1 my-2.5 h-px bg-[#ece8de]" />
-      <button
-        className="flex h-[37px] w-full cursor-pointer items-center gap-3 rounded-[11px] px-3 text-left text-[13.5px] font-medium text-coral-700 transition hover:bg-coral-50"
-        type="button"
-      >
-        <span className="grid h-5 w-5 place-items-center">
-          <LogOut aria-hidden={true} className="h-[17px] w-[17px]" />
-        </span>
-        <span className="flex-1">{t("settings.nav.signOut")}</span>
-      </button>
+      {authProvider === "clerk" ? (
+        <ClerkSignOutButton label={t("settings.nav.signOut")} />
+      ) : (
+        <MockSignOutButton label={t("settings.nav.signOut")} />
+      )}
     </nav>
+  );
+}
+
+function ClerkSignOutButton({ label }: { label: string }) {
+  const { signOut } = useClerk();
+
+  return (
+    <SignOutButton
+      label={label}
+      onClick={() => {
+        void signOut({ redirectUrl: "/login" });
+      }}
+    />
+  );
+}
+
+function MockSignOutButton({ label }: { label: string }) {
+  const router = useRouter();
+
+  return (
+    <SignOutButton
+      label={label}
+      onClick={() => {
+        router.push("/login");
+      }}
+    />
+  );
+}
+
+function SignOutButton({
+  label,
+  onClick,
+}: {
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className="flex h-[37px] w-full cursor-pointer items-center gap-3 rounded-[11px] px-3 text-left text-[13.5px] font-medium text-coral-700 transition hover:bg-coral-50"
+      onClick={onClick}
+      type="button"
+    >
+      <span className="grid h-5 w-5 place-items-center">
+        <LogOut aria-hidden={true} className="h-[17px] w-[17px]" />
+      </span>
+      <span className="flex-1">{label}</span>
+    </button>
   );
 }

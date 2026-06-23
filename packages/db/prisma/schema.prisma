@@ -14,6 +14,7 @@ model Organization {
   companySize           String?
   hiringFocus           String?
   defaultInterviewMode  String?
+  settings              Json                          @default("{}")
   onboardingState       Json                          @default("{}")
   onboardingStep        String                        @default("welcome")
   onboardingCompletedAt DateTime?
