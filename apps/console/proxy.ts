@@ -10,6 +10,8 @@ const isPublicRoute = createRouteMatcher([
   "/about(.*)",
   "/login(.*)",
   "/sign-up(.*)",
+  // Svix-signed Clerk webhook — authenticated by signature, not a Clerk session.
+  "/api/clerk/webhook(.*)",
 ]);
 
 export default isConsoleAuthClerkEnabled
