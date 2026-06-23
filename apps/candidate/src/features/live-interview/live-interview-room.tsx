@@ -37,6 +37,7 @@ import {
   statusFromSessionState,
   statusFromTranscriptTurn,
   transcriptTurnsFromSessionState,
+  visibleInterviewerTurns,
 } from "./live-interview-runtime";
 import { prepareVoiceLevelMeter, VoiceLevelMeter } from "./voice-level-meter";
 
@@ -118,6 +119,13 @@ export function LiveInterviewRoom({
       });
     },
     [],
+  );
+
+  // The candidate sees only the interviewer's finalized questions — not their own
+  // speech, and not streaming partials (which flickered and duplicated).
+  const visibleTurns = React.useMemo(
+    () => visibleInterviewerTurns(transcriptTurns),
+    [transcriptTurns],
   );
 
   React.useEffect(() => {
@@ -472,7 +480,7 @@ export function LiveInterviewRoom({
         onEnableAudio={enableAudio}
         onEndInterview={endInterview}
         status={status}
-        transcriptTurns={transcriptTurns}
+        transcriptTurns={visibleTurns}
         videoRef={videoRef}
       />
     );
