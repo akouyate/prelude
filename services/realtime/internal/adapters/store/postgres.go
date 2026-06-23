@@ -791,3 +791,30 @@ func (s *PostgresStore) MarkRecordingDeleted(ctx context.Context, input applicat
 
 	return err
 }
+
+func (s *PostgresStore) RecordingsForSession(ctx context.Context, sessionID string) ([]domain.Recording, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
+		from live_interview_recordings
+		where session_id = $1
+		order by started_at asc
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recordings := make([]domain.Recording, 0)
+	for rows.Next() {
+		recording, err := scanRecording(rows)
+		if err != nil {
+			return nil, err
+		}
+		recordings = append(recordings, recording)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return recordings, nil
+}

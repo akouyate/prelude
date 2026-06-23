@@ -290,6 +290,23 @@ func (s *MemoryStore) MarkRecordingDeleted(_ context.Context, input application.
 	return nil
 }
 
+func (s *MemoryStore) RecordingsForSession(_ context.Context, sessionID string) ([]domain.Recording, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var out []domain.Recording
+	for _, recording := range s.recordings {
+		if recording.SessionID == sessionID {
+			out = append(out, recording)
+		}
+	}
+	sort.Slice(out, func(i int, j int) bool {
+		return out[i].StartedAt.Before(out[j].StartedAt)
+	})
+
+	return out, nil
+}
+
 func sameEvent(left domain.Event, right domain.Event) bool {
 	return left.ID == right.ID &&
 		left.SessionID == right.SessionID &&

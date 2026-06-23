@@ -50,6 +50,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}/transcript", s.handleGetTranscript)
 	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}/summary", s.handleGetRecruiterSummary)
 	s.mux.HandleFunc("POST /v1/interview-sessions/{session_id}/events", s.handleIngestEvent)
+	s.mux.HandleFunc("DELETE /v1/interview-sessions/{session_id}/recordings", s.handleEraseRecordings)
 	s.mux.HandleFunc("POST /v1/livekit/egress-webhook", s.handleEgressWebhook)
 }
 
@@ -189,6 +190,19 @@ func (r ingestEventRequest) normalizedSequence() int {
 	}
 
 	return r.Sequence
+}
+
+// handleEraseRecordings is the right-to-erasure endpoint: it deletes every audio
+// object for the session and tombstones the rows. It is idempotent, so the
+// console can safely retry. A partial failure returns 500 so the caller retries.
+func (s *Server) handleEraseRecordings(w http.ResponseWriter, r *http.Request) {
+	erased, err := s.service.EraseRecordingsForSession(r.Context(), r.PathValue("session_id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "erase_failed", "failed to erase recordings")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]int{"erased": erased})
 }
 
 func (s *Server) handleEgressWebhook(w http.ResponseWriter, r *http.Request) {

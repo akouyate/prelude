@@ -123,6 +123,9 @@ type RecordingRepository interface {
 	// becomes "deleted", object_key is cleared, and deleted_at/deleted_reason are
 	// set. The row is kept for audit. It is idempotent on an already-deleted row.
 	MarkRecordingDeleted(ctx context.Context, input MarkRecordingDeletedInput) error
+	// RecordingsForSession returns every recording row for a session (any status,
+	// 1:N on reconnects), so erasure can remove all of a candidate's audio.
+	RecordingsForSession(ctx context.Context, sessionID string) ([]domain.Recording, error)
 }
 
 type FinalizeRecordingInput struct {
@@ -757,9 +760,48 @@ func (s *Service) ReconcileRecordings(ctx context.Context, startedBefore time.Ti
 	return reconciled, nil
 }
 
-// recordingRetentionReason is the deleted_reason stamped on recordings erased by
-// the retention sweep (vs. a recruiter erasure request, which uses its own).
-const recordingRetentionReason = "retention"
+// recordingRetentionReason and recordingErasureReason are the deleted_reason
+// values stamped on a tombstone, distinguishing an automatic retention purge
+// from a deliberate (recruiter/candidate) erasure request.
+const (
+	recordingRetentionReason = "retention"
+	recordingErasureReason   = "erasure_request"
+)
+
+// EraseRecordingsForSession deletes the audio object and tombstones the row for
+// every recording of a session — the right-to-erasure path, and the fix for the
+// schema's onDelete:Cascade, which would drop the rows but orphan the R2 objects.
+// It is idempotent: already-deleted rows are skipped, so a retry only re-attempts
+// what failed. It returns how many it erased and the first error encountered, so
+// the caller can retry on partial failure rather than assume full erasure.
+func (s *Service) EraseRecordingsForSession(ctx context.Context, sessionID string) (int, error) {
+	if s.objectStore == nil || s.recordings == nil {
+		return 0, nil
+	}
+
+	recordings, err := s.recordings.RecordingsForSession(ctx, sessionID)
+	if err != nil {
+		return 0, err
+	}
+
+	erased := 0
+	var firstErr error
+	for _, recording := range recordings {
+		if recording.Status == domain.RecordingStatusDeleted {
+			continue
+		}
+		if err := s.eraseRecording(ctx, recording, recordingErasureReason); err != nil {
+			slog.Warn("failed to erase recording", "recording_id", recording.ID, "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		erased++
+	}
+
+	return erased, firstErr
+}
 
 // PurgeExpiredRecordings enforces audio retention: it erases the audio object of
 // every "available" recording whose retention window has elapsed and tombstones

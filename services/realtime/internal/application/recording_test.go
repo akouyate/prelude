@@ -392,6 +392,88 @@ func TestPurgeExpiredRecordingsNoOpWithoutObjectStore(t *testing.T) {
 	}
 }
 
+func mustCreateRecording(t *testing.T, repo *store.MemoryStore, id string, sessionID string, objectKey string, at time.Time) {
+	t.Helper()
+	if err := repo.CreateRecording(context.Background(), domain.Recording{
+		ID:        id,
+		SessionID: sessionID,
+		EgressID:  "eg_" + id,
+		ObjectKey: objectKey,
+		Status:    domain.RecordingStatusAvailable,
+		Format:    "audio/ogg",
+		StartedAt: at,
+		EndedAt:   &at,
+		CreatedAt: at,
+		UpdatedAt: at,
+	}); err != nil {
+		t.Fatalf("create recording %s: %v", id, err)
+	}
+}
+
+func TestEraseRecordingsForSession(t *testing.T) {
+	service, repo, clock := newPurgeService(t)
+	objects := &fakeObjectStore{}
+	service.SetObjectStore(objects)
+
+	const sessionID = "is_erase"
+	// Two recordings for the same session (a reconnect makes it 1:N)...
+	mustCreateRecording(t, repo, "a", sessionID, "recordings/is_erase/1.ogg", clock.now.Add(-10*time.Minute))
+	mustCreateRecording(t, repo, "b", sessionID, "recordings/is_erase/2.ogg", clock.now.Add(-5*time.Minute))
+	// ...and one for a different session, which must be left untouched.
+	mustCreateRecording(t, repo, "other", "is_other", "recordings/is_other/1.ogg", clock.now.Add(-5*time.Minute))
+
+	erased, err := service.EraseRecordingsForSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("EraseRecordingsForSession returned error: %v", err)
+	}
+	if erased != 2 {
+		t.Fatalf("expected 2 erased, got %d", erased)
+	}
+	if len(objects.deleted) != 2 {
+		t.Fatalf("expected both audio objects deleted, got %v", objects.deleted)
+	}
+	for _, egressID := range []string{"eg_a", "eg_b"} {
+		rec, _, _ := repo.RecordingByEgressID(context.Background(), egressID)
+		if rec.Status != domain.RecordingStatusDeleted || rec.ObjectKey != "" || rec.DeletedReason != "erasure_request" {
+			t.Fatalf("expected %s tombstoned with reason erasure_request, got %+v", egressID, rec)
+		}
+	}
+	if other, _, _ := repo.RecordingByEgressID(context.Background(), "eg_other"); other.Status != domain.RecordingStatusAvailable {
+		t.Fatalf("a different session's recording must be untouched, got %s", other.Status)
+	}
+
+	// Idempotent: a re-run erases nothing more and deletes no further objects.
+	erased2, err := service.EraseRecordingsForSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("idempotent erase returned error: %v", err)
+	}
+	if erased2 != 0 {
+		t.Fatalf("expected a re-run to erase nothing, got %d", erased2)
+	}
+	if len(objects.deleted) != 2 {
+		t.Fatalf("a re-run must not delete more objects, got %v", objects.deleted)
+	}
+}
+
+func TestEraseRecordingsForSessionReportsObjectFailure(t *testing.T) {
+	// A failed object delete must surface as an error so the caller retries, and
+	// must leave the row "available" (never tombstone audio that still exists).
+	service, repo, clock := newPurgeService(t)
+	service.SetObjectStore(&fakeObjectStore{err: errors.New("r2 unavailable")})
+	mustCreateRecording(t, repo, "x", "is_x", "recordings/is_x/1.ogg", clock.now.Add(-5*time.Minute))
+
+	erased, err := service.EraseRecordingsForSession(context.Background(), "is_x")
+	if err == nil {
+		t.Fatal("expected an error when an object delete fails, so the caller retries")
+	}
+	if erased != 0 {
+		t.Fatalf("expected 0 erased on failure, got %d", erased)
+	}
+	if rec, _, _ := repo.RecordingByEgressID(context.Background(), "eg_x"); rec.Status != domain.RecordingStatusAvailable {
+		t.Fatalf("expected the row to stay available for retry, got %s", rec.Status)
+	}
+}
+
 func seedRecording(t *testing.T, repo *store.MemoryStore, sessionID string, egressID string, at time.Time) {
 	t.Helper()
 	if err := repo.CreateRecording(context.Background(), domain.Recording{
