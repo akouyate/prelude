@@ -306,6 +306,26 @@ func TestServiceFinalizeRecordingMarksFailedOnShortOrErroredEgress(t *testing.T)
 	}
 }
 
+func TestServiceFinalizeRecordingAvailableWhenCompleteWithUnknownDuration(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)}
+	repo := store.NewMemoryStore()
+	service := application.NewService(repo, fakeLiveKit{}, clock)
+	service.SetRecordingRepository(repo)
+
+	// The reconciliation/GetEgress path can report EGRESS_COMPLETE without a
+	// duration — that must finalize as available, not failed.
+	seedRecording(t, repo, "is_nodur", "eg_nodur", clock.now)
+	if err := service.FinalizeRecording(context.Background(), application.FinalizeRecordingFromEgress{
+		EgressID: "eg_nodur",
+		Status:   "EGRESS_COMPLETE",
+	}); err != nil {
+		t.Fatalf("FinalizeRecording returned error: %v", err)
+	}
+	if rec, _, _ := repo.RecordingByEgressID(context.Background(), "eg_nodur"); rec.Status != domain.RecordingStatusAvailable {
+		t.Fatalf("expected available for a complete egress with unknown duration, got %s", rec.Status)
+	}
+}
+
 func TestServiceReconcileFinalizesTerminalEgressOnly(t *testing.T) {
 	clock := fixedClock{now: time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)}
 	repo := store.NewMemoryStore()

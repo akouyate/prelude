@@ -625,8 +625,13 @@ func (s *Service) FinalizeRecording(ctx context.Context, input FinalizeRecording
 		return nil
 	}
 
+	// A completed egress is available unless we positively know its audio is below
+	// the floor (an instant candidate drop). An unknown duration — the
+	// reconciliation/GetEgress path can omit it — is treated as available, not
+	// failed; the webhook path still carries the real duration.
 	status := domain.RecordingStatusFailed
-	if strings.EqualFold(input.Status, "EGRESS_COMPLETE") && input.DurationMs != nil && *input.DurationMs >= recordingMinDurationMs {
+	if strings.EqualFold(input.Status, "EGRESS_COMPLETE") &&
+		(input.DurationMs == nil || *input.DurationMs >= recordingMinDurationMs) {
 		status = domain.RecordingStatusAvailable
 	}
 
