@@ -54,6 +54,7 @@ async def run_live_worker(
 
     realtime_api = HttpRealtimeApiClient(realtime_api_url, api_key=api_key)
     config = await realtime_api.get_agent_config(session_id)
+    _guard_real_livekit_token(config.livekit_join.token, worker_env)
 
     if not skip_openai_handshake:
         return await OpenAILiveKitWorker(
@@ -103,8 +104,34 @@ async def main() -> None:
     )
 
 
+def _mock_interview_allowed(env: Mapping[str, str]) -> bool:
+    # Default-deny: a fake (mock/scripted, no-audio) interview runs only when
+    # explicitly enabled AND never in production (defense in depth against a
+    # misconfigured deploy). A real candidate must never silently sit through one.
+    if env.get("APP_ENV", "").strip().lower() == "production":
+        return False
+    return env.get("ALLOW_MOCK_INTERVIEW", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _guard_real_livekit_token(token: str, env: Mapping[str, str]) -> None:
+    if token.startswith("mock_lk_") and not _mock_interview_allowed(env):
+        raise RuntimeError(
+            "Refusing a mock LiveKit token (mock_lk_*): the realtime API returned a "
+            "mock room outside an explicitly mock-enabled, non-production environment. "
+            "A real candidate must never silently sit through a fake, no-audio "
+            "interview. Set ALLOW_MOCK_INTERVIEW=true only for local smoke runs."
+        )
+
+
 def _validate_env(env: Mapping[str, str], *, skip_openai_handshake: bool) -> None:
     if skip_openai_handshake:
+        if not _mock_interview_allowed(env):
+            raise RuntimeError(
+                "Refusing --skip-openai-handshake: it runs a mock (scripted, no-audio) "
+                "interview, which is disabled outside an explicitly mock-enabled, "
+                "non-production environment. Set ALLOW_MOCK_INTERVIEW=true only for "
+                "local smoke runs."
+            )
         return
 
     missing = [key for key in REQUIRED_OPENAI_ENV if not env.get(key)]

@@ -6,6 +6,17 @@ import { prepareCandidateSession } from "../../../src/server/public-interviews";
 const REALTIME_API_URL =
   process.env.PRELUDE_REALTIME_API_URL ?? "http://127.0.0.1:8080";
 
+// Default-deny, and never in production: a real candidate must never silently
+// sit through a fake, no-audio (mock) interview. Mock rooms are allowed only in
+// an explicitly opted-in, non-production environment for local smoke runs.
+function mockInterviewAllowed(): boolean {
+  if (process.env.APP_ENV === "production") {
+    return false;
+  }
+  const flag = (process.env.ALLOW_MOCK_INTERVIEW ?? "").trim().toLowerCase();
+  return flag === "1" || flag === "true" || flag === "yes";
+}
+
 type RealtimeSessionResponse = {
   session: {
     id: string;
@@ -115,6 +126,32 @@ export async function POST(request: Request) {
     });
   }
 
+  const isMock = payload.livekit_join.token.startsWith("mock_lk_");
+  if (isMock && !mockInterviewAllowed()) {
+    // Refuse loudly instead of silently dropping the candidate into the no-audio
+    // form fallback — a fake interview must never reach a real candidate.
+    console.error(
+      "[live-interview] Refusing a mock LiveKit token (mock_lk_*) outside an explicitly mock-enabled, non-production environment.",
+    );
+    if (prepared.productSession) {
+      await prisma.candidateSession.update({
+        data: { status: "failed" },
+        where: { id: prepared.productSession.id },
+      });
+    }
+
+    return NextResponse.json(
+      {
+        error: {
+          code: "mock_interview_refused",
+          message:
+            "The live interview service is not available right now. Please try again later.",
+        },
+      },
+      { status: 502 },
+    );
+  }
+
   return NextResponse.json({
     sessionId: payload.session.id,
     productSessionId: prepared.productSession?.id ?? null,
@@ -127,7 +164,7 @@ export async function POST(request: Request) {
       token: payload.livekit_join.token,
       participant: payload.livekit_join.participant,
       expiresAt: payload.livekit_join.expires_at,
-      isMock: payload.livekit_join.token.startsWith("mock_lk_"),
+      isMock,
     },
   });
 }

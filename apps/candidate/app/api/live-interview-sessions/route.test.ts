@@ -62,7 +62,7 @@ describe("POST /api/live-interview-sessions", () => {
     await expect(response.json()).resolves.toMatchObject({
       allowedModalities: ["audio", "video"],
       livekit: {
-        isMock: true,
+        isMock: false,
         participant: "candidate-cs_123",
         roomName: "prelude-is_real",
       },
@@ -200,6 +200,56 @@ describe("POST /api/live-interview-sessions", () => {
     expect(prismaMock.candidateSession.create).not.toHaveBeenCalled();
     expect(prismaMock.candidateSession.update).not.toHaveBeenCalled();
   });
+
+  it("refuses a mock interview room when mock mode is not allowed", async () => {
+    prismaMock.interview.findFirst.mockResolvedValueOnce(publishedInterview());
+    prismaMock.candidateSession.findFirst.mockResolvedValueOnce(null);
+    prismaMock.candidateSession.create.mockResolvedValueOnce(candidateSession());
+    prismaMock.candidateSession.update
+      .mockResolvedValueOnce({
+        ...candidateSession(),
+        realtimeSessionId: "is_real",
+        status: "waiting_candidate",
+      })
+      .mockResolvedValueOnce({ ...candidateSession(), status: "failed" });
+    vi.mocked(fetch).mockResolvedValueOnce(
+      realtimeResponse(["audio"], "mock_lk_is_real"),
+    );
+
+    const response = await POST(
+      request({ candidateToken: "iv_public", consentAccepted: true }),
+    );
+
+    // A real candidate must never silently sit through a fake, no-audio interview.
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toMatchObject({
+      error: { code: "mock_interview_refused" },
+    });
+  });
+
+  it("allows a mock interview room when ALLOW_MOCK_INTERVIEW is set (local smoke)", async () => {
+    vi.stubEnv("ALLOW_MOCK_INTERVIEW", "true");
+    prismaMock.interview.findFirst.mockResolvedValueOnce(publishedInterview());
+    prismaMock.candidateSession.findFirst.mockResolvedValueOnce(null);
+    prismaMock.candidateSession.create.mockResolvedValueOnce(candidateSession());
+    prismaMock.candidateSession.update.mockResolvedValueOnce({
+      ...candidateSession(),
+      realtimeSessionId: "is_real",
+      status: "waiting_candidate",
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(
+      realtimeResponse(["audio"], "mock_lk_is_real"),
+    );
+
+    const response = await POST(
+      request({ candidateToken: "iv_public", consentAccepted: true }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      livekit: { isMock: true },
+    });
+  });
 });
 
 function request(body: Record<string, unknown>) {
@@ -241,13 +291,13 @@ function candidateSession(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function realtimeResponse(allowedModalities: string[]) {
+function realtimeResponse(allowedModalities: string[], token = "lk_is_real") {
   return Response.json({
     livekit_join: {
       expires_at: "2026-06-20T10:15:00.000Z",
       participant: "candidate-cs_123",
       room_name: "prelude-is_real",
-      token: "mock_lk_is_real",
+      token,
       url: "wss://mock-livekit.prelude.local",
     },
     session: {
