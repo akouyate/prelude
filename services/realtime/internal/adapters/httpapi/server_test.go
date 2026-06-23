@@ -16,21 +16,34 @@ import (
 	"github.com/akouyate/prelude/services/realtime/internal/domain"
 )
 
-type stubVerifier struct{ err error }
+type stubWebhookParser struct {
+	finalize application.FinalizeRecordingFromEgress
+	ok       bool
+	err      error
+}
 
-func (v stubVerifier) VerifyWebhook(_ string, _ []byte) error { return v.err }
+func (p stubWebhookParser) ParseEgressEnded(_ *http.Request) (application.FinalizeRecordingFromEgress, bool, error) {
+	return p.finalize, p.ok, p.err
+}
 
-func newRecordingServer(t *testing.T, verifier WebhookVerifier) (*Server, *store.MemoryStore) {
+func newRecordingServer(t *testing.T, parser EgressWebhookParser) (*Server, *store.MemoryStore) {
 	t.Helper()
 	repo := store.NewMemoryStore()
 	service := application.NewService(repo, livekit.NewMockGateway("wss://livekit.example.test"), nil)
 	service.SetRecordingRepository(repo)
 	server := NewServer(service)
-	if verifier != nil {
-		server.SetEgressWebhookVerifier(verifier)
+	if parser != nil {
+		server.SetEgressWebhookParser(parser)
 	}
 
 	return server, repo
+}
+
+func postEgressWebhook(server *Server) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/livekit/egress-webhook", bytes.NewBufferString("{}"))
+	server.ServeHTTP(response, request)
+	return response
 }
 
 func seedActiveRecording(t *testing.T, repo *store.MemoryStore, egressID string) {
@@ -52,15 +65,14 @@ func seedActiveRecording(t *testing.T, repo *store.MemoryStore, egressID string)
 }
 
 func TestServerEgressWebhookFinalizesRecording(t *testing.T) {
-	server, repo := newRecordingServer(t, stubVerifier{})
+	durationMs := 180000
+	server, repo := newRecordingServer(t, stubWebhookParser{
+		finalize: application.FinalizeRecordingFromEgress{EgressID: "eg_1", Status: "EGRESS_COMPLETE", DurationMs: &durationMs},
+		ok:       true,
+	})
 	seedActiveRecording(t, repo, "eg_1")
 
-	body := `{"event":"egress_ended","egressInfo":{"egressId":"eg_1","status":"EGRESS_COMPLETE","fileResults":[{"duration":180000000000}]}}`
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/livekit/egress-webhook", bytes.NewBufferString(body))
-	server.ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
+	if response := postEgressWebhook(server); response.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
 	}
 	recording, found, err := repo.RecordingByEgressID(context.Background(), "eg_1")
@@ -76,15 +88,10 @@ func TestServerEgressWebhookFinalizesRecording(t *testing.T) {
 }
 
 func TestServerEgressWebhookRejectsInvalidSignature(t *testing.T) {
-	server, repo := newRecordingServer(t, stubVerifier{err: errors.New("bad signature")})
+	server, repo := newRecordingServer(t, stubWebhookParser{err: errors.New("bad signature")})
 	seedActiveRecording(t, repo, "eg_1")
 
-	body := `{"event":"egress_ended","egressInfo":{"egressId":"eg_1","status":"EGRESS_COMPLETE","fileResults":[{"duration":180000000000}]}}`
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/livekit/egress-webhook", bytes.NewBufferString(body))
-	server.ServeHTTP(response, request)
-
-	if response.Code != http.StatusUnauthorized {
+	if response := postEgressWebhook(server); response.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", response.Code)
 	}
 	if recording, _, _ := repo.RecordingByEgressID(context.Background(), "eg_1"); recording.Status != domain.RecordingStatusRecording {
@@ -93,12 +100,7 @@ func TestServerEgressWebhookRejectsInvalidSignature(t *testing.T) {
 }
 
 func TestServerEgressWebhookDisabledReturns404(t *testing.T) {
-	server := newTestServer()
-	response := httptest.NewRecorder()
-	request := httptest.NewRequest(http.MethodPost, "/v1/livekit/egress-webhook", bytes.NewBufferString(`{"event":"egress_ended"}`))
-	server.ServeHTTP(response, request)
-
-	if response.Code != http.StatusNotFound {
+	if response := postEgressWebhook(newTestServer()); response.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 when the webhook is disabled, got %d", response.Code)
 	}
 }

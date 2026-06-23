@@ -3,69 +3,85 @@ package livekit
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
-	"time"
+
+	"github.com/livekit/protocol/auth"
 )
 
-func signedWebhookToken(t *testing.T, secret string, claims map[string]any) string {
+func signedWebhookRequest(t *testing.T, apiKey string, secret string, body string) *http.Request {
 	t.Helper()
-	token, err := signJWT(claims, []byte(secret))
+	digest := sha256.Sum256([]byte(body))
+	token, err := auth.NewAccessToken(apiKey, secret).
+		SetSha256(base64.StdEncoding.EncodeToString(digest[:])).
+		ToJWT()
 	if err != nil {
-		t.Fatalf("signJWT: %v", err)
+		t.Fatalf("sign webhook token: %v", err)
 	}
 
-	return token
+	request := httptest.NewRequest(http.MethodPost, "/v1/livekit/egress-webhook", strings.NewReader(body))
+	request.Header.Set("Authorization", token)
+	request.Header.Set("Content-Type", "application/webhook+json")
+	return request
 }
 
-func TestWebhookVerifierAcceptsValidSignature(t *testing.T) {
-	verifier, err := NewWebhookVerifier("lk_key", "lk_secret_long_enough_for_tests")
+func TestWebhookParserMapsVerifiedEgressEnded(t *testing.T) {
+	parser, err := NewWebhookParser("lk_key", "lk_secret_long_enough_for_tests")
 	if err != nil {
-		t.Fatalf("NewWebhookVerifier: %v", err)
+		t.Fatalf("NewWebhookParser: %v", err)
 	}
-	verifier.now = func() time.Time { return time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC) }
 
-	body := []byte(`{"event":"egress_ended","egressInfo":{"egressId":"eg_1"}}`)
-	digest := sha256.Sum256(body)
-	token := signedWebhookToken(t, "lk_secret_long_enough_for_tests", map[string]any{
-		"iss":    "lk_key",
-		"exp":    time.Date(2026, 6, 23, 10, 5, 0, 0, time.UTC).Unix(),
-		"sha256": base64.StdEncoding.EncodeToString(digest[:]),
-	})
+	body := `{"event":"egress_ended","egressInfo":{"egressId":"eg_1","status":"EGRESS_COMPLETE","fileResults":[{"duration":"180000000000"}]}}`
+	request := signedWebhookRequest(t, "lk_key", "lk_secret_long_enough_for_tests", body)
 
-	if err := verifier.VerifyWebhook(token, body); err != nil {
-		t.Fatalf("expected a valid webhook to verify, got %v", err)
+	finalize, ok, err := parser.ParseEgressEnded(request)
+	if err != nil {
+		t.Fatalf("ParseEgressEnded returned error: %v", err)
 	}
-}
-
-func TestWebhookVerifierRejectsTamperedBody(t *testing.T) {
-	verifier, _ := NewWebhookVerifier("lk_key", "lk_secret_long_enough_for_tests")
-	verifier.now = func() time.Time { return time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC) }
-
-	body := []byte(`{"event":"egress_ended","egressInfo":{"egressId":"eg_1"}}`)
-	digest := sha256.Sum256(body)
-	token := signedWebhookToken(t, "lk_secret_long_enough_for_tests", map[string]any{
-		"iss":    "lk_key",
-		"sha256": base64.StdEncoding.EncodeToString(digest[:]),
-	})
-
-	tampered := []byte(`{"event":"egress_ended","egressInfo":{"egressId":"eg_OTHER"}}`)
-	if err := verifier.VerifyWebhook(token, tampered); err == nil {
-		t.Fatal("expected a tampered body to be rejected")
+	if !ok {
+		t.Fatal("expected egress_ended to be handled")
+	}
+	if finalize.EgressID != "eg_1" {
+		t.Fatalf("expected egress id eg_1, got %s", finalize.EgressID)
+	}
+	if finalize.Status != "EGRESS_COMPLETE" {
+		t.Fatalf("expected EGRESS_COMPLETE, got %s", finalize.Status)
+	}
+	if finalize.DurationMs == nil || *finalize.DurationMs != 180000 {
+		t.Fatalf("expected 180000ms, got %v", finalize.DurationMs)
 	}
 }
 
-func TestWebhookVerifierRejectsWrongSecret(t *testing.T) {
-	verifier, _ := NewWebhookVerifier("lk_key", "the_real_secret_long_enough")
-	verifier.now = func() time.Time { return time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC) }
+func TestWebhookParserRejectsWrongSecret(t *testing.T) {
+	parser, err := NewWebhookParser("lk_key", "the_real_secret_long_enough")
+	if err != nil {
+		t.Fatalf("NewWebhookParser: %v", err)
+	}
 
-	body := []byte(`{"event":"egress_ended"}`)
-	digest := sha256.Sum256(body)
-	token := signedWebhookToken(t, "a_different_secret_long_enough", map[string]any{
-		"iss":    "lk_key",
-		"sha256": base64.StdEncoding.EncodeToString(digest[:]),
-	})
+	body := `{"event":"egress_ended","egressInfo":{"egressId":"eg_1"}}`
+	request := signedWebhookRequest(t, "lk_key", "a_different_secret_long_enough", body)
 
-	if err := verifier.VerifyWebhook(token, body); err == nil {
-		t.Fatal("expected a token signed with the wrong secret to be rejected")
+	if _, _, err := parser.ParseEgressEnded(request); err == nil {
+		t.Fatal("expected verification to fail for a token signed with the wrong secret")
+	}
+}
+
+func TestWebhookParserIgnoresNonEgressEvent(t *testing.T) {
+	parser, err := NewWebhookParser("lk_key", "lk_secret_long_enough_for_tests")
+	if err != nil {
+		t.Fatalf("NewWebhookParser: %v", err)
+	}
+
+	body := `{"event":"room_started"}`
+	request := signedWebhookRequest(t, "lk_key", "lk_secret_long_enough_for_tests", body)
+
+	finalize, ok, err := parser.ParseEgressEnded(request)
+	if err != nil {
+		t.Fatalf("ParseEgressEnded returned error: %v", err)
+	}
+	if ok {
+		t.Fatalf("expected a non-egress event to be ignored, got %+v", finalize)
 	}
 }

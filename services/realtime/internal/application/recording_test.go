@@ -20,6 +20,20 @@ type fakeEgress struct {
 	attempts int
 	err      error
 	stopErr  error
+	getState map[string]application.EgressState
+	getErr   error
+}
+
+func (f *fakeEgress) GetEgress(_ context.Context, egressID string) (application.EgressState, error) {
+	if f.getErr != nil {
+		return application.EgressState{}, f.getErr
+	}
+	state, ok := f.getState[egressID]
+	if !ok {
+		return application.EgressState{}, fmt.Errorf("egress %s not found", egressID)
+	}
+
+	return state, nil
 }
 
 func (f *fakeEgress) StartRoomCompositeEgress(_ context.Context, input application.StartEgressInput) (application.EgressHandle, error) {
@@ -289,5 +303,63 @@ func TestServiceFinalizeRecordingMarksFailedOnShortOrErroredEgress(t *testing.T)
 	}
 	if rec, _, _ := repo.RecordingByEgressID(context.Background(), "eg_err"); rec.Status != domain.RecordingStatusFailed {
 		t.Fatalf("expected failed for errored egress, got %s", rec.Status)
+	}
+}
+
+func TestServiceReconcileFinalizesTerminalEgressOnly(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)}
+	repo := store.NewMemoryStore()
+	service := application.NewService(repo, fakeLiveKit{}, clock)
+	service.SetRecordingRepository(repo)
+	durationMs := 90000
+	egress := &fakeEgress{getState: map[string]application.EgressState{
+		"eg_done":   {Status: "EGRESS_COMPLETE", DurationMs: &durationMs},
+		"eg_active": {Status: "EGRESS_ACTIVE"},
+	}}
+	service.SetEgressGateway(egress)
+
+	startedLongAgo := clock.now.Add(-30 * time.Minute)
+	seedRecording(t, repo, "is_done", "eg_done", startedLongAgo)
+	seedRecording(t, repo, "is_active", "eg_active", startedLongAgo)
+
+	reconciled, err := service.ReconcileRecordings(context.Background(), clock.now.Add(-10*time.Minute))
+	if err != nil {
+		t.Fatalf("ReconcileRecordings returned error: %v", err)
+	}
+	if reconciled != 1 {
+		t.Fatalf("expected 1 reconciled, got %d", reconciled)
+	}
+	if rec, _, _ := repo.RecordingByEgressID(context.Background(), "eg_done"); rec.Status != domain.RecordingStatusAvailable {
+		t.Fatalf("expected eg_done available, got %s", rec.Status)
+	}
+	if rec, _, _ := repo.RecordingByEgressID(context.Background(), "eg_active"); rec.Status != domain.RecordingStatusRecording {
+		t.Fatalf("expected eg_active still recording (egress not terminal), got %s", rec.Status)
+	}
+}
+
+func TestServiceReconcileSkipsFreshRecordings(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)}
+	repo := store.NewMemoryStore()
+	service := application.NewService(repo, fakeLiveKit{}, clock)
+	service.SetRecordingRepository(repo)
+	durationMs := 90000
+	egress := &fakeEgress{getState: map[string]application.EgressState{
+		"eg_fresh": {Status: "EGRESS_COMPLETE", DurationMs: &durationMs},
+	}}
+	service.SetEgressGateway(egress)
+
+	// Started after the cutoff: still within a plausible live interview, so it is
+	// not yet a reconciliation candidate.
+	seedRecording(t, repo, "is_fresh", "eg_fresh", clock.now.Add(-2*time.Minute))
+
+	reconciled, err := service.ReconcileRecordings(context.Background(), clock.now.Add(-10*time.Minute))
+	if err != nil {
+		t.Fatalf("ReconcileRecordings returned error: %v", err)
+	}
+	if reconciled != 0 {
+		t.Fatalf("expected 0 reconciled for a fresh recording, got %d", reconciled)
+	}
+	if rec, _, _ := repo.RecordingByEgressID(context.Background(), "eg_fresh"); rec.Status != domain.RecordingStatusRecording {
+		t.Fatalf("expected eg_fresh untouched, got %s", rec.Status)
 	}
 }

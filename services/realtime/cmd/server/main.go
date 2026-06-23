@@ -80,7 +80,7 @@ func main() {
 		service.SetAgentDispatchQueue(dispatcher)
 		slog.Info("using redis agent dispatcher")
 	}
-	var egressWebhookVerifier httpapi.WebhookVerifier
+	var egressWebhookParser httpapi.EgressWebhookParser
 	if recordingEnabled(os.Getenv) {
 		realGateway, gatewayOK := livekitGateway.(*livekit.RealGateway)
 		recordings, recordingsOK := repository.(application.RecordingRepository)
@@ -106,19 +106,20 @@ func main() {
 			service.SetRecordingRepository(recordings)
 			service.SetRecordingConsentGate(consent)
 
-			verifier, err := livekit.NewWebhookVerifier(os.Getenv("LIVEKIT_API_KEY"), os.Getenv("LIVEKIT_API_SECRET"))
+			parser, err := livekit.NewWebhookParser(os.Getenv("LIVEKIT_API_KEY"), os.Getenv("LIVEKIT_API_SECRET"))
 			if err != nil {
-				slog.Error("failed to configure egress webhook verifier", "error", err)
+				slog.Error("failed to configure egress webhook parser", "error", err)
 				os.Exit(1)
 			}
-			egressWebhookVerifier = verifier
+			egressWebhookParser = parser
 			slog.Info("interview audio recording enabled")
 		}
 	}
 
 	handler := httpapi.NewServer(service)
-	if egressWebhookVerifier != nil {
-		handler.SetEgressWebhookVerifier(egressWebhookVerifier)
+	if egressWebhookParser != nil {
+		handler.SetEgressWebhookParser(egressWebhookParser)
+		go runRecordingReconciler(context.Background(), service)
 	}
 
 	server := &http.Server{
@@ -131,5 +132,33 @@ func main() {
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
+	}
+}
+
+const (
+	recordingReconcileInterval = 5 * time.Minute
+	recordingStaleAfter        = 10 * time.Minute
+)
+
+// runRecordingReconciler periodically finalizes recordings whose egress_ended
+// webhook never arrived, by polling LiveKit for each stale in-flight recording.
+// It is the backstop for the webhook path, and it lets local dev finalize
+// recordings without exposing a public webhook URL.
+func runRecordingReconciler(ctx context.Context, service *application.Service) {
+	ticker := time.NewTicker(recordingReconcileInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cutoff := time.Now().UTC().Add(-recordingStaleAfter)
+			if reconciled, err := service.ReconcileRecordings(ctx, cutoff); err != nil {
+				slog.Warn("recording reconciliation failed", "error", err)
+			} else if reconciled > 0 {
+				slog.Info("reconciled recordings", "count", reconciled)
+			}
+		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/akouyate/prelude/services/realtime/internal/application"
 	"github.com/akouyate/prelude/services/realtime/internal/domain"
@@ -214,6 +215,26 @@ func (s *MemoryStore) FinalizeRecordingByEgressID(_ context.Context, input appli
 	}
 
 	return false, nil
+}
+
+func (s *MemoryStore) StaleRecordings(_ context.Context, startedBefore time.Time, limit int) ([]domain.Recording, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var stale []domain.Recording
+	for _, recording := range s.recordings {
+		if recording.Status == domain.RecordingStatusRecording && recording.StartedAt.Before(startedBefore) {
+			stale = append(stale, recording)
+		}
+	}
+	sort.Slice(stale, func(i int, j int) bool {
+		return stale[i].StartedAt.Before(stale[j].StartedAt)
+	})
+	if limit > 0 && len(stale) > limit {
+		stale = stale[:limit]
+	}
+
+	return stale, nil
 }
 
 func sameEvent(left domain.Event, right domain.Event) bool {

@@ -185,3 +185,105 @@ func TestPostgresStoreRecordingLifecycle(t *testing.T) {
 		t.Fatal("expected redelivered finalize to be a no-op")
 	}
 }
+
+func TestMemoryStoreStaleRecordings(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemoryStore()
+	base := time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)
+
+	mk := func(id string, egressID string, status domain.RecordingStatus, startedAt time.Time) {
+		if err := s.CreateRecording(ctx, domain.Recording{
+			ID:        id,
+			SessionID: "is_" + id,
+			EgressID:  egressID,
+			ObjectKey: "recordings/" + id + "/1.ogg",
+			Status:    status,
+			Format:    "audio/ogg",
+			StartedAt: startedAt,
+			CreatedAt: startedAt,
+			UpdatedAt: startedAt,
+		}); err != nil {
+			t.Fatalf("CreateRecording %s: %v", id, err)
+		}
+	}
+	mk("old", "eg_old", domain.RecordingStatusRecording, base.Add(-time.Hour))
+	mk("fresh", "eg_fresh", domain.RecordingStatusRecording, base.Add(-time.Minute))
+	mk("done", "eg_done", domain.RecordingStatusAvailable, base.Add(-time.Hour))
+
+	stale, err := s.StaleRecordings(ctx, base.Add(-10*time.Minute), 50)
+	if err != nil {
+		t.Fatalf("StaleRecordings returned error: %v", err)
+	}
+	if len(stale) != 1 || stale[0].EgressID != "eg_old" {
+		t.Fatalf("expected only eg_old stale (old + still recording), got %+v", stale)
+	}
+}
+
+func TestPostgresStoreStaleRecordings(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for Postgres store integration test")
+	}
+
+	ctx := context.Background()
+	pg, err := store.NewPostgresStore(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("NewPostgresStore returned error: %v", err)
+	}
+	defer pg.Close()
+
+	suffix := time.Now().UTC().Format("20060102150405.000000000")
+	session := domain.Session{
+		ID:                "it_stale_" + suffix,
+		InterviewPlanID:   "plan_123",
+		CandidateID:       "candidate_123",
+		Status:            domain.SessionStatusWaitingCandidate,
+		LiveKitRoomName:   "prelude-it-stale",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio},
+		CreatedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
+	}
+	if err := pg.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	startedLongAgo := time.Now().UTC().Add(-time.Hour).Truncate(time.Millisecond)
+	egressID := "eg_stale_" + suffix
+	if err := pg.CreateRecording(ctx, domain.Recording{
+		ID:        "rec_stale_" + suffix,
+		SessionID: session.ID,
+		EgressID:  egressID,
+		ObjectKey: "recordings/" + session.ID + "/1.ogg",
+		Status:    domain.RecordingStatusRecording,
+		Format:    "audio/ogg",
+		StartedAt: startedLongAgo,
+		CreatedAt: startedLongAgo,
+		UpdatedAt: startedLongAgo,
+	}); err != nil {
+		t.Fatalf("CreateRecording returned error: %v", err)
+	}
+
+	stale, err := pg.StaleRecordings(ctx, time.Now().UTC().Add(-10*time.Minute), 50)
+	if err != nil {
+		t.Fatalf("StaleRecordings returned error: %v", err)
+	}
+	found := false
+	for _, recording := range stale {
+		if recording.EgressID == egressID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected %s in the stale set", egressID)
+	}
+
+	// Leave no in-flight smoke row behind.
+	if _, err := pg.FinalizeRecordingByEgressID(ctx, application.FinalizeRecordingInput{
+		EgressID:  egressID,
+		Status:    domain.RecordingStatusFailed,
+		EndedAt:   time.Now().UTC(),
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("cleanup finalize returned error: %v", err)
+	}
+}

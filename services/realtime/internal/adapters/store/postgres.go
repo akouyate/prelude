@@ -702,3 +702,31 @@ func (s *PostgresStore) RecordingConsentGranted(ctx context.Context, sessionID s
 
 	return consentedAt.Valid, nil
 }
+
+func (s *PostgresStore) StaleRecordings(ctx context.Context, startedBefore time.Time, limit int) ([]domain.Recording, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at
+		from live_interview_recordings
+		where status = $1 and started_at < $2
+		order by started_at asc
+		limit $3
+	`, string(domain.RecordingStatusRecording), startedBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recordings := make([]domain.Recording, 0)
+	for rows.Next() {
+		recording, err := scanRecording(rows)
+		if err != nil {
+			return nil, err
+		}
+		recordings = append(recordings, recording)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return recordings, nil
+}

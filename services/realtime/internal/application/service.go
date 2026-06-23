@@ -112,6 +112,9 @@ type RecordingRepository interface {
 	// a session, if any. It is the start guard ("is an egress already active?")
 	// and the source of the egress id used to stop on session completion.
 	ActiveRecordingForSession(ctx context.Context, sessionID string) (domain.Recording, bool, error)
+	// StaleRecordings returns in-flight ("recording") rows started before the
+	// cutoff — candidates for reconciliation when an egress_ended webhook was lost.
+	StaleRecordings(ctx context.Context, startedBefore time.Time, limit int) ([]domain.Recording, error)
 }
 
 type FinalizeRecordingInput struct {
@@ -128,6 +131,9 @@ type FinalizeRecordingInput struct {
 type EgressGateway interface {
 	StartRoomCompositeEgress(ctx context.Context, input StartEgressInput) (EgressHandle, error)
 	StopEgress(ctx context.Context, egressID string) error
+	// GetEgress polls the current state of an egress job, used by reconciliation
+	// to finalize recordings whose egress_ended webhook never arrived.
+	GetEgress(ctx context.Context, egressID string) (EgressState, error)
 }
 
 type StartEgressInput struct {
@@ -137,6 +143,13 @@ type StartEgressInput struct {
 
 type EgressHandle struct {
 	EgressID string
+}
+
+// EgressState is the polled status of an egress job (its terminal status plus
+// the recorded duration, when available).
+type EgressState struct {
+	Status     string
+	DurationMs *int
 }
 
 // RecordingConsentGate reports whether the candidate behind a live session has
@@ -631,6 +644,60 @@ func (s *Service) FinalizeRecording(ctx context.Context, input FinalizeRecording
 	})
 
 	return err
+}
+
+const recordingReconcileLimit = 50
+
+// ReconcileRecordings finalizes in-flight recordings whose egress has actually
+// ended but whose egress_ended webhook never arrived (lost delivery, or the
+// service was down when it fired). It polls LiveKit for each stale recording and
+// finalizes only those whose egress reached a terminal state; a still-running
+// egress is left untouched. Best-effort: per-recording errors are logged, not
+// fatal, and it returns how many recordings it finalized.
+func (s *Service) ReconcileRecordings(ctx context.Context, startedBefore time.Time) (int, error) {
+	if s.recorder == nil || s.recordings == nil {
+		return 0, nil
+	}
+
+	stale, err := s.recordings.StaleRecordings(ctx, startedBefore, recordingReconcileLimit)
+	if err != nil {
+		return 0, err
+	}
+
+	reconciled := 0
+	for _, recording := range stale {
+		if recording.EgressID == "" {
+			continue
+		}
+		state, err := s.recorder.GetEgress(ctx, recording.EgressID)
+		if err != nil {
+			slog.Warn("failed to poll egress for reconciliation", "egress_id", recording.EgressID, "error", err)
+			continue
+		}
+		if !isTerminalEgressStatus(state.Status) {
+			continue
+		}
+		if err := s.FinalizeRecording(ctx, FinalizeRecordingFromEgress{
+			EgressID:   recording.EgressID,
+			Status:     state.Status,
+			DurationMs: state.DurationMs,
+		}); err != nil {
+			slog.Warn("failed to finalize recording during reconciliation", "egress_id", recording.EgressID, "error", err)
+			continue
+		}
+		reconciled++
+	}
+
+	return reconciled, nil
+}
+
+func isTerminalEgressStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "EGRESS_COMPLETE", "EGRESS_FAILED", "EGRESS_ABORTED", "EGRESS_LIMIT_REACHED":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Service) GetTranscript(ctx context.Context, sessionID string) ([]domain.TranscriptTurn, error) {

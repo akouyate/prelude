@@ -3,7 +3,6 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strings"
 
@@ -11,22 +10,23 @@ import (
 	"github.com/akouyate/prelude/services/realtime/internal/domain"
 )
 
-// WebhookVerifier authenticates an inbound webhook request body against its
-// Authorization header. It is satisfied by the LiveKit webhook verifier.
-type WebhookVerifier interface {
-	VerifyWebhook(authHeader string, body []byte) error
+// EgressWebhookParser verifies an inbound LiveKit webhook and, for egress_ended
+// events, returns the recording-finalization payload. It is satisfied by the
+// LiveKit webhook parser.
+type EgressWebhookParser interface {
+	ParseEgressEnded(r *http.Request) (application.FinalizeRecordingFromEgress, bool, error)
 }
 
 type Server struct {
 	service        *application.Service
 	mux            *http.ServeMux
-	egressVerifier WebhookVerifier
+	egressWebhooks EgressWebhookParser
 }
 
-// SetEgressWebhookVerifier enables the LiveKit egress webhook endpoint. Until it
-// is set, the endpoint returns 404 — recording is opt-in.
-func (s *Server) SetEgressWebhookVerifier(verifier WebhookVerifier) {
-	s.egressVerifier = verifier
+// SetEgressWebhookParser enables the LiveKit egress webhook endpoint. Until it is
+// set, the endpoint returns 404 — recording is opt-in.
+func (s *Server) SetEgressWebhookParser(parser EgressWebhookParser) {
+	s.egressWebhooks = parser
 }
 
 func NewServer(service *application.Service) *Server {
@@ -191,68 +191,27 @@ func (r ingestEventRequest) normalizedSequence() int {
 	return r.Sequence
 }
 
-type egressWebhookEvent struct {
-	Event      string `json:"event"`
-	EgressInfo struct {
-		EgressID    string `json:"egressId"`
-		Status      string `json:"status"`
-		FileResults []struct {
-			Duration int64 `json:"duration"`
-		} `json:"fileResults"`
-	} `json:"egressInfo"`
-}
-
 func (s *Server) handleEgressWebhook(w http.ResponseWriter, r *http.Request) {
-	if s.egressVerifier == nil {
+	if s.egressWebhooks == nil {
 		writeError(w, http.StatusNotFound, "not_found", "egress webhook is not enabled")
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	finalize, ok, err := s.egressWebhooks.ParseEgressEnded(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_body", "failed to read webhook body")
-		return
-	}
-	if err := s.egressVerifier.VerifyWebhook(r.Header.Get("Authorization"), body); err != nil {
 		writeError(w, http.StatusUnauthorized, "invalid_signature", "webhook verification failed")
 		return
 	}
-
-	var event egressWebhookEvent
-	if err := json.Unmarshal(body, &event); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_json", "failed to decode webhook event")
-		return
-	}
-	if event.Event != "egress_ended" {
+	if !ok {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
 		return
 	}
-
-	input := application.FinalizeRecordingFromEgress{
-		EgressID: event.EgressInfo.EgressID,
-		Status:   event.EgressInfo.Status,
-	}
-	if durationMs, ok := egressDurationMs(event); ok {
-		input.DurationMs = &durationMs
-	}
-	if err := s.service.FinalizeRecording(r.Context(), input); err != nil {
+	if err := s.service.FinalizeRecording(r.Context(), finalize); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to finalize recording")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-// egressDurationMs converts the first file result's nanosecond duration to
-// milliseconds, the unit the recording row and the duration floor use.
-func egressDurationMs(event egressWebhookEvent) (int, bool) {
-	for _, file := range event.EgressInfo.FileResults {
-		if file.Duration > 0 {
-			return int(file.Duration / 1_000_000), true
-		}
-	}
-
-	return 0, false
 }
 
 func readJSON(r *http.Request, target any) error {

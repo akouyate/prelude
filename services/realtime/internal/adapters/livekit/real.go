@@ -1,37 +1,28 @@
 package livekit
 
 import (
-	"bytes"
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 	"time"
+
+	"github.com/livekit/protocol/auth"
+	"github.com/livekit/protocol/livekit"
+	lksdk "github.com/livekit/server-sdk-go/v2"
 
 	"github.com/akouyate/prelude/services/realtime/internal/application"
 )
 
-const (
-	joinTTL  = 15 * time.Minute
-	adminTTL = 5 * time.Minute
-)
-
-type httpDoer interface {
-	Do(req *http.Request) (*http.Response, error)
-}
+const joinTTL = 15 * time.Minute
 
 type RealGateway struct {
-	url        string
-	apiKey     string
-	apiSecret  string
-	now        func() time.Time
-	httpClient httpDoer
-	egress     *EgressTarget
+	url          string
+	apiKey       string
+	apiSecret    string
+	now          func() time.Time
+	roomClient   *lksdk.RoomServiceClient
+	egressClient *lksdk.EgressClient
+	target       *EgressTarget
 }
 
 // EgressTarget is the S3-compatible object-storage destination (Cloudflare R2)
@@ -43,12 +34,6 @@ type EgressTarget struct {
 	Endpoint  string
 	AccessKey string
 	Secret    string
-}
-
-// ConfigureEgress enables audio recording on the gateway by setting the R2
-// destination. Until it is called, StartRoomCompositeEgress refuses to run.
-func (g *RealGateway) ConfigureEgress(target EgressTarget) {
-	g.egress = &target
 }
 
 func NewRealGateway(url string, apiKey string, apiSecret string) (*RealGateway, error) {
@@ -65,12 +50,15 @@ func NewRealGateway(url string, apiKey string, apiSecret string) (*RealGateway, 
 		return nil, fmt.Errorf("livekit api secret is required")
 	}
 
+	serverURL := httpAPIURL(url)
+
 	return &RealGateway{
-		url:        url,
-		apiKey:     apiKey,
-		apiSecret:  apiSecret,
-		now:        func() time.Time { return time.Now().UTC() },
-		httpClient: http.DefaultClient,
+		url:          url,
+		apiKey:       apiKey,
+		apiSecret:    apiSecret,
+		now:          func() time.Time { return time.Now().UTC() },
+		roomClient:   lksdk.NewRoomServiceClient(serverURL, apiKey, apiSecret),
+		egressClient: lksdk.NewEgressClient(serverURL, apiKey, apiSecret),
 	}, nil
 }
 
@@ -94,6 +82,12 @@ func NewGatewayFromEnv(url string, apiKey string, apiSecret string, requireReal 
 	return gateway, "real", nil
 }
 
+// ConfigureEgress enables audio recording on the gateway by setting the R2
+// destination. Until it is called, StartRoomCompositeEgress refuses to run.
+func (g *RealGateway) ConfigureEgress(target EgressTarget) {
+	g.target = &target
+}
+
 func (g *RealGateway) CreateJoin(_ context.Context, input application.LiveKitJoinInput) (application.LiveKitJoin, error) {
 	roomName := strings.TrimSpace(input.RoomName)
 	participant := strings.TrimSpace(input.Participant)
@@ -104,7 +98,22 @@ func (g *RealGateway) CreateJoin(_ context.Context, input application.LiveKitJoi
 		return application.LiveKitJoin{}, fmt.Errorf("livekit participant is required")
 	}
 
-	token, err := g.mintJoinToken(participant, roomName)
+	canPublish := true
+	canSubscribe := true
+	canPublishData := true
+	token, err := auth.NewAccessToken(g.apiKey, g.apiSecret).
+		SetIdentity(participant).
+		SetName(participant).
+		SetValidFor(joinTTL).
+		AddGrant(&auth.VideoGrant{
+			RoomJoin:       true,
+			Room:           roomName,
+			CanPublish:     &canPublish,
+			CanSubscribe:   &canSubscribe,
+			CanPublishData: &canPublishData,
+			Agent:          strings.HasPrefix(participant, "agent-"),
+		}).
+		ToJWT()
 	if err != nil {
 		return application.LiveKitJoin{}, err
 	}
@@ -118,52 +127,28 @@ func (g *RealGateway) CreateJoin(_ context.Context, input application.LiveKitJoi
 	}, nil
 }
 
+// EnsureRoom idempotently pre-provisions the room with controlled options before
+// either participant is handed a join token. CreateRoom is idempotent server-side
+// (an existing room returns the room), so a retry is safe.
 func (g *RealGateway) EnsureRoom(ctx context.Context, input application.EnsureRoomInput) error {
 	roomName := strings.TrimSpace(input.RoomName)
 	if roomName == "" {
 		return fmt.Errorf("livekit room name is required")
 	}
 
-	token, err := g.mintAdminToken()
-	if err != nil {
-		return err
-	}
-
-	// CreateRoom is idempotent server-side: an existing room returns 200, so a
-	// retry or duplicate session-creation attempt is safe.
-	_, err = g.doTwirp(ctx, "/twirp/livekit.RoomService/CreateRoom", token, map[string]any{
-		"name":             roomName,
-		"empty_timeout":    uint32(input.EmptyTimeout.Seconds()),
-		"max_participants": input.MaxParticipants,
+	_, err := g.roomClient.CreateRoom(ctx, &livekit.CreateRoomRequest{
+		Name:            roomName,
+		EmptyTimeout:    uint32(input.EmptyTimeout.Seconds()),
+		MaxParticipants: input.MaxParticipants,
 	})
 
 	return err
 }
 
-// mintAdminToken signs a short-lived control-plane token granting roomCreate +
-// roomAdmin. Room creation is done with THIS admin credential, never with a
-// participant join token — candidate/agent tokens deliberately lack roomCreate.
-func (g *RealGateway) mintAdminToken() (string, error) {
-	now := g.now()
-	claims := map[string]any{
-		"iss": g.apiKey,
-		"sub": "prelude-realtime-control-plane",
-		"nbf": now.Unix(),
-		"exp": now.Add(adminTTL).Unix(),
-		"video": map[string]any{
-			"roomCreate": true,
-			"roomAdmin":  true,
-		},
-	}
-	return signJWT(claims, []byte(g.apiSecret))
-}
-
 // StartRoomCompositeEgress starts an audio-only room-composite egress that mixes
 // every participant's audio into a single OGG/Opus file written straight to R2.
-// It hand-rolls the Twirp call exactly like EnsureRoom (no LiveKit SDK), reusing
-// the httpDoer seam, and authorizes with a narrow roomRecord token.
 func (g *RealGateway) StartRoomCompositeEgress(ctx context.Context, input application.StartEgressInput) (application.EgressHandle, error) {
-	if g.egress == nil {
+	if g.target == nil {
 		return application.EgressHandle{}, fmt.Errorf("livekit egress target is not configured")
 	}
 	roomName := strings.TrimSpace(input.RoomName)
@@ -175,52 +160,30 @@ func (g *RealGateway) StartRoomCompositeEgress(ctx context.Context, input applic
 		return application.EgressHandle{}, fmt.Errorf("livekit egress object key is required")
 	}
 
-	token, err := g.mintEgressToken()
+	info, err := g.egressClient.StartRoomCompositeEgress(ctx, &livekit.RoomCompositeEgressRequest{
+		RoomName:  roomName,
+		AudioOnly: true,
+		FileOutputs: []*livekit.EncodedFileOutput{{
+			FileType: livekit.EncodedFileType_OGG,
+			Filepath: objectKey,
+			Output: &livekit.EncodedFileOutput_S3{S3: &livekit.S3Upload{
+				Bucket:         g.target.Bucket,
+				Region:         g.target.Region,
+				AccessKey:      g.target.AccessKey,
+				Secret:         g.target.Secret,
+				Endpoint:       g.target.Endpoint,
+				ForcePathStyle: true,
+			}},
+		}},
+	})
 	if err != nil {
 		return application.EgressHandle{}, err
 	}
-
-	// Field names are the proto names (snake_case); protojson accepts them on the
-	// wire, matching how EnsureRoom encodes its CreateRoom request.
-	payload := map[string]any{
-		"room_name":  roomName,
-		"audio_only": true,
-		"file_outputs": []map[string]any{
-			{
-				"file_type": "OGG", // audio-only egress; OGG/Opus is a passthrough (no transcode)
-				"filepath":  objectKey,
-				"s3": map[string]any{
-					"bucket":           g.egress.Bucket,
-					"region":           g.egress.Region,
-					"access_key":       g.egress.AccessKey,
-					"secret":           g.egress.Secret,
-					"endpoint":         g.egress.Endpoint,
-					"force_path_style": true,
-				},
-			},
-		},
-	}
-
-	responseBody, err := g.doTwirp(ctx, "/twirp/livekit.Egress/StartRoomCompositeEgress", token, payload)
-	if err != nil {
-		return application.EgressHandle{}, err
-	}
-
-	// LiveKit's protojson responses are camelCase by default; tolerate the proto
-	// field name too in case the server is configured to emit it.
-	var parsed struct {
-		EgressID      string `json:"egressId"`
-		EgressIDProto string `json:"egress_id"`
-	}
-	if err := json.Unmarshal(responseBody, &parsed); err != nil {
-		return application.EgressHandle{}, fmt.Errorf("decode egress response: %w", err)
-	}
-	egressID := firstNonBlank(parsed.EgressID, parsed.EgressIDProto)
-	if egressID == "" {
+	if info.GetEgressId() == "" {
 		return application.EgressHandle{}, fmt.Errorf("livekit egress response missing egress id")
 	}
 
-	return application.EgressHandle{EgressID: egressID}, nil
+	return application.EgressHandle{EgressID: info.GetEgressId()}, nil
 }
 
 // StopEgress ends an in-flight egress so the recording finalizes promptly. It is
@@ -231,75 +194,49 @@ func (g *RealGateway) StopEgress(ctx context.Context, egressID string) error {
 		return fmt.Errorf("livekit egress id is required")
 	}
 
-	token, err := g.mintEgressToken()
-	if err != nil {
-		return err
-	}
+	_, err := g.egressClient.StopEgress(ctx, &livekit.StopEgressRequest{EgressId: egressID})
 
-	if _, err := g.doTwirp(ctx, "/twirp/livekit.Egress/StopEgress", token, map[string]any{"egress_id": egressID}); err != nil {
-		return err
-	}
-
-	return nil
+	return err
 }
 
-// mintEgressToken signs a short-lived control-plane token whose only grant is
-// roomRecord — deliberately narrower than the room-admin token, following the
-// least-privilege pattern already used for join and admin tokens.
-func (g *RealGateway) mintEgressToken() (string, error) {
-	now := g.now()
-	claims := map[string]any{
-		"iss": g.apiKey,
-		"sub": "prelude-realtime-egress",
-		"nbf": now.Unix(),
-		"exp": now.Add(adminTTL).Unix(),
-		"video": map[string]any{
-			"roomRecord": true,
-		},
+// GetEgress polls one egress job's current state (via ListEgress filtered by id).
+// Reconciliation uses it to finalize recordings whose egress_ended webhook never
+// arrived.
+func (g *RealGateway) GetEgress(ctx context.Context, egressID string) (application.EgressState, error) {
+	egressID = strings.TrimSpace(egressID)
+	if egressID == "" {
+		return application.EgressState{}, fmt.Errorf("livekit egress id is required")
 	}
-	return signJWT(claims, []byte(g.apiSecret))
+
+	response, err := g.egressClient.ListEgress(ctx, &livekit.ListEgressRequest{EgressId: egressID})
+	if err != nil {
+		return application.EgressState{}, err
+	}
+	if len(response.GetItems()) == 0 {
+		return application.EgressState{}, fmt.Errorf("egress %s not found", egressID)
+	}
+
+	return egressStateFromInfo(response.GetItems()[0]), nil
 }
 
-func (g *RealGateway) doTwirp(ctx context.Context, path string, token string, payload any) ([]byte, error) {
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return nil, err
-	}
-
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, httpBaseURL(g.url)+path, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("Content-Type", "application/json")
-
-	response, err := g.httpClient.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = response.Body.Close() }()
-
-	responseBody, _ := io.ReadAll(io.LimitReader(response.Body, 1<<16))
-	if response.StatusCode >= 300 {
-		return nil, fmt.Errorf("livekit %s failed with HTTP %d: %s", path, response.StatusCode, strings.TrimSpace(string(responseBody)))
-	}
-
-	return responseBody, nil
-}
-
-func firstNonBlank(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return value
+// egressStateFromInfo normalizes a LiveKit EgressInfo: the status enum name and
+// the recorded duration (LiveKit reports nanoseconds) converted to milliseconds.
+func egressStateFromInfo(info *livekit.EgressInfo) application.EgressState {
+	state := application.EgressState{Status: info.GetStatus().String()}
+	for _, file := range info.GetFileResults() {
+		if file.GetDuration() > 0 {
+			milliseconds := int(file.GetDuration() / 1_000_000)
+			state.DurationMs = &milliseconds
+			break
 		}
 	}
 
-	return ""
+	return state
 }
 
-// httpBaseURL converts a LiveKit client URL (wss://host / ws://host) to its HTTP
-// server-API base (https://host / http://host) for Twirp room-service calls.
-func httpBaseURL(rawURL string) string {
+// httpAPIURL converts a LiveKit client URL (wss://host / ws://host) to its HTTP
+// server-API base (https://host / http://host) for the server SDK clients.
+func httpAPIURL(rawURL string) string {
 	switch {
 	case strings.HasPrefix(rawURL, "wss://"):
 		return "https://" + strings.TrimPrefix(rawURL, "wss://")
@@ -308,48 +245,4 @@ func httpBaseURL(rawURL string) string {
 	default:
 		return rawURL
 	}
-}
-
-func (g *RealGateway) mintJoinToken(participant string, roomName string) (string, error) {
-	now := g.now()
-	claims := map[string]any{
-		"iss":  g.apiKey,
-		"sub":  participant,
-		"name": participant,
-		"nbf":  now.Unix(),
-		"exp":  now.Add(joinTTL).Unix(),
-		"video": map[string]any{
-			"roomJoin":       true,
-			"room":           roomName,
-			"canPublish":     true,
-			"canSubscribe":   true,
-			"canPublishData": true,
-			"agent":          strings.HasPrefix(participant, "agent-"),
-		},
-	}
-	return signJWT(claims, []byte(g.apiSecret))
-}
-
-func signJWT(claims map[string]any, secret []byte) (string, error) {
-	header, err := json.Marshal(map[string]string{
-		"alg": "HS256",
-		"typ": "JWT",
-	})
-	if err != nil {
-		return "", err
-	}
-	payload, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-
-	encodedHeader := base64.RawURLEncoding.EncodeToString(header)
-	encodedPayload := base64.RawURLEncoding.EncodeToString(payload)
-	unsigned := encodedHeader + "." + encodedPayload
-	mac := hmac.New(sha256.New, secret)
-	if _, err := mac.Write([]byte(unsigned)); err != nil {
-		return "", err
-	}
-	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
-	return unsigned + "." + signature, nil
 }
