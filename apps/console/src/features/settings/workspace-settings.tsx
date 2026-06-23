@@ -308,9 +308,7 @@ function TeamSection({ data }: { data: WorkspaceSettingsData }) {
 
   return (
     <div className="space-y-5">
-      {data.canManageTeam ? (
-        <InviteTeammatePanel isMockWorkspace={data.authProvider === "mock"} />
-      ) : null}
+      {data.canManageTeam ? <InviteTeammatePanel /> : null}
       {data.canManageTeam && data.pendingInvitations.length > 0 ? (
         <PendingInvitationsPanel invitations={data.pendingInvitations} />
       ) : null}
@@ -324,7 +322,7 @@ function TeamSection({ data }: { data: WorkspaceSettingsData }) {
   );
 }
 
-function InviteTeammatePanel({ isMockWorkspace }: { isMockWorkspace: boolean }) {
+function InviteTeammatePanel() {
   const { t } = useTranslation();
   const roleName = useRoleName();
   const [email, setEmail] = React.useState("");
@@ -358,61 +356,55 @@ function InviteTeammatePanel({ isMockWorkspace }: { isMockWorkspace: boolean }) 
         description={t("settings.team.inviteDescription")}
         title={t("settings.team.inviteTitle")}
       />
-      {isMockWorkspace ? (
-        <p className="mt-4 rounded-[13px] border border-[#e7e2d6] bg-[#f7f6f1] px-4 py-3 text-[13px] leading-5 text-ink-500">
-          {t("settings.team.mockNotice")}
-        </p>
-      ) : (
-        <form
-          className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end"
-          onSubmit={handleSubmit}
-        >
-          <label className="flex flex-1 flex-col gap-2">
-            <span className="text-[12.5px] font-semibold text-ink-700">
-              {t("settings.team.emailLabel")}
-            </span>
-            <Input
-              className="h-11 rounded-[13px] border-[#e2ddd2] bg-white px-3.5 focus:border-ink-900 focus:ring-[#e5e8d6]"
-              onChange={(event) => setEmail(event.target.value)}
-              placeholder={t("settings.team.emailPlaceholder")}
-              required
-              type="email"
-              value={email}
+      <form
+        className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end"
+        onSubmit={handleSubmit}
+      >
+        <label className="flex flex-1 flex-col gap-2">
+          <span className="text-[12.5px] font-semibold text-ink-700">
+            {t("settings.team.emailLabel")}
+          </span>
+          <Input
+            className="h-11 rounded-[13px] border-[#e2ddd2] bg-white px-3.5 focus:border-ink-900 focus:ring-[#e5e8d6]"
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder={t("settings.team.emailPlaceholder")}
+            required
+            type="email"
+            value={email}
+          />
+        </label>
+        <label className="flex flex-col gap-2 sm:w-44">
+          <span className="text-[12.5px] font-semibold text-ink-700">
+            {t("settings.team.roleLabel")}
+          </span>
+          <div className="relative">
+            <select
+              className="h-11 w-full cursor-pointer appearance-none rounded-[13px] border border-[#e2ddd2] bg-white px-3.5 pr-10 text-left text-sm text-ink-950 transition hover:border-[#c8c1b2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+              onChange={(event) =>
+                setRole(event.target.value as OrganizationRole)
+              }
+              value={role}
+            >
+              {ASSIGNABLE_ROLE_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {roleName(option)}
+                </option>
+              ))}
+            </select>
+            <NavArrowDown
+              aria-hidden={true}
+              className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400"
             />
-          </label>
-          <label className="flex flex-col gap-2 sm:w-44">
-            <span className="text-[12.5px] font-semibold text-ink-700">
-              {t("settings.team.roleLabel")}
-            </span>
-            <div className="relative">
-              <select
-                className="h-11 w-full cursor-pointer appearance-none rounded-[13px] border border-[#e2ddd2] bg-white px-3.5 pr-10 text-left text-sm text-ink-950 transition hover:border-[#c8c1b2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-                onChange={(event) =>
-                  setRole(event.target.value as OrganizationRole)
-                }
-                value={role}
-              >
-                {ASSIGNABLE_ROLE_OPTIONS.map((option) => (
-                  <option key={option} value={option}>
-                    {roleName(option)}
-                  </option>
-                ))}
-              </select>
-              <NavArrowDown
-                aria-hidden={true}
-                className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400"
-              />
-            </div>
-          </label>
-          <Button
-            className="h-11"
-            disabled={pending || email.trim().length === 0}
-            type="submit"
-          >
-            {pending ? t("settings.team.sending") : t("settings.team.sendInvite")}
-          </Button>
-        </form>
-      )}
+          </div>
+        </label>
+        <Button
+          className="h-11"
+          disabled={pending || email.trim().length === 0}
+          type="submit"
+        >
+          {pending ? t("settings.team.sending") : t("settings.team.sendInvite")}
+        </Button>
+      </form>
       {feedback ? (
         <p
           className={cn(

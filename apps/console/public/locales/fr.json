@@ -348,7 +348,6 @@
         "sendInvite": "Envoyer l'invitation",
         "sending": "Envoi…",
         "inviteSent": "Invitation envoyée à {{email}}.",
-        "mockNotice": "Inviter des collaborateurs nécessite un véritable espace Clerk, indisponible en mode mock local.",
         "pendingTitle": "Invitations en attente",
         "pendingDescription_one": "{{count}} invitation en attente de réponse.",
         "pendingDescription_other": "{{count}} invitations en attente de réponse.",

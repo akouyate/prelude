@@ -348,7 +348,6 @@
         "sendInvite": "Send invite",
         "sending": "Sending…",
         "inviteSent": "Invitation sent to {{email}}.",
-        "mockNotice": "Inviting teammates needs a real Clerk workspace, which isn't available in local mock mode.",
         "pendingTitle": "Pending invitations",
         "pendingDescription_one": "{{count}} invitation is awaiting a response.",
         "pendingDescription_other": "{{count}} invitations are awaiting a response.",
