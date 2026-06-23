@@ -38,6 +38,8 @@ import {
 } from "../../../../src/features/candidate-screens";
 import { CandidateDetailTabs } from "../../../../src/features/interview-detail/candidate-detail-tabs";
 import { CandidateVoicePlayer } from "../../../../src/features/interview-detail/candidate-voice-player";
+import { DeleteRecordingButton } from "../../../../src/features/interview-detail/delete-recording-button";
+import { canDeleteRecording } from "../../../../src/domain/recording-policy";
 
 type InterviewDetailPageProps = {
   params: Promise<{
@@ -67,6 +69,7 @@ export default async function InterviewDetailPage({
 
   return (
     <CandidateSessionReview
+      canDelete={canDeleteRecording(account.role)}
       canManageReview={canManageCandidateReview(account.role)}
       session={detail.candidateSession}
     />
@@ -74,9 +77,11 @@ export default async function InterviewDetailPage({
 }
 
 function CandidateSessionReview({
+  canDelete,
   canManageReview,
   session,
 }: {
+  canDelete: boolean;
   canManageReview: boolean;
   session: {
     analysisStatus: "available" | "pending" | "not_ready" | "failed";
@@ -249,7 +254,7 @@ function CandidateSessionReview({
           />
         }
         recording={
-          <CandidateRecordingView session={session} />
+          <CandidateRecordingView canDelete={canDelete} session={session} />
         }
       />
     </main>
@@ -262,8 +267,10 @@ type CandidateSessionReviewSession = Parameters<
 type CandidateReviewStatus = CandidateSessionReviewSession["reviewStatus"];
 
 function CandidateRecordingView({
+  canDelete,
   session,
 }: {
+  canDelete: boolean;
   session: CandidateSessionReviewSession;
 }) {
   const moments = getKeyMoments(session);
@@ -296,6 +303,11 @@ function CandidateRecordingView({
             session.evidence.transcriptTurns,
           )}
           recording={session.evidence.recording}
+        />
+        <DeleteRecordingButton
+          candidateSessionId={session.id}
+          canDelete={canDelete}
+          recordingStatus={session.evidence.recording?.status ?? null}
         />
 
         <section className="overflow-hidden rounded-[20px] border border-[#e7e2d8] bg-white">
