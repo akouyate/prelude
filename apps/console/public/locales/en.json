@@ -339,7 +339,30 @@
         "description_other": "{{count}} people have access to this workspace.",
         "invite": "Invite member",
         "openActions": "Open actions for {{name}}",
-        "empty": "No active member found."
+        "empty": "No active member found.",
+        "inviteTitle": "Invite a teammate",
+        "inviteDescription": "They'll receive an email to join this workspace.",
+        "emailLabel": "Email",
+        "emailPlaceholder": "name@company.com",
+        "roleLabel": "Role",
+        "sendInvite": "Send invite",
+        "sending": "Sending…",
+        "inviteSent": "Invitation sent to {{email}}.",
+        "mockNotice": "Inviting teammates needs a real Clerk workspace, which isn't available in local mock mode.",
+        "pendingTitle": "Pending invitations",
+        "pendingDescription_one": "{{count}} invitation is awaiting a response.",
+        "pendingDescription_other": "{{count}} invitations are awaiting a response.",
+        "revoke": "Revoke",
+        "revoking": "Revoking…",
+        "you": "(you)",
+        "changeRoleAria": "Change role for {{name}}",
+        "removeAria": "Remove {{name}}",
+        "roles": {
+          "owner": "Owner",
+          "admin": "Admin",
+          "recruiter": "Recruiter",
+          "viewer": "Viewer"
+        }
       },
       "interview": {
         "title": "Interview defaults",

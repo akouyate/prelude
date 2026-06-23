@@ -1,10 +1,22 @@
 "use client";
 
 import * as React from "react";
-import { CheckCircle, Plus, ThreePointsCircle } from "iconoir-react";
+import { CheckCircle, NavArrowDown, Trash } from "iconoir-react";
 import { useTranslation } from "react-i18next";
-import { Badge, Button, StatusBadge, cn } from "@prelude/ui";
+import { Badge, Button, Input, StatusBadge, cn } from "@prelude/ui";
+import type { OrganizationRole } from "@prelude/types";
 
+import {
+  ASSIGNABLE_ROLE_OPTIONS,
+  canChangeMemberRole,
+  canRemoveMember,
+} from "../../domain/organization-permissions";
+import {
+  changeTeamMemberRoleAction,
+  inviteTeamMemberAction,
+  removeTeamMemberAction,
+  revokeTeamInvitationAction,
+} from "../../server/organizations/team-actions";
 import {
   updateInterviewPreferencesAction,
   updateNotificationPreferencesAction,
@@ -119,7 +131,7 @@ function SettingsSectionContent({
   }
 
   if (section === "team") {
-    return <TeamSection team={data.team} />;
+    return <TeamSection data={data} />;
   }
 
   if (section === "interview") {
@@ -279,62 +291,372 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
   );
 }
 
-function TeamSection({ team }: { team: WorkspaceSettingsData["team"] }) {
+function useRoleName() {
+  const { t } = useTranslation();
+  return React.useCallback(
+    (role: string) => {
+      const key = `settings.team.roles.${role}`;
+      const label = t(key);
+      return label === key ? formatRoleLabel(role) : label;
+    },
+    [t],
+  );
+}
+
+function TeamSection({ data }: { data: WorkspaceSettingsData }) {
+  const viewerRole = data.account.role as OrganizationRole;
+
+  return (
+    <div className="space-y-5">
+      {data.canManageTeam ? (
+        <InviteTeammatePanel isMockWorkspace={data.authProvider === "mock"} />
+      ) : null}
+      {data.canManageTeam && data.pendingInvitations.length > 0 ? (
+        <PendingInvitationsPanel invitations={data.pendingInvitations} />
+      ) : null}
+      <TeamMembersPanel
+        canManage={data.canManageTeam}
+        members={data.team}
+        viewerClerkUserId={data.viewerClerkUserId}
+        viewerRole={viewerRole}
+      />
+    </div>
+  );
+}
+
+function InviteTeammatePanel({ isMockWorkspace }: { isMockWorkspace: boolean }) {
+  const { t } = useTranslation();
+  const roleName = useRoleName();
+  const [email, setEmail] = React.useState("");
+  const [role, setRole] = React.useState<OrganizationRole>("recruiter");
+  const [feedback, setFeedback] = React.useState<{
+    message: string;
+    tone: "error" | "success";
+  } | null>(null);
+  const [pending, startTransition] = React.useTransition();
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFeedback(null);
+    startTransition(async () => {
+      const result = await inviteTeamMemberAction({ email, role });
+      if (result.ok) {
+        setEmail("");
+        setFeedback({
+          message: t("settings.team.inviteSent", { email }),
+          tone: "success",
+        });
+      } else {
+        setFeedback({ message: result.error, tone: "error" });
+      }
+    });
+  }
+
+  return (
+    <SettingsPanel>
+      <SettingsPanelHeading
+        description={t("settings.team.inviteDescription")}
+        title={t("settings.team.inviteTitle")}
+      />
+      {isMockWorkspace ? (
+        <p className="mt-4 rounded-[13px] border border-[#e7e2d6] bg-[#f7f6f1] px-4 py-3 text-[13px] leading-5 text-ink-500">
+          {t("settings.team.mockNotice")}
+        </p>
+      ) : (
+        <form
+          className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end"
+          onSubmit={handleSubmit}
+        >
+          <label className="flex flex-1 flex-col gap-2">
+            <span className="text-[12.5px] font-semibold text-ink-700">
+              {t("settings.team.emailLabel")}
+            </span>
+            <Input
+              className="h-11 rounded-[13px] border-[#e2ddd2] bg-white px-3.5 focus:border-ink-900 focus:ring-[#e5e8d6]"
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder={t("settings.team.emailPlaceholder")}
+              required
+              type="email"
+              value={email}
+            />
+          </label>
+          <label className="flex flex-col gap-2 sm:w-44">
+            <span className="text-[12.5px] font-semibold text-ink-700">
+              {t("settings.team.roleLabel")}
+            </span>
+            <div className="relative">
+              <select
+                className="h-11 w-full cursor-pointer appearance-none rounded-[13px] border border-[#e2ddd2] bg-white px-3.5 pr-10 text-left text-sm text-ink-950 transition hover:border-[#c8c1b2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+                onChange={(event) =>
+                  setRole(event.target.value as OrganizationRole)
+                }
+                value={role}
+              >
+                {ASSIGNABLE_ROLE_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {roleName(option)}
+                  </option>
+                ))}
+              </select>
+              <NavArrowDown
+                aria-hidden={true}
+                className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400"
+              />
+            </div>
+          </label>
+          <Button
+            className="h-11"
+            disabled={pending || email.trim().length === 0}
+            type="submit"
+          >
+            {pending ? t("settings.team.sending") : t("settings.team.sendInvite")}
+          </Button>
+        </form>
+      )}
+      {feedback ? (
+        <p
+          className={cn(
+            "mt-3 text-[13px]",
+            feedback.tone === "error" ? "text-red-600" : "text-olive-700",
+          )}
+        >
+          {feedback.message}
+        </p>
+      ) : null}
+    </SettingsPanel>
+  );
+}
+
+function PendingInvitationsPanel({
+  invitations,
+}: {
+  invitations: WorkspaceSettingsData["pendingInvitations"];
+}) {
   const { t } = useTranslation();
 
   return (
     <SettingsPanel>
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <SettingsPanelHeading
-          description={t("settings.team.description", { count: team.length })}
-          title={t("settings.team.title")}
-        />
-        <Button className="h-[42px]" type="button" variant="secondary">
-          <Plus aria-hidden={true} className="h-4 w-4" />
-          {t("settings.team.invite")}
-        </Button>
-      </div>
-      <div className="mt-5">
-        {team.map((member) => (
-          <div
-            className="flex items-center gap-3 border-t border-[#f1ede4] px-1 py-3.5 first:border-t-0"
-            key={member.email}
-          >
-            <AvatarToken className="h-[42px] w-[42px] rounded-full text-sm">
-              {initialsFor(member.name)}
-            </AvatarToken>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-ink-950">
-                {member.name}
-              </p>
-              <p className="mt-0.5 truncate text-[12.5px] text-ink-500">
-                {member.email}
-              </p>
-            </div>
-            <StatusBadge
-              className="shrink-0"
-              tone={member.role === "owner" ? "dark" : "olive"}
-            >
-              {formatRoleLabel(member.role)}
-            </StatusBadge>
-            <button
-              aria-label={t("settings.team.openActions", {
-                name: member.name,
-              })}
-              className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-[10px] text-ink-400 transition hover:bg-[#f4f2ea] hover:text-ink-950"
-              type="button"
-            >
-              <ThreePointsCircle aria-hidden={true} className="h-5 w-5" />
-            </button>
-          </div>
+      <SettingsPanelHeading
+        description={t("settings.team.pendingDescription", {
+          count: invitations.length,
+        })}
+        title={t("settings.team.pendingTitle")}
+      />
+      <div className="mt-4">
+        {invitations.map((invitation) => (
+          <PendingInvitationRow invitation={invitation} key={invitation.id} />
         ))}
-        {team.length === 0 ? (
+      </div>
+    </SettingsPanel>
+  );
+}
+
+function PendingInvitationRow({
+  invitation,
+}: {
+  invitation: WorkspaceSettingsData["pendingInvitations"][number];
+}) {
+  const { t } = useTranslation();
+  const roleName = useRoleName();
+  const [error, setError] = React.useState<string | null>(null);
+  const [pending, startTransition] = React.useTransition();
+
+  function handleRevoke() {
+    setError(null);
+    startTransition(async () => {
+      const result = await revokeTeamInvitationAction({
+        invitationId: invitation.id,
+      });
+      if (!result.ok) {
+        setError(result.error);
+      }
+    });
+  }
+
+  return (
+    <div className="flex items-center gap-3 border-t border-[#f1ede4] px-1 py-3.5 first:border-t-0">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-ink-900">
+          {invitation.email}
+        </p>
+        <p className="mt-0.5 text-[12px] text-ink-400">
+          {roleName(invitation.role)}
+        </p>
+      </div>
+      {error ? (
+        <span className="text-[12px] text-red-600">{error}</span>
+      ) : null}
+      <button
+        className="shrink-0 rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold text-ink-500 transition hover:bg-[#f4f2ea] hover:text-ink-900 disabled:opacity-50"
+        disabled={pending}
+        onClick={handleRevoke}
+        type="button"
+      >
+        {pending ? t("settings.team.revoking") : t("settings.team.revoke")}
+      </button>
+    </div>
+  );
+}
+
+function TeamMembersPanel({
+  canManage,
+  members,
+  viewerClerkUserId,
+  viewerRole,
+}: {
+  canManage: boolean;
+  members: WorkspaceSettingsData["team"];
+  viewerClerkUserId: string;
+  viewerRole: OrganizationRole;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <SettingsPanel>
+      <SettingsPanelHeading
+        description={t("settings.team.description", { count: members.length })}
+        title={t("settings.team.title")}
+      />
+      <div className="mt-4">
+        {members.map((member) => (
+          <TeamMemberRow
+            canManage={canManage}
+            isSelf={
+              viewerClerkUserId.length > 0 &&
+              member.clerkUserId === viewerClerkUserId
+            }
+            key={member.id}
+            member={member}
+            viewerRole={viewerRole}
+          />
+        ))}
+        {members.length === 0 ? (
           <p className="border-t border-[#f1ede4] px-1 py-4 text-sm text-ink-500">
             {t("settings.team.empty")}
           </p>
         ) : null}
       </div>
     </SettingsPanel>
+  );
+}
+
+function TeamMemberRow({
+  canManage,
+  isSelf,
+  member,
+  viewerRole,
+}: {
+  canManage: boolean;
+  isSelf: boolean;
+  member: WorkspaceSettingsData["team"][number];
+  viewerRole: OrganizationRole;
+}) {
+  const { t } = useTranslation();
+  const roleName = useRoleName();
+  const [error, setError] = React.useState<string | null>(null);
+  const [pending, startTransition] = React.useTransition();
+  const memberRole = member.role as OrganizationRole;
+
+  const manageable = canManage && !isSelf && memberRole !== "owner";
+  const assignableRoles = ASSIGNABLE_ROLE_OPTIONS.filter((option) =>
+    canChangeMemberRole(viewerRole, memberRole, option),
+  );
+  const canEditRole = manageable && assignableRoles.length > 0;
+  const canRemove = manageable && canRemoveMember(viewerRole, memberRole);
+  const roleOptions = assignableRoles.includes(memberRole)
+    ? assignableRoles
+    : [memberRole, ...assignableRoles];
+
+  function handleRoleChange(event: React.ChangeEvent<HTMLSelectElement>) {
+    const newRole = event.target.value as OrganizationRole;
+    if (newRole === memberRole) {
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const result = await changeTeamMemberRoleAction({
+        newRole,
+        userId: member.clerkUserId,
+      });
+      if (!result.ok) {
+        setError(result.error);
+      }
+    });
+  }
+
+  function handleRemove() {
+    setError(null);
+    startTransition(async () => {
+      const result = await removeTeamMemberAction({
+        userId: member.clerkUserId,
+      });
+      if (!result.ok) {
+        setError(result.error);
+      }
+    });
+  }
+
+  return (
+    <div className="flex items-center gap-3 border-t border-[#f1ede4] px-1 py-3.5 first:border-t-0">
+      <AvatarToken className="h-[42px] w-[42px] rounded-full text-sm">
+        {initialsFor(member.name)}
+      </AvatarToken>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-semibold text-ink-950">
+          {member.name}
+          {isSelf ? (
+            <span className="ml-1.5 text-[12px] font-normal text-ink-400">
+              {t("settings.team.you")}
+            </span>
+          ) : null}
+        </p>
+        <p className="mt-0.5 truncate text-[12.5px] text-ink-500">
+          {member.email}
+        </p>
+        {error ? (
+          <p className="mt-1 text-[12px] text-red-600">{error}</p>
+        ) : null}
+      </div>
+      {canEditRole ? (
+        <div className="relative shrink-0">
+          <select
+            aria-label={t("settings.team.changeRoleAria", { name: member.name })}
+            className="h-9 cursor-pointer appearance-none rounded-[10px] border border-[#e2ddd2] bg-white pl-3 pr-8 text-[12.5px] font-semibold text-ink-900 transition hover:border-[#c8c1b2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300 disabled:opacity-50"
+            disabled={pending}
+            onChange={handleRoleChange}
+            value={memberRole}
+          >
+            {roleOptions.map((option) => (
+              <option key={option} value={option}>
+                {roleName(option)}
+              </option>
+            ))}
+          </select>
+          <NavArrowDown
+            aria-hidden={true}
+            className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-400"
+          />
+        </div>
+      ) : (
+        <StatusBadge
+          className="shrink-0"
+          tone={memberRole === "owner" ? "dark" : "olive"}
+        >
+          {roleName(memberRole)}
+        </StatusBadge>
+      )}
+      {canRemove ? (
+        <button
+          aria-label={t("settings.team.removeAria", { name: member.name })}
+          className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-[10px] text-ink-400 transition hover:bg-[#fbeceb] hover:text-red-600 disabled:opacity-50"
+          disabled={pending}
+          onClick={handleRemove}
+          type="button"
+        >
+          <Trash aria-hidden={true} className="h-[18px] w-[18px]" />
+        </button>
+      ) : null}
+    </div>
   );
 }
 

@@ -2,7 +2,12 @@ import "server-only";
 
 import { prisma, type Prisma } from "@prelude/db";
 
-import { getConsoleAuthIdentity } from "../auth/console-auth-provider";
+import { canManageTeam } from "../../domain/organization-permissions";
+import {
+  getConsoleAuthIdentity,
+  getConsoleAuthSession,
+} from "../auth/console-auth-provider";
+import { clerkOrganizationDirectory } from "../organizations/clerk-organization-directory";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import type {
   SettingsInterviewPreferences,
@@ -30,9 +35,10 @@ const defaultNotificationPreferences: SettingsNotificationPreferences = {
 };
 
 export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData> {
-  const [identity, scope] = await Promise.all([
+  const [identity, scope, session] = await Promise.all([
     getConsoleAuthIdentity(),
     getCompletedOrganizationScope(),
+    getConsoleAuthSession(),
   ]);
 
   if (!identity.ok) {
@@ -78,6 +84,13 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
 
   const preferences = parseOrganizationSettings(organization.settings);
 
+  const canManage = canManageTeam(scope.role);
+  const viewerClerkUserId =
+    organization.memberships.find(
+      (membership) => membership.userId === scope.userId,
+    )?.user.clerkUserId ?? "";
+  const pendingInvitations = await loadPendingInvitations(canManage, session);
+
   return {
     account: {
       email: identity.value.userEmail,
@@ -111,13 +124,45 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
       name: organization.name,
     },
     team: organization.memberships.map((membership) => ({
+      clerkUserId: membership.user.clerkUserId,
       email: membership.user.email,
       id: membership.id,
       name: membership.user.name ?? membership.user.email,
       role: membership.role,
       status: membership.status,
     })),
+    canManageTeam: canManage,
+    viewerClerkUserId,
+    pendingInvitations,
   };
+}
+
+async function loadPendingInvitations(
+  canManage: boolean,
+  session: Awaited<ReturnType<typeof getConsoleAuthSession>>,
+): Promise<WorkspaceSettingsData["pendingInvitations"]> {
+  // Only managers see invitations, and only a real Clerk workspace has any.
+  if (!canManage || !session.ok) {
+    return [];
+  }
+  const { clerkOrganizationId, source } = session.value;
+  if (source !== "clerk" || !clerkOrganizationId) {
+    return [];
+  }
+  try {
+    const invitations =
+      await clerkOrganizationDirectory.listPendingInvitations(
+        clerkOrganizationId,
+      );
+    return invitations.map((invitation) => ({
+      email: invitation.email,
+      id: invitation.id,
+      role: invitation.role,
+    }));
+  } catch (error) {
+    console.error("[settings] failed to load pending invitations", error);
+    return [];
+  }
 }
 
 export function parseOrganizationSettings(input: Prisma.JsonValue): {

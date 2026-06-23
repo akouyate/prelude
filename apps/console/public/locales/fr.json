@@ -339,7 +339,30 @@
         "description_other": "{{count}} personnes ont accès à cet espace.",
         "invite": "Inviter un membre",
         "openActions": "Ouvrir les actions pour {{name}}",
-        "empty": "Aucun membre actif trouvé."
+        "empty": "Aucun membre actif trouvé.",
+        "inviteTitle": "Inviter un collaborateur",
+        "inviteDescription": "Il recevra un e-mail pour rejoindre cet espace de travail.",
+        "emailLabel": "E-mail",
+        "emailPlaceholder": "nom@entreprise.com",
+        "roleLabel": "Rôle",
+        "sendInvite": "Envoyer l'invitation",
+        "sending": "Envoi…",
+        "inviteSent": "Invitation envoyée à {{email}}.",
+        "mockNotice": "Inviter des collaborateurs nécessite un véritable espace Clerk, indisponible en mode mock local.",
+        "pendingTitle": "Invitations en attente",
+        "pendingDescription_one": "{{count}} invitation en attente de réponse.",
+        "pendingDescription_other": "{{count}} invitations en attente de réponse.",
+        "revoke": "Révoquer",
+        "revoking": "Révocation…",
+        "you": "(vous)",
+        "changeRoleAria": "Modifier le rôle de {{name}}",
+        "removeAria": "Retirer {{name}}",
+        "roles": {
+          "owner": "Propriétaire",
+          "admin": "Admin",
+          "recruiter": "Recruteur",
+          "viewer": "Lecteur"
+        }
       },
       "interview": {
         "title": "Réglages d'entretien",
