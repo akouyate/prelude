@@ -330,13 +330,6 @@ func (e answerEvaluation) questionID() string {
 	return firstNonEmpty(e.QuestionID, e.QuestionIDCamel)
 }
 
-func (e answerEvaluation) turnIDs() []string {
-	if len(e.TurnIDsCamel) > 0 {
-		return e.TurnIDsCamel
-	}
-	return e.TurnIDs
-}
-
 func (e answerEvaluation) matrix() *evaluationMatrix {
 	if e.EvaluationMatrixCamel != nil {
 		return e.EvaluationMatrixCamel
