@@ -113,10 +113,6 @@ func TestServiceStartsRecordingWhenCandidateAudioReady(t *testing.T) {
 	if !strings.HasPrefix(start.ObjectKey, "recordings/"+sessionID+"/") {
 		t.Fatalf("unexpected object key %s", start.ObjectKey)
 	}
-	if start.Format != "audio/ogg" {
-		t.Fatalf("expected audio/ogg, got %s", start.Format)
-	}
-
 	recording, found, err := repo.ActiveRecordingForSession(context.Background(), sessionID)
 	if err != nil || !found {
 		t.Fatalf("expected an active recording (found=%v err=%v)", found, err)

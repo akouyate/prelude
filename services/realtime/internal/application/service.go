@@ -133,7 +133,6 @@ type EgressGateway interface {
 type StartEgressInput struct {
 	RoomName  string
 	ObjectKey string
-	Format    string
 }
 
 type EgressHandle struct {
@@ -500,10 +499,12 @@ func (s *Service) startRecordingIfNeeded(ctx context.Context, event domain.Event
 		return
 	}
 
-	if _, active, err := s.recordings.ActiveRecordingForSession(ctx, event.SessionID); err != nil {
+	_, active, err := s.recordings.ActiveRecordingForSession(ctx, event.SessionID)
+	if err != nil {
 		slog.Warn("failed to check active recording", "session_id", event.SessionID, "error", err)
 		return
-	} else if active {
+	}
+	if active {
 		return
 	}
 
@@ -512,7 +513,6 @@ func (s *Service) startRecordingIfNeeded(ctx context.Context, event domain.Event
 	handle, err := s.recorder.StartRoomCompositeEgress(ctx, StartEgressInput{
 		RoomName:  liveKitRoomName(event.SessionID),
 		ObjectKey: objectKey,
-		Format:    recordingAudioFormat,
 	})
 	if err != nil {
 		slog.Warn("failed to start interview recording", "session_id", event.SessionID, "error", err)

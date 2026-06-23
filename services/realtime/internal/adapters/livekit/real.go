@@ -129,37 +129,15 @@ func (g *RealGateway) EnsureRoom(ctx context.Context, input application.EnsureRo
 		return err
 	}
 
-	body, err := json.Marshal(map[string]any{
+	// CreateRoom is idempotent server-side: an existing room returns 200, so a
+	// retry or duplicate session-creation attempt is safe.
+	_, err = g.doTwirp(ctx, "/twirp/livekit.RoomService/CreateRoom", token, map[string]any{
 		"name":             roomName,
 		"empty_timeout":    uint32(input.EmptyTimeout.Seconds()),
 		"max_participants": input.MaxParticipants,
 	})
-	if err != nil {
-		return err
-	}
 
-	endpoint := httpBaseURL(g.url) + "/twirp/livekit.RoomService/CreateRoom"
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Authorization", "Bearer "+token)
-	request.Header.Set("Content-Type", "application/json")
-
-	response, err := g.httpClient.Do(request)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = response.Body.Close() }()
-
-	// CreateRoom is idempotent server-side: an existing room returns 200, so a
-	// retry or duplicate session-creation attempt is safe.
-	if response.StatusCode >= 300 {
-		snippet, _ := io.ReadAll(io.LimitReader(response.Body, 512))
-		return fmt.Errorf("livekit create room failed with HTTP %d: %s", response.StatusCode, strings.TrimSpace(string(snippet)))
-	}
-
-	return nil
+	return err
 }
 
 // mintAdminToken signs a short-lived control-plane token granting roomCreate +
@@ -209,7 +187,7 @@ func (g *RealGateway) StartRoomCompositeEgress(ctx context.Context, input applic
 		"audio_only": true,
 		"file_outputs": []map[string]any{
 			{
-				"file_type": egressFileType(input.Format),
+				"file_type": "OGG", // audio-only egress; OGG/Opus is a passthrough (no transcode)
 				"filepath":  objectKey,
 				"s3": map[string]any{
 					"bucket":           g.egress.Bucket,
@@ -307,15 +285,6 @@ func (g *RealGateway) doTwirp(ctx context.Context, path string, token string, pa
 	}
 
 	return responseBody, nil
-}
-
-func egressFileType(format string) string {
-	switch format {
-	case "audio/ogg":
-		return "OGG"
-	default:
-		return "OGG"
-	}
 }
 
 func firstNonBlank(values ...string) string {

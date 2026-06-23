@@ -239,7 +239,6 @@ func TestRealGatewayStartRoomCompositeEgressRecordsAudioToR2(t *testing.T) {
 	handle, err := gateway.StartRoomCompositeEgress(context.Background(), application.StartEgressInput{
 		RoomName:  "prelude-is_test",
 		ObjectKey: "recordings/is_test/123.ogg",
-		Format:    "audio/ogg",
 	})
 	if err != nil {
 		t.Fatalf("StartRoomCompositeEgress returned error: %v", err)
@@ -293,7 +292,6 @@ func TestRealGatewayStartRoomCompositeEgressRequiresTarget(t *testing.T) {
 	if _, err := gateway.StartRoomCompositeEgress(context.Background(), application.StartEgressInput{
 		RoomName:  "prelude-x",
 		ObjectKey: "recordings/x/1.ogg",
-		Format:    "audio/ogg",
 	}); err == nil {
 		t.Fatal("expected error when egress target is not configured")
 	}
@@ -310,7 +308,6 @@ func TestRealGatewayStartRoomCompositeEgressErrorsOnHTTPFailure(t *testing.T) {
 	if _, err := gateway.StartRoomCompositeEgress(context.Background(), application.StartEgressInput{
 		RoomName:  "prelude-x",
 		ObjectKey: "recordings/x/1.ogg",
-		Format:    "audio/ogg",
 	}); err == nil {
 		t.Fatal("expected error on HTTP 500")
 	}
