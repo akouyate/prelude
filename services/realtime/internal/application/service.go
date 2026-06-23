@@ -95,6 +95,33 @@ type LiveKitJoin struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+// RecordingRepository persists live-interview audio-recording state. It is a
+// deliberately separate contract from SessionRepository: the session row is
+// event-derived (mutated only as an AppendEvent side-effect), whereas recording
+// state is a mutable row keyed by EgressID that the egress_ended webhook
+// finalizes out-of-band, after the session is already terminal.
+type RecordingRepository interface {
+	// CreateRecording inserts a new recording row (typically status "recording"
+	// at egress start, or "failed" when a start attempt never returned an id).
+	CreateRecording(ctx context.Context, recording domain.Recording) error
+	// FinalizeRecordingByEgressID transitions the single in-flight recording for
+	// the egress id to its terminal state. It only matches rows still in
+	// "recording" status, so redelivered webhooks are a no-op (updated=false).
+	FinalizeRecordingByEgressID(ctx context.Context, input FinalizeRecordingInput) (bool, error)
+	// ActiveRecordingForSession returns the in-flight ("recording") recording for
+	// a session, if any. It is the start guard ("is an egress already active?")
+	// and the source of the egress id used to stop on session completion.
+	ActiveRecordingForSession(ctx context.Context, sessionID string) (domain.Recording, bool, error)
+}
+
+type FinalizeRecordingInput struct {
+	EgressID   string
+	Status     domain.RecordingStatus
+	DurationMs *int
+	EndedAt    time.Time
+	UpdatedAt  time.Time
+}
+
 type Service struct {
 	repository     SessionRepository
 	planRepository InterviewPlanRepository

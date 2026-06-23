@@ -15,15 +15,17 @@ import (
 )
 
 type MemoryStore struct {
-	mu       sync.RWMutex
-	sessions map[string]domain.Session
-	events   map[string]map[string]domain.Event
+	mu         sync.RWMutex
+	sessions   map[string]domain.Session
+	events     map[string]map[string]domain.Event
+	recordings map[string]domain.Recording
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		sessions: map[string]domain.Session{},
-		events:   map[string]map[string]domain.Event{},
+		sessions:   map[string]domain.Session{},
+		events:     map[string]map[string]domain.Event{},
+		recordings: map[string]domain.Recording{},
 	}
 }
 
@@ -116,6 +118,70 @@ func (s *MemoryStore) AppendEvent(_ context.Context, event domain.Event) (applic
 	s.sessions[event.SessionID] = session
 
 	return application.AppendEventResult{Event: event, Duplicate: false}, nil
+}
+
+func (s *MemoryStore) CreateRecording(_ context.Context, recording domain.Recording) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.recordings[recording.ID]; exists {
+		return errors.New("recording already exists")
+	}
+	if recording.EgressID != "" {
+		for _, existing := range s.recordings {
+			if existing.EgressID == recording.EgressID {
+				return errors.New("recording egress id already exists")
+			}
+		}
+	}
+
+	s.recordings[recording.ID] = recording
+	return nil
+}
+
+func (s *MemoryStore) ActiveRecordingForSession(_ context.Context, sessionID string) (domain.Recording, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var active domain.Recording
+	found := false
+	for _, recording := range s.recordings {
+		if recording.SessionID != sessionID || recording.Status != domain.RecordingStatusRecording {
+			continue
+		}
+		if !found || recording.StartedAt.After(active.StartedAt) {
+			active = recording
+			found = true
+		}
+	}
+
+	return active, found, nil
+}
+
+func (s *MemoryStore) FinalizeRecordingByEgressID(_ context.Context, input application.FinalizeRecordingInput) (bool, error) {
+	if input.EgressID == "" {
+		return false, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for id, recording := range s.recordings {
+		if recording.EgressID != input.EgressID || recording.Status != domain.RecordingStatusRecording {
+			continue
+		}
+		recording.Status = input.Status
+		recording.DurationMs = input.DurationMs
+		if !input.EndedAt.IsZero() {
+			endedAt := input.EndedAt
+			recording.EndedAt = &endedAt
+		}
+		recording.UpdatedAt = input.UpdatedAt
+		s.recordings[id] = recording
+		return true, nil
+	}
+
+	return false, nil
 }
 
 func sameEvent(left domain.Event, right domain.Event) bool {

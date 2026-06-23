@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/akouyate/prelude/services/realtime/internal/application"
 	"github.com/akouyate/prelude/services/realtime/internal/domain"
@@ -519,4 +520,163 @@ func normalizePostgresURL(databaseURL string) string {
 	parsed.RawQuery = query.Encode()
 
 	return parsed.String()
+}
+
+func (s *PostgresStore) CreateRecording(ctx context.Context, recording domain.Recording) error {
+	_, err := s.db.ExecContext(ctx, `
+		insert into live_interview_recordings (
+			id,
+			session_id,
+			egress_id,
+			object_key,
+			status,
+			format,
+			layout,
+			duration_ms,
+			failed_reason,
+			started_at,
+			ended_at,
+			created_at,
+			updated_at
+		) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`,
+		recording.ID,
+		recording.SessionID,
+		nullString(recording.EgressID),
+		recording.ObjectKey,
+		string(recording.Status),
+		recording.Format,
+		nullString(recording.Layout),
+		nullInt(recording.DurationMs),
+		nullString(recording.FailedReason),
+		recording.StartedAt,
+		nullTime(recording.EndedAt),
+		recording.CreatedAt,
+		recording.UpdatedAt,
+	)
+
+	return err
+}
+
+func (s *PostgresStore) ActiveRecordingForSession(ctx context.Context, sessionID string) (domain.Recording, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at
+		from live_interview_recordings
+		where session_id = $1 and status = $2
+		order by started_at desc
+		limit 1
+	`, sessionID, string(domain.RecordingStatusRecording))
+
+	recording, err := scanRecording(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Recording{}, false, nil
+	}
+	if err != nil {
+		return domain.Recording{}, false, err
+	}
+
+	return recording, true, nil
+}
+
+func (s *PostgresStore) FinalizeRecordingByEgressID(ctx context.Context, input application.FinalizeRecordingInput) (bool, error) {
+	if strings.TrimSpace(input.EgressID) == "" {
+		return false, nil
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		update live_interview_recordings
+		set status = $1, duration_ms = $2, ended_at = $3, updated_at = $4
+		where egress_id = $5 and status = $6
+	`,
+		string(input.Status),
+		nullInt(input.DurationMs),
+		nullTimeValue(input.EndedAt),
+		input.UpdatedAt,
+		input.EgressID,
+		string(domain.RecordingStatusRecording),
+	)
+	if err != nil {
+		return false, err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return affected > 0, nil
+}
+
+func scanRecording(scanner eventScanner) (domain.Recording, error) {
+	var recording domain.Recording
+	var egressID sql.NullString
+	var layout sql.NullString
+	var durationMs sql.NullInt64
+	var failedReason sql.NullString
+	var endedAt sql.NullTime
+	var status string
+	if err := scanner.Scan(
+		&recording.ID,
+		&recording.SessionID,
+		&egressID,
+		&recording.ObjectKey,
+		&status,
+		&recording.Format,
+		&layout,
+		&durationMs,
+		&failedReason,
+		&recording.StartedAt,
+		&endedAt,
+		&recording.CreatedAt,
+		&recording.UpdatedAt,
+	); err != nil {
+		return domain.Recording{}, err
+	}
+
+	recording.Status = domain.RecordingStatus(status)
+	recording.EgressID = egressID.String
+	recording.Layout = layout.String
+	recording.FailedReason = failedReason.String
+	if durationMs.Valid {
+		value := int(durationMs.Int64)
+		recording.DurationMs = &value
+	}
+	if endedAt.Valid {
+		ended := endedAt.Time
+		recording.EndedAt = &ended
+	}
+
+	return recording, nil
+}
+
+func nullString(value string) any {
+	if value == "" {
+		return nil
+	}
+
+	return value
+}
+
+func nullInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+
+	return *value
+}
+
+func nullTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+
+	return *value
+}
+
+func nullTimeValue(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+
+	return value
 }
