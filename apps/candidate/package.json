@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "next dev --port 3001",
+    "dev": "dotenvx run -f ../../.env -- next dev --port 3001",
     "build": "next build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
