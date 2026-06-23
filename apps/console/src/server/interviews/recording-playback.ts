@@ -6,7 +6,11 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 // persisted, so a leaked link expires quickly.
 const SIGNED_URL_TTL_SECONDS = 900;
 
-export type CandidateRecordingStatus = "available" | "processing" | "failed";
+export type CandidateRecordingStatus =
+  | "available"
+  | "processing"
+  | "failed"
+  | "deleted";
 
 export type CandidateRecording = {
   durationMs: number | null;
@@ -47,6 +51,15 @@ export function selectRecording(
       objectKey: available.objectKey,
       status: "available",
     };
+  }
+
+  // A deliberate-erasure or retention purge leaves a "deleted" tombstone (object
+  // key cleared). Surface that the audio existed and was removed — never a dead
+  // player or a misleading "failed". Checked before the transient/failed states
+  // because erasure is a definitive end-state.
+  const deleted = recordings.find((recording) => recording.status === "deleted");
+  if (deleted) {
+    return { durationMs: deleted.durationMs, objectKey: null, status: "deleted" };
   }
 
   if (recordings.some((recording) => recording.status === "recording")) {

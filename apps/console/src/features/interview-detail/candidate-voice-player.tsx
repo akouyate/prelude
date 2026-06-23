@@ -7,7 +7,7 @@ import { useRef, useState } from "react";
 // component pulls in no server-only code).
 type CandidateRecording = {
   durationMs: number | null;
-  status: "available" | "processing" | "failed";
+  status: "available" | "processing" | "failed" | "deleted";
   url: string | null;
 };
 
@@ -130,9 +130,11 @@ function VoicePlayerPlaceholder({
   const message =
     status === "processing"
       ? "Recording is processing — it will appear here shortly."
-      : status === "failed"
-        ? "Audio recording is unavailable for this interview."
-        : "No audio recording for this interview.";
+      : status === "deleted"
+        ? "This recording has been deleted and is no longer available."
+        : status === "failed"
+          ? "Audio recording is unavailable for this interview."
+          : "No audio recording for this interview.";
 
   return (
     <section className="sticky top-[58px] z-[15] flex scroll-mt-[58px] items-center gap-3 rounded-[16px] border border-dashed border-[#e0dacc] bg-white/70 px-[18px] py-[13px]">
