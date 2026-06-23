@@ -144,6 +144,7 @@ function input(): CandidateBriefSynthesizerInput {
       questionAnswerSequence: [],
       questionCompletionRate: 100,
       realtimeSessionId: "is_123",
+      recording: null,
       runtimeStatus: "completed",
       status: "completed",
       terminalEventType: "session_completed",
