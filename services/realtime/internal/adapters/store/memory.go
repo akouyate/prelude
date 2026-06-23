@@ -20,7 +20,7 @@ type MemoryStore struct {
 	sessions         map[string]domain.Session
 	events           map[string]map[string]domain.Event
 	recordings       map[string]domain.Recording
-	recordingConsent map[string]bool
+	recordingConsent map[string]application.RecordingConsent
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -28,21 +28,21 @@ func NewMemoryStore() *MemoryStore {
 		sessions:         map[string]domain.Session{},
 		events:           map[string]map[string]domain.Event{},
 		recordings:       map[string]domain.Recording{},
-		recordingConsent: map[string]bool{},
+		recordingConsent: map[string]application.RecordingConsent{},
 	}
 }
 
 // SetRecordingConsent records the recording-consent decision for a session. It
 // exists so tests can model consent; the Postgres store derives it from the
-// console's CandidateSession.consentedAt instead.
-func (s *MemoryStore) SetRecordingConsent(sessionID string, granted bool) {
+// console's CandidateSession (consentedAt + consentCopyVersion) instead.
+func (s *MemoryStore) SetRecordingConsent(sessionID string, consent application.RecordingConsent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.recordingConsent[sessionID] = granted
+	s.recordingConsent[sessionID] = consent
 }
 
-func (s *MemoryStore) RecordingConsentGranted(_ context.Context, sessionID string) (bool, error) {
+func (s *MemoryStore) RecordingConsentFor(_ context.Context, sessionID string) (application.RecordingConsent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -235,6 +235,76 @@ func (s *MemoryStore) StaleRecordings(_ context.Context, startedBefore time.Time
 	}
 
 	return stale, nil
+}
+
+func (s *MemoryStore) DeletableRecordings(_ context.Context, deletedBefore time.Time, limit int) ([]domain.Recording, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var deletable []domain.Recording
+	for _, recording := range s.recordings {
+		if recording.Status != domain.RecordingStatusAvailable {
+			continue
+		}
+		if recordingRetentionAnchor(recording).Before(deletedBefore) {
+			deletable = append(deletable, recording)
+		}
+	}
+	sort.Slice(deletable, func(i int, j int) bool {
+		return recordingRetentionAnchor(deletable[i]).Before(recordingRetentionAnchor(deletable[j]))
+	})
+	if limit > 0 && len(deletable) > limit {
+		deletable = deletable[:limit]
+	}
+
+	return deletable, nil
+}
+
+// recordingRetentionAnchor is the time a recording's retention window is measured
+// from: when the interview ended, falling back to when it started for a row whose
+// egress never reported an end.
+func recordingRetentionAnchor(recording domain.Recording) time.Time {
+	if recording.EndedAt != nil {
+		return *recording.EndedAt
+	}
+
+	return recording.StartedAt
+}
+
+func (s *MemoryStore) MarkRecordingDeleted(_ context.Context, input application.MarkRecordingDeletedInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	recording, ok := s.recordings[input.ID]
+	if !ok {
+		return nil
+	}
+	recording.Status = domain.RecordingStatusDeleted
+	recording.ObjectKey = ""
+	deletedAt := input.DeletedAt
+	recording.DeletedAt = &deletedAt
+	recording.DeletedReason = input.Reason
+	recording.UpdatedAt = input.DeletedAt
+	s.recordings[input.ID] = recording
+
+	return nil
+}
+
+func (s *MemoryStore) RecordingsForSession(_ context.Context, sessionID string) ([]domain.Recording, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var out []domain.Recording
+	for _, recording := range s.recordings {
+		if recording.SessionID == sessionID {
+			out = append(out, recording)
+		}
+	}
+	sort.Slice(out, func(i int, j int) bool {
+		return out[i].StartedAt.Before(out[j].StartedAt)
+	})
+
+	return out, nil
 }
 
 func sameEvent(left domain.Event, right domain.Event) bool {

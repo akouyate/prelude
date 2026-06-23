@@ -543,7 +543,7 @@ func (s *PostgresStore) CreateRecording(ctx context.Context, recording domain.Re
 		recording.ID,
 		recording.SessionID,
 		nullString(recording.EgressID),
-		recording.ObjectKey,
+		nullString(recording.ObjectKey),
 		string(recording.Status),
 		recording.Format,
 		nullString(recording.Layout),
@@ -560,7 +560,7 @@ func (s *PostgresStore) CreateRecording(ctx context.Context, recording domain.Re
 
 func (s *PostgresStore) ActiveRecordingForSession(ctx context.Context, sessionID string) (domain.Recording, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
-		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
 		from live_interview_recordings
 		where session_id = $1 and status = $2
 		order by started_at desc
@@ -610,16 +610,19 @@ func (s *PostgresStore) FinalizeRecordingByEgressID(ctx context.Context, input a
 func scanRecording(scanner eventScanner) (domain.Recording, error) {
 	var recording domain.Recording
 	var egressID sql.NullString
+	var objectKey sql.NullString
 	var layout sql.NullString
 	var durationMs sql.NullInt64
 	var failedReason sql.NullString
 	var endedAt sql.NullTime
+	var deletedAt sql.NullTime
+	var deletedReason sql.NullString
 	var status string
 	if err := scanner.Scan(
 		&recording.ID,
 		&recording.SessionID,
 		&egressID,
-		&recording.ObjectKey,
+		&objectKey,
 		&status,
 		&recording.Format,
 		&layout,
@@ -629,14 +632,18 @@ func scanRecording(scanner eventScanner) (domain.Recording, error) {
 		&endedAt,
 		&recording.CreatedAt,
 		&recording.UpdatedAt,
+		&deletedAt,
+		&deletedReason,
 	); err != nil {
 		return domain.Recording{}, err
 	}
 
 	recording.Status = domain.RecordingStatus(status)
 	recording.EgressID = egressID.String
+	recording.ObjectKey = objectKey.String
 	recording.Layout = layout.String
 	recording.FailedReason = failedReason.String
+	recording.DeletedReason = deletedReason.String
 	if durationMs.Valid {
 		value := int(durationMs.Int64)
 		recording.DurationMs = &value
@@ -644,6 +651,10 @@ func scanRecording(scanner eventScanner) (domain.Recording, error) {
 	if endedAt.Valid {
 		ended := endedAt.Time
 		recording.EndedAt = &ended
+	}
+	if deletedAt.Valid {
+		deleted := deletedAt.Time
+		recording.DeletedAt = &deleted
 	}
 
 	return recording, nil
@@ -681,36 +692,113 @@ func nullTimeValue(value time.Time) any {
 	return value
 }
 
-// RecordingConsentGranted derives recording consent from the console's
+// RecordingConsentFor derives recording consent from the console's
 // CandidateSession row linked by realtimeSessionId. It is fail-closed: a missing
 // row or a null consentedAt means consent has not been granted, so no audio is
-// captured. The Go service reads this console-owned table directly, the same
-// shared-DB boundary used for the published Interview plan.
-func (s *PostgresStore) RecordingConsentGranted(ctx context.Context, sessionID string) (bool, error) {
+// captured. It also reports consentCopyVersion so the application can require an
+// audio-disclosing version before recording (consent-v1 disclosed transcript
+// evidence only). The Go service reads this console-owned table directly, the
+// same shared-DB boundary used for the published Interview plan.
+func (s *PostgresStore) RecordingConsentFor(ctx context.Context, sessionID string) (application.RecordingConsent, error) {
 	var consentedAt sql.NullTime
+	var consentCopyVersion sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		select "consentedAt"
+		select "consentedAt", "consentCopyVersion"
 		from "CandidateSession"
 		where "realtimeSessionId" = $1
-	`, sessionID).Scan(&consentedAt)
+	`, sessionID).Scan(&consentedAt, &consentCopyVersion)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return application.RecordingConsent{}, nil
 	}
 	if err != nil {
-		return false, err
+		return application.RecordingConsent{}, err
 	}
 
-	return consentedAt.Valid, nil
+	return application.RecordingConsent{
+		Granted:     consentedAt.Valid,
+		CopyVersion: consentCopyVersion.String,
+	}, nil
 }
 
 func (s *PostgresStore) StaleRecordings(ctx context.Context, startedBefore time.Time, limit int) ([]domain.Recording, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
 		from live_interview_recordings
 		where status = $1 and started_at < $2
 		order by started_at asc
 		limit $3
 	`, string(domain.RecordingStatusRecording), startedBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recordings := make([]domain.Recording, 0)
+	for rows.Next() {
+		recording, err := scanRecording(rows)
+		if err != nil {
+			return nil, err
+		}
+		recordings = append(recordings, recording)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return recordings, nil
+}
+
+func (s *PostgresStore) DeletableRecordings(ctx context.Context, deletedBefore time.Time, limit int) ([]domain.Recording, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
+		from live_interview_recordings
+		where status = $1 and coalesce(ended_at, started_at) < $2
+		order by coalesce(ended_at, started_at) asc
+		limit $3
+	`, string(domain.RecordingStatusAvailable), deletedBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recordings := make([]domain.Recording, 0)
+	for rows.Next() {
+		recording, err := scanRecording(rows)
+		if err != nil {
+			return nil, err
+		}
+		recordings = append(recordings, recording)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return recordings, nil
+}
+
+func (s *PostgresStore) MarkRecordingDeleted(ctx context.Context, input application.MarkRecordingDeletedInput) error {
+	_, err := s.db.ExecContext(ctx, `
+		update live_interview_recordings
+		set status = $1, object_key = null, deleted_at = $2, deleted_reason = $3, updated_at = $4
+		where id = $5
+	`,
+		string(domain.RecordingStatusDeleted),
+		input.DeletedAt,
+		nullString(input.Reason),
+		input.DeletedAt,
+		input.ID,
+	)
+
+	return err
+}
+
+func (s *PostgresStore) RecordingsForSession(ctx context.Context, sessionID string) ([]domain.Recording, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
+		from live_interview_recordings
+		where session_id = $1
+		order by started_at asc
+	`, sessionID)
 	if err != nil {
 		return nil, err
 	}

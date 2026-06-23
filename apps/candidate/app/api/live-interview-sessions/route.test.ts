@@ -76,7 +76,7 @@ describe("POST /api/live-interview-sessions", () => {
         data: expect.objectContaining({
           candidateEmail: "ada@example.com",
           candidateName: "Ada Lovelace",
-          consentCopyVersion: "candidate-consent-v1",
+          consentCopyVersion: "candidate-consent-v2",
           consentedAt: expect.any(Date),
           interviewId: "int_123",
           jobId: "job_123",
@@ -149,7 +149,7 @@ describe("POST /api/live-interview-sessions", () => {
     expect(prismaMock.candidateSession.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          consentCopyVersion: "candidate-consent-v1",
+          consentCopyVersion: "candidate-consent-v2",
           consentedAt: expect.any(Date),
           startedAt: existingSession.startedAt,
           status: "started",
@@ -277,7 +277,7 @@ function candidateSession(overrides: Record<string, unknown> = {}) {
   return {
     candidateEmail: "ada@example.com",
     candidateName: "Ada Lovelace",
-    consentCopyVersion: "candidate-consent-v1",
+    consentCopyVersion: "candidate-consent-v2",
     consentedAt: new Date("2026-06-20T10:00:00.000Z"),
     id: "cs_123",
     interviewId: "int_123",

@@ -498,6 +498,51 @@ func TestServerAcceptsAnswerEvaluatedEvent(t *testing.T) {
 	}
 }
 
+type stubObjectStore struct{}
+
+func (stubObjectStore) DeleteObject(context.Context, string) error { return nil }
+
+func TestEraseRecordingsEndpoint(t *testing.T) {
+	repository := store.NewMemoryStore()
+	service := application.NewService(repository, livekit.NewMockGateway("wss://livekit.example.test"), nil)
+	service.SetRecordingRepository(repository)
+	service.SetObjectStore(stubObjectStore{})
+
+	startedAt := time.Now().UTC()
+	if err := repository.CreateRecording(context.Background(), domain.Recording{
+		ID:        "rec_1",
+		SessionID: "is_1",
+		EgressID:  "eg_1",
+		ObjectKey: "recordings/is_1/1.ogg",
+		Status:    domain.RecordingStatusAvailable,
+		Format:    "audio/ogg",
+		StartedAt: startedAt,
+		EndedAt:   &startedAt,
+		CreatedAt: startedAt,
+		UpdatedAt: startedAt,
+	}); err != nil {
+		t.Fatalf("seed recording: %v", err)
+	}
+
+	server := NewServer(service)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/v1/interview-sessions/is_1/recordings", nil)
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", response.Code, response.Body.String())
+	}
+	var body struct {
+		Erased int `json:"erased"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Erased != 1 {
+		t.Fatalf("expected erased=1, got %d", body.Erased)
+	}
+}
+
 func newTestServer() *Server {
 	repository := store.NewMemoryStore()
 	livekitGateway := livekit.NewMockGateway("wss://livekit.example.test")

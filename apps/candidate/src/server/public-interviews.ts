@@ -123,7 +123,11 @@ export async function prepareCandidateSession(
           candidateEmail,
           candidateName,
           consentCopyVersion: candidateConsentCopyVersion,
-          consentedAt: existingSession.consentedAt ?? now,
+          // Re-consent re-timestamps: resuming requires accepting the current
+          // copy again (consent gate above), so stamp the consent moment as now.
+          // Carrying an old consentedAt under the current version label would make
+          // the audit assert "consented to vN at T" where T predates vN.
+          consentedAt: now,
           startedAt: existingSession.startedAt ?? now,
           status: "started",
         },

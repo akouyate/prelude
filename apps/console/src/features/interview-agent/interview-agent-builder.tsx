@@ -2059,7 +2059,7 @@ function ComplianceOverridePanel({
 
 // N15: read-only transparency panel. Shows the recruiter the exact AI
 // disclosure + consent copy the candidate is shown before they start, sourced
-// verbatim from @prelude/core (candidate-disclosure-v1 / candidate-consent-v1).
+// verbatim from @prelude/core (candidate-disclosure-v2 / candidate-consent-v2).
 // No new persistence — this is a confirmation surface only.
 function CandidateTrustPanel() {
   return (

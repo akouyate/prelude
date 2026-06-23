@@ -287,3 +287,209 @@ func TestPostgresStoreStaleRecordings(t *testing.T) {
 		t.Fatalf("cleanup finalize returned error: %v", err)
 	}
 }
+
+func TestMemoryStoreDeletableRecordings(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemoryStore()
+	base := time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)
+
+	mkAvailable := func(id string, endedAt time.Time) {
+		started := endedAt.Add(-3 * time.Minute)
+		if err := s.CreateRecording(ctx, domain.Recording{
+			ID:        id,
+			SessionID: "is_" + id,
+			EgressID:  "eg_" + id,
+			ObjectKey: "recordings/" + id + "/1.ogg",
+			Status:    domain.RecordingStatusAvailable,
+			Format:    "audio/ogg",
+			StartedAt: started,
+			EndedAt:   &endedAt,
+			CreatedAt: started,
+			UpdatedAt: endedAt,
+		}); err != nil {
+			t.Fatalf("create %s: %v", id, err)
+		}
+	}
+	mkAvailable("old", base.AddDate(0, 0, -100))
+	mkAvailable("fresh", base.AddDate(0, 0, -1))
+	// In-flight (still "recording") and older than the cutoff: excluded, because
+	// only finalized "available" rows are retention candidates.
+	if err := s.CreateRecording(ctx, domain.Recording{
+		ID:        "inflight",
+		SessionID: "is_inflight",
+		EgressID:  "eg_inflight",
+		ObjectKey: "recordings/inflight/1.ogg",
+		Status:    domain.RecordingStatusRecording,
+		Format:    "audio/ogg",
+		StartedAt: base.AddDate(0, 0, -100),
+		CreatedAt: base,
+		UpdatedAt: base,
+	}); err != nil {
+		t.Fatalf("create inflight: %v", err)
+	}
+
+	deletable, err := s.DeletableRecordings(ctx, base.AddDate(0, 0, -90), 50)
+	if err != nil {
+		t.Fatalf("DeletableRecordings returned error: %v", err)
+	}
+	if len(deletable) != 1 || deletable[0].ID != "old" {
+		t.Fatalf("expected only the old available recording, got %+v", deletable)
+	}
+}
+
+func TestPostgresStoreRetentionLifecycle(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for Postgres store integration test")
+	}
+
+	ctx := context.Background()
+	pg, err := store.NewPostgresStore(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("NewPostgresStore returned error: %v", err)
+	}
+	defer pg.Close()
+
+	suffix := time.Now().UTC().Format("20060102150405.000000000")
+	session := domain.Session{
+		ID:                "it_ret_" + suffix,
+		InterviewPlanID:   "plan_123",
+		CandidateID:       "candidate_123",
+		Status:            domain.SessionStatusWaitingCandidate,
+		LiveKitRoomName:   "prelude-it-ret",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio},
+		CreatedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
+	}
+	if err := pg.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	endedAt := time.Now().UTC().AddDate(0, 0, -100).Truncate(time.Millisecond)
+	recID := "rec_ret_" + suffix
+	if err := pg.CreateRecording(ctx, domain.Recording{
+		ID:        recID,
+		SessionID: session.ID,
+		EgressID:  "eg_ret_" + suffix,
+		ObjectKey: "recordings/" + session.ID + "/1.ogg",
+		Status:    domain.RecordingStatusAvailable,
+		Format:    "audio/ogg",
+		StartedAt: endedAt.Add(-3 * time.Minute),
+		EndedAt:   &endedAt,
+		CreatedAt: endedAt,
+		UpdatedAt: endedAt,
+	}); err != nil {
+		t.Fatalf("CreateRecording returned error: %v", err)
+	}
+
+	cutoff := time.Now().UTC().AddDate(0, 0, -90)
+	deletable, err := pg.DeletableRecordings(ctx, cutoff, 50)
+	if err != nil {
+		t.Fatalf("DeletableRecordings returned error: %v", err)
+	}
+	if !containsRecording(deletable, recID) {
+		t.Fatalf("expected %s in the deletable set", recID)
+	}
+
+	if err := pg.MarkRecordingDeleted(ctx, application.MarkRecordingDeletedInput{
+		ID:        recID,
+		Reason:    "retention",
+		DeletedAt: time.Now().UTC().Truncate(time.Millisecond),
+	}); err != nil {
+		t.Fatalf("MarkRecordingDeleted returned error: %v", err)
+	}
+
+	after, err := pg.DeletableRecordings(ctx, cutoff, 50)
+	if err != nil {
+		t.Fatalf("DeletableRecordings (after) returned error: %v", err)
+	}
+	if containsRecording(after, recID) {
+		t.Fatalf("expected the tombstoned recording %s to be excluded", recID)
+	}
+}
+
+func containsRecording(recordings []domain.Recording, id string) bool {
+	for _, recording := range recordings {
+		if recording.ID == id {
+			return true
+		}
+	}
+
+	return false
+}
+
+func TestPostgresStoreRecordingsForSessionIncludesTombstones(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for Postgres store integration test")
+	}
+
+	ctx := context.Background()
+	pg, err := store.NewPostgresStore(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("NewPostgresStore returned error: %v", err)
+	}
+	defer pg.Close()
+
+	suffix := time.Now().UTC().Format("20060102150405.000000000")
+	session := domain.Session{
+		ID:                "it_rfs_" + suffix,
+		InterviewPlanID:   "plan_123",
+		CandidateID:       "candidate_123",
+		Status:            domain.SessionStatusWaitingCandidate,
+		LiveKitRoomName:   "prelude-it-rfs",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio},
+		CreatedAt:         time.Now().UTC(),
+		UpdatedAt:         time.Now().UTC(),
+	}
+	if err := pg.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	at := time.Now().UTC().Truncate(time.Millisecond)
+	for _, rec := range []domain.Recording{
+		{ID: "rec_av_" + suffix, EgressID: "eg_av_" + suffix, ObjectKey: "recordings/" + session.ID + "/1.ogg", StartedAt: at},
+		{ID: "rec_del_" + suffix, EgressID: "eg_del_" + suffix, ObjectKey: "recordings/" + session.ID + "/2.ogg", StartedAt: at.Add(time.Minute)},
+	} {
+		if err := pg.CreateRecording(ctx, domain.Recording{
+			ID: rec.ID, SessionID: session.ID, EgressID: rec.EgressID, ObjectKey: rec.ObjectKey,
+			Status: domain.RecordingStatusAvailable, Format: "audio/ogg",
+			StartedAt: rec.StartedAt, CreatedAt: rec.StartedAt, UpdatedAt: rec.StartedAt,
+		}); err != nil {
+			t.Fatalf("CreateRecording %s: %v", rec.ID, err)
+		}
+	}
+
+	// Tombstone the second one — its object_key becomes NULL.
+	delID := "rec_del_" + suffix
+	if err := pg.MarkRecordingDeleted(ctx, application.MarkRecordingDeletedInput{
+		ID: delID, Reason: "erasure_request", DeletedAt: at,
+	}); err != nil {
+		t.Fatalf("MarkRecordingDeleted returned error: %v", err)
+	}
+
+	// RecordingsForSession must return BOTH rows — and scanning the tombstone with
+	// a NULL object_key must not error (it scans to an empty key).
+	all, err := pg.RecordingsForSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("RecordingsForSession returned error: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("expected 2 recordings for the session, got %d", len(all))
+	}
+	var tombstone domain.Recording
+	for _, recording := range all {
+		if recording.ID == delID {
+			tombstone = recording
+		}
+	}
+	if tombstone.Status != domain.RecordingStatusDeleted {
+		t.Fatalf("expected the tombstone status deleted, got %s", tombstone.Status)
+	}
+	if tombstone.ObjectKey != "" {
+		t.Fatalf("a NULL object_key must scan to empty, got %q", tombstone.ObjectKey)
+	}
+	if tombstone.DeletedAt == nil {
+		t.Fatal("expected deleted_at to be set on the tombstone")
+	}
+}
