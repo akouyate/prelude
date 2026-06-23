@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { Geist, Instrument_Serif, Plus_Jakarta_Sans } from "next/font/google";
+import { NuqsAdapter } from "nuqs/adapters/next/app";
 
 import { QueryProvider } from "../src/providers/query-provider";
 import {
@@ -40,7 +41,11 @@ export const metadata: Metadata = {
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
-  const app = <QueryProvider>{children}</QueryProvider>;
+  const app = (
+    <NuqsAdapter>
+      <QueryProvider>{children}</QueryProvider>
+    </NuqsAdapter>
+  );
 
   return (
     <html lang="en">

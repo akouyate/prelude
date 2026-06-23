@@ -409,15 +409,9 @@
         "currentPlan": "Forfait actuel",
         "planName": "Espace V1",
         "planDescription": "Clerk Billing n'est pas encore connecté. L'usage vient des données de l'espace.",
-        "managePlan": "Gérer le forfait",
+        "managePlan": "Configurer la facturation",
         "interviewsThisMonth": "Entretiens ce mois-ci",
-        "activeRoles": "Rôles actifs",
-        "billingSetup": "Configuration de facturation",
-        "notConnected": "Clerk Billing n'est pas connecté",
-        "notConnectedDescription": "Clerk Billing pourra être connecté avant le lancement payant.",
-        "configure": "Configurer",
-        "billingHistory": "Historique de facturation",
-        "viewInvoices": "Voir les factures"
+        "activeRoles": "Rôles actifs"
       }
     }
   }

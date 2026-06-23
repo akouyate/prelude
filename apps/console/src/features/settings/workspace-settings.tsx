@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { CheckCircle, NavArrowDown, Trash } from "iconoir-react";
+import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { useTranslation } from "react-i18next";
 import { Badge, Button, Input, StatusBadge, cn } from "@prelude/ui";
 import type { OrganizationRole } from "@prelude/types";
@@ -45,7 +46,7 @@ const sectionLabelKeys: Record<SettingsSection, string> = {
   notifications: "settings.nav.notifications",
   billing: "settings.nav.billing",
 };
-const settingsSectionOrder: SettingsSection[] = [
+const settingsSectionOrder = [
   "profile",
   "workspace",
   "team",
@@ -53,11 +54,24 @@ const settingsSectionOrder: SettingsSection[] = [
   "integrations",
   "notifications",
   "billing",
-];
+] as const satisfies readonly SettingsSection[];
+
+const settingsViewParser = parseAsStringLiteral(settingsSectionOrder)
+  .withDefault("profile")
+  .withOptions({
+    history: "push",
+    scroll: false,
+  });
 
 export function WorkspaceSettings({ data }: { data: WorkspaceSettingsData }) {
   const { t } = useTranslation();
-  const [section, setSection] = React.useState<SettingsSection>("profile");
+  const [section, setSection] = useQueryState("view", settingsViewParser);
+  const handleSectionChange = React.useCallback(
+    (nextSection: SettingsSection) => {
+      void setSection(nextSection);
+    },
+    [setSection],
+  );
 
   return (
     <section>
@@ -73,11 +87,11 @@ export function WorkspaceSettings({ data }: { data: WorkspaceSettingsData }) {
       <div className="grid gap-7 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
         <SettingsSectionNav
           authProvider={data.authProvider}
-          onSectionChange={setSection}
+          onSectionChange={handleSectionChange}
           section={section}
         />
         <SettingsMobileNav
-          onSectionChange={setSection}
+          onSectionChange={handleSectionChange}
           section={section}
         />
 
@@ -919,74 +933,36 @@ function BillingSection({
   const interviewsUsed = metrics.published + metrics.needsReview;
 
   return (
-    <div className="flex flex-col gap-[18px]">
-      <section className="overflow-hidden rounded-[22px] bg-ink-900 p-6 text-white">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-mint-200">
-              {t("settings.billing.currentPlan")}
-            </p>
-            <h2 className="mt-2.5 text-2xl font-semibold tracking-[-0.015em]">
-              {t("settings.billing.planName")}
-            </h2>
-            <p className="mt-2 text-[13.5px] text-white/65">
-              {t("settings.billing.planDescription")}
-            </p>
-          </div>
-          <Button
-            className="bg-white text-ink-950 hover:bg-[#f6f3ec]"
-            type="button"
-          >
-            {t("settings.billing.managePlan")}
-          </Button>
+    <section className="overflow-hidden rounded-[22px] bg-ink-900 p-6 text-white">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-mint-200">
+            {t("settings.billing.currentPlan")}
+          </p>
+          <h2 className="mt-2.5 text-2xl font-semibold tracking-[-0.015em]">
+            {t("settings.billing.planName")}
+          </h2>
+          <p className="mt-2 text-[13.5px] text-white/65">
+            {t("settings.billing.planDescription")}
+          </p>
         </div>
-        <div className="mt-6 grid gap-5 sm:grid-cols-2">
-          <UsageMeter
-            label={t("settings.billing.interviewsThisMonth")}
-            max={250}
-            value={interviewsUsed}
-          />
-          <UsageMeter
-            label={t("settings.billing.activeRoles")}
-            max={25}
-            value={metrics.activeRoles}
-          />
-        </div>
-      </section>
-
-      <SettingsPanel>
-        <h3 className="text-base font-semibold text-ink-950">
-          {t("settings.billing.billingSetup")}
-        </h3>
-        <div className="mt-4 flex items-center gap-3 rounded-[15px] border border-[#f1ede4] bg-white/60 px-4 py-3.5">
-          <span className="grid h-8 w-12 shrink-0 place-items-center rounded-lg bg-ink-900 text-white">
-            <CheckCircle aria-hidden={true} className="h-5 w-5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-ink-950">
-              {t("settings.billing.notConnected")}
-            </p>
-            <p className="mt-0.5 text-[12.5px] text-ink-500">
-              {t("settings.billing.notConnectedDescription")}
-            </p>
-          </div>
-          <Button type="button" variant="secondary">
-            {t("settings.billing.configure")}
-          </Button>
-        </div>
-        <div className="mt-4 flex items-center justify-between">
-          <span className="text-[13.5px] text-ink-500">
-            {t("settings.billing.billingHistory")}
-          </span>
-          <button
-            className="cursor-pointer text-[13px] font-semibold text-olive-900"
-            type="button"
-          >
-            {t("settings.billing.viewInvoices")}
-          </button>
-        </div>
-      </SettingsPanel>
-    </div>
+        <Button type="button" variant="secondary">
+          {t("settings.billing.managePlan")}
+        </Button>
+      </div>
+      <div className="mt-6 grid gap-5 sm:grid-cols-2">
+        <UsageMeter
+          label={t("settings.billing.interviewsThisMonth")}
+          max={250}
+          value={interviewsUsed}
+        />
+        <UsageMeter
+          label={t("settings.billing.activeRoles")}
+          max={25}
+          value={metrics.activeRoles}
+        />
+      </div>
+    </section>
   );
 }
 

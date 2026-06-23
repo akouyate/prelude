@@ -25,6 +25,7 @@
     "i18next-http-backend": "^3.0.6",
     "iconoir-react": "^7.11.1",
     "next": "^16.2.9",
+    "nuqs": "^2.8.9",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-i18next": "^16.6.6",

@@ -409,15 +409,9 @@
         "currentPlan": "Current plan",
         "planName": "V1 workspace",
         "planDescription": "Clerk Billing is not connected yet. Usage is tracked from workspace data.",
-        "managePlan": "Manage plan",
+        "managePlan": "Configure billing",
         "interviewsThisMonth": "Interviews this month",
-        "activeRoles": "Active roles",
-        "billingSetup": "Billing setup",
-        "notConnected": "Clerk Billing not connected",
-        "notConnectedDescription": "Clerk Billing can be connected before paid launch.",
-        "configure": "Configure",
-        "billingHistory": "Billing history",
-        "viewInvoices": "View invoices"
+        "activeRoles": "Active roles"
       }
     }
   }
