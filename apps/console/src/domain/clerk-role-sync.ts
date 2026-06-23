@@ -29,3 +29,15 @@ export function resolveOrganizationRoleFromClerk(input: {
 
   return mapClerkOrganizationRole(input.clerkRole, "viewer");
 }
+
+/**
+ * Map our granular OrganizationRole to Clerk's coarse membership role. Clerk's
+ * default Role Set only distinguishes admin vs member (custom roles need the
+ * paid B2B add-on), so owner/admin -> org:admin and recruiter/viewer ->
+ * org:member; the granular role is carried alongside in publicMetadata.
+ */
+export function toClerkMembershipRole(
+  role: OrganizationRole,
+): "org:admin" | "org:member" {
+  return role === "owner" || role === "admin" ? "org:admin" : "org:member";
+}

@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveOrganizationRoleFromClerk } from "./clerk-role-sync";
+import {
+  resolveOrganizationRoleFromClerk,
+  toClerkMembershipRole,
+} from "./clerk-role-sync";
 
 describe("resolveOrganizationRoleFromClerk", () => {
   it("prefers the granular Prelude role carried in publicMetadata", () => {
@@ -48,5 +51,17 @@ describe("resolveOrganizationRoleFromClerk", () => {
     expect(
       resolveOrganizationRoleFromClerk({ clerkRole: "org:weird_role" }),
     ).toBe("viewer");
+  });
+});
+
+describe("toClerkMembershipRole", () => {
+  it("maps owner and admin to Clerk's org:admin", () => {
+    expect(toClerkMembershipRole("owner")).toBe("org:admin");
+    expect(toClerkMembershipRole("admin")).toBe("org:admin");
+  });
+
+  it("maps recruiter and viewer to Clerk's org:member", () => {
+    expect(toClerkMembershipRole("recruiter")).toBe("org:member");
+    expect(toClerkMembershipRole("viewer")).toBe("org:member");
   });
 });
