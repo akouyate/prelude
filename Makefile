@@ -7,7 +7,9 @@ DATABASE_URL ?= postgresql://postgres:postgres@localhost:$(POSTGRES_PORT)/prelud
 REDIS_URL ?= redis://localhost:$(REDIS_PORT)/0
 PYTHON_VERSION ?= 3.14
 MIGRATION_NAME ?= init
-LOAD_ENV := set -a; [ ! -f .env ] || . ./.env; set +a
+# .env is dotenvx-encrypted; decrypt it through dotenvx (needs .env.keys) and
+# export the values. Falls back silently if .env/dotenvx is absent.
+LOAD_ENV := set -a; [ ! -f .env ] || eval "$$(dotenvx get --format eval -f .env 2>/dev/null)"; set +a
 BENCHMARK_PROVIDER ?= mock_openai_realtime
 BENCHMARK_SCENARIO ?= normal
 BENCHMARK_ITERATIONS ?= 3

@@ -17,8 +17,9 @@ test-results
 .env
 .env.*
 !.env.example
-# dotenvx: the encrypted console env is committed (values are ciphertext);
-# the private decryption keys are NEVER committed.
+# dotenvx: the encrypted env files are committed (values are ciphertext);
+# the private decryption keys (.env.keys) are NEVER committed.
+!/.env
 !apps/console/.env.local
 .env.keys
 **/.env.keys
