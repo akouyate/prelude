@@ -943,6 +943,15 @@ def test_live_interviewer_instructions_keep_first_screening_scope() -> None:
     assert "Product Manager B2B SaaS" in instructions
 
 
+def test_live_interviewer_instructions_pin_a_single_language() -> None:
+    # The live agent drifted between French and English mid-interview. A passive
+    # "Language: fr" line was not enough; the prompt must forbid switching.
+    instructions = build_live_interviewer_instructions(create_demo_plan())
+
+    assert "Never switch languages" in instructions
+    assert create_demo_plan().language in instructions
+
+
 def test_live_interviewer_instructions_onboard_without_product_narration() -> None:
     instructions = build_live_interviewer_instructions(create_demo_plan())
 

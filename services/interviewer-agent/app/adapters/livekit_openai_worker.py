@@ -1439,6 +1439,12 @@ Role: {plan.role_title}
 Language: {plan.language}
 Allowed candidate modalities: {", ".join(modalities) or "audio"}
 
+Language discipline (critical):
+- Speak only {plan.language} for the entire interview: the greeting, every
+  question, reprompts, follow-ups, and the closing.
+- Never switch languages mid-interview, even if the candidate uses or switches to
+  another language. Always continue in {plan.language}.
+
 Structured interview style:
 {_format_interview_style(plan.interview_style)}
 
