@@ -13,6 +13,7 @@ export { suggestReviewStatus } from "./domain/review";
 export {
   aiGuardrails,
   aiCompliancePolicyVersion,
+  audioRecordingConsentCopyVersions,
   buildAiCompliancePromptContext,
   candidateConsentCopy,
   candidateConsentCopyVersion,

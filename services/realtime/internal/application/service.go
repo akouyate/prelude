@@ -201,8 +201,9 @@ const recordingAudioFormat = "audio/ogg"
 // a right to erasure). Only sessions consented under one of these may be
 // audio-recorded; candidate-consent-v1 disclosed transcript evidence only, so a
 // session consented under it must never be recorded. This mirrors
-// @prelude/core's audioRecordingConsentCopyVersions and must move in lockstep
-// with it when the consent copy is revised. It is a code constant, not env
+// @prelude/core's exported audioRecordingConsentCopyVersions (a core unit test
+// pins that list to the live candidateConsentCopyVersion); keep this Go copy in
+// lockstep when the consent version is revised. It is a code constant, not env
 // config, on purpose: an env knob here could silently re-enable recording of
 // transcript-only consent and break the legal basis.
 var audioConsentCopyVersions = map[string]bool{

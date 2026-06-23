@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   aiGuardrails,
+  audioRecordingConsentCopyVersions,
   buildAiCompliancePromptContext,
   candidateConsentCopy,
   candidateConsentCopyVersion,
@@ -65,6 +66,14 @@ describe("AI compliance policy", () => {
     expect(candidateConsentCopy).toContain("request deletion of my recording");
     expect(recruiterLimitationCopy).toContain("human screening review only");
     expect(humanInLoopRule).toContain("human recruiter");
+  });
+
+  it("keeps the audio-recording consent allowlist in lockstep with the consent version", () => {
+    // Only sessions consented under an audio-disclosing version may be recorded.
+    // The current consent version MUST be in the allowlist, or the Go recording
+    // gate — which mirrors this list — would refuse to record freshly consented
+    // candidates. Bumping the version without extending the allowlist fails here.
+    expect(audioRecordingConsentCopyVersions).toContain(candidateConsentCopyVersion);
   });
 
   it("keeps protected and biometric topics out of automated review", () => {

@@ -3,8 +3,7 @@
 import { useState, useTransition } from "react";
 
 import { deleteRecordingAction } from "../../server/interviews/recording-actions";
-
-type RecordingStatus = "available" | "processing" | "failed" | "deleted" | null;
+import type { CandidateRecordingStatus } from "../../server/interviews/recording-playback";
 
 export function DeleteRecordingButton({
   candidateSessionId,
@@ -13,7 +12,7 @@ export function DeleteRecordingButton({
 }: {
   candidateSessionId: string;
   canDelete: boolean;
-  recordingStatus: RecordingStatus;
+  recordingStatus: CandidateRecordingStatus | null;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
