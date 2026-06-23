@@ -10,18 +10,24 @@ does not make final hiring, rejection, ranking, or archive decisions.
 
 ## Candidate Disclosure Copy
 
-Canonical copy version: `candidate-disclosure-v1`.
+Canonical copy version: `candidate-disclosure-v2`.
 
 Use this copy or a localized equivalent before a live interview starts:
 
-> You are speaking with an AI-guided interviewer for a first screening. Your
+> You are speaking with an AI-guided interviewer for a first screening. This
+> interview is audio-recorded so a recruiter can review your answers later. Your
 > answers are reviewed by a recruiter; Prelude does not assess protected
 > attributes, appearance, accent, tone, or emotion.
 
-The candidate consent copy must also say that answers may be recorded as
-transcript evidence for recruiter review.
+The candidate consent copy must disclose that the candidate's **voice is
+audio-recorded** (not only transcribed), the purpose (recruiter replay), the
+**retention period** (kept up to 90 days, then permanently deleted), the **right
+to request deletion** at any time, and that the audio is **stored in the EU** and
+processed by Prelude's recording provider (LiveKit / Cloudflare R2).
 
-Canonical consent copy version: `candidate-consent-v1`.
+Canonical consent copy version: `candidate-consent-v2`. Only sessions consented
+under `candidate-consent-v2`+ may be audio-recorded — `candidate-consent-v1`
+disclosed transcript evidence only and must never be audio-recorded.
 
 ## Recruiter Limitation Copy
 

@@ -55,12 +55,14 @@ describe("protected topic categories", () => {
 
 describe("AI compliance policy", () => {
   it("discloses the AI interviewer and human review boundaries", () => {
-    expect(candidateConsentCopyVersion).toBe("candidate-consent-v1");
-    expect(candidateDisclosureCopyVersion).toBe("candidate-disclosure-v1");
+    expect(candidateConsentCopyVersion).toBe("candidate-consent-v2");
+    expect(candidateDisclosureCopyVersion).toBe("candidate-disclosure-v2");
     expect(recruiterLimitationCopyVersion).toBe("recruiter-limitation-v1");
     expect(candidateDisclosureCopy).toContain("AI-guided interviewer");
     expect(candidateDisclosureCopy).toContain("reviewed by a recruiter");
-    expect(candidateConsentCopy).toContain("recorded and transcribed");
+    expect(candidateDisclosureCopy).toContain("audio-recorded");
+    expect(candidateConsentCopy).toContain("audio recording of my voice");
+    expect(candidateConsentCopy).toContain("request deletion of my recording");
     expect(recruiterLimitationCopy).toContain("human screening review only");
     expect(humanInLoopRule).toContain("human recruiter");
   });
@@ -89,7 +91,7 @@ describe("AI compliance policy", () => {
     expect(promptContext).toContain(humanInLoopRule);
     expect(promptContext).toContain(sensitiveInformationHandlingRule);
     expect(promptContext).toContain("biometric or face analysis");
-    expect(promptContext).toContain("candidate-disclosure-v1");
+    expect(promptContext).toContain("candidate-disclosure-v2");
   });
 
   it("detects risky automated-decision wording", () => {
