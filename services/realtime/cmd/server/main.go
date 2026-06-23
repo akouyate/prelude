@@ -20,6 +20,15 @@ func main() {
 		port = "8080"
 	}
 
+	// Fail fast in production rather than silently degrade to an in-memory store,
+	// a mock LiveKit gateway, or no agent dispatch.
+	if isProduction(os.Getenv) {
+		if missing := missingProductionConfig(os.Getenv); len(missing) > 0 {
+			slog.Error("refusing to start in production without required config", "missing", missing)
+			os.Exit(1)
+		}
+	}
+
 	repository := application.SessionRepository(store.NewMemoryStore())
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
 		postgresStore, err := store.NewPostgresStore(context.Background(), databaseURL)
