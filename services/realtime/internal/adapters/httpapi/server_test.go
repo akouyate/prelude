@@ -2,15 +2,106 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/akouyate/prelude/services/realtime/internal/adapters/livekit"
 	"github.com/akouyate/prelude/services/realtime/internal/adapters/store"
 	"github.com/akouyate/prelude/services/realtime/internal/application"
+	"github.com/akouyate/prelude/services/realtime/internal/domain"
 )
+
+type stubVerifier struct{ err error }
+
+func (v stubVerifier) VerifyWebhook(_ string, _ []byte) error { return v.err }
+
+func newRecordingServer(t *testing.T, verifier WebhookVerifier) (*Server, *store.MemoryStore) {
+	t.Helper()
+	repo := store.NewMemoryStore()
+	service := application.NewService(repo, livekit.NewMockGateway("wss://livekit.example.test"), nil)
+	service.SetRecordingRepository(repo)
+	server := NewServer(service)
+	if verifier != nil {
+		server.SetEgressWebhookVerifier(verifier)
+	}
+
+	return server, repo
+}
+
+func seedActiveRecording(t *testing.T, repo *store.MemoryStore, egressID string) {
+	t.Helper()
+	now := time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)
+	if err := repo.CreateRecording(context.Background(), domain.Recording{
+		ID:        "rec_" + egressID,
+		SessionID: "is_1",
+		EgressID:  egressID,
+		ObjectKey: "recordings/is_1/1.ogg",
+		Status:    domain.RecordingStatusRecording,
+		Format:    "audio/ogg",
+		StartedAt: now,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed recording: %v", err)
+	}
+}
+
+func TestServerEgressWebhookFinalizesRecording(t *testing.T) {
+	server, repo := newRecordingServer(t, stubVerifier{})
+	seedActiveRecording(t, repo, "eg_1")
+
+	body := `{"event":"egress_ended","egressInfo":{"egressId":"eg_1","status":"EGRESS_COMPLETE","fileResults":[{"duration":180000000000}]}}`
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/livekit/egress-webhook", bytes.NewBufferString(body))
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	recording, found, err := repo.RecordingByEgressID(context.Background(), "eg_1")
+	if err != nil || !found {
+		t.Fatalf("expected recording (found=%v err=%v)", found, err)
+	}
+	if recording.Status != domain.RecordingStatusAvailable {
+		t.Fatalf("expected available, got %s", recording.Status)
+	}
+	if recording.DurationMs == nil || *recording.DurationMs != 180000 {
+		t.Fatalf("expected duration 180000ms, got %v", recording.DurationMs)
+	}
+}
+
+func TestServerEgressWebhookRejectsInvalidSignature(t *testing.T) {
+	server, repo := newRecordingServer(t, stubVerifier{err: errors.New("bad signature")})
+	seedActiveRecording(t, repo, "eg_1")
+
+	body := `{"event":"egress_ended","egressInfo":{"egressId":"eg_1","status":"EGRESS_COMPLETE","fileResults":[{"duration":180000000000}]}}`
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/livekit/egress-webhook", bytes.NewBufferString(body))
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", response.Code)
+	}
+	if recording, _, _ := repo.RecordingByEgressID(context.Background(), "eg_1"); recording.Status != domain.RecordingStatusRecording {
+		t.Fatalf("an unverified webhook must not finalize the recording, got %s", recording.Status)
+	}
+}
+
+func TestServerEgressWebhookDisabledReturns404(t *testing.T) {
+	server := newTestServer()
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/livekit/egress-webhook", bytes.NewBufferString(`{"event":"egress_ended"}`))
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when the webhook is disabled, got %d", response.Code)
+	}
+}
 
 func TestServerHealth(t *testing.T) {
 	server := newTestServer()

@@ -177,6 +177,19 @@ func (s *MemoryStore) ActiveRecordingForSession(_ context.Context, sessionID str
 	return active, found, nil
 }
 
+func (s *MemoryStore) RecordingByEgressID(_ context.Context, egressID string) (domain.Recording, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, recording := range s.recordings {
+		if recording.EgressID == egressID {
+			return recording, true, nil
+		}
+	}
+
+	return domain.Recording{}, false, nil
+}
+
 func (s *MemoryStore) FinalizeRecordingByEgressID(_ context.Context, input application.FinalizeRecordingInput) (bool, error) {
 	if input.EgressID == "" {
 		return false, nil

@@ -591,6 +591,48 @@ func recordingObjectKey(sessionID string, at time.Time) string {
 	return fmt.Sprintf("recordings/%s/%d.ogg", sessionID, at.UnixMilli())
 }
 
+const recordingMinDurationMs = 1000
+
+// FinalizeRecordingFromEgress is the terminal egress signal delivered by the
+// LiveKit egress_ended webhook (and, later, the reconciliation sweep).
+type FinalizeRecordingFromEgress struct {
+	EgressID   string
+	Status     string
+	DurationMs *int
+	EndedAt    time.Time
+}
+
+// FinalizeRecording resolves an in-flight recording to its terminal state from a
+// LiveKit egress result. A complete egress with real audio becomes available; a
+// failed egress, or one whose audio is below the duration floor (an instant
+// candidate drop), becomes failed. It is idempotent: a redelivered webhook
+// matches no in-flight row and updates nothing.
+func (s *Service) FinalizeRecording(ctx context.Context, input FinalizeRecordingFromEgress) error {
+	if s.recordings == nil || strings.TrimSpace(input.EgressID) == "" {
+		return nil
+	}
+
+	status := domain.RecordingStatusFailed
+	if strings.EqualFold(input.Status, "EGRESS_COMPLETE") && input.DurationMs != nil && *input.DurationMs >= recordingMinDurationMs {
+		status = domain.RecordingStatusAvailable
+	}
+
+	endedAt := input.EndedAt
+	if endedAt.IsZero() {
+		endedAt = s.clock.Now()
+	}
+
+	_, err := s.recordings.FinalizeRecordingByEgressID(ctx, FinalizeRecordingInput{
+		EgressID:   input.EgressID,
+		Status:     status,
+		DurationMs: input.DurationMs,
+		EndedAt:    endedAt,
+		UpdatedAt:  s.clock.Now(),
+	})
+
+	return err
+}
+
 func (s *Service) GetTranscript(ctx context.Context, sessionID string) ([]domain.TranscriptTurn, error) {
 	session, err := s.GetSession(ctx, sessionID)
 	if err != nil {

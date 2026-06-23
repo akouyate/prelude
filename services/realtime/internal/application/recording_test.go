@@ -218,3 +218,80 @@ func TestServiceStopsRecordingOnSessionCompleted(t *testing.T) {
 		t.Fatalf("expected egress eg_test_1 to be stopped, got %v", egress.stopped)
 	}
 }
+
+func seedRecording(t *testing.T, repo *store.MemoryStore, sessionID string, egressID string, at time.Time) {
+	t.Helper()
+	if err := repo.CreateRecording(context.Background(), domain.Recording{
+		ID:        "rec_" + egressID,
+		SessionID: sessionID,
+		EgressID:  egressID,
+		ObjectKey: "recordings/" + sessionID + "/1.ogg",
+		Status:    domain.RecordingStatusRecording,
+		Format:    "audio/ogg",
+		StartedAt: at,
+		CreatedAt: at,
+		UpdatedAt: at,
+	}); err != nil {
+		t.Fatalf("seed recording: %v", err)
+	}
+}
+
+func TestServiceFinalizeRecordingMarksAvailableOnComplete(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)}
+	repo := store.NewMemoryStore()
+	service := application.NewService(repo, fakeLiveKit{}, clock)
+	service.SetRecordingRepository(repo)
+
+	seedRecording(t, repo, "is_1", "eg_1", clock.now)
+
+	durationMs := 180000
+	if err := service.FinalizeRecording(context.Background(), application.FinalizeRecordingFromEgress{
+		EgressID:   "eg_1",
+		Status:     "EGRESS_COMPLETE",
+		DurationMs: &durationMs,
+		EndedAt:    clock.now.Add(3 * time.Minute),
+	}); err != nil {
+		t.Fatalf("FinalizeRecording returned error: %v", err)
+	}
+
+	recording, found, err := repo.RecordingByEgressID(context.Background(), "eg_1")
+	if err != nil || !found {
+		t.Fatalf("expected recording (found=%v err=%v)", found, err)
+	}
+	if recording.Status != domain.RecordingStatusAvailable {
+		t.Fatalf("expected available, got %s", recording.Status)
+	}
+	if recording.DurationMs == nil || *recording.DurationMs != durationMs {
+		t.Fatalf("expected persisted duration %d, got %v", durationMs, recording.DurationMs)
+	}
+}
+
+func TestServiceFinalizeRecordingMarksFailedOnShortOrErroredEgress(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)}
+	repo := store.NewMemoryStore()
+	service := application.NewService(repo, fakeLiveKit{}, clock)
+	service.SetRecordingRepository(repo)
+
+	// An instant candidate drop: egress completes but below the duration floor.
+	seedRecording(t, repo, "is_short", "eg_short", clock.now)
+	shortMs := 200
+	if err := service.FinalizeRecording(context.Background(), application.FinalizeRecordingFromEgress{
+		EgressID: "eg_short", Status: "EGRESS_COMPLETE", DurationMs: &shortMs,
+	}); err != nil {
+		t.Fatalf("FinalizeRecording (short) returned error: %v", err)
+	}
+	if rec, _, _ := repo.RecordingByEgressID(context.Background(), "eg_short"); rec.Status != domain.RecordingStatusFailed {
+		t.Fatalf("expected failed for sub-floor duration, got %s", rec.Status)
+	}
+
+	// An egress that errored out.
+	seedRecording(t, repo, "is_err", "eg_err", clock.now)
+	if err := service.FinalizeRecording(context.Background(), application.FinalizeRecordingFromEgress{
+		EgressID: "eg_err", Status: "EGRESS_FAILED",
+	}); err != nil {
+		t.Fatalf("FinalizeRecording (failed) returned error: %v", err)
+	}
+	if rec, _, _ := repo.RecordingByEgressID(context.Background(), "eg_err"); rec.Status != domain.RecordingStatusFailed {
+		t.Fatalf("expected failed for errored egress, got %s", rec.Status)
+	}
+}
