@@ -20,7 +20,7 @@ type MemoryStore struct {
 	sessions         map[string]domain.Session
 	events           map[string]map[string]domain.Event
 	recordings       map[string]domain.Recording
-	recordingConsent map[string]bool
+	recordingConsent map[string]application.RecordingConsent
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -28,21 +28,21 @@ func NewMemoryStore() *MemoryStore {
 		sessions:         map[string]domain.Session{},
 		events:           map[string]map[string]domain.Event{},
 		recordings:       map[string]domain.Recording{},
-		recordingConsent: map[string]bool{},
+		recordingConsent: map[string]application.RecordingConsent{},
 	}
 }
 
 // SetRecordingConsent records the recording-consent decision for a session. It
 // exists so tests can model consent; the Postgres store derives it from the
-// console's CandidateSession.consentedAt instead.
-func (s *MemoryStore) SetRecordingConsent(sessionID string, granted bool) {
+// console's CandidateSession (consentedAt + consentCopyVersion) instead.
+func (s *MemoryStore) SetRecordingConsent(sessionID string, consent application.RecordingConsent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.recordingConsent[sessionID] = granted
+	s.recordingConsent[sessionID] = consent
 }
 
-func (s *MemoryStore) RecordingConsentGranted(_ context.Context, sessionID string) (bool, error) {
+func (s *MemoryStore) RecordingConsentFor(_ context.Context, sessionID string) (application.RecordingConsent, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

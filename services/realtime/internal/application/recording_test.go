@@ -69,7 +69,10 @@ func newRecordingService(t *testing.T, consent bool) (*application.Service, *sto
 		t.Fatalf("CreateSession returned error: %v", err)
 	}
 	if consent {
-		repo.SetRecordingConsent(session.Session.ID, true)
+		repo.SetRecordingConsent(session.Session.ID, application.RecordingConsent{
+			Granted:     true,
+			CopyVersion: "candidate-consent-v2",
+		})
 	}
 
 	return service, repo, egress, session
@@ -154,6 +157,29 @@ func TestServiceDoesNotRecordWithoutConsent(t *testing.T) {
 	}
 	if _, found, _ := repo.ActiveRecordingForSession(context.Background(), sessionID); found {
 		t.Fatal("expected no recording without consent")
+	}
+}
+
+func TestServiceDoesNotRecordWithPreAudioConsentVersion(t *testing.T) {
+	// candidate-consent-v1 disclosed transcript evidence only — not that the
+	// candidate's voice would be audio-recorded. Recording such a session would
+	// exceed the consented scope, so consent alone is not enough: the copy version
+	// must be one that disclosed audio recording.
+	service, repo, egress, session := newRecordingService(t, false)
+	sessionID := session.Session.ID
+	repo.SetRecordingConsent(sessionID, application.RecordingConsent{
+		Granted:     true,
+		CopyVersion: "candidate-consent-v1",
+	})
+
+	ingestJoined(t, service, sessionID, 1, "evt_joined")
+	ingestMediaReady(t, service, sessionID, 2, "evt_media", true)
+
+	if egress.attempts != 0 {
+		t.Fatalf("expected no egress attempt for a pre-audio consent version, got %d", egress.attempts)
+	}
+	if _, found, _ := repo.ActiveRecordingForSession(context.Background(), sessionID); found {
+		t.Fatal("expected no recording when consent predates audio disclosure")
 	}
 }
 

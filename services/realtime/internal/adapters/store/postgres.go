@@ -681,26 +681,32 @@ func nullTimeValue(value time.Time) any {
 	return value
 }
 
-// RecordingConsentGranted derives recording consent from the console's
+// RecordingConsentFor derives recording consent from the console's
 // CandidateSession row linked by realtimeSessionId. It is fail-closed: a missing
 // row or a null consentedAt means consent has not been granted, so no audio is
-// captured. The Go service reads this console-owned table directly, the same
-// shared-DB boundary used for the published Interview plan.
-func (s *PostgresStore) RecordingConsentGranted(ctx context.Context, sessionID string) (bool, error) {
+// captured. It also reports consentCopyVersion so the application can require an
+// audio-disclosing version before recording (consent-v1 disclosed transcript
+// evidence only). The Go service reads this console-owned table directly, the
+// same shared-DB boundary used for the published Interview plan.
+func (s *PostgresStore) RecordingConsentFor(ctx context.Context, sessionID string) (application.RecordingConsent, error) {
 	var consentedAt sql.NullTime
+	var consentCopyVersion sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		select "consentedAt"
+		select "consentedAt", "consentCopyVersion"
 		from "CandidateSession"
 		where "realtimeSessionId" = $1
-	`, sessionID).Scan(&consentedAt)
+	`, sessionID).Scan(&consentedAt, &consentCopyVersion)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return application.RecordingConsent{}, nil
 	}
 	if err != nil {
-		return false, err
+		return application.RecordingConsent{}, err
 	}
 
-	return consentedAt.Valid, nil
+	return application.RecordingConsent{
+		Granted:     consentedAt.Valid,
+		CopyVersion: consentCopyVersion.String,
+	}, nil
 }
 
 func (s *PostgresStore) StaleRecordings(ctx context.Context, startedBefore time.Time, limit int) ([]domain.Recording, error) {

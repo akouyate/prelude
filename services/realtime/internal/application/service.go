@@ -152,14 +152,36 @@ type EgressState struct {
 	DurationMs *int
 }
 
-// RecordingConsentGate reports whether the candidate behind a live session has
-// recorded their consent to be recorded. Recording is fail-closed: without a
-// positive consent signal, no egress is started.
+// RecordingConsent is the candidate's recorded consent decision for a live
+// session: whether consent was captured at all, and the version of the consent
+// copy they accepted. The copy version matters because only the audio-disclosing
+// versions authorize voice recording (see audioConsentCopyVersions).
+type RecordingConsent struct {
+	Granted     bool
+	CopyVersion string
+}
+
+// RecordingConsentGate reports the candidate's recorded consent for a live
+// session. Recording is fail-closed: without a positive consent signal under an
+// audio-disclosing copy version, no egress is started.
 type RecordingConsentGate interface {
-	RecordingConsentGranted(ctx context.Context, sessionID string) (bool, error)
+	RecordingConsentFor(ctx context.Context, sessionID string) (RecordingConsent, error)
 }
 
 const recordingAudioFormat = "audio/ogg"
+
+// audioConsentCopyVersions are the candidate consent-copy versions whose text
+// discloses that the candidate's voice is audio-recorded (with EU retention and
+// a right to erasure). Only sessions consented under one of these may be
+// audio-recorded; candidate-consent-v1 disclosed transcript evidence only, so a
+// session consented under it must never be recorded. This mirrors
+// @prelude/core's audioRecordingConsentCopyVersions and must move in lockstep
+// with it when the consent copy is revised. It is a code constant, not env
+// config, on purpose: an env knob here could silently re-enable recording of
+// transcript-only consent and break the legal basis.
+var audioConsentCopyVersions = map[string]bool{
+	"candidate-consent-v2": true,
+}
 
 type Service struct {
 	repository     SessionRepository
@@ -503,12 +525,20 @@ func (s *Service) startRecordingIfNeeded(ctx context.Context, event domain.Event
 		return
 	}
 
-	granted, err := s.consent.RecordingConsentGranted(ctx, event.SessionID)
+	consent, err := s.consent.RecordingConsentFor(ctx, event.SessionID)
 	if err != nil {
 		slog.Warn("failed to check recording consent", "session_id", event.SessionID, "error", err)
 		return
 	}
-	if !granted {
+	if !consent.Granted {
+		return
+	}
+	if !audioConsentCopyVersions[consent.CopyVersion] {
+		// Consent exists but predates audio disclosure (e.g. candidate-consent-v1,
+		// transcript only). Recording would exceed the consented scope, so stay
+		// fail-closed and capture nothing.
+		slog.Info("skipping recording: consent copy version does not authorize audio",
+			"session_id", event.SessionID, "consent_copy_version", consent.CopyVersion)
 		return
 	}
 
