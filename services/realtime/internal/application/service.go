@@ -168,6 +168,14 @@ type RecordingConsentGate interface {
 	RecordingConsentFor(ctx context.Context, sessionID string) (RecordingConsent, error)
 }
 
+// ObjectStore deletes recording audio objects from object storage. It backs both
+// erasure paths — the retention sweep and a recruiter erasure request — so
+// deletion is idempotent: removing an already-absent object is success, never an
+// error, which keeps retries and re-deliveries safe.
+type ObjectStore interface {
+	DeleteObject(ctx context.Context, key string) error
+}
+
 const recordingAudioFormat = "audio/ogg"
 
 // audioConsentCopyVersions are the candidate consent-copy versions whose text
