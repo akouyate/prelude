@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 
+import { prisma } from "@prelude/db";
 import type { OrganizationRole } from "@prelude/types";
 
 import { getConsoleAuthSession } from "../auth/console-auth-provider";
@@ -26,14 +27,23 @@ async function getTeamActor(): Promise<TeamActor> {
   if (!session.ok) {
     throw new Error(session.error);
   }
+  // Resolve the Clerk org id from the user's DB organization (consistent with
+  // how the rest of the console scopes data) rather than the session's active
+  // org, which can be unset on a fresh sign-in. Mock mode has no Clerk org, so
+  // null routes the service to its mock-mode guard.
+  const clerkOrganizationId =
+    session.value.source === "mock"
+      ? null
+      : ((
+          await prisma.organization.findUnique({
+            select: { clerkOrganizationId: true },
+            where: { id: scope.organizationId },
+          })
+        )?.clerkOrganizationId ?? null);
+
   return {
     organizationId: scope.organizationId,
-    // Mock mode has no real Clerk workspace; null routes the service to its
-    // mock-mode guard instead of attempting a Clerk Backend API call.
-    clerkOrganizationId:
-      session.value.source === "mock"
-        ? null
-        : session.value.clerkOrganizationId,
+    clerkOrganizationId,
     role: scope.role,
     userId: session.value.userId,
   };
