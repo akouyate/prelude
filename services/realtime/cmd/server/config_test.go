@@ -74,6 +74,26 @@ func TestMissingProductionConfigIgnoresR2WhenRecordingDisabled(t *testing.T) {
 	}
 }
 
+func TestRecordingRetentionDays(t *testing.T) {
+	cases := []struct {
+		in   string
+		want int
+	}{
+		{"", 90},        // default
+		{"30", 30},      // explicit
+		{"0", 0},        // disabled
+		{"  45 ", 45},   // trimmed
+		{"-5", 90},      // negative falls back to default
+		{"notanum", 90}, // unparseable falls back to default
+	}
+	for _, c := range cases {
+		got := recordingRetentionDays(func(string) string { return c.in })
+		if got != c.want {
+			t.Errorf("recordingRetentionDays(%q) = %d, want %d", c.in, got, c.want)
+		}
+	}
+}
+
 func containsConfigKey(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

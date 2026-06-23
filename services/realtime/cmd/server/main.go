@@ -9,6 +9,7 @@ import (
 
 	"github.com/akouyate/prelude/services/realtime/internal/adapters/httpapi"
 	"github.com/akouyate/prelude/services/realtime/internal/adapters/livekit"
+	"github.com/akouyate/prelude/services/realtime/internal/adapters/objectstore"
 	"github.com/akouyate/prelude/services/realtime/internal/adapters/redisqueue"
 	"github.com/akouyate/prelude/services/realtime/internal/adapters/store"
 	"github.com/akouyate/prelude/services/realtime/internal/application"
@@ -95,16 +96,29 @@ func main() {
 			if region == "" {
 				region = "auto"
 			}
+			bucket := os.Getenv("EGRESS_R2_BUCKET")
+			endpoint := os.Getenv("EGRESS_R2_ENDPOINT")
+			accessKey := os.Getenv("EGRESS_R2_ACCESS_KEY_ID")
+			secret := os.Getenv("EGRESS_R2_SECRET_ACCESS_KEY")
 			realGateway.ConfigureEgress(livekit.EgressTarget{
-				Bucket:    os.Getenv("EGRESS_R2_BUCKET"),
+				Bucket:    bucket,
 				Region:    region,
-				Endpoint:  os.Getenv("EGRESS_R2_ENDPOINT"),
-				AccessKey: os.Getenv("EGRESS_R2_ACCESS_KEY_ID"),
-				Secret:    os.Getenv("EGRESS_R2_SECRET_ACCESS_KEY"),
+				Endpoint:  endpoint,
+				AccessKey: accessKey,
+				Secret:    secret,
 			})
 			service.SetEgressGateway(realGateway)
 			service.SetRecordingRepository(recordings)
 			service.SetRecordingConsentGate(consent)
+			// Same bucket + creds egress writes to, so the retention sweep and
+			// erasure can delete the very objects egress produced.
+			service.SetObjectStore(objectstore.NewR2Store(objectstore.Config{
+				Bucket:    bucket,
+				Region:    region,
+				Endpoint:  endpoint,
+				AccessKey: accessKey,
+				Secret:    secret,
+			}))
 
 			parser, err := livekit.NewWebhookParser(os.Getenv("LIVEKIT_API_KEY"), os.Getenv("LIVEKIT_API_SECRET"))
 			if err != nil {
@@ -119,7 +133,7 @@ func main() {
 	handler := httpapi.NewServer(service)
 	if egressWebhookParser != nil {
 		handler.SetEgressWebhookParser(egressWebhookParser)
-		go runRecordingReconciler(context.Background(), service)
+		go runRecordingReconciler(context.Background(), service, recordingRetentionDays(os.Getenv))
 	}
 
 	server := &http.Server{
@@ -140,11 +154,13 @@ const (
 	recordingStaleAfter        = 10 * time.Minute
 )
 
-// runRecordingReconciler periodically finalizes recordings whose egress_ended
-// webhook never arrived, by polling LiveKit for each stale in-flight recording.
-// It is the backstop for the webhook path, and it lets local dev finalize
-// recordings without exposing a public webhook URL.
-func runRecordingReconciler(ctx context.Context, service *application.Service) {
+// runRecordingReconciler drives the periodic recording maintenance on one ticker:
+// it finalizes recordings whose egress_ended webhook never arrived (by polling
+// LiveKit), and it purges recordings past the retention window. The reconciler is
+// the backstop for the webhook path and lets local dev finalize without a public
+// webhook URL; the purge enforces audio storage limitation. retentionDays <= 0
+// disables the purge.
+func runRecordingReconciler(ctx context.Context, service *application.Service, retentionDays int) {
 	ticker := time.NewTicker(recordingReconcileInterval)
 	defer ticker.Stop()
 
@@ -158,6 +174,15 @@ func runRecordingReconciler(ctx context.Context, service *application.Service) {
 				slog.Warn("recording reconciliation failed", "error", err)
 			} else if reconciled > 0 {
 				slog.Info("reconciled recordings", "count", reconciled)
+			}
+
+			if retentionDays > 0 {
+				retentionCutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
+				if purged, err := service.PurgeExpiredRecordings(ctx, retentionCutoff); err != nil {
+					slog.Warn("recording retention purge failed", "error", err)
+				} else if purged > 0 {
+					slog.Info("purged expired recordings", "count", purged)
+				}
 			}
 		}
 	}

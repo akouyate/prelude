@@ -255,6 +255,143 @@ func TestServiceStopsRecordingOnSessionCompleted(t *testing.T) {
 	}
 }
 
+type fakeObjectStore struct {
+	deleted []string
+	err     error
+}
+
+func (f *fakeObjectStore) DeleteObject(_ context.Context, key string) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.deleted = append(f.deleted, key)
+	return nil
+}
+
+func seedAvailableRecording(t *testing.T, repo *store.MemoryStore, id string, objectKey string, endedAt time.Time) {
+	t.Helper()
+	startedAt := endedAt.Add(-3 * time.Minute)
+	if err := repo.CreateRecording(context.Background(), domain.Recording{
+		ID:        id,
+		SessionID: "is_" + id,
+		EgressID:  "eg_" + id,
+		ObjectKey: objectKey,
+		Status:    domain.RecordingStatusAvailable,
+		Format:    "audio/ogg",
+		StartedAt: startedAt,
+		EndedAt:   &endedAt,
+		CreatedAt: startedAt,
+		UpdatedAt: endedAt,
+	}); err != nil {
+		t.Fatalf("seed available recording %s: %v", id, err)
+	}
+}
+
+func newPurgeService(t *testing.T) (*application.Service, *store.MemoryStore, fixedClock) {
+	t.Helper()
+	clock := fixedClock{now: time.Date(2026, 6, 23, 12, 0, 0, 0, time.UTC)}
+	repo := store.NewMemoryStore()
+	service := application.NewService(repo, fakeLiveKit{}, clock)
+	service.SetRecordingRepository(repo)
+
+	return service, repo, clock
+}
+
+func TestPurgeExpiredRecordingsErasesObjectThenTombstones(t *testing.T) {
+	service, repo, clock := newPurgeService(t)
+	objects := &fakeObjectStore{}
+	service.SetObjectStore(objects)
+
+	seedAvailableRecording(t, repo, "old", "recordings/is_old/1.ogg", clock.now.AddDate(0, 0, -100))
+
+	cutoff := clock.now.AddDate(0, 0, -90)
+	purged, err := service.PurgeExpiredRecordings(context.Background(), cutoff)
+	if err != nil {
+		t.Fatalf("PurgeExpiredRecordings returned error: %v", err)
+	}
+	if purged != 1 {
+		t.Fatalf("expected 1 purged, got %d", purged)
+	}
+	if len(objects.deleted) != 1 || objects.deleted[0] != "recordings/is_old/1.ogg" {
+		t.Fatalf("expected the audio object to be deleted, got %v", objects.deleted)
+	}
+
+	rec, found, err := repo.RecordingByEgressID(context.Background(), "eg_old")
+	if err != nil || !found {
+		t.Fatalf("expected the tombstone row (found=%v err=%v)", found, err)
+	}
+	if rec.Status != domain.RecordingStatusDeleted {
+		t.Fatalf("expected deleted status, got %s", rec.Status)
+	}
+	if rec.ObjectKey != "" {
+		t.Fatalf("expected object key cleared, got %q", rec.ObjectKey)
+	}
+	if rec.DeletedAt == nil || rec.DeletedReason != "retention" {
+		t.Fatalf("expected deleted_at + reason=retention, got at=%v reason=%q", rec.DeletedAt, rec.DeletedReason)
+	}
+}
+
+func TestPurgeExpiredRecordingsSkipsFreshAndNonAvailable(t *testing.T) {
+	service, repo, clock := newPurgeService(t)
+	objects := &fakeObjectStore{}
+	service.SetObjectStore(objects)
+
+	// Within the retention window — must be kept.
+	seedAvailableRecording(t, repo, "fresh", "recordings/is_fresh/1.ogg", clock.now.AddDate(0, 0, -1))
+	// Old but still in-flight (status "recording", not "available") — only
+	// finalized recordings are retention candidates, never a live one.
+	seedRecording(t, repo, "is_inflight", "eg_inflight", clock.now.AddDate(0, 0, -200))
+
+	purged, err := service.PurgeExpiredRecordings(context.Background(), clock.now.AddDate(0, 0, -90))
+	if err != nil {
+		t.Fatalf("PurgeExpiredRecordings returned error: %v", err)
+	}
+	if purged != 0 {
+		t.Fatalf("expected nothing purged, got %d", purged)
+	}
+	if len(objects.deleted) != 0 {
+		t.Fatalf("expected no object deletes, got %v", objects.deleted)
+	}
+}
+
+func TestPurgeExpiredRecordingsKeepsRowWhenObjectDeleteFails(t *testing.T) {
+	// Delete the object FIRST: if that fails, the row must stay "available" so the
+	// next tick retries — never tombstone a row whose audio still exists.
+	service, repo, clock := newPurgeService(t)
+	service.SetObjectStore(&fakeObjectStore{err: errors.New("r2 unavailable")})
+
+	seedAvailableRecording(t, repo, "old", "recordings/is_old/1.ogg", clock.now.AddDate(0, 0, -100))
+
+	purged, err := service.PurgeExpiredRecordings(context.Background(), clock.now.AddDate(0, 0, -90))
+	if err != nil {
+		t.Fatalf("purge is best-effort and should not return an error, got %v", err)
+	}
+	if purged != 0 {
+		t.Fatalf("expected 0 purged when the object delete fails, got %d", purged)
+	}
+
+	rec, _, _ := repo.RecordingByEgressID(context.Background(), "eg_old")
+	if rec.Status != domain.RecordingStatusAvailable {
+		t.Fatalf("expected the row to stay available for retry, got %s", rec.Status)
+	}
+	if rec.ObjectKey == "" {
+		t.Fatal("object key must be preserved when the delete failed")
+	}
+}
+
+func TestPurgeExpiredRecordingsNoOpWithoutObjectStore(t *testing.T) {
+	service, repo, clock := newPurgeService(t)
+	seedAvailableRecording(t, repo, "old", "recordings/is_old/1.ogg", clock.now.AddDate(0, 0, -100))
+
+	purged, err := service.PurgeExpiredRecordings(context.Background(), clock.now.AddDate(0, 0, -90))
+	if err != nil {
+		t.Fatalf("PurgeExpiredRecordings returned error: %v", err)
+	}
+	if purged != 0 {
+		t.Fatalf("expected a no-op without an object store, got %d purged", purged)
+	}
+}
+
 func seedRecording(t *testing.T, repo *store.MemoryStore, sessionID string, egressID string, at time.Time) {
 	t.Helper()
 	if err := repo.CreateRecording(context.Background(), domain.Recording{

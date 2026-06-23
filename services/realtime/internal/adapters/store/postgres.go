@@ -747,3 +747,47 @@ func (s *PostgresStore) StaleRecordings(ctx context.Context, startedBefore time.
 
 	return recordings, nil
 }
+
+func (s *PostgresStore) DeletableRecordings(ctx context.Context, deletedBefore time.Time, limit int) ([]domain.Recording, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
+		from live_interview_recordings
+		where status = $1 and coalesce(ended_at, started_at) < $2
+		order by coalesce(ended_at, started_at) asc
+		limit $3
+	`, string(domain.RecordingStatusAvailable), deletedBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recordings := make([]domain.Recording, 0)
+	for rows.Next() {
+		recording, err := scanRecording(rows)
+		if err != nil {
+			return nil, err
+		}
+		recordings = append(recordings, recording)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return recordings, nil
+}
+
+func (s *PostgresStore) MarkRecordingDeleted(ctx context.Context, input application.MarkRecordingDeletedInput) error {
+	_, err := s.db.ExecContext(ctx, `
+		update live_interview_recordings
+		set status = $1, object_key = null, deleted_at = $2, deleted_reason = $3, updated_at = $4
+		where id = $5
+	`,
+		string(domain.RecordingStatusDeleted),
+		input.DeletedAt,
+		nullString(input.Reason),
+		input.DeletedAt,
+		input.ID,
+	)
+
+	return err
+}

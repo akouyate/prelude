@@ -1,6 +1,30 @@
 package main
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
+
+// defaultRecordingRetentionDays is the audio retention window when
+// RECORDING_RETENTION_DAYS is unset — 90 days, matching the candidate consent
+// copy ("kept for up to 90 days, then permanently deleted").
+const defaultRecordingRetentionDays = 90
+
+// recordingRetentionDays is the audio retention window in days. It defaults to 90
+// and falls back to the default for an unparseable or negative value; "0"
+// disables the retention sweep (audio is then kept until erased by request).
+func recordingRetentionDays(getenv func(string) string) int {
+	raw := strings.TrimSpace(getenv("RECORDING_RETENTION_DAYS"))
+	if raw == "" {
+		return defaultRecordingRetentionDays
+	}
+	days, err := strconv.Atoi(raw)
+	if err != nil || days < 0 {
+		return defaultRecordingRetentionDays
+	}
+
+	return days
+}
 
 // requiredProductionConfig lists the env vars the realtime service must have in
 // production. Without them it would silently degrade to an in-memory store (data

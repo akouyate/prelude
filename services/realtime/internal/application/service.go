@@ -115,6 +115,14 @@ type RecordingRepository interface {
 	// StaleRecordings returns in-flight ("recording") rows started before the
 	// cutoff — candidates for reconciliation when an egress_ended webhook was lost.
 	StaleRecordings(ctx context.Context, startedBefore time.Time, limit int) ([]domain.Recording, error)
+	// DeletableRecordings returns "available" rows whose retention window has
+	// elapsed — coalesce(endedAt, startedAt) is before the cutoff — so the audio
+	// object can be erased. Already-deleted and failed rows are excluded.
+	DeletableRecordings(ctx context.Context, deletedBefore time.Time, limit int) ([]domain.Recording, error)
+	// MarkRecordingDeleted tombstones a recording after its object is gone: status
+	// becomes "deleted", object_key is cleared, and deleted_at/deleted_reason are
+	// set. The row is kept for audit. It is idempotent on an already-deleted row.
+	MarkRecordingDeleted(ctx context.Context, input MarkRecordingDeletedInput) error
 }
 
 type FinalizeRecordingInput struct {
@@ -123,6 +131,13 @@ type FinalizeRecordingInput struct {
 	DurationMs *int
 	EndedAt    time.Time
 	UpdatedAt  time.Time
+}
+
+// MarkRecordingDeletedInput tombstones one recording row by id.
+type MarkRecordingDeletedInput struct {
+	ID        string
+	Reason    string
+	DeletedAt time.Time
 }
 
 // EgressGateway starts and stops LiveKit room-composite egress jobs that record
@@ -199,6 +214,7 @@ type Service struct {
 	recorder       EgressGateway
 	recordings     RecordingRepository
 	consent        RecordingConsentGate
+	objectStore    ObjectStore
 	clock          Clock
 	provider       string
 }
@@ -237,6 +253,13 @@ func (s *Service) SetRecordingRepository(repository RecordingRepository) {
 
 func (s *Service) SetRecordingConsentGate(gate RecordingConsentGate) {
 	s.consent = gate
+}
+
+// SetObjectStore wires the object store used to erase recording audio (retention
+// sweep + erasure request). Without it, PurgeExpiredRecordings and erasure are
+// no-ops.
+func (s *Service) SetObjectStore(store ObjectStore) {
+	s.objectStore = store
 }
 
 // SetProvider configures the live voice provider reported to the agent worker.
@@ -732,6 +755,54 @@ func (s *Service) ReconcileRecordings(ctx context.Context, startedBefore time.Ti
 	}
 
 	return reconciled, nil
+}
+
+// recordingRetentionReason is the deleted_reason stamped on recordings erased by
+// the retention sweep (vs. a recruiter erasure request, which uses its own).
+const recordingRetentionReason = "retention"
+
+// PurgeExpiredRecordings enforces audio retention: it erases the audio object of
+// every "available" recording whose retention window has elapsed and tombstones
+// the row. It runs on the reconciliation ticker. Best-effort: a per-recording
+// failure is logged and skipped (retried next tick), and it returns how many
+// recordings it purged. A nil object store (storage not configured) is a no-op.
+func (s *Service) PurgeExpiredRecordings(ctx context.Context, deletedBefore time.Time) (int, error) {
+	if s.objectStore == nil || s.recordings == nil {
+		return 0, nil
+	}
+
+	expired, err := s.recordings.DeletableRecordings(ctx, deletedBefore, recordingReconcileLimit)
+	if err != nil {
+		return 0, err
+	}
+
+	purged := 0
+	for _, recording := range expired {
+		if err := s.eraseRecording(ctx, recording, recordingRetentionReason); err != nil {
+			slog.Warn("failed to purge expired recording", "recording_id", recording.ID, "error", err)
+			continue
+		}
+		purged++
+	}
+
+	return purged, nil
+}
+
+// eraseRecording removes a recording's audio object and then tombstones the row.
+// Order matters: the object is deleted FIRST, so a failure leaves the row intact
+// ("available") to be retried — we never tombstone a row whose audio still
+// exists. Object deletion is idempotent, so a re-run after a tombstone-write
+// failure simply deletes nothing and tombstones.
+func (s *Service) eraseRecording(ctx context.Context, recording domain.Recording, reason string) error {
+	if err := s.objectStore.DeleteObject(ctx, recording.ObjectKey); err != nil {
+		return err
+	}
+
+	return s.recordings.MarkRecordingDeleted(ctx, MarkRecordingDeletedInput{
+		ID:        recording.ID,
+		Reason:    reason,
+		DeletedAt: s.clock.Now(),
+	})
 }
 
 func isTerminalEgressStatus(status string) bool {
