@@ -303,6 +303,26 @@ function useRoleName() {
   );
 }
 
+// Shared transition + error state for a single inline team action (revoke /
+// change role / remove): run the action, surface its error, expose `pending`.
+function useRowAction() {
+  const [error, setError] = React.useState<string | null>(null);
+  const [pending, startTransition] = React.useTransition();
+  const run = React.useCallback(
+    (action: () => Promise<{ ok: true } | { ok: false; error: string }>) => {
+      setError(null);
+      startTransition(async () => {
+        const result = await action();
+        if (!result.ok) {
+          setError(result.error);
+        }
+      });
+    },
+    [],
+  );
+  return { error, pending, run };
+}
+
 function TeamSection({ data }: { data: WorkspaceSettingsData }) {
   const viewerRole = data.account.role as OrganizationRole;
 
@@ -450,20 +470,7 @@ function PendingInvitationRow({
 }) {
   const { t } = useTranslation();
   const roleName = useRoleName();
-  const [error, setError] = React.useState<string | null>(null);
-  const [pending, startTransition] = React.useTransition();
-
-  function handleRevoke() {
-    setError(null);
-    startTransition(async () => {
-      const result = await revokeTeamInvitationAction({
-        invitationId: invitation.id,
-      });
-      if (!result.ok) {
-        setError(result.error);
-      }
-    });
-  }
+  const { error, pending, run } = useRowAction();
 
   return (
     <div className="flex items-center gap-3 border-t border-[#f1ede4] px-1 py-3.5 first:border-t-0">
@@ -481,7 +488,11 @@ function PendingInvitationRow({
       <button
         className="shrink-0 rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold text-ink-500 transition hover:bg-[#f4f2ea] hover:text-ink-900 disabled:opacity-50"
         disabled={pending}
-        onClick={handleRevoke}
+        onClick={() =>
+          run(() =>
+            revokeTeamInvitationAction({ invitationId: invitation.id }),
+          )
+        }
         type="button"
       >
         {pending ? t("settings.team.revoking") : t("settings.team.revoke")}
@@ -545,8 +556,7 @@ function TeamMemberRow({
 }) {
   const { t } = useTranslation();
   const roleName = useRoleName();
-  const [error, setError] = React.useState<string | null>(null);
-  const [pending, startTransition] = React.useTransition();
+  const { error, pending, run } = useRowAction();
   const memberRole = member.role as OrganizationRole;
 
   const manageable = canManage && !isSelf && memberRole !== "owner";
@@ -555,37 +565,16 @@ function TeamMemberRow({
   );
   const canEditRole = manageable && assignableRoles.length > 0;
   const canRemove = manageable && canRemoveMember(viewerRole, memberRole);
-  const roleOptions = assignableRoles.includes(memberRole)
-    ? assignableRoles
-    : [memberRole, ...assignableRoles];
+  const roleOptions = [...new Set([memberRole, ...assignableRoles])];
 
   function handleRoleChange(event: React.ChangeEvent<HTMLSelectElement>) {
     const newRole = event.target.value as OrganizationRole;
     if (newRole === memberRole) {
       return;
     }
-    setError(null);
-    startTransition(async () => {
-      const result = await changeTeamMemberRoleAction({
-        newRole,
-        userId: member.clerkUserId,
-      });
-      if (!result.ok) {
-        setError(result.error);
-      }
-    });
-  }
-
-  function handleRemove() {
-    setError(null);
-    startTransition(async () => {
-      const result = await removeTeamMemberAction({
-        userId: member.clerkUserId,
-      });
-      if (!result.ok) {
-        setError(result.error);
-      }
-    });
+    run(() =>
+      changeTeamMemberRoleAction({ newRole, userId: member.clerkUserId }),
+    );
   }
 
   return (
@@ -642,7 +631,9 @@ function TeamMemberRow({
           aria-label={t("settings.team.removeAria", { name: member.name })}
           className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-[10px] text-ink-400 transition hover:bg-[#fbeceb] hover:text-red-600 disabled:opacity-50"
           disabled={pending}
-          onClick={handleRemove}
+          onClick={() =>
+            run(() => removeTeamMemberAction({ userId: member.clerkUserId }))
+          }
           type="button"
         >
           <Trash aria-hidden={true} className="h-[18px] w-[18px]" />

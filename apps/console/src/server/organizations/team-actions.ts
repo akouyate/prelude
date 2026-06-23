@@ -2,7 +2,6 @@
 
 import { revalidatePath } from "next/cache";
 
-import { prisma } from "@prelude/db";
 import type { OrganizationRole } from "@prelude/types";
 
 import { getConsoleAuthSession } from "../auth/console-auth-provider";
@@ -13,6 +12,7 @@ import {
   inviteTeamMember,
   removeTeamMember,
   revokeTeamInvitation,
+  type OrganizationDirectory,
   type TeamActor,
   type TeamResult,
 } from "./team-management";
@@ -27,86 +27,55 @@ async function getTeamActor(): Promise<TeamActor> {
   if (!session.ok) {
     throw new Error(session.error);
   }
-  // Resolve the Clerk org id from the user's DB organization (consistent with
-  // how the rest of the console scopes data) rather than the session's active
-  // org, which can be unset on a fresh sign-in. Mock mode has no Clerk org, so
-  // null routes the service to its mock-mode guard.
-  const clerkOrganizationId =
-    session.value.source === "mock"
-      ? null
-      : ((
-          await prisma.organization.findUnique({
-            select: { clerkOrganizationId: true },
-            where: { id: scope.organizationId },
-          })
-        )?.clerkOrganizationId ?? null);
-
+  // clerkOrganizationId comes from the org scope (null in mock mode), so the
+  // service's mock-mode guard fires without a per-action source check.
   return {
     organizationId: scope.organizationId,
-    clerkOrganizationId,
+    clerkOrganizationId: scope.clerkOrganizationId,
     role: scope.role,
     userId: session.value.userId,
   };
 }
 
-export async function inviteTeamMemberAction(input: {
-  email: string;
-  role: OrganizationRole;
-}): Promise<TeamResult<{ invitationId: string }>> {
+// Every team action shares one envelope: resolve the actor, delegate to the
+// gated service with the live Clerk directory, and revalidate settings on
+// success.
+async function runTeamAction<Input, Value>(
+  serviceFn: (
+    directory: OrganizationDirectory,
+    actor: TeamActor,
+    input: Input,
+  ) => Promise<TeamResult<Value>>,
+  input: Input,
+): Promise<TeamResult<Value>> {
   const actor = await getTeamActor();
-  const result = await inviteTeamMember(
-    clerkOrganizationDirectory,
-    actor,
-    input,
-  );
+  const result = await serviceFn(clerkOrganizationDirectory, actor, input);
   if (result.ok) {
     revalidatePath(SETTINGS_PATH);
   }
   return result;
 }
 
+export async function inviteTeamMemberAction(input: {
+  email: string;
+  role: OrganizationRole;
+}) {
+  return runTeamAction(inviteTeamMember, input);
+}
+
 export async function revokeTeamInvitationAction(input: {
   invitationId: string;
-}): Promise<TeamResult<null>> {
-  const actor = await getTeamActor();
-  const result = await revokeTeamInvitation(
-    clerkOrganizationDirectory,
-    actor,
-    input,
-  );
-  if (result.ok) {
-    revalidatePath(SETTINGS_PATH);
-  }
-  return result;
+}) {
+  return runTeamAction(revokeTeamInvitation, input);
 }
 
 export async function changeTeamMemberRoleAction(input: {
   userId: string;
   newRole: OrganizationRole;
-}): Promise<TeamResult<null>> {
-  const actor = await getTeamActor();
-  const result = await changeTeamMemberRole(
-    clerkOrganizationDirectory,
-    actor,
-    input,
-  );
-  if (result.ok) {
-    revalidatePath(SETTINGS_PATH);
-  }
-  return result;
+}) {
+  return runTeamAction(changeTeamMemberRole, input);
 }
 
-export async function removeTeamMemberAction(input: {
-  userId: string;
-}): Promise<TeamResult<null>> {
-  const actor = await getTeamActor();
-  const result = await removeTeamMember(
-    clerkOrganizationDirectory,
-    actor,
-    input,
-  );
-  if (result.ok) {
-    revalidatePath(SETTINGS_PATH);
-  }
-  return result;
+export async function removeTeamMemberAction(input: { userId: string }) {
+  return runTeamAction(removeTeamMember, input);
 }

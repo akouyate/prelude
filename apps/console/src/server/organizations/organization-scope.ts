@@ -85,6 +85,7 @@ async function ensureDevelopmentOrganizationScope(
     return {
       organizationId: organization.id,
       organizationName: organization.name,
+      clerkOrganizationId: null,
       userId: user.id,
       role: mapClerkOrganizationRole(membership.role, authSession.role),
     };
@@ -106,6 +107,7 @@ async function ensureDevelopmentOrganizationScope(
     return {
       organizationId: existingMembership.organizationId,
       organizationName: existingMembership.organization.name,
+      clerkOrganizationId: null,
       userId: user.id,
       role: mapClerkOrganizationRole(existingMembership.role, "viewer"),
     };
@@ -119,6 +121,7 @@ async function ensureDevelopmentOrganizationScope(
   return {
     organizationId: organization.id,
     organizationName: organization.name,
+    clerkOrganizationId: null,
     userId: user.id,
     role: "owner",
   };

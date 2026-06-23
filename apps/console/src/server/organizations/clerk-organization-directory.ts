@@ -2,9 +2,9 @@ import "server-only";
 
 import { clerkClient } from "@clerk/nextjs/server";
 
-import type { OrganizationRole } from "@prelude/types";
-
 import {
+  preludeRoleMetadata,
+  readPreludeRole,
   resolveOrganizationRoleFromClerk,
   toClerkMembershipRole,
 } from "../../domain/clerk-role-sync";
@@ -12,20 +12,6 @@ import type {
   OrganizationDirectory,
   PendingInvitation,
 } from "./team-management";
-
-function preludeRoleMetadata(role: OrganizationRole) {
-  // The granular role travels in publicMetadata so it survives without the
-  // paid custom-roles add-on and is visible/editable from the Clerk dashboard.
-  return { preludeRole: role };
-}
-
-function readPreludeRole(metadata: unknown): string | null {
-  if (metadata && typeof metadata === "object" && "preludeRole" in metadata) {
-    const value = (metadata as Record<string, unknown>).preludeRole;
-    return typeof value === "string" ? value : null;
-  }
-  return null;
-}
 
 /**
  * Live OrganizationDirectory backed by the Clerk Backend API. Clerk owns the
@@ -77,11 +63,10 @@ export const clerkOrganizationDirectory: OrganizationDirectory = {
     const client = await clerkClient();
     const { data } = await client.organizations.getOrganizationMembershipList({
       organizationId: clerkOrganizationId,
-      limit: 100,
+      userId: [userId],
+      limit: 1,
     });
-    const membership = data.find(
-      (entry) => entry.publicUserData?.userId === userId,
-    );
+    const membership = data[0];
     if (!membership) {
       return null;
     }
@@ -93,16 +78,19 @@ export const clerkOrganizationDirectory: OrganizationDirectory = {
 
   async setMemberRole({ clerkOrganizationId, userId, role }) {
     const client = await clerkClient();
-    await client.organizations.updateOrganizationMembership({
-      organizationId: clerkOrganizationId,
-      userId,
-      role: toClerkMembershipRole(role),
-    });
-    await client.organizations.updateOrganizationMembershipMetadata({
-      organizationId: clerkOrganizationId,
-      userId,
-      publicMetadata: preludeRoleMetadata(role),
-    });
+    // Two independent writes to the same membership — overlap their latency.
+    await Promise.all([
+      client.organizations.updateOrganizationMembership({
+        organizationId: clerkOrganizationId,
+        userId,
+        role: toClerkMembershipRole(role),
+      }),
+      client.organizations.updateOrganizationMembershipMetadata({
+        organizationId: clerkOrganizationId,
+        userId,
+        publicMetadata: preludeRoleMetadata(role),
+      }),
+    ]);
   },
 
   async removeMember({ clerkOrganizationId, userId }) {

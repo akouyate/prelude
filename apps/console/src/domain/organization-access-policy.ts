@@ -3,6 +3,9 @@ import type { OrganizationRole } from "@prelude/types";
 export type CompletedOrganizationScope = {
   organizationId: string;
   organizationName: string;
+  // The org's Clerk id, or null for a mock-mode workspace (no real Clerk org).
+  // Resolved here once so call sites don't each re-derive it.
+  clerkOrganizationId: string | null;
   userId: string;
   role: OrganizationRole;
 };
@@ -85,6 +88,7 @@ export function resolveCompletedOrganizationScope({
   return {
     organizationId: membership.organizationId,
     organizationName: membership.organization.name,
+    clerkOrganizationId: membership.organization.clerkOrganizationId,
     role: mapClerkOrganizationRole(membership.role, "viewer"),
     userId: membership.userId,
   };

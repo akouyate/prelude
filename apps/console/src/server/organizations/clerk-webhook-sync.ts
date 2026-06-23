@@ -1,6 +1,9 @@
 import type { OrganizationRole } from "@prelude/types";
 
-import { resolveOrganizationRoleFromClerk } from "../../domain/clerk-role-sync";
+import {
+  readPreludeRole,
+  resolveOrganizationRoleFromClerk,
+} from "../../domain/clerk-role-sync";
 
 export type ClerkWebhookEvent = {
   type: string;
@@ -53,11 +56,6 @@ function composeName(first: unknown, last: unknown): string | null {
   return parts.length ? parts.join(" ") : null;
 }
 
-function preludeRoleOf(data: Record<string, unknown>): string | null {
-  const meta = asRecord(data.public_metadata);
-  return meta ? asString(meta.preludeRole) : null;
-}
-
 export function planClerkWebhookSync(
   event: ClerkWebhookEvent,
 ): ClerkSyncIntent | null {
@@ -88,7 +86,7 @@ export function planClerkWebhookSync(
           ? composeName(userData.first_name, userData.last_name)
           : null,
         role: resolveOrganizationRoleFromClerk({
-          publicMetadataRole: preludeRoleOf(data),
+          publicMetadataRole: readPreludeRole(data.public_metadata),
           clerkRole: asString(data.role),
         }),
       };
@@ -108,7 +106,7 @@ export function planClerkWebhookSync(
         clerkOrganizationId,
         email,
         role: resolveOrganizationRoleFromClerk({
-          publicMetadataRole: preludeRoleOf(data),
+          publicMetadataRole: readPreludeRole(data.public_metadata),
           clerkRole: asString(data.role),
         }),
         status:

@@ -3,10 +3,7 @@ import "server-only";
 import { prisma, type Prisma } from "@prelude/db";
 
 import { canManageTeam } from "../../domain/organization-permissions";
-import {
-  getConsoleAuthIdentity,
-  getConsoleAuthSession,
-} from "../auth/console-auth-provider";
+import { getConsoleAuthIdentity } from "../auth/console-auth-provider";
 import { clerkOrganizationDirectory } from "../organizations/clerk-organization-directory";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import type {
@@ -35,17 +32,26 @@ const defaultNotificationPreferences: SettingsNotificationPreferences = {
 };
 
 export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData> {
-  const [identity, scope, session] = await Promise.all([
+  const [identity, scope] = await Promise.all([
     getConsoleAuthIdentity(),
     getCompletedOrganizationScope(),
-    getConsoleAuthSession(),
   ]);
 
   if (!identity.ok) {
     throw new Error(identity.error);
   }
 
-  const [organization, draftCount, publishedCount, activeRoleCount, user] = await Promise.all([
+  const canManage = canManageTeam(scope.role);
+
+  const [
+    organization,
+    draftCount,
+    publishedCount,
+    activeRoleCount,
+    needsReviewCount,
+    user,
+    pendingInvitations,
+  ] = await Promise.all([
     prisma.organization.findUniqueOrThrow({
       include: {
         jobSourceConnections: {
@@ -76,20 +82,26 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
     prisma.job.count({
       where: { organizationId: scope.organizationId },
     }),
+    prisma.candidateSession.count({
+      where: {
+        organizationId: scope.organizationId,
+        reviewStatus: "to_review",
+        status: "completed",
+      },
+    }),
     prisma.user.findUnique({
       select: { preferredLanguage: true },
       where: { id: scope.userId },
     }),
+    loadPendingInvitations(canManage, scope.clerkOrganizationId),
   ]);
 
   const preferences = parseOrganizationSettings(organization.settings);
 
-  const canManage = canManageTeam(scope.role);
   const viewerClerkUserId =
     organization.memberships.find(
       (membership) => membership.userId === scope.userId,
     )?.user.clerkUserId ?? "";
-  const pendingInvitations = await loadPendingInvitations(canManage, session);
 
   return {
     account: {
@@ -106,13 +118,7 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
     interviewPreferences: preferences.interview,
     metrics: {
       activeRoles: activeRoleCount,
-      needsReview: await prisma.candidateSession.count({
-        where: {
-          organizationId: scope.organizationId,
-          reviewStatus: "to_review",
-          status: "completed",
-        },
-      }),
+      needsReview: needsReviewCount,
       published: publishedCount,
       drafts: draftCount,
     },
@@ -139,14 +145,11 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
 
 async function loadPendingInvitations(
   canManage: boolean,
-  session: Awaited<ReturnType<typeof getConsoleAuthSession>>,
+  clerkOrganizationId: string | null,
 ): Promise<WorkspaceSettingsData["pendingInvitations"]> {
-  // Only managers see invitations, and only a real Clerk workspace has any.
-  if (!canManage || !session.ok) {
-    return [];
-  }
-  const { clerkOrganizationId, source } = session.value;
-  if (source !== "clerk" || !clerkOrganizationId) {
+  // Only managers see invitations, and only a real Clerk workspace has any
+  // (clerkOrganizationId is null in mock mode).
+  if (!canManage || !clerkOrganizationId) {
     return [];
   }
   try {

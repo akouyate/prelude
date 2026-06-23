@@ -72,15 +72,8 @@ export const prismaClerkSyncStore: ClerkSyncStore = {
   },
 
   async deactivateMembership({ organizationId, clerkUserId }) {
-    const user = await prisma.user.findUnique({
-      where: { clerkUserId },
-      select: { id: true },
-    });
-    if (!user) {
-      return;
-    }
     await prisma.organizationMembership.updateMany({
-      where: { organizationId, userId: user.id },
+      where: { organizationId, user: { clerkUserId } },
       data: { status: "inactive" },
     });
   },
