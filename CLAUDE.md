@@ -45,6 +45,8 @@ make db-studio / db-shell / redis-shell
 The backend services are driven through `make`, not pnpm:
 
 ```bash
+make test-services                              # Go + Python service unit tests (pnpm test skips services/)
+make test-realtime / test-agent                 # the Go / Python suites individually
 make live-openai-worker SESSION_ID=is_xxx       # Python live interviewer worker (uv)
 make live-openai-autoworker                     # Redis-backed Python auto-worker
 make agent-benchmark / agent-role-benchmark     # Python provider/role benchmark harness

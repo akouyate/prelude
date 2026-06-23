@@ -34,7 +34,7 @@ E2E_SMOKE_LIVE_LLM ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell db-migrate db-generate db-studio agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live dev
+.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "Prelude local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -116,6 +116,14 @@ db-studio: ## Open Prisma Studio against local Postgres.
 		database_url="$(DATABASE_URL)"; \
 	fi; \
 	DATABASE_URL="$$database_url" pnpm --filter @prelude/db exec prisma studio --schema prisma/schema.prisma
+
+test-services: test-realtime test-agent ## Run the Go + Python service test suites (not covered by pnpm test).
+
+test-realtime: ## Run the Go realtime control-plane unit tests.
+	cd services/realtime && go test ./...
+
+test-agent: ## Run the Python interviewer-agent unit tests.
+	cd services/interviewer-agent && PYTHONPATH=. uv run --python "$(PYTHON_VERSION)" --with-requirements requirements.txt python -m pytest tests
 
 agent-benchmark: ## Run the Python live IA provider benchmark harness.
 	@$(LOAD_ENV); \
