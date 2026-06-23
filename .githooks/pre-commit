@@ -1,0 +1,10 @@
+#!/bin/sh
+# Prevent committing a decrypted (plaintext) .env. The committed root .env must
+# stay dotenvx-encrypted; dotenvx's precommit check allows the encrypted file
+# (and gitignored ones) but fails if a tracked .env holds plaintext values.
+if command -v dotenvx >/dev/null 2>&1; then
+  dotenvx ext precommit
+else
+  echo "warning: dotenvx not found — skipping the encrypted-.env pre-commit check." >&2
+  echo "         install it (brew install dotenvx) to guard against leaking secrets." >&2
+fi

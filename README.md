@@ -24,8 +24,10 @@ This repository is a pnpm/Turborepo monorepo with two Next.js App Router apps an
 
 ```bash
 corepack enable
-pnpm install
-cp .env.example .env
+pnpm install                          # also configures the git pre-commit hook
+brew install dotenvx                  # or: npm install -g @dotenvx/dotenvx
+# Get the private `.env.keys` from the team (e.g. 1Password) and place it at the
+# repo root — it decrypts the committed, encrypted `.env`.
 make env-up
 make db-generate
 pnpm dev
@@ -33,6 +35,20 @@ pnpm dev
 
 The console app runs on `http://localhost:3000`.
 The candidate app runs on `http://localhost:3001`.
+
+## Environment & secrets
+
+Config is encrypted with [dotenvx](https://dotenvx.com): a single committed root
+`.env` holds ciphertext (DB, Clerk, realtime / LiveKit / OpenAI / ElevenLabs).
+The private decryption key `.env.keys` is **gitignored** and shared out of band
+(e.g. 1Password) — never commit it.
+
+- The app `dev` scripts and the `Makefile` decrypt automatically (`dotenvx run` /
+  `dotenvx get`), so `pnpm dev` and `make` just work once `.env.keys` is present.
+- Edit a value with `dotenvx set KEY value` (re-encrypts in place); read one with
+  `dotenvx get KEY`.
+- A `.githooks/pre-commit` hook (auto-configured on `pnpm install`) runs
+  `dotenvx ext precommit`, which blocks committing a decrypted `.env`.
 
 ## Scripts
 
@@ -48,16 +64,12 @@ pnpm test:e2e
 
 `packages/db` owns Prisma. Local development uses Postgres through Docker Compose.
 
-The default local connection string is committed in `.env.example`:
+Postgres listens on host port **5440** by default — `docker compose` and the
+`Makefile` both default `POSTGRES_PORT` to 5440, and the encrypted `.env` points
+`DATABASE_URL` there. Override it if that port is taken (and align `DATABASE_URL`):
 
 ```bash
-DATABASE_URL="postgresql://postgres:postgres@localhost:5432/prelude?schema=public"
-```
-
-If port `5432` is already used on your machine, start Postgres on another host port and align `DATABASE_URL` in `.env`:
-
-```bash
-POSTGRES_PORT=5433 make env-up
+POSTGRES_PORT=5441 make env-up
 ```
 
 Useful local commands:
@@ -73,7 +85,7 @@ make env-down
 make env-reset
 ```
 
-`make env-reset` removes the local Docker volume and should only be used when you want a clean database. Keep real secrets in `.env`; it is ignored by git.
+`make env-reset` removes the local Docker volume and should only be used when you want a clean database. Secrets live in the dotenvx-encrypted `.env` (committed as ciphertext); the decryption key `.env.keys` stays out of git.
 
 Use `MIGRATION_NAME=your_migration_name make db-migrate` when adding a new Prisma migration.
 

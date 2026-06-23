@@ -1,7 +1,7 @@
 SHELL := /bin/sh
 
 COMPOSE ?= docker compose
-POSTGRES_PORT ?= 5432
+POSTGRES_PORT ?= 5440
 REDIS_PORT ?= 6379
 DATABASE_URL ?= postgresql://postgres:postgres@localhost:$(POSTGRES_PORT)/prelude?schema=public
 REDIS_URL ?= redis://localhost:$(REDIS_PORT)/0
