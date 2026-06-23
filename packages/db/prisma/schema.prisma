@@ -27,6 +27,7 @@ model Organization {
   jobs                  Job[]
   jobSourceConnections  JobSourceConnection[]
   memberships           OrganizationMembership[]
+  invitations           OrganizationInvitation[]
 }
 
 model User {
@@ -55,6 +56,21 @@ model OrganizationMembership {
 
   @@unique([organizationId, userId])
   @@index([userId])
+}
+
+model OrganizationInvitation {
+  id              String       @id @default(cuid())
+  organizationId  String
+  email           String
+  role            String
+  status          String       @default("pending")
+  invitedByUserId String?
+  createdAt       DateTime     @default(now())
+  acceptedAt      DateTime?
+  organization    Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, email])
+  @@index([organizationId, status])
 }
 
 model Job {
