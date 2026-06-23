@@ -680,3 +680,25 @@ func nullTimeValue(value time.Time) any {
 
 	return value
 }
+
+// RecordingConsentGranted derives recording consent from the console's
+// CandidateSession row linked by realtimeSessionId. It is fail-closed: a missing
+// row or a null consentedAt means consent has not been granted, so no audio is
+// captured. The Go service reads this console-owned table directly, the same
+// shared-DB boundary used for the published Interview plan.
+func (s *PostgresStore) RecordingConsentGranted(ctx context.Context, sessionID string) (bool, error) {
+	var consentedAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		select "consentedAt"
+		from "CandidateSession"
+		where "realtimeSessionId" = $1
+	`, sessionID).Scan(&consentedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+
+	return consentedAt.Valid, nil
+}

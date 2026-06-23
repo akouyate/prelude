@@ -122,11 +122,41 @@ type FinalizeRecordingInput struct {
 	UpdatedAt  time.Time
 }
 
+// EgressGateway starts and stops LiveKit room-composite egress jobs that record
+// the interview audio into object storage. It is optional: when recording is
+// disabled the service never receives one and no audio is captured.
+type EgressGateway interface {
+	StartRoomCompositeEgress(ctx context.Context, input StartEgressInput) (EgressHandle, error)
+	StopEgress(ctx context.Context, egressID string) error
+}
+
+type StartEgressInput struct {
+	RoomName  string
+	ObjectKey string
+	Format    string
+}
+
+type EgressHandle struct {
+	EgressID string
+}
+
+// RecordingConsentGate reports whether the candidate behind a live session has
+// recorded their consent to be recorded. Recording is fail-closed: without a
+// positive consent signal, no egress is started.
+type RecordingConsentGate interface {
+	RecordingConsentGranted(ctx context.Context, sessionID string) (bool, error)
+}
+
+const recordingAudioFormat = "audio/ogg"
+
 type Service struct {
 	repository     SessionRepository
 	planRepository InterviewPlanRepository
 	agentQueue     AgentDispatchQueue
 	livekit        LiveKitGateway
+	recorder       EgressGateway
+	recordings     RecordingRepository
+	consent        RecordingConsentGate
 	clock          Clock
 	provider       string
 }
@@ -150,6 +180,21 @@ func NewService(repository SessionRepository, livekit LiveKitGateway, clock Cloc
 
 func (s *Service) SetAgentDispatchQueue(queue AgentDispatchQueue) {
 	s.agentQueue = queue
+}
+
+// SetEgressGateway, SetRecordingRepository, and SetRecordingConsentGate wire the
+// optional audio-recording subsystem. All three must be set for recording to
+// run; otherwise startRecordingIfNeeded is a no-op and no audio is captured.
+func (s *Service) SetEgressGateway(gateway EgressGateway) {
+	s.recorder = gateway
+}
+
+func (s *Service) SetRecordingRepository(repository RecordingRepository) {
+	s.recordings = repository
+}
+
+func (s *Service) SetRecordingConsentGate(gate RecordingConsentGate) {
+	s.consent = gate
 }
 
 // SetProvider configures the live voice provider reported to the agent worker.
@@ -226,7 +271,7 @@ func (s *Service) CreateSession(ctx context.Context, input CreateSessionInput) (
 	}
 	sessionID := newID("is")
 	now := s.clock.Now()
-	roomName := "prelude-" + sessionID
+	roomName := liveKitRoomName(sessionID)
 
 	session := domain.Session{
 		ID:                sessionID,
@@ -407,6 +452,8 @@ func (s *Service) IngestEvent(ctx context.Context, input IngestEventInput) (Inge
 
 	if !result.Duplicate {
 		s.dispatchAgentIfNeeded(ctx, result.Event)
+		s.startRecordingIfNeeded(ctx, result.Event)
+		s.stopRecordingIfNeeded(ctx, result.Event)
 	}
 
 	return IngestEventOutput{Event: result.Event, Duplicate: result.Duplicate}, nil
@@ -425,6 +472,123 @@ func (s *Service) dispatchAgentIfNeeded(ctx context.Context, event domain.Event)
 	if err != nil {
 		slog.Warn("failed to dispatch live agent", "session_id", event.SessionID, "error", err)
 	}
+}
+
+// startRecordingIfNeeded best-effort starts a LiveKit room-composite egress when
+// the candidate's audio becomes ready, mirroring dispatchAgentIfNeeded: it runs
+// off the ingestion path and never fails it. Recording is gated on the optional
+// subsystem being wired, recorded consent, audio actually being live, and no
+// egress already running for the session — a reconnect re-enters the same room,
+// so the guard is "is an egress active?", not "did this session ever record?".
+func (s *Service) startRecordingIfNeeded(ctx context.Context, event domain.Event) {
+	if s.recorder == nil || s.recordings == nil || s.consent == nil {
+		return
+	}
+	if event.Type != domain.EventCandidateMediaReady {
+		return
+	}
+	if !candidateAudioReady(event.Payload) {
+		return
+	}
+
+	granted, err := s.consent.RecordingConsentGranted(ctx, event.SessionID)
+	if err != nil {
+		slog.Warn("failed to check recording consent", "session_id", event.SessionID, "error", err)
+		return
+	}
+	if !granted {
+		return
+	}
+
+	if _, active, err := s.recordings.ActiveRecordingForSession(ctx, event.SessionID); err != nil {
+		slog.Warn("failed to check active recording", "session_id", event.SessionID, "error", err)
+		return
+	} else if active {
+		return
+	}
+
+	now := s.clock.Now()
+	objectKey := recordingObjectKey(event.SessionID, now)
+	handle, err := s.recorder.StartRoomCompositeEgress(ctx, StartEgressInput{
+		RoomName:  liveKitRoomName(event.SessionID),
+		ObjectKey: objectKey,
+		Format:    recordingAudioFormat,
+	})
+	if err != nil {
+		slog.Warn("failed to start interview recording", "session_id", event.SessionID, "error", err)
+		if createErr := s.recordings.CreateRecording(ctx, domain.Recording{
+			ID:           newID("rec"),
+			SessionID:    event.SessionID,
+			ObjectKey:    objectKey,
+			Status:       domain.RecordingStatusFailed,
+			Format:       recordingAudioFormat,
+			FailedReason: "egress_start_failed",
+			StartedAt:    now,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}); createErr != nil {
+			slog.Warn("failed to persist failed recording", "session_id", event.SessionID, "error", createErr)
+		}
+		return
+	}
+
+	if err := s.recordings.CreateRecording(ctx, domain.Recording{
+		ID:        newID("rec"),
+		SessionID: event.SessionID,
+		EgressID:  handle.EgressID,
+		ObjectKey: objectKey,
+		Status:    domain.RecordingStatusRecording,
+		Format:    recordingAudioFormat,
+		StartedAt: now,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		slog.Warn("failed to persist recording", "session_id", event.SessionID, "egress_id", handle.EgressID, "error", err)
+	}
+}
+
+// stopRecordingIfNeeded best-effort stops the active egress when the session ends
+// so the audio object finalizes promptly instead of waiting for the room's empty
+// timeout. LiveKit also auto-stops on room close, so a failure here is non-fatal.
+func (s *Service) stopRecordingIfNeeded(ctx context.Context, event domain.Event) {
+	if s.recorder == nil || s.recordings == nil {
+		return
+	}
+	if event.Type != domain.EventSessionCompleted && event.Type != domain.EventSessionFailed {
+		return
+	}
+
+	recording, active, err := s.recordings.ActiveRecordingForSession(ctx, event.SessionID)
+	if err != nil {
+		slog.Warn("failed to look up active recording", "session_id", event.SessionID, "error", err)
+		return
+	}
+	if !active || recording.EgressID == "" {
+		return
+	}
+
+	if err := s.recorder.StopEgress(ctx, recording.EgressID); err != nil {
+		slog.Warn("failed to stop interview recording", "session_id", event.SessionID, "egress_id", recording.EgressID, "error", err)
+	}
+}
+
+func candidateAudioReady(payload json.RawMessage) bool {
+	var parsed struct {
+		Audio bool `json:"audio"`
+	}
+	if err := json.Unmarshal(payload, &parsed); err != nil {
+		return false
+	}
+
+	return parsed.Audio
+}
+
+func liveKitRoomName(sessionID string) string {
+	return "prelude-" + sessionID
+}
+
+func recordingObjectKey(sessionID string, at time.Time) string {
+	return fmt.Sprintf("recordings/%s/%d.ogg", sessionID, at.UnixMilli())
 }
 
 func (s *Service) GetTranscript(ctx context.Context, sessionID string) ([]domain.TranscriptTurn, error) {
