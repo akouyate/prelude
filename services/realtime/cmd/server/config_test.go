@@ -34,6 +34,46 @@ func TestMissingProductionConfigEmptyWhenAllPresent(t *testing.T) {
 	}
 }
 
+func TestMissingProductionConfigRequiresR2WhenRecordingEnabled(t *testing.T) {
+	getenv := func(key string) string {
+		switch key {
+		case "RECORDING_ENABLED":
+			return "true"
+		case "DATABASE_URL", "REDIS_URL", "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET":
+			return "configured"
+		default:
+			return ""
+		}
+	}
+
+	missing := missingProductionConfig(getenv)
+	for _, key := range []string{
+		"EGRESS_R2_BUCKET",
+		"EGRESS_R2_ENDPOINT",
+		"EGRESS_R2_ACCESS_KEY_ID",
+		"EGRESS_R2_SECRET_ACCESS_KEY",
+	} {
+		if !containsConfigKey(missing, key) {
+			t.Errorf("expected %q to be required when recording is enabled in production", key)
+		}
+	}
+}
+
+func TestMissingProductionConfigIgnoresR2WhenRecordingDisabled(t *testing.T) {
+	getenv := func(key string) string {
+		switch key {
+		case "DATABASE_URL", "REDIS_URL", "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET":
+			return "configured"
+		default:
+			return ""
+		}
+	}
+
+	if missing := missingProductionConfig(getenv); len(missing) != 0 {
+		t.Fatalf("expected no missing config when recording is disabled, got %v", missing)
+	}
+}
+
 func containsConfigKey(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {

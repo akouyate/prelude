@@ -80,7 +80,46 @@ func main() {
 		service.SetAgentDispatchQueue(dispatcher)
 		slog.Info("using redis agent dispatcher")
 	}
+	var egressWebhookVerifier httpapi.WebhookVerifier
+	if recordingEnabled(os.Getenv) {
+		realGateway, gatewayOK := livekitGateway.(*livekit.RealGateway)
+		recordings, recordingsOK := repository.(application.RecordingRepository)
+		consent, consentOK := repository.(application.RecordingConsentGate)
+		switch {
+		case !gatewayOK:
+			slog.Warn("RECORDING_ENABLED set but the live LiveKit gateway is unavailable; recording stays off")
+		case !recordingsOK || !consentOK:
+			slog.Warn("RECORDING_ENABLED set but the session store does not support recording; recording stays off")
+		default:
+			region := os.Getenv("EGRESS_R2_REGION")
+			if region == "" {
+				region = "auto"
+			}
+			realGateway.ConfigureEgress(livekit.EgressTarget{
+				Bucket:    os.Getenv("EGRESS_R2_BUCKET"),
+				Region:    region,
+				Endpoint:  os.Getenv("EGRESS_R2_ENDPOINT"),
+				AccessKey: os.Getenv("EGRESS_R2_ACCESS_KEY_ID"),
+				Secret:    os.Getenv("EGRESS_R2_SECRET_ACCESS_KEY"),
+			})
+			service.SetEgressGateway(realGateway)
+			service.SetRecordingRepository(recordings)
+			service.SetRecordingConsentGate(consent)
+
+			verifier, err := livekit.NewWebhookVerifier(os.Getenv("LIVEKIT_API_KEY"), os.Getenv("LIVEKIT_API_SECRET"))
+			if err != nil {
+				slog.Error("failed to configure egress webhook verifier", "error", err)
+				os.Exit(1)
+			}
+			egressWebhookVerifier = verifier
+			slog.Info("interview audio recording enabled")
+		}
+	}
+
 	handler := httpapi.NewServer(service)
+	if egressWebhookVerifier != nil {
+		handler.SetEgressWebhookVerifier(egressWebhookVerifier)
+	}
 
 	server := &http.Server{
 		Addr:              ":" + port,
