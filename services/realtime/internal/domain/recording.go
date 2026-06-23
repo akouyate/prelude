@@ -15,6 +15,11 @@ const (
 	// audio, or ended in error. Recording is fail-soft, so this never breaks the
 	// interview — it only tells the recruiter/ops that no replay exists.
 	RecordingStatusFailed RecordingStatus = "failed"
+	// RecordingStatusDeleted means the audio object was deliberately erased — by
+	// the retention sweep (storage limitation) or a recruiter erasure request. The
+	// row is kept as a tombstone with ObjectKey cleared and DeletedAt/DeletedReason
+	// set, so the read path can show "deleted" instead of presigning a dead key.
+	RecordingStatusDeleted RecordingStatus = "deleted"
 )
 
 // Recording is runtime evidence that a live interview's audio was captured via
@@ -41,4 +46,8 @@ type Recording struct {
 	EndedAt      *time.Time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	// DeletedAt and DeletedReason are set once the audio object has been erased
+	// (Status becomes RecordingStatusDeleted); ObjectKey is cleared at that point.
+	DeletedAt     *time.Time
+	DeletedReason string
 }

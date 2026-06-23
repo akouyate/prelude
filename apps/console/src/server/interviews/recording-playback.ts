@@ -18,7 +18,9 @@ export type CandidateRecording = {
 
 type RecordingRow = {
   durationMs: number | null;
-  objectKey: string;
+  // Nullable: the object is cleared when a recording is erased (retention sweep
+  // or an erasure request), leaving a tombstone row.
+  objectKey: string | null;
   status: string;
 };
 

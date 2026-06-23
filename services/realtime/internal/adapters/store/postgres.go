@@ -543,7 +543,7 @@ func (s *PostgresStore) CreateRecording(ctx context.Context, recording domain.Re
 		recording.ID,
 		recording.SessionID,
 		nullString(recording.EgressID),
-		recording.ObjectKey,
+		nullString(recording.ObjectKey),
 		string(recording.Status),
 		recording.Format,
 		nullString(recording.Layout),
@@ -560,7 +560,7 @@ func (s *PostgresStore) CreateRecording(ctx context.Context, recording domain.Re
 
 func (s *PostgresStore) ActiveRecordingForSession(ctx context.Context, sessionID string) (domain.Recording, bool, error) {
 	row := s.db.QueryRowContext(ctx, `
-		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
 		from live_interview_recordings
 		where session_id = $1 and status = $2
 		order by started_at desc
@@ -610,16 +610,19 @@ func (s *PostgresStore) FinalizeRecordingByEgressID(ctx context.Context, input a
 func scanRecording(scanner eventScanner) (domain.Recording, error) {
 	var recording domain.Recording
 	var egressID sql.NullString
+	var objectKey sql.NullString
 	var layout sql.NullString
 	var durationMs sql.NullInt64
 	var failedReason sql.NullString
 	var endedAt sql.NullTime
+	var deletedAt sql.NullTime
+	var deletedReason sql.NullString
 	var status string
 	if err := scanner.Scan(
 		&recording.ID,
 		&recording.SessionID,
 		&egressID,
-		&recording.ObjectKey,
+		&objectKey,
 		&status,
 		&recording.Format,
 		&layout,
@@ -629,14 +632,18 @@ func scanRecording(scanner eventScanner) (domain.Recording, error) {
 		&endedAt,
 		&recording.CreatedAt,
 		&recording.UpdatedAt,
+		&deletedAt,
+		&deletedReason,
 	); err != nil {
 		return domain.Recording{}, err
 	}
 
 	recording.Status = domain.RecordingStatus(status)
 	recording.EgressID = egressID.String
+	recording.ObjectKey = objectKey.String
 	recording.Layout = layout.String
 	recording.FailedReason = failedReason.String
+	recording.DeletedReason = deletedReason.String
 	if durationMs.Valid {
 		value := int(durationMs.Int64)
 		recording.DurationMs = &value
@@ -644,6 +651,10 @@ func scanRecording(scanner eventScanner) (domain.Recording, error) {
 	if endedAt.Valid {
 		ended := endedAt.Time
 		recording.EndedAt = &ended
+	}
+	if deletedAt.Valid {
+		deleted := deletedAt.Time
+		recording.DeletedAt = &deleted
 	}
 
 	return recording, nil
@@ -711,7 +722,7 @@ func (s *PostgresStore) RecordingConsentFor(ctx context.Context, sessionID strin
 
 func (s *PostgresStore) StaleRecordings(ctx context.Context, startedBefore time.Time, limit int) ([]domain.Recording, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
 		from live_interview_recordings
 		where status = $1 and started_at < $2
 		order by started_at asc
