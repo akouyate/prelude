@@ -111,7 +111,7 @@ export function transcriptTurnsFromSessionState(state: LiveSessionState) {
 export function visibleInterviewerTurns(
   turns: LiveTranscriptTurn[],
 ): LiveTranscriptTurn[] {
-  return turns
+  const sorted = turns
     .filter((turn) => turn.speaker === "interviewer" && turn.isFinal)
     .sort((left, right) => {
       const leftStart = Date.parse(left.startedAt);
@@ -122,6 +122,20 @@ export function visibleInterviewerTurns(
 
       return byStart !== 0 ? byStart : left.turnId.localeCompare(right.turnId);
     });
+
+  // Collapse exact-duplicate phrases: the realtime stream sometimes finalizes the
+  // same question twice with different turn ids, which showed as duplicated lines.
+  // Keep the first occurrence of each normalized text.
+  const seen = new Set<string>();
+  return sorted.filter((turn) => {
+    const key = turn.text.trim().replace(/\s+/g, " ").toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+
+    return true;
+  });
 }
 
 export function hasClosingTranscript(state: LiveSessionState) {
