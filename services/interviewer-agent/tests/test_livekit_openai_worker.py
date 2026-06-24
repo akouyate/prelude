@@ -315,6 +315,97 @@ async def test_s1_fresh_turn_for_current_prompt_still_drives_policy() -> None:
 
 
 @pytest.mark.asyncio
+async def test_s5b_record_publishes_without_policy_then_handle_drives_policy() -> None:
+    # S5b: publishing a segment (record_candidate_transcript) emits the transcript
+    # turn for the UI but does NOT evaluate/advance. Policy runs once on the
+    # COMPLETED turn (handle_candidate_turn) — this is what stops per-fragment
+    # over-probing while keeping the live transcript streaming per segment.
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    publisher = FakeTranscriptPublisher()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+        transcript_publisher=publisher,
+    )
+    await controller.start()
+    occurred = datetime(2026, 6, 18, tzinfo=timezone.utc)
+
+    turn_id = await controller.record_candidate_transcript("Premier bout de phrase.", occurred)
+    assert turn_id is not None
+    assert any(turn["speaker"] == "candidate" for turn in publisher.turns)  # published
+    assert EventType.ANSWER_EVALUATED not in [event.type for event in events]  # no policy
+
+    await controller.handle_candidate_turn(
+        "Premier bout de phrase, et voici la suite complete et detaillee de ma reponse.",
+        occurred,
+        turn_ids=[turn_id],
+        turn_generation=controller.prompt_generation,
+    )
+    assert EventType.ANSWER_EVALUATED in [event.type for event in events]  # policy ran
+
+
+@pytest.mark.asyncio
+async def test_s5b_bridge_aggregates_segments_into_one_turn() -> None:
+    # S5b: two transcript segments inside one speaking run are each published, but
+    # policy runs ONCE on the joined text after the speaking-stop flush.
+    recorded: list[str] = []
+    handled: list[tuple[str, object]] = []
+
+    async def record(transcript, created_at, *, turn_generation=None, spoke_over_agent=False):
+        recorded.append(transcript)
+        return f"turn-{len(recorded)}"
+
+    async def handle(transcript, created_at, *, turn_ids=None, turn_generation=None, spoke_over_agent=False):
+        handled.append((transcript, turn_ids))
+
+    async def _noop_emit(event):
+        return None
+
+    emitter = PreludeEventEmitter(
+        session_id="s",
+        candidate_id="c",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=_noop_emit,
+    )
+    session = FakeAgentSession()
+    bridge = LiveKitAgentEventBridge(
+        emitter=emitter,
+        record_transcript_handler=record,
+        handle_turn_handler=handle,
+        turn_flush_debounce_seconds=0.01,
+        emit_state_events=False,
+    )
+    bridge.register(session)
+
+    session.handlers["user_state_changed"](
+        SimpleNamespace(old_state="listening", new_state="speaking", created_at=0.0)
+    )
+    session.handlers["user_input_transcribed"](
+        SimpleNamespace(transcript="Premiere phrase.", is_final=True, created_at=0.0)
+    )
+    session.handlers["user_input_transcribed"](
+        SimpleNamespace(transcript="Deuxieme phrase.", is_final=True, created_at=0.0)
+    )
+    session.handlers["user_state_changed"](
+        SimpleNamespace(old_state="speaking", new_state="listening", created_at=0.0)
+    )
+    await asyncio.sleep(0.05)  # let the debounce flush fire
+    await bridge.drain()
+
+    assert recorded == ["Premiere phrase.", "Deuxieme phrase."]  # both published
+    assert len(handled) == 1  # policy ran once
+    assert handled[0][0] == "Premiere phrase. Deuxieme phrase."  # on the joined turn
+
+
+@pytest.mark.asyncio
 async def test_livekit_agent_bridge_persists_final_candidate_transcript() -> None:
     events: list[InterviewEvent] = []
 

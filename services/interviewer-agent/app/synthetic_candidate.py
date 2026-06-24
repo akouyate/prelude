@@ -63,9 +63,12 @@ SAMPLES_PER_FRAME = LIVEKIT_SAMPLE_RATE * FRAME_DURATION_MS // 1000  # 240
 BYTES_PER_SAMPLE = 2  # int16 little-endian
 
 # Pause inserted between sentences so the turn-detector sees a realistic gap.
-INTER_SENTENCE_SILENCE_MS = 400
+INTER_SENTENCE_SILENCE_MS = 200
 # Human-like "thinking" delay before the candidate starts answering.
 PRE_ANSWER_DELAY_S = 0.8
+# After session_closing, keep polling this long for session_completed — the LLM
+# closing line plays out (~15s) before it fires.
+CLOSING_GRACE_S = 25.0
 
 # Trigger / lifecycle tuning.
 EVENT_POLL_INTERVAL_S = 0.5
@@ -534,20 +537,28 @@ class RunState:
 async def speak_answer(
     audio: CandidateAudio, tts: TTSProvider, state: RunState, text: str
 ) -> None:
-    """Synthesize and play one answer, sentence by sentence, with pauses."""
+    """Synthesize the WHOLE answer first, then play it as one continuous turn.
+
+    Synthesizing sentence-by-sentence while playing leaves multi-second silences
+    (the model is generating the next sentence) which the VAD reads as several
+    short turns — defeating the per-turn aggregation we are testing. Pre-rendering
+    every chunk makes the candidate's answer a single speaking run with only short
+    inter-sentence pauses.
+    """
     state.speaking = True
     started = time.monotonic()
     try:
-        await asyncio.sleep(PRE_ANSWER_DELAY_S)
         sentences = split_sentences(text) or [text]
-        for i, sentence in enumerate(sentences):
+        chunks: list[bytes] = []
+        for sentence in sentences:
             try:
-                pcm = await tts.synthesize(sentence)
+                chunks.append(await tts.synthesize(sentence))
             except Exception:
                 logger.exception("TTS failed for a sentence; skipping it")
-                continue
+        await asyncio.sleep(PRE_ANSWER_DELAY_S)
+        for i, pcm in enumerate(chunks):
             await audio.play_pcm(pcm)
-            if i < len(sentences) - 1:
+            if i < len(chunks) - 1:
                 await audio.play_silence(INTER_SENTENCE_SILENCE_MS)
         # Trailing pause so the agent's endpoint detector closes the turn cleanly.
         await audio.play_silence(INTER_SENTENCE_SILENCE_MS)
@@ -572,10 +583,14 @@ async def drive_conversation(
     """
     deadline = time.monotonic() + max_seconds
     join_deadline = time.monotonic() + AGENT_JOIN_TIMEOUT_S
+    closing_grace_deadline: float | None = None
 
     while True:
         if time.monotonic() > deadline:
             logger.warning("hard wall-clock cap (%.0fs) reached; stopping", max_seconds)
+            return
+        if closing_grace_deadline is not None and time.monotonic() > closing_grace_deadline:
+            logger.info("session_completed did not arrive within the closing grace; stopping")
             return
 
         try:
@@ -591,21 +606,30 @@ async def drive_conversation(
             if event.type in ("question_asked", "agent_speech_started", "session_started"):
                 state.agent_joined = True
 
-            if event.type in ("session_closing", "session_completed"):
-                if event.type == "session_closing":
-                    state.closing_seen = True
-                    if state.spoken_seconds < PREMATURE_END_MIN_SPOKEN_S:
-                        state.premature_closing = True
-                        logger.warning(
-                            "session_closing after only %.1fs of candidate speech "
-                            "(< %.1fs): possible premature end",
-                            state.spoken_seconds,
-                            PREMATURE_END_MIN_SPOKEN_S,
-                        )
-                else:
-                    state.completed_seen = True
-                logger.info("terminal event seen: %s", event.type)
+            if event.type == "session_completed":
+                state.completed_seen = True
+                logger.info("terminal event seen: session_completed")
                 return
+
+            if event.type == "session_closing":
+                state.closing_seen = True
+                if state.spoken_seconds < PREMATURE_END_MIN_SPOKEN_S:
+                    state.premature_closing = True
+                    logger.warning(
+                        "session_closing after only %.1fs of candidate speech "
+                        "(< %.1fs): possible premature end",
+                        state.spoken_seconds,
+                        PREMATURE_END_MIN_SPOKEN_S,
+                    )
+                # The closing line plays (LLM-generated, ~15s) before
+                # session_completed fires — keep polling for it within a grace
+                # window instead of stopping on session_closing.
+                logger.info(
+                    "session_closing seen — waiting up to %.0fs for session_completed",
+                    CLOSING_GRACE_S,
+                )
+                closing_grace_deadline = time.monotonic() + CLOSING_GRACE_S
+                continue
 
             if event.type == "agent_speech_completed":
                 state.agent_joined = True
@@ -658,8 +682,15 @@ async def print_verdict(store: EventStore, state: RunState, started_at: float) -
     session_closing = counts.get("session_closing", 0) > 0
     duration = time.monotonic() - started_at
 
+    # The interview ended properly once it reached the closing (all questions done
+    # plus the wrap-up). session_completed is just the post-closing-playout
+    # confirmation, and the LLM closing line can run ~15s, so session_closing with
+    # every question completed is itself a pass.
+    reached_end = session_completed or (
+        session_closing and questions_completed >= questions_asked
+    )
     clean = (
-        session_completed
+        reached_end
         and questions_asked > 0
         and questions_completed > 0
         and not state.premature_closing
