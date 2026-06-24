@@ -82,6 +82,57 @@ async def test_openai_answer_inference_parses_llm_matrix_without_network() -> No
 
 
 @pytest.mark.asyncio
+async def test_openai_answer_inference_derives_label_from_matrix_not_freeform() -> None:
+    # The realtime evaluator sometimes returns a free-form label that contradicts
+    # its own matrix: here it says "vague" while scoring the answer 13/15 with no
+    # challenge. Trusting that label made the interviewer probe a strong answer
+    # (the "j'ai deja repondu" harassment seen in the live log). The classification
+    # must be DERIVED from the matrix, so a high-scoring, no-challenge answer is
+    # COMPLETE and the orchestrator moves on instead of forcing a follow-up.
+    client = FakeResponsesClient(
+        """
+        {
+          "classification": "vague",
+          "reason_codes": ["wants_more_depth"],
+          "confidence": 0.7,
+          "scores": {
+            "clarity": 3,
+            "relevance": 3,
+            "concreteness": 2,
+            "coherence": 3,
+            "role_signal": 2
+          },
+          "challenge_needed": false,
+          "challenge_reason": null,
+          "challenge_prompt": null
+        }
+        """
+    )
+    plan = create_demo_plan()
+    provider = OpenAIAnswerInferenceProvider(
+        config=OpenAIAnswerInferenceConfig(model="gpt-test", timeout_seconds=1),
+        client=client,
+    )
+
+    assessment = await provider.assess_answer(
+        plan=plan,
+        question=plan.questions[0],
+        turn=CandidateTurn(
+            question_id="q1",
+            transcript=(
+                "Ce qui me plait c'est avant tout le fait de manager une equipe et "
+                "de la faire grandir sur la duree, avec des resultats concrets."
+            ),
+        ),
+    )
+
+    assert assessment.classification == AnswerClassification.COMPLETE
+    assert assessment.evaluation_matrix is not None
+    assert assessment.evaluation_matrix.overall_score == 13
+    assert assessment.evaluation_matrix.challenge_needed is False
+
+
+@pytest.mark.asyncio
 async def test_answer_inference_input_includes_recruiter_expected_signal() -> None:
     client = FakeResponsesClient(
         """

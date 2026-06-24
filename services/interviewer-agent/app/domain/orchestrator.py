@@ -323,6 +323,19 @@ class InterviewOrchestrator:
         return AnswerClassification.COMPLETE
 
     @staticmethod
+    def classify_from_matrix(matrix: EvaluationMatrix) -> AnswerClassification:
+        # Single source of truth for turning a scored matrix into a turn label,
+        # shared by the local heuristic and the LLM-backed evaluator. A
+        # high-scoring answer with no challenge is COMPLETE, so the interviewer
+        # never forces a follow-up on a strong answer just because a free-form
+        # model label said "vague" (the harassment seen in the live log).
+        if matrix.challenge_needed:
+            return AnswerClassification.VAGUE
+        if matrix.overall_score < 8:
+            return AnswerClassification.INCOMPLETE
+        return AnswerClassification.COMPLETE
+
+    @staticmethod
     def assess_candidate_turn(
         *,
         question: InterviewQuestion,
@@ -343,26 +356,14 @@ class InterviewOrchestrator:
             if dimension.score < 2:
                 reason_codes.append(f"low_{dimension.name.value}")
 
-        if matrix.challenge_needed:
+        classification = InterviewOrchestrator.classify_from_matrix(matrix)
+        if classification == AnswerClassification.VAGUE:
             reason_codes.append(matrix.challenge_reason or "answer_needs_challenge")
-            return CandidateAnswerAssessment(
-                classification=AnswerClassification.VAGUE,
-                reason_codes=_dedupe(reason_codes),
-                confidence=_matrix_confidence(matrix),
-                evaluation_matrix=matrix,
-            )
-
-        if matrix.overall_score < 8:
+        elif classification == AnswerClassification.INCOMPLETE:
             reason_codes.append("insufficient_answer_quality")
-            return CandidateAnswerAssessment(
-                classification=AnswerClassification.INCOMPLETE,
-                reason_codes=_dedupe(reason_codes),
-                confidence=_matrix_confidence(matrix),
-                evaluation_matrix=matrix,
-            )
 
         return CandidateAnswerAssessment(
-            classification=AnswerClassification.COMPLETE,
+            classification=classification,
             reason_codes=_dedupe(reason_codes),
             confidence=_matrix_confidence(matrix),
             evaluation_matrix=matrix,

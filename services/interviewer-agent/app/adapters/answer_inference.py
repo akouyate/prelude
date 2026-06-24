@@ -277,14 +277,19 @@ def _extract_json_object(value: str) -> str:
 
 
 def _assessment_from_payload(payload: dict[str, object]) -> CandidateAnswerAssessment:
-    classification = AnswerClassification(str(payload.get("classification", "vague")))
+    matrix = _matrix_from_payload(payload)
+    # Derive the label from the matrix rather than the model's free-form
+    # "classification" field: the realtime evaluator sometimes returns a label
+    # that contradicts its own scores (e.g. "vague" on a 13/15 answer), which
+    # made the interviewer probe strong answers. The scored matrix is the
+    # structured signal of record, shared with the local heuristic.
+    classification = InterviewOrchestrator.classify_from_matrix(matrix)
     reason_codes = [
         str(item)[:80]
         for item in payload.get("reason_codes", [])
         if isinstance(item, str) and item.strip()
     ]
     confidence = _bounded_float(payload.get("confidence"), default=0.6)
-    matrix = _matrix_from_payload(payload)
     return CandidateAnswerAssessment(
         classification=classification,
         reason_codes=reason_codes or ["llm_assisted"],
