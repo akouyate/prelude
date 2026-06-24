@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/akouyate/prelude/services/realtime/internal/application"
 	"github.com/akouyate/prelude/services/realtime/internal/domain"
@@ -110,12 +111,16 @@ func (s *PostgresStore) GetInterviewPlan(ctx context.Context, planID string) (ap
 	}
 
 	responseModes := decodeStringArray(responseModesBytes)
-	questions := decodeInterviewQuestions(questionsBytes)
+	// Language is pinned for V1 (see plan.Language below). Thread it into question
+	// decoding so the category follow-up fallback is authored in the interview
+	// language rather than defaulting to English.
+	language := "fr"
+	questions := decodeInterviewQuestions(questionsBytes, language)
 	if len(questions) == 0 {
 		return application.InterviewPlan{}, application.ErrPlanNotFound
 	}
 
-	plan.Language = "fr"
+	plan.Language = language
 	plan.Questions = questions
 	plan.AllowVideo = containsString(responseModes, "video")
 	plan.AllowAudioOnly = containsString(responseModes, "audio") || len(responseModes) == 0
@@ -392,7 +397,7 @@ type persistedQuestion struct {
 	Source         string `json:"source"`
 }
 
-func decodeInterviewQuestions(value []byte) []application.InterviewQuestion {
+func decodeInterviewQuestions(value []byte, language string) []application.InterviewQuestion {
 	var raw []persistedQuestion
 	if err := json.Unmarshal(value, &raw); err != nil {
 		return []application.InterviewQuestion{}
@@ -415,7 +420,7 @@ func decodeInterviewQuestions(value []byte) []application.InterviewQuestion {
 			Prompt:         prompt,
 			Category:       category,
 			ExpectedSignal: strings.TrimSpace(question.ExpectedSignal),
-			FollowUpPrompt: resolveFollowUpPrompt(question.FollowUpPrompt, category),
+			FollowUpPrompt: resolveFollowUpPrompt(question.FollowUpPrompt, category, language),
 		})
 	}
 
@@ -474,15 +479,26 @@ func clampQuestionCategory(category string) string {
 // compliance-scanned follow-up persisted on the question, and only falls back to
 // the generic category default when the plan has none (e.g. a legacy row written
 // before the field existed).
-func resolveFollowUpPrompt(authored string, category string) string {
+func resolveFollowUpPrompt(authored string, category string, language string) string {
 	if trimmed := strings.TrimSpace(authored); trimmed != "" {
 		return trimmed
 	}
 
-	return followUpPrompt(category)
+	return followUpPrompt(category, language)
 }
 
-func followUpPrompt(category string) string {
+func followUpPrompt(category string, language string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(language)), "fr") {
+		switch category {
+		case "motivation":
+			return "Qu'est-ce qui rend cette opportunité particulièrement pertinente pour la suite de votre parcours ?"
+		case "logistics":
+			return "Y a-t-il une contrainte pratique que le recruteur devrait connaître dès maintenant ?"
+		default: // experience, role_fit
+			return "Pouvez-vous décrire le contexte, votre action, et le résultat obtenu ?"
+		}
+	}
+
 	switch category {
 	case "motivation":
 		return "What makes this opportunity specifically relevant for your next step?"
@@ -519,4 +535,301 @@ func normalizePostgresURL(databaseURL string) string {
 	parsed.RawQuery = query.Encode()
 
 	return parsed.String()
+}
+
+func (s *PostgresStore) CreateRecording(ctx context.Context, recording domain.Recording) error {
+	_, err := s.db.ExecContext(ctx, `
+		insert into live_interview_recordings (
+			id,
+			session_id,
+			egress_id,
+			object_key,
+			status,
+			format,
+			layout,
+			duration_ms,
+			failed_reason,
+			started_at,
+			ended_at,
+			created_at,
+			updated_at
+		) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`,
+		recording.ID,
+		recording.SessionID,
+		nullString(recording.EgressID),
+		nullString(recording.ObjectKey),
+		string(recording.Status),
+		recording.Format,
+		nullString(recording.Layout),
+		nullInt(recording.DurationMs),
+		nullString(recording.FailedReason),
+		recording.StartedAt,
+		nullTime(recording.EndedAt),
+		recording.CreatedAt,
+		recording.UpdatedAt,
+	)
+
+	return err
+}
+
+func (s *PostgresStore) ActiveRecordingForSession(ctx context.Context, sessionID string) (domain.Recording, bool, error) {
+	row := s.db.QueryRowContext(ctx, `
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
+		from live_interview_recordings
+		where session_id = $1 and status = $2
+		order by started_at desc
+		limit 1
+	`, sessionID, string(domain.RecordingStatusRecording))
+
+	recording, err := scanRecording(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domain.Recording{}, false, nil
+	}
+	if err != nil {
+		return domain.Recording{}, false, err
+	}
+
+	return recording, true, nil
+}
+
+func (s *PostgresStore) FinalizeRecordingByEgressID(ctx context.Context, input application.FinalizeRecordingInput) (bool, error) {
+	if strings.TrimSpace(input.EgressID) == "" {
+		return false, nil
+	}
+
+	result, err := s.db.ExecContext(ctx, `
+		update live_interview_recordings
+		set status = $1, duration_ms = $2, ended_at = $3, updated_at = $4
+		where egress_id = $5 and status = $6
+	`,
+		string(input.Status),
+		nullInt(input.DurationMs),
+		nullTimeValue(input.EndedAt),
+		input.UpdatedAt,
+		input.EgressID,
+		string(domain.RecordingStatusRecording),
+	)
+	if err != nil {
+		return false, err
+	}
+
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return affected > 0, nil
+}
+
+func scanRecording(scanner eventScanner) (domain.Recording, error) {
+	var recording domain.Recording
+	var egressID sql.NullString
+	var objectKey sql.NullString
+	var layout sql.NullString
+	var durationMs sql.NullInt64
+	var failedReason sql.NullString
+	var endedAt sql.NullTime
+	var deletedAt sql.NullTime
+	var deletedReason sql.NullString
+	var status string
+	if err := scanner.Scan(
+		&recording.ID,
+		&recording.SessionID,
+		&egressID,
+		&objectKey,
+		&status,
+		&recording.Format,
+		&layout,
+		&durationMs,
+		&failedReason,
+		&recording.StartedAt,
+		&endedAt,
+		&recording.CreatedAt,
+		&recording.UpdatedAt,
+		&deletedAt,
+		&deletedReason,
+	); err != nil {
+		return domain.Recording{}, err
+	}
+
+	recording.Status = domain.RecordingStatus(status)
+	recording.EgressID = egressID.String
+	recording.ObjectKey = objectKey.String
+	recording.Layout = layout.String
+	recording.FailedReason = failedReason.String
+	recording.DeletedReason = deletedReason.String
+	if durationMs.Valid {
+		value := int(durationMs.Int64)
+		recording.DurationMs = &value
+	}
+	if endedAt.Valid {
+		ended := endedAt.Time
+		recording.EndedAt = &ended
+	}
+	if deletedAt.Valid {
+		deleted := deletedAt.Time
+		recording.DeletedAt = &deleted
+	}
+
+	return recording, nil
+}
+
+func nullString(value string) any {
+	if value == "" {
+		return nil
+	}
+
+	return value
+}
+
+func nullInt(value *int) any {
+	if value == nil {
+		return nil
+	}
+
+	return *value
+}
+
+func nullTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+
+	return *value
+}
+
+func nullTimeValue(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+
+	return value
+}
+
+// RecordingConsentFor derives recording consent from the console's
+// CandidateSession row linked by realtimeSessionId. It is fail-closed: a missing
+// row or a null consentedAt means consent has not been granted, so no audio is
+// captured. It also reports consentCopyVersion so the application can require an
+// audio-disclosing version before recording (consent-v1 disclosed transcript
+// evidence only). The Go service reads this console-owned table directly, the
+// same shared-DB boundary used for the published Interview plan.
+func (s *PostgresStore) RecordingConsentFor(ctx context.Context, sessionID string) (application.RecordingConsent, error) {
+	var consentedAt sql.NullTime
+	var consentCopyVersion sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		select "consentedAt", "consentCopyVersion"
+		from "CandidateSession"
+		where "realtimeSessionId" = $1
+	`, sessionID).Scan(&consentedAt, &consentCopyVersion)
+	if errors.Is(err, sql.ErrNoRows) {
+		return application.RecordingConsent{}, nil
+	}
+	if err != nil {
+		return application.RecordingConsent{}, err
+	}
+
+	return application.RecordingConsent{
+		Granted:     consentedAt.Valid,
+		CopyVersion: consentCopyVersion.String,
+	}, nil
+}
+
+func (s *PostgresStore) StaleRecordings(ctx context.Context, startedBefore time.Time, limit int) ([]domain.Recording, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
+		from live_interview_recordings
+		where status = $1 and started_at < $2
+		order by started_at asc
+		limit $3
+	`, string(domain.RecordingStatusRecording), startedBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recordings := make([]domain.Recording, 0)
+	for rows.Next() {
+		recording, err := scanRecording(rows)
+		if err != nil {
+			return nil, err
+		}
+		recordings = append(recordings, recording)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return recordings, nil
+}
+
+func (s *PostgresStore) DeletableRecordings(ctx context.Context, deletedBefore time.Time, limit int) ([]domain.Recording, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
+		from live_interview_recordings
+		where status = $1 and coalesce(ended_at, started_at) < $2
+		order by coalesce(ended_at, started_at) asc
+		limit $3
+	`, string(domain.RecordingStatusAvailable), deletedBefore, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recordings := make([]domain.Recording, 0)
+	for rows.Next() {
+		recording, err := scanRecording(rows)
+		if err != nil {
+			return nil, err
+		}
+		recordings = append(recordings, recording)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return recordings, nil
+}
+
+func (s *PostgresStore) MarkRecordingDeleted(ctx context.Context, input application.MarkRecordingDeletedInput) error {
+	_, err := s.db.ExecContext(ctx, `
+		update live_interview_recordings
+		set status = $1, object_key = null, deleted_at = $2, deleted_reason = $3, updated_at = $4
+		where id = $5
+	`,
+		string(domain.RecordingStatusDeleted),
+		input.DeletedAt,
+		nullString(input.Reason),
+		input.DeletedAt,
+		input.ID,
+	)
+
+	return err
+}
+
+func (s *PostgresStore) RecordingsForSession(ctx context.Context, sessionID string) ([]domain.Recording, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		select id, session_id, egress_id, object_key, status, format, layout, duration_ms, failed_reason, started_at, ended_at, created_at, updated_at, deleted_at, deleted_reason
+		from live_interview_recordings
+		where session_id = $1
+		order by started_at asc
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	recordings := make([]domain.Recording, 0)
+	for rows.Next() {
+		recording, err := scanRecording(rows)
+		if err != nil {
+			return nil, err
+		}
+		recordings = append(recordings, recording)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return recordings, nil
 }

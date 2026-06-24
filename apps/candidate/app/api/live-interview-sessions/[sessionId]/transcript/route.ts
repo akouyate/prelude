@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { realtimeAuthHeaders } from "../../../../../src/server/realtime-api";
+
 const REALTIME_API_URL =
   process.env.PRELUDE_REALTIME_API_URL ?? "http://127.0.0.1:8080";
 
@@ -29,7 +31,7 @@ export async function GET(_request: Request, context: RouteContext) {
   const response = await fetch(
     `${REALTIME_API_URL}/v1/interview-sessions/${sessionId}/transcript`,
     {
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json", ...realtimeAuthHeaders() },
       cache: "no-store",
     },
   ).catch(() => null);

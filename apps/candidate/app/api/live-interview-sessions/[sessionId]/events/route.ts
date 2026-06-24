@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 
+import { realtimeAuthHeaders } from "../../../../../src/server/realtime-api";
+
 const REALTIME_API_URL =
   process.env.PRELUDE_REALTIME_API_URL ?? "http://127.0.0.1:8080";
 
@@ -38,7 +40,7 @@ export async function GET(_request: Request, context: RouteContext) {
   const sessionResponse = await fetch(
     `${REALTIME_API_URL}/v1/interview-sessions/${sessionId}`,
     {
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json", ...realtimeAuthHeaders() },
       cache: "no-store",
     },
   ).catch(() => null);
@@ -88,7 +90,7 @@ export async function POST(request: Request, context: RouteContext) {
   const sessionResponse = await fetch(
     `${REALTIME_API_URL}/v1/interview-sessions/${sessionId}`,
     {
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json", ...realtimeAuthHeaders() },
       cache: "no-store",
     },
   ).catch(() => null);
@@ -128,7 +130,7 @@ export async function POST(request: Request, context: RouteContext) {
     `${REALTIME_API_URL}/v1/interview-sessions/${sessionId}/events`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...realtimeAuthHeaders() },
       body: JSON.stringify({
         event_id: `evt_${sessionId}_${eventType}`,
         session_id: sessionId,

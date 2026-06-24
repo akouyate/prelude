@@ -49,6 +49,13 @@ The private decryption key `.env.keys` is **gitignored** and shared out of band
   `dotenvx get KEY`.
 - A `.githooks/pre-commit` hook (auto-configured on `pnpm install`) runs
   `dotenvx ext precommit`, which blocks committing a decrypted `.env`.
+- `REALTIME_API_KEY` is the shared secret the Go realtime API verifies on every
+  inbound call (events ingestion, recruiter reads, the recordings-erasure
+  endpoint). The realtime service, candidate app, and console all read it from
+  the same `.env`, so they stay in sync. It is **required in production** (the
+  realtime service fails fast without it) and disables auth when empty (local
+  dev); `/health` and the LiveKit egress webhook (which self-authenticates via
+  its signature) are exempt.
 
 ## Scripts
 

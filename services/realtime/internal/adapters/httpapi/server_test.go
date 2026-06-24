@@ -2,15 +2,177 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/akouyate/prelude/services/realtime/internal/adapters/livekit"
 	"github.com/akouyate/prelude/services/realtime/internal/adapters/store"
 	"github.com/akouyate/prelude/services/realtime/internal/application"
+	"github.com/akouyate/prelude/services/realtime/internal/domain"
 )
+
+type stubWebhookParser struct {
+	finalize application.FinalizeRecordingFromEgress
+	ok       bool
+	err      error
+}
+
+func (p stubWebhookParser) ParseEgressEnded(_ *http.Request) (application.FinalizeRecordingFromEgress, bool, error) {
+	return p.finalize, p.ok, p.err
+}
+
+func newRecordingServer(t *testing.T, parser EgressWebhookParser) (*Server, *store.MemoryStore) {
+	t.Helper()
+	repo := store.NewMemoryStore()
+	service := application.NewService(repo, livekit.NewMockGateway("wss://livekit.example.test"), nil)
+	service.SetRecordingRepository(repo)
+	server := NewServer(service)
+	if parser != nil {
+		server.SetEgressWebhookParser(parser)
+	}
+
+	return server, repo
+}
+
+func postEgressWebhook(server *Server) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/livekit/egress-webhook", bytes.NewBufferString("{}"))
+	server.ServeHTTP(response, request)
+	return response
+}
+
+func newAuthServer(t *testing.T, apiKey string) *Server {
+	t.Helper()
+	repo := store.NewMemoryStore()
+	service := application.NewService(repo, livekit.NewMockGateway("wss://livekit.example.test"), nil)
+	service.SetRecordingRepository(repo)
+	server := NewServer(service)
+	server.SetAPIKey(apiKey)
+	return server
+}
+
+func deleteRecordings(server *Server, bearer string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/v1/interview-sessions/is_1/recordings", nil)
+	if bearer != "" {
+		request.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	server.ServeHTTP(response, request)
+	return response
+}
+
+func TestServerRejectsMissingAPIKey(t *testing.T) {
+	server := newAuthServer(t, "s3cret")
+	if response := deleteRecordings(server, ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without bearer, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestServerRejectsWrongAPIKey(t *testing.T) {
+	server := newAuthServer(t, "s3cret")
+	if response := deleteRecordings(server, "nope"); response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with wrong bearer, got %d", response.Code)
+	}
+}
+
+func TestServerAcceptsValidAPIKey(t *testing.T) {
+	server := newAuthServer(t, "s3cret")
+	if response := deleteRecordings(server, "s3cret"); response.Code == http.StatusUnauthorized {
+		t.Fatalf("expected the valid bearer to pass auth, got 401")
+	}
+}
+
+func TestServerHealthExemptFromAuth(t *testing.T) {
+	server := newAuthServer(t, "s3cret")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected /health to bypass auth (200), got %d", response.Code)
+	}
+}
+
+func TestServerWebhookExemptFromAuth(t *testing.T) {
+	// The egress webhook self-authenticates via the LiveKit signature, so the
+	// API-key middleware must not gate it. With no parser wired it returns 404,
+	// never 401.
+	server := newAuthServer(t, "s3cret")
+	if response := postEgressWebhook(server); response.Code == http.StatusUnauthorized {
+		t.Fatalf("expected webhook to bypass api-key auth, got 401")
+	}
+}
+
+func TestServerAuthDisabledWhenKeyUnset(t *testing.T) {
+	// Local/dev without REALTIME_API_KEY: auth is disabled (production fails fast
+	// on the missing key via requiredProductionConfig instead).
+	server := newAuthServer(t, "")
+	if response := deleteRecordings(server, ""); response.Code == http.StatusUnauthorized {
+		t.Fatalf("expected auth disabled when key unset, got 401")
+	}
+}
+
+func seedActiveRecording(t *testing.T, repo *store.MemoryStore, egressID string) {
+	t.Helper()
+	now := time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)
+	if err := repo.CreateRecording(context.Background(), domain.Recording{
+		ID:        "rec_" + egressID,
+		SessionID: "is_1",
+		EgressID:  egressID,
+		ObjectKey: "recordings/is_1/1.ogg",
+		Status:    domain.RecordingStatusRecording,
+		Format:    "audio/ogg",
+		StartedAt: now,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		t.Fatalf("seed recording: %v", err)
+	}
+}
+
+func TestServerEgressWebhookFinalizesRecording(t *testing.T) {
+	durationMs := 180000
+	server, repo := newRecordingServer(t, stubWebhookParser{
+		finalize: application.FinalizeRecordingFromEgress{EgressID: "eg_1", Status: "EGRESS_COMPLETE", DurationMs: &durationMs},
+		ok:       true,
+	})
+	seedActiveRecording(t, repo, "eg_1")
+
+	if response := postEgressWebhook(server); response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", response.Code, response.Body.String())
+	}
+	recording, found, err := repo.RecordingByEgressID(context.Background(), "eg_1")
+	if err != nil || !found {
+		t.Fatalf("expected recording (found=%v err=%v)", found, err)
+	}
+	if recording.Status != domain.RecordingStatusAvailable {
+		t.Fatalf("expected available, got %s", recording.Status)
+	}
+	if recording.DurationMs == nil || *recording.DurationMs != 180000 {
+		t.Fatalf("expected duration 180000ms, got %v", recording.DurationMs)
+	}
+}
+
+func TestServerEgressWebhookRejectsInvalidSignature(t *testing.T) {
+	server, repo := newRecordingServer(t, stubWebhookParser{err: errors.New("bad signature")})
+	seedActiveRecording(t, repo, "eg_1")
+
+	if response := postEgressWebhook(server); response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", response.Code)
+	}
+	if recording, _, _ := repo.RecordingByEgressID(context.Background(), "eg_1"); recording.Status != domain.RecordingStatusRecording {
+		t.Fatalf("an unverified webhook must not finalize the recording, got %s", recording.Status)
+	}
+}
+
+func TestServerEgressWebhookDisabledReturns404(t *testing.T) {
+	if response := postEgressWebhook(newTestServer()); response.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when the webhook is disabled, got %d", response.Code)
+	}
+}
 
 func TestServerHealth(t *testing.T) {
 	server := newTestServer()
@@ -402,6 +564,51 @@ func TestServerAcceptsAnswerEvaluatedEvent(t *testing.T) {
 		if response.Code != http.StatusAccepted {
 			t.Fatalf("expected event status 202, got %d: %s", response.Code, response.Body.String())
 		}
+	}
+}
+
+type stubObjectStore struct{}
+
+func (stubObjectStore) DeleteObject(context.Context, string) error { return nil }
+
+func TestEraseRecordingsEndpoint(t *testing.T) {
+	repository := store.NewMemoryStore()
+	service := application.NewService(repository, livekit.NewMockGateway("wss://livekit.example.test"), nil)
+	service.SetRecordingRepository(repository)
+	service.SetObjectStore(stubObjectStore{})
+
+	startedAt := time.Now().UTC()
+	if err := repository.CreateRecording(context.Background(), domain.Recording{
+		ID:        "rec_1",
+		SessionID: "is_1",
+		EgressID:  "eg_1",
+		ObjectKey: "recordings/is_1/1.ogg",
+		Status:    domain.RecordingStatusAvailable,
+		Format:    "audio/ogg",
+		StartedAt: startedAt,
+		EndedAt:   &startedAt,
+		CreatedAt: startedAt,
+		UpdatedAt: startedAt,
+	}); err != nil {
+		t.Fatalf("seed recording: %v", err)
+	}
+
+	server := NewServer(service)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/v1/interview-sessions/is_1/recordings", nil)
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", response.Code, response.Body.String())
+	}
+	var body struct {
+		Erased int `json:"erased"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.Erased != 1 {
+		t.Fatalf("expected erased=1, got %d", body.Erased)
 	}
 }
 

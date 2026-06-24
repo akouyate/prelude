@@ -95,11 +95,130 @@ type LiveKitJoin struct {
 	ExpiresAt   time.Time `json:"expires_at"`
 }
 
+// RecordingRepository persists live-interview audio-recording state. It is a
+// deliberately separate contract from SessionRepository: the session row is
+// event-derived (mutated only as an AppendEvent side-effect), whereas recording
+// state is a mutable row keyed by EgressID that the egress_ended webhook
+// finalizes out-of-band, after the session is already terminal.
+type RecordingRepository interface {
+	// CreateRecording inserts a new recording row (typically status "recording"
+	// at egress start, or "failed" when a start attempt never returned an id).
+	CreateRecording(ctx context.Context, recording domain.Recording) error
+	// FinalizeRecordingByEgressID transitions the single in-flight recording for
+	// the egress id to its terminal state. It only matches rows still in
+	// "recording" status, so redelivered webhooks are a no-op (updated=false).
+	FinalizeRecordingByEgressID(ctx context.Context, input FinalizeRecordingInput) (bool, error)
+	// ActiveRecordingForSession returns the in-flight ("recording") recording for
+	// a session, if any. It is the start guard ("is an egress already active?")
+	// and the source of the egress id used to stop on session completion.
+	ActiveRecordingForSession(ctx context.Context, sessionID string) (domain.Recording, bool, error)
+	// StaleRecordings returns in-flight ("recording") rows started before the
+	// cutoff — candidates for reconciliation when an egress_ended webhook was lost.
+	StaleRecordings(ctx context.Context, startedBefore time.Time, limit int) ([]domain.Recording, error)
+	// DeletableRecordings returns "available" rows whose retention window has
+	// elapsed — coalesce(endedAt, startedAt) is before the cutoff — so the audio
+	// object can be erased. Already-deleted and failed rows are excluded.
+	DeletableRecordings(ctx context.Context, deletedBefore time.Time, limit int) ([]domain.Recording, error)
+	// MarkRecordingDeleted tombstones a recording after its object is gone: status
+	// becomes "deleted", object_key is cleared, and deleted_at/deleted_reason are
+	// set. The row is kept for audit. It is idempotent on an already-deleted row.
+	MarkRecordingDeleted(ctx context.Context, input MarkRecordingDeletedInput) error
+	// RecordingsForSession returns every recording row for a session (any status,
+	// 1:N on reconnects), so erasure can remove all of a candidate's audio.
+	RecordingsForSession(ctx context.Context, sessionID string) ([]domain.Recording, error)
+}
+
+type FinalizeRecordingInput struct {
+	EgressID   string
+	Status     domain.RecordingStatus
+	DurationMs *int
+	EndedAt    time.Time
+	UpdatedAt  time.Time
+}
+
+// MarkRecordingDeletedInput tombstones one recording row by id.
+type MarkRecordingDeletedInput struct {
+	ID        string
+	Reason    string
+	DeletedAt time.Time
+}
+
+// EgressGateway starts and stops LiveKit room-composite egress jobs that record
+// the interview audio into object storage. It is optional: when recording is
+// disabled the service never receives one and no audio is captured.
+type EgressGateway interface {
+	StartRoomCompositeEgress(ctx context.Context, input StartEgressInput) (EgressHandle, error)
+	StopEgress(ctx context.Context, egressID string) error
+	// GetEgress polls the current state of an egress job, used by reconciliation
+	// to finalize recordings whose egress_ended webhook never arrived.
+	GetEgress(ctx context.Context, egressID string) (EgressState, error)
+}
+
+type StartEgressInput struct {
+	RoomName  string
+	ObjectKey string
+}
+
+type EgressHandle struct {
+	EgressID string
+}
+
+// EgressState is the polled status of an egress job (its terminal status plus
+// the recorded duration, when available).
+type EgressState struct {
+	Status     string
+	DurationMs *int
+}
+
+// RecordingConsent is the candidate's recorded consent decision for a live
+// session: whether consent was captured at all, and the version of the consent
+// copy they accepted. The copy version matters because only the audio-disclosing
+// versions authorize voice recording (see audioConsentCopyVersions).
+type RecordingConsent struct {
+	Granted     bool
+	CopyVersion string
+}
+
+// RecordingConsentGate reports the candidate's recorded consent for a live
+// session. Recording is fail-closed: without a positive consent signal under an
+// audio-disclosing copy version, no egress is started.
+type RecordingConsentGate interface {
+	RecordingConsentFor(ctx context.Context, sessionID string) (RecordingConsent, error)
+}
+
+// ObjectStore deletes recording audio objects from object storage. It backs both
+// erasure paths — the retention sweep and a recruiter erasure request — so
+// deletion is idempotent: removing an already-absent object is success, never an
+// error, which keeps retries and re-deliveries safe.
+type ObjectStore interface {
+	DeleteObject(ctx context.Context, key string) error
+}
+
+const recordingAudioFormat = "audio/ogg"
+
+// audioConsentCopyVersions are the candidate consent-copy versions whose text
+// discloses that the candidate's voice is audio-recorded (with EU retention and
+// a right to erasure). Only sessions consented under one of these may be
+// audio-recorded; candidate-consent-v1 disclosed transcript evidence only, so a
+// session consented under it must never be recorded. This mirrors
+// @prelude/core's exported audioRecordingConsentCopyVersions (a core unit test
+// pins that list to the live candidateConsentCopyVersion); keep this Go copy in
+// lockstep when the consent version is revised. It is a code constant, not env
+// config, on purpose: an env knob here could silently re-enable recording of
+// transcript-only consent and break the legal basis.
+var audioConsentCopyVersions = map[string]bool{
+	"candidate-consent-v2": true,
+}
+
 type Service struct {
 	repository     SessionRepository
 	planRepository InterviewPlanRepository
 	agentQueue     AgentDispatchQueue
 	livekit        LiveKitGateway
+	recorder       EgressGateway
+	recordings     RecordingRepository
+	consent        RecordingConsentGate
+	objectStore    ObjectStore
 	clock          Clock
 	provider       string
 }
@@ -123,6 +242,28 @@ func NewService(repository SessionRepository, livekit LiveKitGateway, clock Cloc
 
 func (s *Service) SetAgentDispatchQueue(queue AgentDispatchQueue) {
 	s.agentQueue = queue
+}
+
+// SetEgressGateway, SetRecordingRepository, and SetRecordingConsentGate wire the
+// optional audio-recording subsystem. All three must be set for recording to
+// run; otherwise startRecordingIfNeeded is a no-op and no audio is captured.
+func (s *Service) SetEgressGateway(gateway EgressGateway) {
+	s.recorder = gateway
+}
+
+func (s *Service) SetRecordingRepository(repository RecordingRepository) {
+	s.recordings = repository
+}
+
+func (s *Service) SetRecordingConsentGate(gate RecordingConsentGate) {
+	s.consent = gate
+}
+
+// SetObjectStore wires the object store used to erase recording audio (retention
+// sweep + erasure request). Without it, PurgeExpiredRecordings and erasure are
+// no-ops.
+func (s *Service) SetObjectStore(store ObjectStore) {
+	s.objectStore = store
 }
 
 // SetProvider configures the live voice provider reported to the agent worker.
@@ -199,7 +340,7 @@ func (s *Service) CreateSession(ctx context.Context, input CreateSessionInput) (
 	}
 	sessionID := newID("is")
 	now := s.clock.Now()
-	roomName := "prelude-" + sessionID
+	roomName := liveKitRoomName(sessionID)
 
 	session := domain.Session{
 		ID:                sessionID,
@@ -380,6 +521,8 @@ func (s *Service) IngestEvent(ctx context.Context, input IngestEventInput) (Inge
 
 	if !result.Duplicate {
 		s.dispatchAgentIfNeeded(ctx, result.Event)
+		s.startRecordingIfNeeded(ctx, result.Event)
+		s.stopRecordingIfNeeded(ctx, result.Event)
 	}
 
 	return IngestEventOutput{Event: result.Event, Duplicate: result.Duplicate}, nil
@@ -397,6 +540,334 @@ func (s *Service) dispatchAgentIfNeeded(ctx context.Context, event domain.Event)
 	})
 	if err != nil {
 		slog.Warn("failed to dispatch live agent", "session_id", event.SessionID, "error", err)
+	}
+}
+
+// startRecordingIfNeeded best-effort starts a LiveKit room-composite egress when
+// the candidate's audio becomes ready, mirroring dispatchAgentIfNeeded: it runs
+// off the ingestion path and never fails it. Recording is gated on the optional
+// subsystem being wired, recorded consent, audio actually being live, and no
+// egress already running for the session — a reconnect re-enters the same room,
+// so the guard is "is an egress active?", not "did this session ever record?".
+func (s *Service) startRecordingIfNeeded(ctx context.Context, event domain.Event) {
+	if s.recorder == nil || s.recordings == nil || s.consent == nil {
+		return
+	}
+	if event.Type != domain.EventCandidateMediaReady {
+		return
+	}
+	if !candidateAudioReady(event.Payload) {
+		return
+	}
+
+	consent, err := s.consent.RecordingConsentFor(ctx, event.SessionID)
+	if err != nil {
+		slog.Warn("failed to check recording consent", "session_id", event.SessionID, "error", err)
+		return
+	}
+	if !consent.Granted {
+		return
+	}
+	if !audioConsentCopyVersions[consent.CopyVersion] {
+		// Consent exists but predates audio disclosure (e.g. candidate-consent-v1,
+		// transcript only). Recording would exceed the consented scope, so stay
+		// fail-closed and capture nothing.
+		slog.Info("skipping recording: consent copy version does not authorize audio",
+			"session_id", event.SessionID, "consent_copy_version", consent.CopyVersion)
+		return
+	}
+
+	_, active, err := s.recordings.ActiveRecordingForSession(ctx, event.SessionID)
+	if err != nil {
+		slog.Warn("failed to check active recording", "session_id", event.SessionID, "error", err)
+		return
+	}
+	if active {
+		return
+	}
+
+	now := s.clock.Now()
+	objectKey := recordingObjectKey(event.SessionID, now)
+	handle, err := s.recorder.StartRoomCompositeEgress(ctx, StartEgressInput{
+		RoomName:  liveKitRoomName(event.SessionID),
+		ObjectKey: objectKey,
+	})
+	if err != nil {
+		slog.Warn("failed to start interview recording", "session_id", event.SessionID, "error", err)
+		if createErr := s.recordings.CreateRecording(ctx, domain.Recording{
+			ID:           newID("rec"),
+			SessionID:    event.SessionID,
+			ObjectKey:    objectKey,
+			Status:       domain.RecordingStatusFailed,
+			Format:       recordingAudioFormat,
+			FailedReason: "egress_start_failed",
+			StartedAt:    now,
+			CreatedAt:    now,
+			UpdatedAt:    now,
+		}); createErr != nil {
+			slog.Warn("failed to persist failed recording", "session_id", event.SessionID, "error", createErr)
+		}
+		return
+	}
+
+	if err := s.recordings.CreateRecording(ctx, domain.Recording{
+		ID:        newID("rec"),
+		SessionID: event.SessionID,
+		EgressID:  handle.EgressID,
+		ObjectKey: objectKey,
+		Status:    domain.RecordingStatusRecording,
+		Format:    recordingAudioFormat,
+		StartedAt: now,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}); err != nil {
+		slog.Warn("failed to persist recording", "session_id", event.SessionID, "egress_id", handle.EgressID, "error", err)
+	}
+}
+
+// stopRecordingIfNeeded best-effort stops the active egress when the session ends
+// so the audio object finalizes promptly instead of waiting for the room's empty
+// timeout. LiveKit also auto-stops on room close, so a failure here is non-fatal.
+func (s *Service) stopRecordingIfNeeded(ctx context.Context, event domain.Event) {
+	if s.recorder == nil || s.recordings == nil {
+		return
+	}
+	if event.Type != domain.EventSessionCompleted && event.Type != domain.EventSessionFailed {
+		return
+	}
+
+	recording, active, err := s.recordings.ActiveRecordingForSession(ctx, event.SessionID)
+	if err != nil {
+		slog.Warn("failed to look up active recording", "session_id", event.SessionID, "error", err)
+		return
+	}
+	if !active || recording.EgressID == "" {
+		return
+	}
+
+	if err := s.recorder.StopEgress(ctx, recording.EgressID); err != nil {
+		slog.Warn("failed to stop interview recording", "session_id", event.SessionID, "egress_id", recording.EgressID, "error", err)
+	}
+}
+
+func candidateAudioReady(payload json.RawMessage) bool {
+	var parsed struct {
+		Audio bool `json:"audio"`
+	}
+	if err := json.Unmarshal(payload, &parsed); err != nil {
+		return false
+	}
+
+	return parsed.Audio
+}
+
+func liveKitRoomName(sessionID string) string {
+	return "prelude-" + sessionID
+}
+
+func recordingObjectKey(sessionID string, at time.Time) string {
+	return fmt.Sprintf("recordings/%s/%d.ogg", sessionID, at.UnixMilli())
+}
+
+const recordingMinDurationMs = 1000
+
+// FinalizeRecordingFromEgress is the terminal egress signal delivered by the
+// LiveKit egress_ended webhook (and, later, the reconciliation sweep).
+type FinalizeRecordingFromEgress struct {
+	EgressID   string
+	Status     string
+	DurationMs *int
+	EndedAt    time.Time
+}
+
+// FinalizeRecording resolves an in-flight recording to its terminal state from a
+// LiveKit egress result. A complete egress with real audio becomes available; a
+// failed egress, or one whose audio is below the duration floor (an instant
+// candidate drop), becomes failed. It is idempotent: a redelivered webhook
+// matches no in-flight row and updates nothing.
+func (s *Service) FinalizeRecording(ctx context.Context, input FinalizeRecordingFromEgress) error {
+	if s.recordings == nil || strings.TrimSpace(input.EgressID) == "" {
+		return nil
+	}
+
+	// A completed egress is available unless we positively know its audio is below
+	// the floor (an instant candidate drop). An unknown duration — the
+	// reconciliation/GetEgress path can omit it — is treated as available, not
+	// failed; the webhook path still carries the real duration.
+	status := domain.RecordingStatusFailed
+	if strings.EqualFold(input.Status, "EGRESS_COMPLETE") &&
+		(input.DurationMs == nil || *input.DurationMs >= recordingMinDurationMs) {
+		status = domain.RecordingStatusAvailable
+	}
+
+	endedAt := input.EndedAt
+	if endedAt.IsZero() {
+		endedAt = s.clock.Now()
+	}
+
+	_, err := s.recordings.FinalizeRecordingByEgressID(ctx, FinalizeRecordingInput{
+		EgressID:   input.EgressID,
+		Status:     status,
+		DurationMs: input.DurationMs,
+		EndedAt:    endedAt,
+		UpdatedAt:  s.clock.Now(),
+	})
+
+	return err
+}
+
+const recordingReconcileLimit = 50
+
+// ReconcileRecordings finalizes in-flight recordings whose egress has actually
+// ended but whose egress_ended webhook never arrived (lost delivery, or the
+// service was down when it fired). It polls LiveKit for each stale recording and
+// finalizes only those whose egress reached a terminal state; a still-running
+// egress is left untouched. Best-effort: per-recording errors are logged, not
+// fatal, and it returns how many recordings it finalized.
+func (s *Service) ReconcileRecordings(ctx context.Context, startedBefore time.Time) (int, error) {
+	if s.recorder == nil || s.recordings == nil {
+		return 0, nil
+	}
+
+	stale, err := s.recordings.StaleRecordings(ctx, startedBefore, recordingReconcileLimit)
+	if err != nil {
+		return 0, err
+	}
+
+	reconciled := 0
+	for _, recording := range stale {
+		if recording.EgressID == "" {
+			continue
+		}
+		state, err := s.recorder.GetEgress(ctx, recording.EgressID)
+		if err != nil {
+			slog.Warn("failed to poll egress for reconciliation", "egress_id", recording.EgressID, "error", err)
+			continue
+		}
+		if !isTerminalEgressStatus(state.Status) {
+			continue
+		}
+		if err := s.FinalizeRecording(ctx, FinalizeRecordingFromEgress{
+			EgressID:   recording.EgressID,
+			Status:     state.Status,
+			DurationMs: state.DurationMs,
+		}); err != nil {
+			slog.Warn("failed to finalize recording during reconciliation", "egress_id", recording.EgressID, "error", err)
+			continue
+		}
+		reconciled++
+	}
+
+	return reconciled, nil
+}
+
+// recordingRetentionReason and recordingErasureReason are the deleted_reason
+// values stamped on a tombstone, distinguishing an automatic retention purge
+// from a deliberate (recruiter/candidate) erasure request.
+const (
+	recordingRetentionReason = "retention"
+	recordingErasureReason   = "erasure_request"
+)
+
+// EraseRecordingsForSession deletes the audio object and tombstones the row for
+// every recording of a session — the right-to-erasure path, and the fix for the
+// schema's onDelete:Cascade, which would drop the rows but orphan the R2 objects.
+// It is idempotent: already-deleted rows are skipped, so a retry only re-attempts
+// what failed. It returns how many it erased and the first error encountered, so
+// the caller can retry on partial failure rather than assume full erasure.
+func (s *Service) EraseRecordingsForSession(ctx context.Context, sessionID string) (int, error) {
+	if s.objectStore == nil || s.recordings == nil {
+		return 0, nil
+	}
+
+	recordings, err := s.recordings.RecordingsForSession(ctx, sessionID)
+	if err != nil {
+		return 0, err
+	}
+
+	erased := 0
+	var firstErr error
+	for _, recording := range recordings {
+		if recording.Status == domain.RecordingStatusDeleted {
+			continue
+		}
+		if recording.Status == domain.RecordingStatusRecording {
+			// In-flight: the audio object does not exist yet, so deleting now would
+			// no-op and the still-running egress would land an ORPHAN after we
+			// tombstone (object_key nulled, nothing ever revisits it). Stop the
+			// egress instead and leave the row to finalize -> available; the object
+			// that lands is then erased by a retry or the retention sweep. Never
+			// tombstone an in-flight row.
+			if recording.EgressID != "" && s.recorder != nil {
+				if err := s.recorder.StopEgress(ctx, recording.EgressID); err != nil {
+					slog.Warn("failed to stop egress during erasure", "recording_id", recording.ID, "egress_id", recording.EgressID, "error", err)
+				}
+			}
+			continue
+		}
+		if err := s.eraseRecording(ctx, recording, recordingErasureReason); err != nil {
+			slog.Warn("failed to erase recording", "recording_id", recording.ID, "error", err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		erased++
+	}
+
+	return erased, firstErr
+}
+
+// PurgeExpiredRecordings enforces audio retention: it erases the audio object of
+// every "available" recording whose retention window has elapsed and tombstones
+// the row. It runs on the reconciliation ticker. Best-effort: a per-recording
+// failure is logged and skipped (retried next tick), and it returns how many
+// recordings it purged. A nil object store (storage not configured) is a no-op.
+func (s *Service) PurgeExpiredRecordings(ctx context.Context, deletedBefore time.Time) (int, error) {
+	if s.objectStore == nil || s.recordings == nil {
+		return 0, nil
+	}
+
+	expired, err := s.recordings.DeletableRecordings(ctx, deletedBefore, recordingReconcileLimit)
+	if err != nil {
+		return 0, err
+	}
+
+	purged := 0
+	for _, recording := range expired {
+		if err := s.eraseRecording(ctx, recording, recordingRetentionReason); err != nil {
+			slog.Warn("failed to purge expired recording", "recording_id", recording.ID, "error", err)
+			continue
+		}
+		purged++
+	}
+
+	return purged, nil
+}
+
+// eraseRecording removes a recording's audio object and then tombstones the row.
+// Order matters: the object is deleted FIRST, so a failure leaves the row intact
+// ("available") to be retried — we never tombstone a row whose audio still
+// exists. Object deletion is idempotent, so a re-run after a tombstone-write
+// failure simply deletes nothing and tombstones.
+func (s *Service) eraseRecording(ctx context.Context, recording domain.Recording, reason string) error {
+	if err := s.objectStore.DeleteObject(ctx, recording.ObjectKey); err != nil {
+		return err
+	}
+
+	return s.recordings.MarkRecordingDeleted(ctx, MarkRecordingDeletedInput{
+		ID:        recording.ID,
+		Reason:    reason,
+		DeletedAt: s.clock.Now(),
+	})
+}
+
+func isTerminalEgressStatus(status string) bool {
+	switch strings.ToUpper(strings.TrimSpace(status)) {
+	case "EGRESS_COMPLETE", "EGRESS_FAILED", "EGRESS_ABORTED", "EGRESS_LIMIT_REACHED":
+		return true
+	default:
+		return false
 	}
 }
 

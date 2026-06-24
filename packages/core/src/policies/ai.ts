@@ -36,15 +36,23 @@ export const protectedTopicCategories = [
 export type ProtectedTopicCategory = (typeof protectedTopicCategories)[number];
 
 export const aiCompliancePolicyVersion = "ai-compliance-v1";
-export const candidateDisclosureCopyVersion = "candidate-disclosure-v1";
-export const candidateConsentCopyVersion = "candidate-consent-v1";
+// v2 introduces audio-recording disclosure + consent (voice capture, retention,
+// erasure, EU residency). v1 is retained only as the historical label stamped on
+// already-consented sessions — never reuse the v1 label for new copy.
+export const candidateDisclosureCopyVersion = "candidate-disclosure-v2";
+export const candidateConsentCopyVersion = "candidate-consent-v2";
 export const recruiterLimitationCopyVersion = "recruiter-limitation-v1";
 
+// Audio-consent versions accepted by the recording subsystem: only sessions
+// consented under one of these may be audio-recorded (v1 disclosed transcript
+// evidence only, not voice capture).
+export const audioRecordingConsentCopyVersions = ["candidate-consent-v2"] as const;
+
 export const candidateDisclosureCopy =
-  "You are speaking with an AI-guided interviewer for a first screening. Your answers are reviewed by a recruiter; Prelude does not assess protected attributes, appearance, accent, tone, or emotion.";
+  "You are speaking with an AI-guided interviewer for a first screening. This interview is audio-recorded so a recruiter can review your answers later. Your answers are reviewed by a recruiter; Prelude does not assess protected attributes, appearance, accent, tone, or emotion.";
 
 export const candidateConsentCopy =
-  "I understand that I am joining an AI-guided first-screening interview. My answers may be recorded and transcribed as evidence for recruiter review, and Prelude must not assess protected attributes, appearance, accent, tone, emotion, personality, or biometric signals.";
+  "I understand that I am joining an AI-guided first-screening interview. An audio recording of my voice, together with a transcript, will be created and stored in the EU as evidence for recruiter review, and may be processed by Prelude's recording provider for that purpose. The recording is kept for up to 90 days and then permanently deleted, and I can request deletion of my recording at any time. Prelude must not assess protected attributes, appearance, accent, tone, emotion, personality, or biometric signals.";
 
 export const recruiterLimitationCopy =
   "Prelude supports human screening review only. It must not be used as an automated hiring or rejection decision, and it excludes protected traits, appearance, accent, tone, emotion, personality, and biometric signals.";

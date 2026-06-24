@@ -37,6 +37,9 @@ import {
   initialsForCandidate,
 } from "../../../../src/features/candidate-screens";
 import { CandidateDetailTabs } from "../../../../src/features/interview-detail/candidate-detail-tabs";
+import { CandidateVoicePlayer } from "../../../../src/features/interview-detail/candidate-voice-player";
+import { DeleteRecordingButton } from "../../../../src/features/interview-detail/delete-recording-button";
+import { canDeleteRecording } from "../../../../src/domain/recording-policy";
 
 type InterviewDetailPageProps = {
   params: Promise<{
@@ -66,6 +69,7 @@ export default async function InterviewDetailPage({
 
   return (
     <CandidateSessionReview
+      canDelete={canDeleteRecording(account.role)}
       canManageReview={canManageCandidateReview(account.role)}
       session={detail.candidateSession}
     />
@@ -73,9 +77,11 @@ export default async function InterviewDetailPage({
 }
 
 function CandidateSessionReview({
+  canDelete,
   canManageReview,
   session,
 }: {
+  canDelete: boolean;
   canManageReview: boolean;
   session: {
     analysisStatus: "available" | "pending" | "not_ready" | "failed";
@@ -248,7 +254,7 @@ function CandidateSessionReview({
           />
         }
         recording={
-          <CandidateRecordingView session={session} />
+          <CandidateRecordingView canDelete={canDelete} session={session} />
         }
       />
     </main>
@@ -261,8 +267,10 @@ type CandidateSessionReviewSession = Parameters<
 type CandidateReviewStatus = CandidateSessionReviewSession["reviewStatus"];
 
 function CandidateRecordingView({
+  canDelete,
   session,
 }: {
+  canDelete: boolean;
   session: CandidateSessionReviewSession;
 }) {
   const moments = getKeyMoments(session);
@@ -290,7 +298,17 @@ function CandidateRecordingView({
           </div>
         </section>
 
-        <CandidateVoicePlayer evidence={session.evidence} />
+        <CandidateVoicePlayer
+          fallbackDurationMs={getRecordingDurationMs(
+            session.evidence.transcriptTurns,
+          )}
+          recording={session.evidence.recording}
+        />
+        <DeleteRecordingButton
+          candidateSessionId={session.id}
+          canDelete={canDelete}
+          recordingStatus={session.evidence.recording?.status ?? null}
+        />
 
         <section className="overflow-hidden rounded-[20px] border border-[#e7e2d8] bg-white">
           <div className="flex items-center justify-between gap-3">
@@ -424,63 +442,6 @@ function CandidateReviewRail({
         </p>
       </Card>
     </>
-  );
-}
-
-function CandidateVoicePlayer({
-  evidence,
-}: {
-  evidence: CandidateSessionEvidence;
-}) {
-  const durationMs = getRecordingDurationMs(evidence.transcriptTurns);
-  const elapsedMs = Math.round(durationMs * 0.34);
-  const playheadLeft = `${durationMs > 0 ? 34 : 0}%`;
-  const maxBarHeight = Math.max(...waveformBars);
-
-  return (
-    <section className="sticky top-[58px] z-[15] flex scroll-mt-[58px] items-center gap-4 rounded-[16px] border border-[#e7e2d8] bg-white px-[18px] py-[13px] shadow-[0_6px_20px_rgba(20,18,12,0.07)]">
-      <button
-        className="grid h-[46px] w-[46px] shrink-0 cursor-pointer place-items-center rounded-full border-0 text-white transition hover:bg-[#2a2925] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-        style={{ backgroundColor: "#171612" }}
-        type="button"
-      >
-        <PlaySolid aria-hidden={true} className="h-[19px] w-[19px]" />
-        <span className="sr-only">Play recording</span>
-      </button>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-[13px] font-semibold text-ink-950">
-            Voice interview
-          </p>
-          <p className="font-mono text-xs tabular-nums text-[#8a8178]">
-            {formatDurationLabel(elapsedMs)} / {formatDurationLabel(durationMs)}
-          </p>
-        </div>
-        <div className="relative mt-2 flex h-[30px] cursor-pointer items-end gap-0.5">
-          {waveformBars.map((height, index) => (
-            <span
-              className={index < 18 ? "bg-olive-700" : "bg-[#ded8ca]"}
-              key={`${height}-${index}`}
-              style={{
-                borderRadius: 2,
-                flex: 1,
-                height: `${Math.max(5, Math.round((height / maxBarHeight) * 30))}px`,
-                minWidth: 2,
-              }}
-            />
-          ))}
-          <span
-            className="pointer-events-none absolute -top-[3px] bottom-[-3px] w-0.5 rounded-full"
-            style={{ backgroundColor: "#171612", left: playheadLeft }}
-          >
-            <span
-              className="absolute -left-[3px] -top-1 h-2 w-2 rounded-full"
-              style={{ backgroundColor: "#171612" }}
-            />
-          </span>
-        </div>
-      </div>
-    </section>
   );
 }
 
@@ -1140,12 +1101,6 @@ function AuditGuardrailsPanel({
     </section>
   );
 }
-
-const waveformBars = [
-  46, 68, 82, 70, 44, 34, 42, 54, 58, 57, 52, 48, 42, 45, 62, 74, 80, 58,
-  34, 24, 38, 52, 70, 66, 50, 44, 39, 43, 47, 54, 60, 49, 36, 28, 44, 70,
-  78, 58, 42, 35, 39, 47, 52, 50, 43, 38, 35, 45, 58, 75, 66, 46, 32, 27,
-];
 
 function getSignalSummary(distribution: {
   "Not assessable": number;

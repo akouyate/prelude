@@ -353,18 +353,18 @@ def _contains_any(value: str, markers: list[str]) -> bool:
     return any(marker in value for marker in normalized_markers)
 
 
+_MIN_SUBSTANTIVE_WORDS = 6
+
+
 def _looks_like_partial_answer(normalized: str) -> bool:
     words = normalized.split()
-    if len(words) <= 2 and normalized in {
-        "oui",
-        "non",
-        "un peu",
-        "peut etre",
-        "maybe",
-        "yes",
-        "no",
-    }:
+    # Substance floor: a barely-started or terse answer should earn a probe, not
+    # an advance. The realtime VAD often finalizes a turn at a mid-thought breath
+    # pause, so the interviewer invites elaboration rather than racing to the next
+    # question. This subsumes the old monosyllable list (all below the floor).
+    if len(words) < _MIN_SUBSTANTIVE_WORDS:
         return True
+    # Explicit non-answers, even when longer than the floor.
     return normalized in {
         "je ne sais pas",
         "je sais pas",
@@ -505,21 +505,45 @@ class LiveKitAgentEventBridge:
         self,
         *,
         emitter: PreludeEventEmitter,
-        candidate_transcript_handler: Callable[[str, datetime], Awaitable[None]]
-        | None = None,
+        candidate_transcript_handler: Callable[..., Awaitable[None]] | None = None,
+        record_transcript_handler: Callable[..., Awaitable[str | None]] | None = None,
+        handle_turn_handler: Callable[..., Awaitable[None]] | None = None,
         question_id_provider: Callable[[], str | None] | None = None,
+        prompt_generation_provider: Callable[[], int] | None = None,
+        agent_speaking_provider: Callable[[], bool] | None = None,
         emit_state_events: bool = True,
+        turn_flush_debounce_seconds: float = 1.0,
     ) -> None:
         self._emitter = emitter
         self._candidate_transcript_handler = candidate_transcript_handler
+        # S5b: when both are provided, the bridge AGGREGATES per-segment transcripts
+        # into one turn — publishing each segment immediately (record_*) but driving
+        # policy only once, on the completed turn (handle_*). Falls back to the
+        # single-segment candidate_transcript_handler when these are absent.
+        self._record_transcript_handler = record_transcript_handler
+        self._handle_turn_handler = handle_turn_handler
         self._question_id_provider = question_id_provider
+        self._prompt_generation_provider = prompt_generation_provider
+        self._agent_speaking_provider = agent_speaking_provider
         self._emit_state_events = emit_state_events
+        self._turn_flush_debounce_seconds = turn_flush_debounce_seconds
         self._tasks: set[asyncio.Task[None]] = set()
         self._assistant_turns = 0
         self._candidate_turns = 0
         self._agent_state_turns = 0
         self._candidate_speaking = False
         self._candidate_activity_seen = False
+        # S1 turn-token guard: snapshot, at the moment the candidate STARTS a
+        # speaking run, which prompt generation was active and whether the agent
+        # was still speaking. A transcript that finalizes later carries this
+        # snapshot so a late fragment / talk-over cannot drive interview policy.
+        self._turn_generation_snapshot: int | None = None
+        self._spoke_over_agent_snapshot = False
+        # S5b turn aggregator: per-segment buffers flushed once per completed turn.
+        self._turn_segments: list[str] = []
+        self._turn_ids: list[str] = []
+        self._turn_first_occurred_at: datetime | None = None
+        self._flush_task: asyncio.Task[None] | None = None
 
     def register(self, session: object) -> None:
         on = getattr(session, "on")
@@ -559,6 +583,17 @@ class LiveKitAgentEventBridge:
             if new_state == "speaking":
                 self._candidate_speaking = True
                 self._candidate_activity_seen = True
+                # S5b: a resumed speaking run is the SAME turn — cancel any pending
+                # flush so mid-answer pauses coalesce into one turn for policy.
+                self._cancel_turn_flush()
+                # S1: capture the prompt context this speaking run belongs to.
+                if self._prompt_generation_provider is not None:
+                    self._turn_generation_snapshot = self._prompt_generation_provider()
+                self._spoke_over_agent_snapshot = bool(
+                    self._agent_speaking_provider()
+                    if self._agent_speaking_provider is not None
+                    else False
+                )
                 payload = {"source": "livekit_agent_session"}
                 if question_id := self._current_question_id():
                     payload["question_id"] = question_id
@@ -583,6 +618,10 @@ class LiveKitAgentEventBridge:
                         occurred_at=created_at,
                     )
                 )
+                # S5b: the candidate stopped — flush the aggregated turn to policy
+                # after a short debounce (a quick resume cancels it, coalescing
+                # mid-answer pauses into one turn).
+                self._schedule_turn_flush()
 
         @on("user_input_transcribed")
         def on_user_input_transcribed(event: object) -> None:
@@ -596,8 +635,19 @@ class LiveKitAgentEventBridge:
             self._candidate_turns += 1
             self._candidate_activity_seen = True
             created_at = _created_at(event)
+            if self._record_transcript_handler is not None:
+                # S5b: publish this segment now; buffer it for the per-turn flush.
+                self._schedule(self._record_and_buffer(transcript, created_at))
+                return
             if self._candidate_transcript_handler is not None:
-                self._schedule(self._candidate_transcript_handler(transcript, created_at))
+                self._schedule(
+                    self._candidate_transcript_handler(
+                        transcript,
+                        created_at,
+                        turn_generation=self._turn_generation_snapshot,
+                        spoke_over_agent=self._spoke_over_agent_snapshot,
+                    )
+                )
                 return
 
             question_id = self._current_question_id() or "unscoped_livekit"
@@ -726,6 +776,89 @@ class LiveKitAgentEventBridge:
         task = asyncio.create_task(awaitable)
         self._tasks.add(task)
 
+    async def _record_and_buffer(self, transcript: str, created_at: datetime) -> None:
+        # S5b: publish the segment via the controller, then buffer it (with its turn
+        # id + S1 snapshot) for the per-turn policy flush. A backchannel during agent
+        # speech returns None and is not aggregated.
+        if self._record_transcript_handler is None:
+            return
+        turn_id = await self._record_transcript_handler(
+            transcript,
+            created_at,
+            turn_generation=self._turn_generation_snapshot,
+            spoke_over_agent=self._spoke_over_agent_snapshot,
+        )
+        if turn_id is None:
+            return
+        self._turn_segments.append(transcript)
+        self._turn_ids.append(turn_id)
+        if self._turn_first_occurred_at is None:
+            self._turn_first_occurred_at = created_at
+
+    def _schedule_turn_flush(self) -> None:
+        self._cancel_turn_flush()
+        self._flush_task = asyncio.create_task(self._flush_turn_after_debounce())
+        self._tasks.add(self._flush_task)
+
+    def _cancel_turn_flush(self) -> None:
+        if self._flush_task is not None and not self._flush_task.done():
+            self._flush_task.cancel()
+        self._flush_task = None
+
+    async def _flush_turn_after_debounce(self) -> None:
+        try:
+            await asyncio.sleep(self._turn_flush_debounce_seconds)
+        except asyncio.CancelledError:
+            return
+        await self._flush_turn()
+
+    async def _flush_turn(self) -> None:
+        segments = self._turn_segments
+        turn_ids = self._turn_ids
+        occurred_at = self._turn_first_occurred_at
+        # The S1 snapshot is owned by candidate speech-start, which cancels any
+        # pending flush — so it cannot change between the last buffered segment and
+        # this flush. Read it directly instead of shadowing it in per-flush copies.
+        generation = self._turn_generation_snapshot
+        spoke_over = self._spoke_over_agent_snapshot
+        self._reset_turn_buffer()
+        if not segments or self._handle_turn_handler is None:
+            return
+        joined = " ".join(segment.strip() for segment in segments if segment.strip())
+        if not joined:
+            return
+        await self._handle_turn_handler(
+            joined,
+            occurred_at or datetime.now(timezone.utc),
+            turn_ids=turn_ids,
+            turn_generation=generation,
+            spoke_over_agent=spoke_over,
+        )
+
+    def _reset_turn_buffer(self) -> None:
+        self._turn_segments = []
+        self._turn_ids = []
+        self._turn_first_occurred_at = None
+
+
+def _candidate_turn_drives_policy(
+    *,
+    turn_generation: int | None,
+    current_generation: int,
+    spoke_over_agent: bool,
+) -> bool:
+    # A candidate turn only advances or closes the interview if it is a bona-fide
+    # answer to the CURRENT prompt: it must not have overlapped the agent's prompt
+    # (talk-over) and must not belong to an older prompt generation (a late
+    # fragment of a previous turn that finalized after we already moved on). Such
+    # turns are still recorded as transcript, but they never drive policy — this
+    # is the fix for the premature-end + talk-over bugs from the live log.
+    if spoke_over_agent:
+        return False
+    if turn_generation is not None and turn_generation != current_generation:
+        return False
+    return True
+
 
 class LiveInterviewOrchestrationController:
     def __init__(
@@ -750,6 +883,11 @@ class LiveInterviewOrchestrationController:
         self._agent_speech_payload: dict[str, object] | None = None
         self._terminal = False
         self._closed = asyncio.Event()
+        # S1: monotonic counter bumped once per spoken prompt (question /
+        # follow-up / reprompt / repeat). The bridge snapshots it at candidate
+        # speech-start so a turn that finalizes after we moved on cannot drive
+        # policy against the wrong question.
+        self._prompt_generation = 0
 
     async def start(self) -> None:
         command = self._orchestrator.start()
@@ -762,20 +900,34 @@ class LiveInterviewOrchestrationController:
     def current_question_id(self) -> str | None:
         return self._orchestrator.current_question_id
 
-    async def handle_candidate_transcript(
+    @property
+    def prompt_generation(self) -> int:
+        return self._prompt_generation
+
+    @property
+    def agent_is_speaking(self) -> bool:
+        return self._agent_speech_in_progress
+
+    async def record_candidate_transcript(
         self,
         transcript: str,
         occurred_at: datetime,
-    ) -> None:
+        *,
+        turn_generation: int | None = None,
+        spoke_over_agent: bool = False,
+    ) -> str | None:
+        # S5b: PUBLISH-only. Emit the candidate transcript turn (UI + event store)
+        # for each finalized speech segment. Policy is driven separately, once per
+        # COMPLETED turn (handle_candidate_turn), so the interviewer reacts to the
+        # whole answer instead of probing every micro-fragment. Returns the turn id,
+        # or None for a backchannel during agent speech (not a real turn).
         async with self._lock:
             if self._terminal or self._orchestrator.current_question_id is None:
-                return
-
+                return None
             question_id = self._orchestrator.current_question_id
             if self._agent_speech_in_progress and _is_backchannel(transcript):
                 await self._emit_backchannel(question_id, transcript, occurred_at)
-                return
-
+                return None
             turn = _candidate_turn_from_live_transcript(
                 question_id=question_id,
                 transcript=transcript,
@@ -784,13 +936,75 @@ class LiveInterviewOrchestrationController:
             self._candidate_turns += 1
             turn_id = f"{self._emitter._session_id}:candidate:{self._candidate_turns}"
             await self._emit_candidate_turn(turn, turn_id, occurred_at)
+            return turn_id
+
+    async def handle_candidate_turn(
+        self,
+        transcript: str,
+        occurred_at: datetime,
+        *,
+        turn_ids: list[str] | None = None,
+        turn_generation: int | None = None,
+        spoke_over_agent: bool = False,
+    ) -> None:
+        # S5b: POLICY for one COMPLETED candidate turn (the aggregated transcript).
+        # The segments were already published by record_candidate_transcript, so we
+        # do not re-publish here — we classify the WHOLE answer and let the
+        # orchestrator decide (follow-up / complete / close). Withdraw and "I wasn't
+        # finished" are turn-level intents, evaluated here against the full turn.
+        async with self._lock:
+            if self._terminal or self._orchestrator.current_question_id is None:
+                return
+            question_id = self._orchestrator.current_question_id
+            turn = _candidate_turn_from_live_transcript(
+                question_id=question_id,
+                transcript=transcript,
+                occurred_at=occurred_at,
+            )
+            ids = turn_ids or []
             if turn.withdraw_requested:
                 await self._close_for_withdrawal()
                 return
             if turn.candidate_intent == CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED:
-                await self._resume_previous_answer(turn=turn, turn_ids=[turn_id])
+                await self._resume_previous_answer(turn=turn, turn_ids=ids)
                 return
-            await self._evaluate_and_execute(turn, [turn_id])
+            if not _candidate_turn_drives_policy(
+                turn_generation=turn_generation,
+                current_generation=self._prompt_generation,
+                spoke_over_agent=spoke_over_agent,
+            ):
+                # A late fragment or talk-over of a prior prompt: already recorded,
+                # but it must not advance or close the interview (S1).
+                return
+            await self._evaluate_and_execute(turn, ids)
+
+    async def handle_candidate_transcript(
+        self,
+        transcript: str,
+        occurred_at: datetime,
+        *,
+        turn_generation: int | None = None,
+        spoke_over_agent: bool = False,
+    ) -> None:
+        # Back-compat path (one segment == one turn): publish, then drive policy on
+        # that single segment. The bridge's turn aggregator instead calls
+        # record_candidate_transcript per segment and handle_candidate_turn once on
+        # the completed turn.
+        turn_id = await self.record_candidate_transcript(
+            transcript,
+            occurred_at,
+            turn_generation=turn_generation,
+            spoke_over_agent=spoke_over_agent,
+        )
+        if turn_id is None:
+            return
+        await self.handle_candidate_turn(
+            transcript,
+            occurred_at,
+            turn_ids=[turn_id],
+            turn_generation=turn_generation,
+            spoke_over_agent=spoke_over_agent,
+        )
 
     async def handle_initial_silence(self) -> None:
         async with self._lock:
@@ -1079,6 +1293,9 @@ class LiveInterviewOrchestrationController:
         spoken_text: str | None = None,
         extra_payload: dict[str, object] | None = None,
     ) -> None:
+        # S1: a new prompt is being delivered — bump the generation so any turn
+        # that belongs to the previous prompt is recognised as stale.
+        self._prompt_generation += 1
         utterance_id = (
             f"{command.question_id}:live-openai:{utterance_kind}:"
             f"{command.attempt_index or command.question_index or 0}"
@@ -1243,7 +1460,7 @@ class OpenAILiveKitWorker:
         try:
             from livekit import agents, rtc
             from livekit.agents import room_io
-            from livekit.plugins import openai
+            from livekit.plugins import noise_cancellation, openai
             from openai.types import realtime
         except ImportError as exc:
             raise RuntimeError(
@@ -1332,8 +1549,11 @@ class OpenAILiveKitWorker:
             )
             bridge = LiveKitAgentEventBridge(
                 emitter=emitter,
-                candidate_transcript_handler=controller.handle_candidate_transcript,
+                record_transcript_handler=controller.record_candidate_transcript,
+                handle_turn_handler=controller.handle_candidate_turn,
                 question_id_provider=lambda: controller.current_question_id,
+                prompt_generation_provider=lambda: controller.prompt_generation,
+                agent_speaking_provider=lambda: controller.agent_is_speaking,
                 emit_state_events=False,
             )
             bridge.register(session)
@@ -1350,6 +1570,12 @@ class OpenAILiveKitWorker:
                         sample_rate=24000,
                         num_channels=1,
                         frame_size_ms=50,
+                        # S2: Krisp BVC voice isolation on the inbound audio,
+                        # applied before VAD/transcription. Removes ambient noise
+                        # and background voices so a phone candidate's long answers
+                        # are not fragmented by noise-induced turn boundaries.
+                        # Wideband WebRTC (24kHz) → BVC, not the SIP BVCTelephony.
+                        noise_cancellation=noise_cancellation.BVC(),
                     ),
                     audio_output=room_io.AudioOutputOptions(
                         sample_rate=24000,
@@ -1438,6 +1664,12 @@ You are Prelude's live interview agent for a first screening interview.
 Role: {plan.role_title}
 Language: {plan.language}
 Allowed candidate modalities: {", ".join(modalities) or "audio"}
+
+Language discipline (critical):
+- Speak only {plan.language} for the entire interview: the greeting, every
+  question, reprompts, follow-ups, and the closing.
+- Never switch languages mid-interview, even if the candidate uses or switches to
+  another language. Always continue in {plan.language}.
 
 Structured interview style:
 {_format_interview_style(plan.interview_style)}
@@ -1963,7 +2195,9 @@ def _turn_detection(realtime: object, value: str) -> object:
     return module.SemanticVad(
         type="semantic_vad",
         create_response=False,
-        eagerness="auto",
+        # "low" is OpenAI's most patient setting: it waits through mid-thought
+        # pauses before declaring the candidate's turn over. "auto" cut people off.
+        eagerness="low",
         interrupt_response=True,
     )
 

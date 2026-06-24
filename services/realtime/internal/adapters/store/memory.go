@@ -9,22 +9,44 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/akouyate/prelude/services/realtime/internal/application"
 	"github.com/akouyate/prelude/services/realtime/internal/domain"
 )
 
 type MemoryStore struct {
-	mu       sync.RWMutex
-	sessions map[string]domain.Session
-	events   map[string]map[string]domain.Event
+	mu               sync.RWMutex
+	sessions         map[string]domain.Session
+	events           map[string]map[string]domain.Event
+	recordings       map[string]domain.Recording
+	recordingConsent map[string]application.RecordingConsent
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		sessions: map[string]domain.Session{},
-		events:   map[string]map[string]domain.Event{},
+		sessions:         map[string]domain.Session{},
+		events:           map[string]map[string]domain.Event{},
+		recordings:       map[string]domain.Recording{},
+		recordingConsent: map[string]application.RecordingConsent{},
 	}
+}
+
+// SetRecordingConsent records the recording-consent decision for a session. It
+// exists so tests can model consent; the Postgres store derives it from the
+// console's CandidateSession (consentedAt + consentCopyVersion) instead.
+func (s *MemoryStore) SetRecordingConsent(sessionID string, consent application.RecordingConsent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.recordingConsent[sessionID] = consent
+}
+
+func (s *MemoryStore) RecordingConsentFor(_ context.Context, sessionID string) (application.RecordingConsent, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	return s.recordingConsent[sessionID], nil
 }
 
 func (s *MemoryStore) CreateSession(_ context.Context, session domain.Session) error {
@@ -116,6 +138,173 @@ func (s *MemoryStore) AppendEvent(_ context.Context, event domain.Event) (applic
 	s.sessions[event.SessionID] = session
 
 	return application.AppendEventResult{Event: event, Duplicate: false}, nil
+}
+
+func (s *MemoryStore) CreateRecording(_ context.Context, recording domain.Recording) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.recordings[recording.ID]; exists {
+		return errors.New("recording already exists")
+	}
+	if recording.EgressID != "" {
+		for _, existing := range s.recordings {
+			if existing.EgressID == recording.EgressID {
+				return errors.New("recording egress id already exists")
+			}
+		}
+	}
+
+	s.recordings[recording.ID] = recording
+	return nil
+}
+
+func (s *MemoryStore) ActiveRecordingForSession(_ context.Context, sessionID string) (domain.Recording, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var active domain.Recording
+	found := false
+	for _, recording := range s.recordings {
+		if recording.SessionID != sessionID || recording.Status != domain.RecordingStatusRecording {
+			continue
+		}
+		if !found || recording.StartedAt.After(active.StartedAt) {
+			active = recording
+			found = true
+		}
+	}
+
+	return active, found, nil
+}
+
+func (s *MemoryStore) RecordingByEgressID(_ context.Context, egressID string) (domain.Recording, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	for _, recording := range s.recordings {
+		if recording.EgressID == egressID {
+			return recording, true, nil
+		}
+	}
+
+	return domain.Recording{}, false, nil
+}
+
+func (s *MemoryStore) FinalizeRecordingByEgressID(_ context.Context, input application.FinalizeRecordingInput) (bool, error) {
+	if input.EgressID == "" {
+		return false, nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for id, recording := range s.recordings {
+		if recording.EgressID != input.EgressID || recording.Status != domain.RecordingStatusRecording {
+			continue
+		}
+		recording.Status = input.Status
+		recording.DurationMs = input.DurationMs
+		if !input.EndedAt.IsZero() {
+			endedAt := input.EndedAt
+			recording.EndedAt = &endedAt
+		}
+		recording.UpdatedAt = input.UpdatedAt
+		s.recordings[id] = recording
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func (s *MemoryStore) StaleRecordings(_ context.Context, startedBefore time.Time, limit int) ([]domain.Recording, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var stale []domain.Recording
+	for _, recording := range s.recordings {
+		if recording.Status == domain.RecordingStatusRecording && recording.StartedAt.Before(startedBefore) {
+			stale = append(stale, recording)
+		}
+	}
+	sort.Slice(stale, func(i int, j int) bool {
+		return stale[i].StartedAt.Before(stale[j].StartedAt)
+	})
+	if limit > 0 && len(stale) > limit {
+		stale = stale[:limit]
+	}
+
+	return stale, nil
+}
+
+func (s *MemoryStore) DeletableRecordings(_ context.Context, deletedBefore time.Time, limit int) ([]domain.Recording, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var deletable []domain.Recording
+	for _, recording := range s.recordings {
+		if recording.Status != domain.RecordingStatusAvailable {
+			continue
+		}
+		if recordingRetentionAnchor(recording).Before(deletedBefore) {
+			deletable = append(deletable, recording)
+		}
+	}
+	sort.Slice(deletable, func(i int, j int) bool {
+		return recordingRetentionAnchor(deletable[i]).Before(recordingRetentionAnchor(deletable[j]))
+	})
+	if limit > 0 && len(deletable) > limit {
+		deletable = deletable[:limit]
+	}
+
+	return deletable, nil
+}
+
+// recordingRetentionAnchor is the time a recording's retention window is measured
+// from: when the interview ended, falling back to when it started for a row whose
+// egress never reported an end.
+func recordingRetentionAnchor(recording domain.Recording) time.Time {
+	if recording.EndedAt != nil {
+		return *recording.EndedAt
+	}
+
+	return recording.StartedAt
+}
+
+func (s *MemoryStore) MarkRecordingDeleted(_ context.Context, input application.MarkRecordingDeletedInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	recording, ok := s.recordings[input.ID]
+	if !ok {
+		return nil
+	}
+	recording.Status = domain.RecordingStatusDeleted
+	recording.ObjectKey = ""
+	deletedAt := input.DeletedAt
+	recording.DeletedAt = &deletedAt
+	recording.DeletedReason = input.Reason
+	recording.UpdatedAt = input.DeletedAt
+	s.recordings[input.ID] = recording
+
+	return nil
+}
+
+func (s *MemoryStore) RecordingsForSession(_ context.Context, sessionID string) ([]domain.Recording, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var out []domain.Recording
+	for _, recording := range s.recordings {
+		if recording.SessionID == sessionID {
+			out = append(out, recording)
+		}
+	}
+	sort.Slice(out, func(i int, j int) bool {
+		return out[i].StartedAt.Before(out[j].StartedAt)
+	})
+
+	return out, nil
 }
 
 func sameEvent(left domain.Event, right domain.Event) bool {

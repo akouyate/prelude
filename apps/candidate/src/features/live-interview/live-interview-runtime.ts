@@ -102,6 +102,42 @@ export function transcriptTurnsFromSessionState(state: LiveSessionState) {
   });
 }
 
+// visibleInterviewerTurns is what the candidate live UI renders: only the
+// interviewer's finalized questions. The candidate's own speech is hidden (they
+// asked to see only the agent's questions), and streaming partials are dropped —
+// those arrive as a flurry of short, non-final turns with their own ids and were
+// the source of the flicker + duplicated phrases. Sorted by start time with a
+// stable turnId tiebreak so equal timestamps never reorder between renders.
+export function visibleInterviewerTurns(
+  turns: LiveTranscriptTurn[],
+): LiveTranscriptTurn[] {
+  const sorted = turns
+    .filter((turn) => turn.speaker === "interviewer" && turn.isFinal)
+    .sort((left, right) => {
+      const leftStart = Date.parse(left.startedAt);
+      const rightStart = Date.parse(right.startedAt);
+      const byStart =
+        (Number.isNaN(leftStart) ? 0 : leftStart) -
+        (Number.isNaN(rightStart) ? 0 : rightStart);
+
+      return byStart !== 0 ? byStart : left.turnId.localeCompare(right.turnId);
+    });
+
+  // Collapse exact-duplicate phrases: the realtime stream sometimes finalizes the
+  // same question twice with different turn ids, which showed as duplicated lines.
+  // Keep the first occurrence of each normalized text.
+  const seen = new Set<string>();
+  return sorted.filter((turn) => {
+    const key = turn.text.trim().replace(/\s+/g, " ").toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+
+    return true;
+  });
+}
+
 export function hasClosingTranscript(state: LiveSessionState) {
   return state.events.some(
     (event) =>

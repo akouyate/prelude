@@ -1,6 +1,11 @@
 import { liveInterviewWireEventSchema } from "@prelude/contracts";
 import { prisma, type Prisma } from "@prelude/db";
 
+import {
+  type CandidateRecording,
+  getRecordingPlayback,
+} from "./recording-playback";
+
 export type CandidateEvidenceStatus =
   | "created"
   | "waiting_candidate"
@@ -35,6 +40,7 @@ export type CandidateSessionEvidence = {
   questionAnswerSequence: CandidateQuestionAnswer[];
   questionCompletionRate: number | null;
   realtimeSessionId: string | null;
+  recording: CandidateRecording | null;
   runtimeStatus: string | null;
   status: CandidateEvidenceStatus;
   terminalEventType: "session_completed" | "session_failed" | null;
@@ -83,27 +89,33 @@ export async function getCandidateSessionEvidence({
     });
   }
 
-  const runtimeSession = await prisma.liveInterviewSession.findUnique({
-    include: {
-      events: {
-        orderBy: { sequenceNumber: "asc" },
+  const [runtimeSession, recording] = await Promise.all([
+    prisma.liveInterviewSession.findUnique({
+      include: {
+        events: {
+          orderBy: { sequenceNumber: "asc" },
+        },
       },
-    },
-    where: { id: productSession.realtimeSessionId },
-  });
+      where: { id: productSession.realtimeSessionId },
+    }),
+    getRecordingPlayback(productSession.realtimeSessionId),
+  ]);
 
-  return buildCandidateSessionEvidence({
-    events: runtimeSession?.events ?? [],
-    productSession,
-    questionCount,
-    runtimeSession: runtimeSession
-      ? {
-          id: runtimeSession.id,
-          status: runtimeSession.status,
-          updatedAt: runtimeSession.updatedAt,
-        }
-      : null,
-  });
+  return {
+    ...buildCandidateSessionEvidence({
+      events: runtimeSession?.events ?? [],
+      productSession,
+      questionCount,
+      runtimeSession: runtimeSession
+        ? {
+            id: runtimeSession.id,
+            status: runtimeSession.status,
+            updatedAt: runtimeSession.updatedAt,
+          }
+        : null,
+    }),
+    recording,
+  };
 }
 
 export function buildCandidateSessionEvidence({
@@ -158,6 +170,7 @@ export function buildCandidateSessionEvidence({
         ? Math.round((questionCompletedCount / questionCount) * 100)
         : null,
     realtimeSessionId: productSession.realtimeSessionId,
+    recording: null,
     runtimeStatus: runtimeSession?.status ?? null,
     status: resolveEvidenceStatus({
       productStatus: productSession.status,

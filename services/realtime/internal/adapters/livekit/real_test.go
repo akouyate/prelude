@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"io"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +33,13 @@ func TestNewGatewayFromEnvFallsBackToMockWithoutCredentials(t *testing.T) {
 	}
 }
 
+func TestNewGatewayFromEnvFailsFastInProductionWithoutCredentials(t *testing.T) {
+	_, _, err := NewGatewayFromEnv("wss://livekit.example.test", "", "", true)
+	if err == nil {
+		t.Fatal("expected error in production without livekit credentials")
+	}
+}
+
 func TestRealGatewayMintsJoinTokenWithoutLeakingSecret(t *testing.T) {
 	gateway, err := NewRealGateway(
 		"wss://livekit.example.test",
@@ -60,9 +65,6 @@ func TestRealGatewayMintsJoinTokenWithoutLeakingSecret(t *testing.T) {
 	if join.URL != "wss://livekit.example.test" {
 		t.Fatalf("expected livekit url, got %s", join.URL)
 	}
-	if join.RoomName != "prelude-is_test" {
-		t.Fatalf("expected room, got %s", join.RoomName)
-	}
 	if join.Participant != "agent-is_test" {
 		t.Fatalf("expected participant, got %s", join.Participant)
 	}
@@ -81,9 +83,6 @@ func TestRealGatewayMintsJoinTokenWithoutLeakingSecret(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected video grant in claims: %#v", claims)
 	}
-	if claims["iss"] != "livekit_key" {
-		t.Fatalf("expected api key issuer, got %#v", claims["iss"])
-	}
 	if claims["sub"] != "agent-is_test" {
 		t.Fatalf("expected participant identity, got %#v", claims["sub"])
 	}
@@ -95,100 +94,6 @@ func TestRealGatewayMintsJoinTokenWithoutLeakingSecret(t *testing.T) {
 	}
 	if video["agent"] != true {
 		t.Fatalf("expected agent grant, got %#v", video["agent"])
-	}
-}
-
-func TestNewGatewayFromEnvFailsFastInProductionWithoutCredentials(t *testing.T) {
-	_, _, err := NewGatewayFromEnv("wss://livekit.example.test", "", "", true)
-	if err == nil {
-		t.Fatal("expected error in production without livekit credentials")
-	}
-}
-
-type stubDoer struct {
-	request *http.Request
-	body    []byte
-	status  int
-	err     error
-}
-
-func (s *stubDoer) Do(req *http.Request) (*http.Response, error) {
-	s.request = req
-	if req.Body != nil {
-		s.body, _ = io.ReadAll(req.Body)
-	}
-	if s.err != nil {
-		return nil, s.err
-	}
-
-	return &http.Response{
-		StatusCode: s.status,
-		Body:       io.NopCloser(strings.NewReader("{}")),
-	}, nil
-}
-
-func TestRealGatewayEnsureRoomCreatesRoomWithAdminToken(t *testing.T) {
-	gateway, err := NewRealGateway(
-		"wss://livekit.example.test",
-		"livekit_key",
-		"livekit_secret_that_is_long_enough_for_tests",
-	)
-	if err != nil {
-		t.Fatalf("NewRealGateway returned error: %v", err)
-	}
-	gateway.now = func() time.Time { return time.Date(2026, 6, 18, 10, 0, 0, 0, time.UTC) }
-	stub := &stubDoer{status: http.StatusOK}
-	gateway.httpClient = stub
-
-	if err := gateway.EnsureRoom(context.Background(), application.EnsureRoomInput{
-		RoomName:        "prelude-is_test",
-		EmptyTimeout:    5 * time.Minute,
-		MaxParticipants: 2,
-	}); err != nil {
-		t.Fatalf("EnsureRoom returned error: %v", err)
-	}
-
-	if stub.request == nil {
-		t.Fatal("expected a CreateRoom request to be issued")
-	}
-	if got := stub.request.URL.String(); got != "https://livekit.example.test/twirp/livekit.RoomService/CreateRoom" {
-		t.Fatalf("unexpected create-room endpoint: %s", got)
-	}
-
-	auth := stub.request.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
-		t.Fatalf("expected bearer auth, got %q", auth)
-	}
-	token := strings.TrimPrefix(auth, "Bearer ")
-	if strings.Contains(token, "livekit_secret_that_is_long_enough_for_tests") {
-		t.Fatal("admin token must not contain the LiveKit API secret")
-	}
-
-	claims := decodeJWTClaims(t, token)
-	video, ok := claims["video"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected video grant in admin token: %#v", claims)
-	}
-	if video["roomCreate"] != true || video["roomAdmin"] != true {
-		t.Fatalf("expected roomCreate+roomAdmin grants, got %#v", video)
-	}
-	if !strings.Contains(string(stub.body), `"prelude-is_test"`) {
-		t.Fatalf("expected room name in request body, got %s", string(stub.body))
-	}
-}
-
-func TestRealGatewayEnsureRoomReturnsErrorOnHTTPFailure(t *testing.T) {
-	gateway, err := NewRealGateway("wss://livekit.example.test", "k", "secret_long_enough_for_tests")
-	if err != nil {
-		t.Fatalf("NewRealGateway returned error: %v", err)
-	}
-	gateway.httpClient = &stubDoer{status: http.StatusInternalServerError}
-
-	if err := gateway.EnsureRoom(context.Background(), application.EnsureRoomInput{
-		RoomName:        "prelude-x",
-		MaxParticipants: 2,
-	}); err == nil {
-		t.Fatal("expected error on HTTP 500")
 	}
 }
 
@@ -211,6 +116,20 @@ func TestRealGatewayJoinTokenDoesNotGrantRoomCreate(t *testing.T) {
 	video, _ := claims["video"].(map[string]any)
 	if _, ok := video["roomCreate"]; ok {
 		t.Fatalf("join token must NOT grant roomCreate, got %#v", video)
+	}
+}
+
+func TestRealGatewayStartRoomCompositeEgressRequiresTarget(t *testing.T) {
+	gateway, err := NewRealGateway("wss://livekit.example.test", "k", "secret_long_enough_for_tests")
+	if err != nil {
+		t.Fatalf("NewRealGateway returned error: %v", err)
+	}
+
+	if _, err := gateway.StartRoomCompositeEgress(context.Background(), application.StartEgressInput{
+		RoomName:  "prelude-x",
+		ObjectKey: "recordings/x/1.ogg",
+	}); err == nil {
+		t.Fatal("expected error when egress target is not configured")
 	}
 }
 

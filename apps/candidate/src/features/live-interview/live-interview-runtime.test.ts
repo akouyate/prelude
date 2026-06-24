@@ -6,8 +6,12 @@ import {
   statusFromSessionState,
   statusFromTranscriptTurn,
   transcriptTurnsFromSessionState,
+  visibleInterviewerTurns,
 } from "./live-interview-runtime";
-import type { LiveSessionState } from "./live-interview-types";
+import type {
+  LiveSessionState,
+  LiveTranscriptTurn,
+} from "./live-interview-types";
 
 describe("live interview runtime state", () => {
   it("maps realtime events to candidate room states", () => {
@@ -108,3 +112,53 @@ function event(type: string, payload: Record<string, unknown> = {}) {
     type,
   };
 }
+
+describe("visibleInterviewerTurns", () => {
+  const turn = (overrides: Partial<LiveTranscriptTurn>): LiveTranscriptTurn => ({
+    isFinal: true,
+    sessionId: "is_1",
+    speaker: "interviewer",
+    startedAt: "2026-06-23T10:00:00Z",
+    text: "question",
+    turnId: "t",
+    ...overrides,
+  });
+
+  it("shows only finalized interviewer turns — never the candidate, never partials", () => {
+    const turns = [
+      turn({ startedAt: "2026-06-23T10:00:00Z", text: "First question.", turnId: "i1" }),
+      turn({ speaker: "candidate", startedAt: "2026-06-23T10:00:30Z", text: "My answer.", turnId: "c1" }),
+      turn({ isFinal: false, startedAt: "2026-06-23T10:01:00Z", text: "And how", turnId: "i2_partial" }),
+      turn({ startedAt: "2026-06-23T10:01:02Z", text: "Second question.", turnId: "i2" }),
+      turn({ speaker: "system", startedAt: "2026-06-23T10:01:05Z", text: "noise", turnId: "sys" }),
+    ];
+
+    expect(visibleInterviewerTurns(turns).map((item) => item.turnId)).toEqual([
+      "i1",
+      "i2",
+    ]);
+  });
+
+  it("sorts by start time with a stable turnId tiebreak (no reorder flicker)", () => {
+    const turns = [
+      turn({ startedAt: "2026-06-23T10:00:00Z", text: "B question.", turnId: "b" }),
+      turn({ startedAt: "2026-06-23T10:00:00Z", text: "A question.", turnId: "a" }),
+    ];
+
+    expect(visibleInterviewerTurns(turns).map((item) => item.turnId)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
+
+  it("collapses exact-duplicate finalized questions (same text, different ids)", () => {
+    // The realtime stream sometimes finalizes the same phrase twice with
+    // different turn ids — that showed as duplicated lines in the live UI.
+    const turns = [
+      turn({ startedAt: "2026-06-23T10:00:00Z", text: "Tell us about a project.", turnId: "a" }),
+      turn({ startedAt: "2026-06-23T10:00:01Z", text: "Tell us about a project.", turnId: "b" }),
+    ];
+
+    expect(visibleInterviewerTurns(turns).map((item) => item.turnId)).toEqual(["a"]);
+  });
+});

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,9 +11,32 @@ import (
 	"github.com/akouyate/prelude/services/realtime/internal/domain"
 )
 
+// EgressWebhookParser verifies an inbound LiveKit webhook and, for egress_ended
+// events, returns the recording-finalization payload. It is satisfied by the
+// LiveKit webhook parser.
+type EgressWebhookParser interface {
+	ParseEgressEnded(r *http.Request) (application.FinalizeRecordingFromEgress, bool, error)
+}
+
 type Server struct {
-	service *application.Service
-	mux     *http.ServeMux
+	service        *application.Service
+	mux            *http.ServeMux
+	egressWebhooks EgressWebhookParser
+	apiKey         string
+}
+
+// SetEgressWebhookParser enables the LiveKit egress webhook endpoint. Until it is
+// set, the endpoint returns 404 — recording is opt-in.
+func (s *Server) SetEgressWebhookParser(parser EgressWebhookParser) {
+	s.egressWebhooks = parser
+}
+
+// SetAPIKey enables shared-secret authentication on every route except /health
+// and the self-authenticating egress webhook. An empty key disables auth (local
+// dev); production requires REALTIME_API_KEY via requiredProductionConfig, so the
+// service fails fast rather than booting this endpoint unauthenticated.
+func (s *Server) SetAPIKey(apiKey string) {
+	s.apiKey = strings.TrimSpace(apiKey)
 }
 
 func NewServer(service *application.Service) *Server {
@@ -25,7 +49,46 @@ func NewServer(service *application.Service) *Server {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid API key")
+		return
+	}
 	s.mux.ServeHTTP(w, r)
+}
+
+// authorized enforces the shared-secret API key on every route except the public
+// ones (see isPublicRoute). Auth is disabled when no key is configured (local
+// dev); production requires the key via requiredProductionConfig. The comparison
+// is constant-time so a wrong key cannot be narrowed by timing.
+func (s *Server) authorized(r *http.Request) bool {
+	if s.apiKey == "" {
+		return true
+	}
+	if isPublicRoute(r) {
+		return true
+	}
+
+	const prefix = "Bearer "
+	header := r.Header.Get("Authorization")
+	if !strings.HasPrefix(header, prefix) {
+		return false
+	}
+	token := strings.TrimSpace(strings.TrimPrefix(header, prefix))
+
+	return subtle.ConstantTimeCompare([]byte(token), []byte(s.apiKey)) == 1
+}
+
+// isPublicRoute lists the endpoints that bypass API-key auth: liveness, and the
+// egress webhook (which self-authenticates via the LiveKit request signature).
+func isPublicRoute(r *http.Request) bool {
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/health":
+		return true
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/livekit/egress-webhook":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) routes() {
@@ -36,6 +99,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}/transcript", s.handleGetTranscript)
 	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}/summary", s.handleGetRecruiterSummary)
 	s.mux.HandleFunc("POST /v1/interview-sessions/{session_id}/events", s.handleIngestEvent)
+	s.mux.HandleFunc("DELETE /v1/interview-sessions/{session_id}/recordings", s.handleEraseRecordings)
+	s.mux.HandleFunc("POST /v1/livekit/egress-webhook", s.handleEgressWebhook)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
@@ -174,6 +239,42 @@ func (r ingestEventRequest) normalizedSequence() int {
 	}
 
 	return r.Sequence
+}
+
+// handleEraseRecordings is the right-to-erasure endpoint: it deletes every audio
+// object for the session and tombstones the rows. It is idempotent, so the
+// console can safely retry. A partial failure returns 500 so the caller retries.
+func (s *Server) handleEraseRecordings(w http.ResponseWriter, r *http.Request) {
+	erased, err := s.service.EraseRecordingsForSession(r.Context(), r.PathValue("session_id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "erase_failed", "failed to erase recordings")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]int{"erased": erased})
+}
+
+func (s *Server) handleEgressWebhook(w http.ResponseWriter, r *http.Request) {
+	if s.egressWebhooks == nil {
+		writeError(w, http.StatusNotFound, "not_found", "egress webhook is not enabled")
+		return
+	}
+
+	finalize, ok, err := s.egressWebhooks.ParseEgressEnded(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid_signature", "webhook verification failed")
+		return
+	}
+	if !ok {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ignored"})
+		return
+	}
+	if err := s.service.FinalizeRecording(r.Context(), finalize); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to finalize recording")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func readJSON(r *http.Request, target any) error {

@@ -243,6 +243,169 @@ async def test_live_orchestration_controller_pushes_transcript_turns() -> None:
 
 
 @pytest.mark.asyncio
+async def test_s1_stale_or_overlapping_turn_is_recorded_but_drives_no_policy() -> None:
+    # S1 turn-token guard. A candidate transcript that belongs to an older prompt
+    # generation (a late fragment of a previous turn) OR that overlapped the
+    # agent's prompt must still be RECORDED, but must not advance/close the
+    # interview. These are the premature-end + talk-over bugs seen in the live
+    # session log (a Q1 tail evaluated against Q2; a fragment during the
+    # follow-up completing the last question and closing the session).
+    for kwargs in ({"turn_generation": 0}, {"spoke_over_agent": True}):
+        events: list[InterviewEvent] = []
+        emitter = PreludeEventEmitter(
+            session_id="session-test",
+            candidate_id="candidate-test",
+            provider_metadata={"provider": "openai_realtime"},
+            emit_event=lambda event: _append_event(events, event),
+        )
+        session = FakeLiveSession()
+        publisher = FakeTranscriptPublisher()
+        controller = LiveInterviewOrchestrationController(
+            plan=create_demo_plan(),
+            emitter=emitter,
+            session=session,
+            transcript_publisher=publisher,
+        )
+
+        await controller.start()  # asks Q1; the prompt generation is now 1
+        await controller.handle_candidate_transcript(
+            "Un fragment en retard ou par-dessus l'agent.",
+            datetime(2026, 6, 18, tzinfo=timezone.utc),
+            **kwargs,
+        )
+
+        assert any(
+            turn["speaker"] == "candidate"
+            and turn["text"] == "Un fragment en retard ou par-dessus l'agent."
+            for turn in publisher.turns
+        ), kwargs
+        types = [event.type for event in events]
+        assert EventType.ANSWER_EVALUATED not in types, kwargs
+        assert EventType.QUESTION_COMPLETED not in types, kwargs
+        assert EventType.SESSION_CLOSING not in types, kwargs
+
+
+@pytest.mark.asyncio
+async def test_s1_fresh_turn_for_current_prompt_still_drives_policy() -> None:
+    # The guard must not over-block: a bona-fide answer to the current prompt
+    # (matching generation, no overlap) is still evaluated as before.
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+
+    await controller.start()  # the prompt generation is now 1
+    await controller.handle_candidate_transcript(
+        "Voici ma reponse complete et detaillee a la question qui vient d'etre posee.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+        turn_generation=controller.prompt_generation,
+        spoke_over_agent=False,
+    )
+
+    assert EventType.ANSWER_EVALUATED in [event.type for event in events]
+
+
+@pytest.mark.asyncio
+async def test_s5b_record_publishes_without_policy_then_handle_drives_policy() -> None:
+    # S5b: publishing a segment (record_candidate_transcript) emits the transcript
+    # turn for the UI but does NOT evaluate/advance. Policy runs once on the
+    # COMPLETED turn (handle_candidate_turn) — this is what stops per-fragment
+    # over-probing while keeping the live transcript streaming per segment.
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    publisher = FakeTranscriptPublisher()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+        transcript_publisher=publisher,
+    )
+    await controller.start()
+    occurred = datetime(2026, 6, 18, tzinfo=timezone.utc)
+
+    turn_id = await controller.record_candidate_transcript("Premier bout de phrase.", occurred)
+    assert turn_id is not None
+    assert any(turn["speaker"] == "candidate" for turn in publisher.turns)  # published
+    assert EventType.ANSWER_EVALUATED not in [event.type for event in events]  # no policy
+
+    await controller.handle_candidate_turn(
+        "Premier bout de phrase, et voici la suite complete et detaillee de ma reponse.",
+        occurred,
+        turn_ids=[turn_id],
+        turn_generation=controller.prompt_generation,
+    )
+    assert EventType.ANSWER_EVALUATED in [event.type for event in events]  # policy ran
+
+
+@pytest.mark.asyncio
+async def test_s5b_bridge_aggregates_segments_into_one_turn() -> None:
+    # S5b: two transcript segments inside one speaking run are each published, but
+    # policy runs ONCE on the joined text after the speaking-stop flush.
+    recorded: list[str] = []
+    handled: list[tuple[str, object]] = []
+
+    async def record(transcript, created_at, *, turn_generation=None, spoke_over_agent=False):
+        recorded.append(transcript)
+        return f"turn-{len(recorded)}"
+
+    async def handle(transcript, created_at, *, turn_ids=None, turn_generation=None, spoke_over_agent=False):
+        handled.append((transcript, turn_ids))
+
+    async def _noop_emit(event):
+        return None
+
+    emitter = PreludeEventEmitter(
+        session_id="s",
+        candidate_id="c",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=_noop_emit,
+    )
+    session = FakeAgentSession()
+    bridge = LiveKitAgentEventBridge(
+        emitter=emitter,
+        record_transcript_handler=record,
+        handle_turn_handler=handle,
+        turn_flush_debounce_seconds=0.01,
+        emit_state_events=False,
+    )
+    bridge.register(session)
+
+    session.handlers["user_state_changed"](
+        SimpleNamespace(old_state="listening", new_state="speaking", created_at=0.0)
+    )
+    session.handlers["user_input_transcribed"](
+        SimpleNamespace(transcript="Premiere phrase.", is_final=True, created_at=0.0)
+    )
+    session.handlers["user_input_transcribed"](
+        SimpleNamespace(transcript="Deuxieme phrase.", is_final=True, created_at=0.0)
+    )
+    session.handlers["user_state_changed"](
+        SimpleNamespace(old_state="speaking", new_state="listening", created_at=0.0)
+    )
+    await asyncio.sleep(0.05)  # let the debounce flush fire
+    await bridge.drain()
+
+    assert recorded == ["Premiere phrase.", "Deuxieme phrase."]  # both published
+    assert len(handled) == 1  # policy ran once
+    assert handled[0][0] == "Premiere phrase. Deuxieme phrase."  # on the joined turn
+
+
+@pytest.mark.asyncio
 async def test_livekit_agent_bridge_persists_final_candidate_transcript() -> None:
     events: list[InterviewEvent] = []
 
@@ -539,6 +702,20 @@ def test_live_transcript_classifies_wait_partial_and_complete_answers() -> None:
         InterviewOrchestrator.classify_candidate_turn(answer_turn)
         == AnswerClassification.COMPLETE
     )
+
+
+def test_live_transcript_treats_a_too_short_answer_as_partial() -> None:
+    # The realtime VAD often finalizes a turn at a mid-thought breath pause. A
+    # barely-started or terse answer must earn a probe (PARTIAL), not an advance,
+    # so the interviewer invites elaboration instead of rushing to the next one.
+    turn = _candidate_turn_from_live_transcript(
+        question_id="q1",
+        transcript="J'ai mené la migration.",
+        occurred_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+
+    assert turn.candidate_intent == CandidateTurnIntent.ANSWER_PARTIAL
+    assert turn.is_complete is False
 
 
 def test_live_transcript_does_not_confuse_answer_examples_with_example_request() -> None:
@@ -941,6 +1118,15 @@ def test_live_interviewer_instructions_keep_first_screening_scope() -> None:
     assert "Ask one question at a time" in instructions
     assert "Never score or comment on face, accent, tone, emotion" in instructions
     assert "Product Manager B2B SaaS" in instructions
+
+
+def test_live_interviewer_instructions_pin_a_single_language() -> None:
+    # The live agent drifted between French and English mid-interview. A passive
+    # "Language: fr" line was not enough; the prompt must forbid switching.
+    instructions = build_live_interviewer_instructions(create_demo_plan())
+
+    assert "Never switch languages" in instructions
+    assert create_demo_plan().language in instructions
 
 
 def test_live_interviewer_instructions_onboard_without_product_narration() -> None:

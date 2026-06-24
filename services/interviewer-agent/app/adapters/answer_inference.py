@@ -19,7 +19,12 @@ from app.domain.orchestrator import (
 
 
 DEFAULT_OPENAI_ANSWER_INFERENCE_MODEL = "gpt-4.1-mini"
-DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS = 4.0
+# S4: the evaluator stays on the critical path (so the interviewer keeps probing
+# weak answers in real time) but is tightly bounded. Beyond this budget we fall
+# back to the fast local heuristic rather than holding dead air — capping the
+# evaluation wait at ~1.0s (on top of the turn-flush debounce) instead of the
+# 2-4.5s seen in the live log.
+DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS = 1.0
 
 
 class HeuristicAnswerInferenceProvider:
@@ -108,7 +113,8 @@ class OpenAIAnswerInferenceProvider:
             instructions=_answer_inference_instructions(),
             input=_answer_inference_input(plan=plan, question=question, turn=turn),
             temperature=0,
-            max_output_tokens=700,
+            # Compact JSON verdict; fewer tokens = faster within the tight budget.
+            max_output_tokens=320,
             timeout=self._config.timeout_seconds,
         )
         payload = _json_from_response(response)
@@ -277,14 +283,19 @@ def _extract_json_object(value: str) -> str:
 
 
 def _assessment_from_payload(payload: dict[str, object]) -> CandidateAnswerAssessment:
-    classification = AnswerClassification(str(payload.get("classification", "vague")))
+    matrix = _matrix_from_payload(payload)
+    # Derive the label from the matrix rather than the model's free-form
+    # "classification" field: the realtime evaluator sometimes returns a label
+    # that contradicts its own scores (e.g. "vague" on a 13/15 answer), which
+    # made the interviewer probe strong answers. The scored matrix is the
+    # structured signal of record, shared with the local heuristic.
+    classification = InterviewOrchestrator.classify_from_matrix(matrix)
     reason_codes = [
         str(item)[:80]
         for item in payload.get("reason_codes", [])
         if isinstance(item, str) and item.strip()
     ]
     confidence = _bounded_float(payload.get("confidence"), default=0.6)
-    matrix = _matrix_from_payload(payload)
     return CandidateAnswerAssessment(
         classification=classification,
         reason_codes=reason_codes or ["llm_assisted"],

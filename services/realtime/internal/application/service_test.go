@@ -308,14 +308,6 @@ func validSessionCompletedPayload() json.RawMessage {
 	}`)
 }
 
-func validSessionFailedPayload() json.RawMessage {
-	return json.RawMessage(`{
-		"code": "agent_runtime_error",
-		"message": "Interview agent failed: RuntimeError",
-		"retryable": false
-	}`)
-}
-
 func TestServiceGetAgentConfigReturnsAgentJoinAndDemoPlan(t *testing.T) {
 	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
 	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
