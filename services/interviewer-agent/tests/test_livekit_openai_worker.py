@@ -243,6 +243,78 @@ async def test_live_orchestration_controller_pushes_transcript_turns() -> None:
 
 
 @pytest.mark.asyncio
+async def test_s1_stale_or_overlapping_turn_is_recorded_but_drives_no_policy() -> None:
+    # S1 turn-token guard. A candidate transcript that belongs to an older prompt
+    # generation (a late fragment of a previous turn) OR that overlapped the
+    # agent's prompt must still be RECORDED, but must not advance/close the
+    # interview. These are the premature-end + talk-over bugs seen in the live
+    # session log (a Q1 tail evaluated against Q2; a fragment during the
+    # follow-up completing the last question and closing the session).
+    for kwargs in ({"turn_generation": 0}, {"spoke_over_agent": True}):
+        events: list[InterviewEvent] = []
+        emitter = PreludeEventEmitter(
+            session_id="session-test",
+            candidate_id="candidate-test",
+            provider_metadata={"provider": "openai_realtime"},
+            emit_event=lambda event: _append_event(events, event),
+        )
+        session = FakeLiveSession()
+        publisher = FakeTranscriptPublisher()
+        controller = LiveInterviewOrchestrationController(
+            plan=create_demo_plan(),
+            emitter=emitter,
+            session=session,
+            transcript_publisher=publisher,
+        )
+
+        await controller.start()  # asks Q1; the prompt generation is now 1
+        await controller.handle_candidate_transcript(
+            "Un fragment en retard ou par-dessus l'agent.",
+            datetime(2026, 6, 18, tzinfo=timezone.utc),
+            **kwargs,
+        )
+
+        assert any(
+            turn["speaker"] == "candidate"
+            and turn["text"] == "Un fragment en retard ou par-dessus l'agent."
+            for turn in publisher.turns
+        ), kwargs
+        types = [event.type for event in events]
+        assert EventType.ANSWER_EVALUATED not in types, kwargs
+        assert EventType.QUESTION_COMPLETED not in types, kwargs
+        assert EventType.SESSION_CLOSING not in types, kwargs
+
+
+@pytest.mark.asyncio
+async def test_s1_fresh_turn_for_current_prompt_still_drives_policy() -> None:
+    # The guard must not over-block: a bona-fide answer to the current prompt
+    # (matching generation, no overlap) is still evaluated as before.
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+
+    await controller.start()  # the prompt generation is now 1
+    await controller.handle_candidate_transcript(
+        "Voici ma reponse complete et detaillee a la question qui vient d'etre posee.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+        turn_generation=controller.prompt_generation,
+        spoke_over_agent=False,
+    )
+
+    assert EventType.ANSWER_EVALUATED in [event.type for event in events]
+
+
+@pytest.mark.asyncio
 async def test_livekit_agent_bridge_persists_final_candidate_transcript() -> None:
     events: list[InterviewEvent] = []
 

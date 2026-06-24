@@ -505,14 +505,17 @@ class LiveKitAgentEventBridge:
         self,
         *,
         emitter: PreludeEventEmitter,
-        candidate_transcript_handler: Callable[[str, datetime], Awaitable[None]]
-        | None = None,
+        candidate_transcript_handler: Callable[..., Awaitable[None]] | None = None,
         question_id_provider: Callable[[], str | None] | None = None,
+        prompt_generation_provider: Callable[[], int] | None = None,
+        agent_speaking_provider: Callable[[], bool] | None = None,
         emit_state_events: bool = True,
     ) -> None:
         self._emitter = emitter
         self._candidate_transcript_handler = candidate_transcript_handler
         self._question_id_provider = question_id_provider
+        self._prompt_generation_provider = prompt_generation_provider
+        self._agent_speaking_provider = agent_speaking_provider
         self._emit_state_events = emit_state_events
         self._tasks: set[asyncio.Task[None]] = set()
         self._assistant_turns = 0
@@ -520,6 +523,12 @@ class LiveKitAgentEventBridge:
         self._agent_state_turns = 0
         self._candidate_speaking = False
         self._candidate_activity_seen = False
+        # S1 turn-token guard: snapshot, at the moment the candidate STARTS a
+        # speaking run, which prompt generation was active and whether the agent
+        # was still speaking. A transcript that finalizes later carries this
+        # snapshot so a late fragment / talk-over cannot drive interview policy.
+        self._turn_generation_snapshot: int | None = None
+        self._spoke_over_agent_snapshot = False
 
     def register(self, session: object) -> None:
         on = getattr(session, "on")
@@ -559,6 +568,14 @@ class LiveKitAgentEventBridge:
             if new_state == "speaking":
                 self._candidate_speaking = True
                 self._candidate_activity_seen = True
+                # S1: capture the prompt context this speaking run belongs to.
+                if self._prompt_generation_provider is not None:
+                    self._turn_generation_snapshot = self._prompt_generation_provider()
+                self._spoke_over_agent_snapshot = bool(
+                    self._agent_speaking_provider()
+                    if self._agent_speaking_provider is not None
+                    else False
+                )
                 payload = {"source": "livekit_agent_session"}
                 if question_id := self._current_question_id():
                     payload["question_id"] = question_id
@@ -597,7 +614,14 @@ class LiveKitAgentEventBridge:
             self._candidate_activity_seen = True
             created_at = _created_at(event)
             if self._candidate_transcript_handler is not None:
-                self._schedule(self._candidate_transcript_handler(transcript, created_at))
+                self._schedule(
+                    self._candidate_transcript_handler(
+                        transcript,
+                        created_at,
+                        turn_generation=self._turn_generation_snapshot,
+                        spoke_over_agent=self._spoke_over_agent_snapshot,
+                    )
+                )
                 return
 
             question_id = self._current_question_id() or "unscoped_livekit"
@@ -727,6 +751,25 @@ class LiveKitAgentEventBridge:
         self._tasks.add(task)
 
 
+def _candidate_turn_drives_policy(
+    *,
+    turn_generation: int | None,
+    current_generation: int,
+    spoke_over_agent: bool,
+) -> bool:
+    # A candidate turn only advances or closes the interview if it is a bona-fide
+    # answer to the CURRENT prompt: it must not have overlapped the agent's prompt
+    # (talk-over) and must not belong to an older prompt generation (a late
+    # fragment of a previous turn that finalized after we already moved on). Such
+    # turns are still recorded as transcript, but they never drive policy — this
+    # is the fix for the premature-end + talk-over bugs from the live log.
+    if spoke_over_agent:
+        return False
+    if turn_generation is not None and turn_generation != current_generation:
+        return False
+    return True
+
+
 class LiveInterviewOrchestrationController:
     def __init__(
         self,
@@ -750,6 +793,11 @@ class LiveInterviewOrchestrationController:
         self._agent_speech_payload: dict[str, object] | None = None
         self._terminal = False
         self._closed = asyncio.Event()
+        # S1: monotonic counter bumped once per spoken prompt (question /
+        # follow-up / reprompt / repeat). The bridge snapshots it at candidate
+        # speech-start so a turn that finalizes after we moved on cannot drive
+        # policy against the wrong question.
+        self._prompt_generation = 0
 
     async def start(self) -> None:
         command = self._orchestrator.start()
@@ -762,10 +810,21 @@ class LiveInterviewOrchestrationController:
     def current_question_id(self) -> str | None:
         return self._orchestrator.current_question_id
 
+    @property
+    def prompt_generation(self) -> int:
+        return self._prompt_generation
+
+    @property
+    def agent_is_speaking(self) -> bool:
+        return self._agent_speech_in_progress
+
     async def handle_candidate_transcript(
         self,
         transcript: str,
         occurred_at: datetime,
+        *,
+        turn_generation: int | None = None,
+        spoke_over_agent: bool = False,
     ) -> None:
         async with self._lock:
             if self._terminal or self._orchestrator.current_question_id is None:
@@ -789,6 +848,14 @@ class LiveInterviewOrchestrationController:
                 return
             if turn.candidate_intent == CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED:
                 await self._resume_previous_answer(turn=turn, turn_ids=[turn_id])
+                return
+            if not _candidate_turn_drives_policy(
+                turn_generation=turn_generation,
+                current_generation=self._prompt_generation,
+                spoke_over_agent=spoke_over_agent,
+            ):
+                # Recorded above for the transcript/brief, but a late fragment or
+                # talk-over must not advance or close the interview (S1).
                 return
             await self._evaluate_and_execute(turn, [turn_id])
 
@@ -1079,6 +1146,9 @@ class LiveInterviewOrchestrationController:
         spoken_text: str | None = None,
         extra_payload: dict[str, object] | None = None,
     ) -> None:
+        # S1: a new prompt is being delivered — bump the generation so any turn
+        # that belongs to the previous prompt is recognised as stale.
+        self._prompt_generation += 1
         utterance_id = (
             f"{command.question_id}:live-openai:{utterance_kind}:"
             f"{command.attempt_index or command.question_index or 0}"
@@ -1334,6 +1404,8 @@ class OpenAILiveKitWorker:
                 emitter=emitter,
                 candidate_transcript_handler=controller.handle_candidate_transcript,
                 question_id_provider=lambda: controller.current_question_id,
+                prompt_generation_provider=lambda: controller.prompt_generation,
+                agent_speaking_provider=lambda: controller.agent_is_speaking,
                 emit_state_events=False,
             )
             bridge.register(session)
