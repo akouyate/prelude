@@ -32,7 +32,7 @@ func TestDecodeInterviewQuestionsClampsCategoryToWorkerSet(t *testing.T) {
 
 	for _, tc := range cases {
 		raw := []byte(`[{"id":"q1","prompt":"Tell me about a project you are proud of.","category":"` + tc.stored + `","expectedSignal":"x","source":"agent"}]`)
-		questions := decodeInterviewQuestions(raw)
+		questions := decodeInterviewQuestions(raw, "fr")
 		if len(questions) != 1 {
 			t.Fatalf("stored %q: expected 1 question, got %d", tc.stored, len(questions))
 		}
@@ -49,7 +49,7 @@ func TestDecodeInterviewQuestionsClampsCategoryToWorkerSet(t *testing.T) {
 // heuristic that sniffed the prompt/signal/source text.
 func TestDecodeInterviewQuestionsHonorsStoredCategory(t *testing.T) {
 	raw := []byte(`[{"id":"q1","prompt":"What motivates communication and judgment for you?","category":"experience","source":"agent"}]`)
-	questions := decodeInterviewQuestions(raw)
+	questions := decodeInterviewQuestions(raw, "fr")
 	if len(questions) != 1 || questions[0].Category != "experience" {
 		t.Fatalf("expected stored category experience, got %+v", questions)
 	}
@@ -59,7 +59,7 @@ func TestDecodeInterviewQuestionsHonorsStoredCategory(t *testing.T) {
 // interviewer/evaluator is not blind to the intended evaluation signal.
 func TestDecodeInterviewQuestionsThreadsExpectedSignalToTheAgent(t *testing.T) {
 	raw := []byte(`[{"id":"q1","prompt":"Describe a hard tradeoff you owned.","category":"experience","expectedSignal":"ownership and decision-making under constraints","source":"agent"}]`)
-	questions := decodeInterviewQuestions(raw)
+	questions := decodeInterviewQuestions(raw, "fr")
 	if len(questions) != 1 {
 		t.Fatalf("expected 1 question, got %d", len(questions))
 	}
@@ -73,7 +73,7 @@ func TestDecodeInterviewQuestionsThreadsExpectedSignalToTheAgent(t *testing.T) {
 // then speaks it exactly when it needs one bounded probe.
 func TestDecodeInterviewQuestionsHonorsAuthoredFollowUp(t *testing.T) {
 	raw := []byte(`[{"id":"q1","prompt":"Describe a hard tradeoff you owned.","category":"experience","followUpPrompt":"What did you personally decide, and what changed afterward?","source":"agent"}]`)
-	questions := decodeInterviewQuestions(raw)
+	questions := decodeInterviewQuestions(raw, "fr")
 	if len(questions) != 1 {
 		t.Fatalf("expected 1 question, got %d", len(questions))
 	}
@@ -86,11 +86,27 @@ func TestDecodeInterviewQuestionsHonorsAuthoredFollowUp(t *testing.T) {
 // always has a bounded probe available.
 func TestDecodeInterviewQuestionsFallsBackToCategoryFollowUpWhenAbsent(t *testing.T) {
 	raw := []byte(`[{"id":"q1","prompt":"What makes you want this role?","category":"motivation","source":"agent"}]`)
-	questions := decodeInterviewQuestions(raw)
+	questions := decodeInterviewQuestions(raw, "fr")
 	if len(questions) != 1 {
 		t.Fatalf("expected 1 question, got %d", len(questions))
 	}
-	if questions[0].FollowUpPrompt != followUpPrompt("motivation") {
+	if questions[0].FollowUpPrompt != followUpPrompt("motivation", "fr") {
 		t.Fatalf("expected the category fallback follow-up, got %q", questions[0].FollowUpPrompt)
+	}
+}
+
+// The category fallback must be authored in the interview language. An English
+// fallback on a French interview was both spoken to the candidate and injected
+// into the agent instructions ("Follow-up allowed: ..."), which pulled the live
+// voice toward English (the FR/EN mixing seen in the live session).
+func TestFollowUpPromptIsLocalized(t *testing.T) {
+	if got := followUpPrompt("experience", "fr"); got != "Pouvez-vous décrire le contexte, votre action, et le résultat obtenu ?" {
+		t.Fatalf("expected the French experience fallback, got %q", got)
+	}
+	if got := followUpPrompt("motivation", "fr"); got != "Qu'est-ce qui rend cette opportunité particulièrement pertinente pour la suite de votre parcours ?" {
+		t.Fatalf("expected the French motivation fallback, got %q", got)
+	}
+	if got := followUpPrompt("experience", "en"); got != "Can you share the context, your action, and the result?" {
+		t.Fatalf("expected the English fallback to remain available, got %q", got)
 	}
 }

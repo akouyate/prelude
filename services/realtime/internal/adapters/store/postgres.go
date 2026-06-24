@@ -111,12 +111,16 @@ func (s *PostgresStore) GetInterviewPlan(ctx context.Context, planID string) (ap
 	}
 
 	responseModes := decodeStringArray(responseModesBytes)
-	questions := decodeInterviewQuestions(questionsBytes)
+	// Language is pinned for V1 (see plan.Language below). Thread it into question
+	// decoding so the category follow-up fallback is authored in the interview
+	// language rather than defaulting to English.
+	language := "fr"
+	questions := decodeInterviewQuestions(questionsBytes, language)
 	if len(questions) == 0 {
 		return application.InterviewPlan{}, application.ErrPlanNotFound
 	}
 
-	plan.Language = "fr"
+	plan.Language = language
 	plan.Questions = questions
 	plan.AllowVideo = containsString(responseModes, "video")
 	plan.AllowAudioOnly = containsString(responseModes, "audio") || len(responseModes) == 0
@@ -393,7 +397,7 @@ type persistedQuestion struct {
 	Source         string `json:"source"`
 }
 
-func decodeInterviewQuestions(value []byte) []application.InterviewQuestion {
+func decodeInterviewQuestions(value []byte, language string) []application.InterviewQuestion {
 	var raw []persistedQuestion
 	if err := json.Unmarshal(value, &raw); err != nil {
 		return []application.InterviewQuestion{}
@@ -416,7 +420,7 @@ func decodeInterviewQuestions(value []byte) []application.InterviewQuestion {
 			Prompt:         prompt,
 			Category:       category,
 			ExpectedSignal: strings.TrimSpace(question.ExpectedSignal),
-			FollowUpPrompt: resolveFollowUpPrompt(question.FollowUpPrompt, category),
+			FollowUpPrompt: resolveFollowUpPrompt(question.FollowUpPrompt, category, language),
 		})
 	}
 
@@ -475,15 +479,26 @@ func clampQuestionCategory(category string) string {
 // compliance-scanned follow-up persisted on the question, and only falls back to
 // the generic category default when the plan has none (e.g. a legacy row written
 // before the field existed).
-func resolveFollowUpPrompt(authored string, category string) string {
+func resolveFollowUpPrompt(authored string, category string, language string) string {
 	if trimmed := strings.TrimSpace(authored); trimmed != "" {
 		return trimmed
 	}
 
-	return followUpPrompt(category)
+	return followUpPrompt(category, language)
 }
 
-func followUpPrompt(category string) string {
+func followUpPrompt(category string, language string) string {
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(language)), "fr") {
+		switch category {
+		case "motivation":
+			return "Qu'est-ce qui rend cette opportunité particulièrement pertinente pour la suite de votre parcours ?"
+		case "logistics":
+			return "Y a-t-il une contrainte pratique que le recruteur devrait connaître dès maintenant ?"
+		default: // experience, role_fit
+			return "Pouvez-vous décrire le contexte, votre action, et le résultat obtenu ?"
+		}
+	}
+
 	switch category {
 	case "motivation":
 		return "What makes this opportunity specifically relevant for your next step?"
