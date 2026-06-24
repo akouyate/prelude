@@ -44,7 +44,7 @@ import subprocess
 import sys
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Protocol
 
 import httpx
@@ -524,7 +524,7 @@ class RunState:
     completed_seen: bool = False
     agent_joined: bool = False
     premature_closing: bool = False
-    speaking: bool = field(default=False)
+    speaking: bool = False
 
     def next_answer(self) -> str:
         if self.next_answer_index < len(self.answers):

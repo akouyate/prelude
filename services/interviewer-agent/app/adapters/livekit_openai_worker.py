@@ -543,8 +543,6 @@ class LiveKitAgentEventBridge:
         self._turn_segments: list[str] = []
         self._turn_ids: list[str] = []
         self._turn_first_occurred_at: datetime | None = None
-        self._turn_gen_at_flush: int | None = None
-        self._spoke_over_at_flush = False
         self._flush_task: asyncio.Task[None] | None = None
 
     def register(self, session: object) -> None:
@@ -796,8 +794,6 @@ class LiveKitAgentEventBridge:
         self._turn_ids.append(turn_id)
         if self._turn_first_occurred_at is None:
             self._turn_first_occurred_at = created_at
-        self._turn_gen_at_flush = self._turn_generation_snapshot
-        self._spoke_over_at_flush = self._spoke_over_agent_snapshot
 
     def _schedule_turn_flush(self) -> None:
         self._cancel_turn_flush()
@@ -820,8 +816,11 @@ class LiveKitAgentEventBridge:
         segments = self._turn_segments
         turn_ids = self._turn_ids
         occurred_at = self._turn_first_occurred_at
-        generation = self._turn_gen_at_flush
-        spoke_over = self._spoke_over_at_flush
+        # The S1 snapshot is owned by candidate speech-start, which cancels any
+        # pending flush — so it cannot change between the last buffered segment and
+        # this flush. Read it directly instead of shadowing it in per-flush copies.
+        generation = self._turn_generation_snapshot
+        spoke_over = self._spoke_over_agent_snapshot
         self._reset_turn_buffer()
         if not segments or self._handle_turn_handler is None:
             return
