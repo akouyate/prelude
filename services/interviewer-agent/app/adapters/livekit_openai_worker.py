@@ -1313,7 +1313,7 @@ class OpenAILiveKitWorker:
         try:
             from livekit import agents, rtc
             from livekit.agents import room_io
-            from livekit.plugins import openai
+            from livekit.plugins import noise_cancellation, openai
             from openai.types import realtime
         except ImportError as exc:
             raise RuntimeError(
@@ -1422,6 +1422,12 @@ class OpenAILiveKitWorker:
                         sample_rate=24000,
                         num_channels=1,
                         frame_size_ms=50,
+                        # S2: Krisp BVC voice isolation on the inbound audio,
+                        # applied before VAD/transcription. Removes ambient noise
+                        # and background voices so a phone candidate's long answers
+                        # are not fragmented by noise-induced turn boundaries.
+                        # Wideband WebRTC (24kHz) → BVC, not the SIP BVCTelephony.
+                        noise_cancellation=noise_cancellation.BVC(),
                     ),
                     audio_output=room_io.AudioOutputOptions(
                         sample_rate=24000,
