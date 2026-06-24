@@ -19,6 +19,7 @@ func TestMissingProductionConfigReportsAllAbsentRequiredVars(t *testing.T) {
 		"LIVEKIT_URL",
 		"LIVEKIT_API_KEY",
 		"LIVEKIT_API_SECRET",
+		"REALTIME_API_KEY",
 	} {
 		if !containsConfigKey(missing, key) {
 			t.Errorf("expected %q to be required in production", key)
@@ -62,7 +63,7 @@ func TestMissingProductionConfigRequiresR2WhenRecordingEnabled(t *testing.T) {
 func TestMissingProductionConfigIgnoresR2WhenRecordingDisabled(t *testing.T) {
 	getenv := func(key string) string {
 		switch key {
-		case "DATABASE_URL", "REDIS_URL", "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET":
+		case "DATABASE_URL", "REDIS_URL", "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET", "REALTIME_API_KEY":
 			return "configured"
 		default:
 			return ""
@@ -120,6 +121,25 @@ func TestRecordingRetentionDisabled(t *testing.T) {
 	// Recording off: "0" retention is irrelevant — never flagged.
 	if recordingRetentionDisabled(func(string) string { return "" }) {
 		t.Error("recording disabled must never be flagged regardless of retention")
+	}
+}
+
+func TestMissingProductionConfigRequiresRealtimeAPIKey(t *testing.T) {
+	// REALTIME_API_KEY authenticates inbound calls to the realtime HTTP API
+	// (events ingestion, recruiter reads, the destructive recordings-erasure
+	// endpoint). Production must fail fast without it so the API is never served
+	// unauthenticated.
+	getenv := func(key string) string {
+		switch key {
+		case "DATABASE_URL", "REDIS_URL", "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET":
+			return "configured"
+		default:
+			return ""
+		}
+	}
+
+	if !containsConfigKey(missingProductionConfig(getenv), "REALTIME_API_KEY") {
+		t.Error("REALTIME_API_KEY must be required in production so the realtime API is never unauthenticated")
 	}
 }
 

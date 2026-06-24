@@ -135,6 +135,9 @@ func main() {
 	}
 
 	handler := httpapi.NewServer(service)
+	// Shared-secret auth on the HTTP API. Empty in local dev (auth disabled);
+	// production fails fast on a missing REALTIME_API_KEY via requiredProductionConfig.
+	handler.SetAPIKey(os.Getenv("REALTIME_API_KEY"))
 	if egressWebhookParser != nil {
 		handler.SetEgressWebhookParser(egressWebhookParser)
 		go runRecordingReconciler(context.Background(), service, recordingRetentionDays(os.Getenv))

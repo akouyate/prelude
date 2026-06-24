@@ -45,6 +45,11 @@ var requiredProductionConfig = []string{
 	"LIVEKIT_URL",
 	"LIVEKIT_API_KEY",
 	"LIVEKIT_API_SECRET",
+	// Shared secret the HTTP API verifies on inbound calls; without it the API
+	// (events ingestion, recruiter reads, the destructive recordings-erasure
+	// endpoint) would serve unauthenticated. The server disables auth only when
+	// this is empty, so production must require it.
+	"REALTIME_API_KEY",
 }
 
 // recordingRequiredConfig lists the extra env vars needed once audio recording

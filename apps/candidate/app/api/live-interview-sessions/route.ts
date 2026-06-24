@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@prelude/db";
 
 import { prepareCandidateSession } from "../../../src/server/public-interviews";
+import { realtimeAuthHeaders } from "../../../src/server/realtime-api";
 
 const REALTIME_API_URL =
   process.env.PRELUDE_REALTIME_API_URL ?? "http://127.0.0.1:8080";
@@ -72,7 +73,7 @@ export async function POST(request: Request) {
       `${REALTIME_API_URL}/v1/interview-sessions`,
       {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", ...realtimeAuthHeaders() },
         body: JSON.stringify({
           interview_plan_id: prepared.interviewPlanId,
           candidate_id: prepared.candidateId,

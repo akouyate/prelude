@@ -46,6 +46,75 @@ func postEgressWebhook(server *Server) *httptest.ResponseRecorder {
 	return response
 }
 
+func newAuthServer(t *testing.T, apiKey string) *Server {
+	t.Helper()
+	repo := store.NewMemoryStore()
+	service := application.NewService(repo, livekit.NewMockGateway("wss://livekit.example.test"), nil)
+	service.SetRecordingRepository(repo)
+	server := NewServer(service)
+	server.SetAPIKey(apiKey)
+	return server
+}
+
+func deleteRecordings(server *Server, bearer string) *httptest.ResponseRecorder {
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/v1/interview-sessions/is_1/recordings", nil)
+	if bearer != "" {
+		request.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	server.ServeHTTP(response, request)
+	return response
+}
+
+func TestServerRejectsMissingAPIKey(t *testing.T) {
+	server := newAuthServer(t, "s3cret")
+	if response := deleteRecordings(server, ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without bearer, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestServerRejectsWrongAPIKey(t *testing.T) {
+	server := newAuthServer(t, "s3cret")
+	if response := deleteRecordings(server, "nope"); response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 with wrong bearer, got %d", response.Code)
+	}
+}
+
+func TestServerAcceptsValidAPIKey(t *testing.T) {
+	server := newAuthServer(t, "s3cret")
+	if response := deleteRecordings(server, "s3cret"); response.Code == http.StatusUnauthorized {
+		t.Fatalf("expected the valid bearer to pass auth, got 401")
+	}
+}
+
+func TestServerHealthExemptFromAuth(t *testing.T) {
+	server := newAuthServer(t, "s3cret")
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/health", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected /health to bypass auth (200), got %d", response.Code)
+	}
+}
+
+func TestServerWebhookExemptFromAuth(t *testing.T) {
+	// The egress webhook self-authenticates via the LiveKit signature, so the
+	// API-key middleware must not gate it. With no parser wired it returns 404,
+	// never 401.
+	server := newAuthServer(t, "s3cret")
+	if response := postEgressWebhook(server); response.Code == http.StatusUnauthorized {
+		t.Fatalf("expected webhook to bypass api-key auth, got 401")
+	}
+}
+
+func TestServerAuthDisabledWhenKeyUnset(t *testing.T) {
+	// Local/dev without REALTIME_API_KEY: auth is disabled (production fails fast
+	// on the missing key via requiredProductionConfig instead).
+	server := newAuthServer(t, "")
+	if response := deleteRecordings(server, ""); response.Code == http.StatusUnauthorized {
+		t.Fatalf("expected auth disabled when key unset, got 401")
+	}
+}
+
 func seedActiveRecording(t *testing.T, repo *store.MemoryStore, egressID string) {
 	t.Helper()
 	now := time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)

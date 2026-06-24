@@ -12,6 +12,13 @@ function realtimeApiUrl() {
   return process.env.PRELUDE_REALTIME_API_URL ?? "http://127.0.0.1:8080";
 }
 
+// The realtime API verifies REALTIME_API_KEY on every non-public route. When it
+// is unset (local dev) no header is sent and the Go API serves auth-disabled.
+function realtimeAuthHeaders(): Record<string, string> {
+  const apiKey = process.env.REALTIME_API_KEY?.trim();
+  return apiKey ? { authorization: `Bearer ${apiKey}` } : {};
+}
+
 // deleteRecordingAction is the recruiter-facing right-to-erasure trigger. It does
 // NOT tombstone the row itself: the Go realtime service owns deletion because it
 // removes the actual R2 audio object before tombstoning. The console has no
@@ -46,7 +53,7 @@ export async function deleteRecordingAction({
     `${realtimeApiUrl()}/v1/interview-sessions/${encodeURIComponent(
       session.realtimeSessionId,
     )}/recordings`,
-    { method: "DELETE" },
+    { method: "DELETE", headers: realtimeAuthHeaders() },
   );
   if (!response.ok) {
     throw new Error("Failed to delete the recording. Please try again.");
