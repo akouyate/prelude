@@ -824,7 +824,7 @@ function interviewDraft() {
         durationSeconds: 75,
         id: "motivation",
         prompt:
-          "What made you interested in this Customer Success Manager role?",
+          "Qu'est-ce qui vous a donné envie de rejoindre ce poste de Customer Success Manager ?",
         signal: "Role motivation and clarity of expectations",
         source: "agent",
       },
@@ -832,7 +832,7 @@ function interviewDraft() {
         durationSeconds: 90,
         id: "role-skills",
         prompt:
-          "Tell us about a recent customer onboarding project and the impact you had.",
+          "Parlez-moi d'un projet d'onboarding client récent et de l'impact que vous avez eu.",
         signal: "Relevant experience connected to customer success work",
         source: "job_description",
       },
@@ -840,7 +840,7 @@ function interviewDraft() {
         durationSeconds: 90,
         id: "communication",
         prompt:
-          "Explain how you would handle an at-risk customer after a difficult implementation.",
+          "Expliquez comment vous géreriez un client à risque après une implémentation difficile.",
         signal: "Communication, prioritization, and customer judgment",
         source: "agent",
       },
