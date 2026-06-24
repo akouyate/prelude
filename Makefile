@@ -31,10 +31,15 @@ E2E_SMOKE_RUN_ID ?=
 E2E_SMOKE_RESET ?= 1
 E2E_SMOKE_CONSOLE_URL ?= http://localhost:3000
 E2E_SMOKE_LIVE_LLM ?=
+VOICE_SMOKE_TTS ?= pocket
+VOICE_SMOKE_INTERVIEW_PLAN_ID ?= interview_e2e_local-live
+VOICE_SMOKE_VOICE ?=
+VOICE_SMOKE_MAX_SECONDS ?= 240
+VOICE_SMOKE_PYTHON ?= 3.13
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live dev
+.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "Prelude local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -259,6 +264,30 @@ e2e-smoke: env-up ## Create a repeatable V1 E2E smoke dataset with mocked LLM by
 e2e-smoke-live: ## Run the E2E smoke in explicit live-LLM mode; requires ALLOW_LIVE_LLM_TESTS=1.
 	@test "$(ALLOW_LIVE_LLM_TESTS)" = "1" || (printf "Set ALLOW_LIVE_LLM_TESTS=1 to acknowledge paid live LLM smoke mode.\n"; exit 1)
 	@$(MAKE) e2e-smoke E2E_SMOKE_LIVE_LLM=1 ALLOW_LIVE_LLM_TESTS=1
+
+e2e-voice-smoke: ## Drive a full live interview as a synthetic candidate (TTS pocket=local/free default, openai gated). Requires a running realtime API + autoworker.
+	@if [ "$(VOICE_SMOKE_TTS)" = "openai" ] && [ "$(ALLOW_LIVE_LLM_TESTS)" != "1" ]; then \
+		printf "Set ALLOW_LIVE_LLM_TESTS=1 to acknowledge paid OpenAI TTS (or use the default VOICE_SMOKE_TTS=pocket).\n"; \
+		exit 1; \
+	fi
+	@$(LOAD_ENV); \
+	realtime_api_url="$${REALTIME_API_URL:-$(LIVE_SMOKE_REALTIME_API_URL)}"; \
+	if [ -n "$(REALTIME_API_URL)" ]; then \
+		realtime_api_url="$(REALTIME_API_URL)"; \
+	fi; \
+	database_url="$${DATABASE_URL:-$(DATABASE_URL)}"; \
+	if [ "$(origin DATABASE_URL)" = "command line" ] || [ "$(origin DATABASE_URL)" = "environment" ]; then \
+		database_url="$(DATABASE_URL)"; \
+	fi; \
+	harness_args="--tts $(VOICE_SMOKE_TTS) --interview-plan-id $(VOICE_SMOKE_INTERVIEW_PLAN_ID) --realtime-api-url $$realtime_api_url --database-url $$database_url --max-seconds $(VOICE_SMOKE_MAX_SECONDS)"; \
+	if [ -n "$(VOICE_SMOKE_VOICE)" ]; then \
+		harness_args="$$harness_args --voice $(VOICE_SMOKE_VOICE)"; \
+	fi; \
+	uv_with="--with-requirements requirements.txt"; \
+	if [ "$(VOICE_SMOKE_TTS)" = "pocket" ]; then \
+		uv_with="$$uv_with --with pocket-tts==2.1.0"; \
+	fi; \
+	cd services/interviewer-agent && PYTHONPATH=. uv run --python $(VOICE_SMOKE_PYTHON) $$uv_with python -m app.synthetic_candidate $$harness_args
 
 dev: env-up ## Start local infrastructure, then run the app dev stack.
 	@$(LOAD_ENV); pnpm dev
