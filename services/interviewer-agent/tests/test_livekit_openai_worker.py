@@ -541,6 +541,20 @@ def test_live_transcript_classifies_wait_partial_and_complete_answers() -> None:
     )
 
 
+def test_live_transcript_treats_a_too_short_answer_as_partial() -> None:
+    # The realtime VAD often finalizes a turn at a mid-thought breath pause. A
+    # barely-started or terse answer must earn a probe (PARTIAL), not an advance,
+    # so the interviewer invites elaboration instead of rushing to the next one.
+    turn = _candidate_turn_from_live_transcript(
+        question_id="q1",
+        transcript="J'ai mené la migration.",
+        occurred_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
+    )
+
+    assert turn.candidate_intent == CandidateTurnIntent.ANSWER_PARTIAL
+    assert turn.is_complete is False
+
+
 def test_live_transcript_does_not_confuse_answer_examples_with_example_request() -> None:
     for transcript in [
         "Par exemple, j'ai priorise une roadmap apres un incident client.",

@@ -353,18 +353,18 @@ def _contains_any(value: str, markers: list[str]) -> bool:
     return any(marker in value for marker in normalized_markers)
 
 
+_MIN_SUBSTANTIVE_WORDS = 6
+
+
 def _looks_like_partial_answer(normalized: str) -> bool:
     words = normalized.split()
-    if len(words) <= 2 and normalized in {
-        "oui",
-        "non",
-        "un peu",
-        "peut etre",
-        "maybe",
-        "yes",
-        "no",
-    }:
+    # Substance floor: a barely-started or terse answer should earn a probe, not
+    # an advance. The realtime VAD often finalizes a turn at a mid-thought breath
+    # pause, so the interviewer invites elaboration rather than racing to the next
+    # question. This subsumes the old monosyllable list (all below the floor).
+    if len(words) < _MIN_SUBSTANTIVE_WORDS:
         return True
+    # Explicit non-answers, even when longer than the floor.
     return normalized in {
         "je ne sais pas",
         "je sais pas",
@@ -1969,7 +1969,9 @@ def _turn_detection(realtime: object, value: str) -> object:
     return module.SemanticVad(
         type="semantic_vad",
         create_response=False,
-        eagerness="auto",
+        # "low" is OpenAI's most patient setting: it waits through mid-thought
+        # pauses before declaring the candidate's turn over. "auto" cut people off.
+        eagerness="low",
         interrupt_response=True,
     )
 
