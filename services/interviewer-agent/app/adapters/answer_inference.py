@@ -19,7 +19,11 @@ from app.domain.orchestrator import (
 
 
 DEFAULT_OPENAI_ANSWER_INFERENCE_MODEL = "gpt-4.1-mini"
-DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS = 4.0
+# S4: the evaluator stays on the critical path (so the interviewer keeps probing
+# weak answers in real time) but is tightly bounded. Beyond this budget we fall
+# back to the fast local heuristic rather than holding dead air — capping the
+# post-answer pause at ~1.5s instead of the 2-4.5s seen in the live log.
+DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS = 1.5
 
 
 class HeuristicAnswerInferenceProvider:
@@ -108,7 +112,8 @@ class OpenAIAnswerInferenceProvider:
             instructions=_answer_inference_instructions(),
             input=_answer_inference_input(plan=plan, question=question, turn=turn),
             temperature=0,
-            max_output_tokens=700,
+            # Compact JSON verdict; fewer tokens = faster within the tight budget.
+            max_output_tokens=320,
             timeout=self._config.timeout_seconds,
         )
         payload = _json_from_response(response)

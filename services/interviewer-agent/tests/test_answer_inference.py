@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from types import SimpleNamespace
 
 import pytest
 
 from app.adapters.answer_inference import (
+    DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS,
     FallbackAnswerInferenceProvider,
     OpenAIAnswerInferenceConfig,
     OpenAIAnswerInferenceProvider,
@@ -33,6 +35,48 @@ class FakeResponsesClient:
 class FailingProvider:
     async def assess_answer(self, **_kwargs: object):
         raise RuntimeError("provider failed")
+
+
+class SlowProvider:
+    def __init__(self, delay: float) -> None:
+        self.delay = delay
+
+    async def assess_answer(self, **_kwargs: object):
+        await asyncio.sleep(self.delay)
+        raise AssertionError("slow primary should have been cancelled by the budget")
+
+
+def test_default_answer_inference_latency_budget_is_tight() -> None:
+    # S4: keep the LLM evaluator on the path but bound it tightly so the next
+    # utterance is never stalled by a slow evaluation (the 2-4.5s dead air seen
+    # in the live log). The default budget is ~1.5s; beyond it we fall back to
+    # the fast local heuristic, which still probes weak answers.
+    assert DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS <= 1.5
+    assert OpenAIAnswerInferenceConfig.from_env({}).timeout_seconds <= 1.5
+
+
+@pytest.mark.asyncio
+async def test_fallback_answer_inference_uses_heuristic_when_primary_exceeds_budget() -> None:
+    plan = create_demo_plan()
+    provider = FallbackAnswerInferenceProvider(
+        primary=SlowProvider(delay=5.0),
+        timeout_seconds=0.1,
+    )
+
+    assessment = await provider.assess_answer(
+        plan=plan,
+        question=plan.questions[0],
+        turn=CandidateTurn(
+            question_id="q1",
+            transcript="Oui.",
+            is_complete=False,
+            candidate_intent=CandidateTurnIntent.ANSWER_PARTIAL,
+            classifier_reason="answer_too_short_or_generic",
+        ),
+    )
+
+    assert assessment.classification == AnswerClassification.VAGUE
+    assert any(code.startswith("llm_fallback:") for code in assessment.reason_codes)
 
 
 @pytest.mark.asyncio
