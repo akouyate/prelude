@@ -22,8 +22,9 @@ DEFAULT_OPENAI_ANSWER_INFERENCE_MODEL = "gpt-4.1-mini"
 # S4: the evaluator stays on the critical path (so the interviewer keeps probing
 # weak answers in real time) but is tightly bounded. Beyond this budget we fall
 # back to the fast local heuristic rather than holding dead air — capping the
-# post-answer pause at ~1.5s instead of the 2-4.5s seen in the live log.
-DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS = 1.5
+# evaluation wait at ~1.0s (on top of the turn-flush debounce) instead of the
+# 2-4.5s seen in the live log.
+DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS = 1.0
 
 
 class HeuristicAnswerInferenceProvider:
