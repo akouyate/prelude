@@ -101,6 +101,11 @@ func (g *RealGateway) CreateJoin(_ context.Context, input application.LiveKitJoi
 	canPublish := true
 	canSubscribe := true
 	canPublishData := true
+	// The Agent grant is keyed off the "agent-" identity prefix, which is safe to
+	// trust because the participant identity is assigned server-side by the
+	// application service ("candidate-"+CandidateID for the candidate,
+	// "agent-"+SessionID for the interviewer) and never taken from client input —
+	// so a candidate can never present an "agent-" identity to obtain it.
 	token, err := auth.NewAccessToken(g.apiKey, g.apiSecret).
 		SetIdentity(participant).
 		SetName(participant).

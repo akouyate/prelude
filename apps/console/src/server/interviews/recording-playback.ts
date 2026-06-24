@@ -100,21 +100,36 @@ export async function getRecordingPlayback(
   return { durationMs: selected.durationMs, status: selected.status, url };
 }
 
-async function signRecordingUrl(objectKey: string): Promise<string | null> {
-  const bucket = process.env.EGRESS_R2_BUCKET;
+// The R2 client is built once per process — its credentials come from the
+// environment and never change, so rebuilding it on every page load is wasted
+// work. Returns null when object storage is not configured.
+let r2Client: S3Client | null = null;
+
+function getR2Client(): S3Client | null {
+  if (r2Client) {
+    return r2Client;
+  }
   const endpoint = process.env.EGRESS_R2_ENDPOINT;
   const accessKeyId = process.env.EGRESS_R2_ACCESS_KEY_ID;
   const secretAccessKey = process.env.EGRESS_R2_SECRET_ACCESS_KEY;
-  if (!bucket || !endpoint || !accessKeyId || !secretAccessKey) {
+  if (!endpoint || !accessKeyId || !secretAccessKey) {
     return null;
   }
-
-  const client = new S3Client({
+  r2Client = new S3Client({
     credentials: { accessKeyId, secretAccessKey },
     endpoint,
     forcePathStyle: true,
     region: process.env.EGRESS_R2_REGION ?? "auto",
   });
+  return r2Client;
+}
+
+async function signRecordingUrl(objectKey: string): Promise<string | null> {
+  const bucket = process.env.EGRESS_R2_BUCKET;
+  const client = bucket ? getR2Client() : null;
+  if (!bucket || !client) {
+    return null;
+  }
 
   return getSignedUrl(
     client,
