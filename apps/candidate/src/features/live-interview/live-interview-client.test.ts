@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   completeProductSession,
   connectRoom,
+  consumeTranscriptionStream,
   createSession,
   fetchLiveSessionState,
   decodeRealtimeTranscriptPacket,
@@ -13,16 +14,39 @@ import {
 } from "./live-interview-client";
 import type { LiveInterviewSession } from "./live-interview-types";
 
+type FakeTextStreamReader = {
+  info: {
+    attributes?: Record<string, string>;
+    timestamp: number;
+  };
+  [Symbol.asyncIterator](): AsyncIterator<string>;
+};
+
 type FakeTextStreamHandler = (
-  reader: {
-    info: {
-      attributes?: Record<string, string>;
-      timestamp: number;
-    };
-    readAll: () => Promise<string>;
-  },
+  reader: FakeTextStreamReader,
   participantInfo: { identity: string },
 ) => void;
+
+// Mirrors a LiveKit TextStreamReader: an async-iterable that yields each delta
+// chunk (the synchronized agent transcription arrives paced to the audio).
+function textStreamReader({
+  attributes,
+  chunks,
+  timestamp,
+}: {
+  attributes?: Record<string, string>;
+  chunks: string[];
+  timestamp: number;
+}): FakeTextStreamReader {
+  return {
+    info: { attributes, timestamp },
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) {
+        yield chunk;
+      }
+    },
+  };
+}
 
 type FakeRoom = {
   emit: (event: string, ...args: unknown[]) => void;
@@ -327,11 +351,12 @@ describe("live interview client", () => {
     });
   });
 
-  it("pushes native LiveKit transcription text streams", async () => {
+  it("reveals interviewer transcription progressively, synced to the voice", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse({ ok: true }))
       .mockResolvedValueOnce(jsonResponse({ ok: true }));
     const onTranscriptTurn = vi.fn();
+    const onInterviewerCaption = vi.fn();
 
     await connectRoom({
       session: sessionFixture({
@@ -344,6 +369,7 @@ describe("live interview client", () => {
       onAudioPlaybackBlocked: vi.fn(),
       onAudioPlaybackReady: vi.fn(),
       onDisconnected: vi.fn(),
+      onInterviewerCaption,
       onInterviewerJoined: vi.fn(),
       onInterviewerReady: vi.fn(),
       onReconnecting: vi.fn(),
@@ -352,30 +378,123 @@ describe("live interview client", () => {
     });
 
     livekitMock.room?.textStreamHandlers.get("lk.transcription")?.(
-      {
-        info: {
-          attributes: {
-            lk_segment_id: "segment_1",
-            lk_transcribed_track_id: "track_1",
-            lk_transcription_final: "true",
-          },
-          timestamp: 1_780_000_000,
+      textStreamReader({
+        attributes: {
+          lk_segment_id: "segment_1",
+          lk_transcribed_track_id: "track_1",
+          lk_transcription_final: "true",
         },
-        readAll: () => Promise.resolve(" Can you introduce yourself? "),
-      },
+        chunks: [" Can you", " introduce", " yourself? "],
+        timestamp: 1_780_000_000,
+      }),
       { identity: "agent-is_123" },
     );
 
+    // Each delta grows the live caption: the on-screen text tracks the voice.
     await vi.waitFor(() =>
-      expect(onTranscriptTurn).toHaveBeenCalledWith({
-        turnId: "segment_1",
-        sessionId: "is_123",
-        speaker: "interviewer",
-        text: "Can you introduce yourself?",
-        isFinal: true,
-        startedAt: "2026-05-28T20:26:40.000Z",
-        endedAt: "2026-05-28T20:26:40.000Z",
+      expect(onInterviewerCaption).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          text: "Can you introduce yourself?",
+          isFinal: true,
+        }),
+      ),
+    );
+    expect(
+      onInterviewerCaption.mock.calls.map(([caption]) => ({
+        isFinal: caption.isFinal,
+        text: caption.text,
+      })),
+    ).toEqual([
+      { isFinal: false, text: "Can you" },
+      { isFinal: false, text: "Can you introduce" },
+      { isFinal: false, text: "Can you introduce yourself?" },
+      { isFinal: true, text: "Can you introduce yourself?" },
+    ]);
+
+    // The finalized turn still lands exactly once, for the recruiter history.
+    expect(onTranscriptTurn).toHaveBeenCalledTimes(1);
+    expect(onTranscriptTurn).toHaveBeenCalledWith({
+      turnId: "segment_1",
+      sessionId: "is_123",
+      speaker: "interviewer",
+      text: "Can you introduce yourself?",
+      isFinal: true,
+      startedAt: "2026-05-28T20:26:40.000Z",
+      endedAt: "2026-05-28T20:26:40.000Z",
+    });
+  });
+
+  it("never publishes a live caption for the candidate's own speech", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+    const onTranscriptTurn = vi.fn();
+    const onInterviewerCaption = vi.fn();
+
+    await connectRoom({
+      session: sessionFixture({
+        livekit: {
+          ...sessionFixture().livekit,
+          isMock: false,
+        },
       }),
+      stream: mediaStreamFixture({ audio: true, video: false }),
+      onAudioPlaybackBlocked: vi.fn(),
+      onAudioPlaybackReady: vi.fn(),
+      onDisconnected: vi.fn(),
+      onInterviewerCaption,
+      onInterviewerJoined: vi.fn(),
+      onInterviewerReady: vi.fn(),
+      onReconnecting: vi.fn(),
+      onRoomConnected: vi.fn(),
+      onTranscriptTurn,
+    });
+
+    livekitMock.room?.textStreamHandlers.get("lk.transcription")?.(
+      textStreamReader({
+        attributes: { lk_segment_id: "c_seg" },
+        chunks: ["I have", " relevant", " experience."],
+        timestamp: 1_780_000_000,
+      }),
+      { identity: "candidate-cs_123" },
+    );
+
+    await vi.waitFor(() => expect(onTranscriptTurn).toHaveBeenCalledTimes(1));
+    expect(onInterviewerCaption).not.toHaveBeenCalled();
+    expect(onTranscriptTurn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        speaker: "candidate",
+        text: "I have relevant experience.",
+        isFinal: true,
+      }),
+    );
+  });
+
+  it("accumulates transcription deltas into a growing caption", async () => {
+    const onCaption = vi.fn();
+    const onTurn = vi.fn();
+
+    await consumeTranscriptionStream({
+      reader: textStreamReader({
+        attributes: { lk_segment_id: "seg", lk_transcription_final: "true" },
+        chunks: ["Bonjour", " et", " bienvenue."],
+        timestamp: 1_780_000_000,
+      }),
+      participantIdentity: "agent-is_9",
+      sessionId: "is_9",
+      onCaption,
+      onTurn,
+    });
+
+    expect(onCaption.mock.calls.map(([caption]) => caption.text)).toEqual([
+      "Bonjour",
+      "Bonjour et",
+      "Bonjour et bienvenue.",
+      "Bonjour et bienvenue.",
+    ]);
+    expect(onTurn).toHaveBeenCalledTimes(1);
+    expect(onTurn).toHaveBeenCalledWith(
+      expect.objectContaining({ isFinal: true, text: "Bonjour et bienvenue." }),
     );
   });
 

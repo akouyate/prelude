@@ -123,19 +123,139 @@ export function visibleInterviewerTurns(
       return byStart !== 0 ? byStart : left.turnId.localeCompare(right.turnId);
     });
 
-  // Collapse exact-duplicate phrases: the realtime stream sometimes finalizes the
-  // same question twice with different turn ids, which showed as duplicated lines.
-  // Keep the first occurrence of each normalized text.
-  const seen = new Set<string>();
-  return sorted.filter((turn) => {
-    const key = turn.text.trim().replace(/\s+/g, " ").toLowerCase();
-    if (seen.has(key)) {
-      return false;
-    }
-    seen.add(key);
+  // Collapse progressive duplicates: the same spoken phrase arrives several times
+  // at different lengths — streaming partials that leaked in as final, plus the
+  // prelude data packet and the HTTP poll — which showed as stacked, half-written
+  // copies of one question. Keep the most complete version. A finished question
+  // ends on terminal punctuation, so two genuinely distinct questions are never
+  // merged; only an unterminated fragment folds into the longer phrase it
+  // prefixes.
+  const kept: LiveTranscriptTurn[] = [];
+  for (const turn of sorted) {
+    const key = normalizeTranscriptText(turn.text);
+    const dupIndex = kept.findIndex((other) => {
+      const otherKey = normalizeTranscriptText(other.text);
+      if (otherKey === key) {
+        return true;
+      }
+      if (otherKey.startsWith(key)) {
+        return looksTruncated(key);
+      }
+      if (key.startsWith(otherKey)) {
+        return looksTruncated(otherKey);
+      }
 
-    return true;
-  });
+      return false;
+    });
+
+    if (dupIndex === -1) {
+      kept.push(turn);
+      continue;
+    }
+
+    const existing = kept[dupIndex];
+    if (
+      existing &&
+      normalizeTranscriptText(turn.text).length >
+        normalizeTranscriptText(existing.text).length
+    ) {
+      kept[dupIndex] = turn;
+    }
+  }
+
+  return kept;
+}
+
+// normalizeTranscriptText is the dedupe/identity key for a spoken phrase:
+// trimmed, single-spaced, lower-cased — so the same question phrased with
+// incidental whitespace or casing differences collapses to one line.
+export function normalizeTranscriptText(text: string): string {
+  return text.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+// looksTruncated marks a phrase that does not end on terminal punctuation — the
+// fingerprint of a streaming partial cut mid-sentence, as opposed to a finished
+// question. Only such fragments are folded into a longer phrase they prefix, so
+// two complete questions are never collapsed into one.
+function looksTruncated(normalizedText: string): boolean {
+  return !/[.!?…]$/.test(normalizedText.trim());
+}
+
+export type InterviewerView = {
+  // The big foreground line. null means "nothing said yet" — the caller falls
+  // back to a status description.
+  activeText: string | null;
+  // Identity of the active line, used to re-key the render so a *new* question
+  // re-triggers the word reveal while a *growing* one updates in place.
+  activeTurnId: string | null;
+  // True only while the live caption is still streaming in (voice in progress),
+  // which drives the per-word reveal + cursor. False once finalized or when the
+  // active line is a finalized fallback (e.g. after a reconnect).
+  isStreaming: boolean;
+  // Up to the three previous finalized questions, shown dimmed above the active
+  // line. Never includes the active line's own (possibly finalized) twin.
+  previous: LiveTranscriptTurn[];
+};
+
+// selectInterviewerView decides what the candidate's live stage shows. The live
+// caption (audio-synced LiveKit transcription) is authoritative for the active
+// line so the text tracks the voice word by word; finalized turns are history.
+// The same segment also arrives as a finalized turn from other paths (LiveKit
+// stream close, the prelude data packet, HTTP polling), so the caption's twin is
+// excluded from the dimmed history to avoid showing it twice.
+export function selectInterviewerView({
+  finalTurns,
+  caption,
+}: {
+  finalTurns: LiveTranscriptTurn[];
+  caption: LiveTranscriptTurn | null;
+}): InterviewerView {
+  const finals = visibleInterviewerTurns(finalTurns);
+  const captionText = caption?.text.trim() ?? "";
+
+  if (caption && captionText.length > 0) {
+    const captionKey = normalizeTranscriptText(captionText);
+    const lastIndex = finals.length - 1;
+    const previous = finals.filter((turn, index) => {
+      if (turn.turnId === caption.turnId) {
+        return false;
+      }
+      const turnKey = normalizeTranscriptText(turn.text);
+      if (turnKey === captionKey) {
+        return false;
+      }
+      // The caption is the live version of the most recent utterance: drop that
+      // one turn when they are the same growing phrase (either prefixes the
+      // other), but never an older question that merely shares a prefix.
+      if (
+        index === lastIndex &&
+        (turnKey.startsWith(captionKey) || captionKey.startsWith(turnKey))
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+
+    return {
+      activeText: captionText,
+      activeTurnId: caption.turnId,
+      isStreaming: !caption.isFinal,
+      previous: lastTurns(previous, 3),
+    };
+  }
+
+  const active = finals.length > 0 ? finals[finals.length - 1] : null;
+  return {
+    activeText: active?.text ?? null,
+    activeTurnId: active?.turnId ?? null,
+    isStreaming: false,
+    previous: lastTurns(finals.slice(0, -1), 3),
+  };
+}
+
+function lastTurns(turns: LiveTranscriptTurn[], count: number) {
+  return turns.slice(Math.max(0, turns.length - count));
 }
 
 export function hasClosingTranscript(state: LiveSessionState) {

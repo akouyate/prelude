@@ -33,11 +33,11 @@ import type {
 } from "./live-interview-types";
 import {
   hasClosingTranscript,
+  selectInterviewerView,
   shouldKeepCurrentRuntimeStatus,
   statusFromSessionState,
   statusFromTranscriptTurn,
   transcriptTurnsFromSessionState,
-  visibleInterviewerTurns,
 } from "./live-interview-runtime";
 import { prepareVoiceLevelMeter, VoiceLevelMeter } from "./voice-level-meter";
 
@@ -90,6 +90,11 @@ export function LiveInterviewRoom({
   const [transcriptTurns, setTranscriptTurns] = React.useState<
     LiveTranscriptTurn[]
   >([]);
+  // The interviewer's currently-spoken segment, streamed in from the LiveKit
+  // transcription paced to the audio. It drives the live word-by-word reveal;
+  // finalized turns live in transcriptTurns for history.
+  const [interviewerCaption, setInterviewerCaption] =
+    React.useState<LiveTranscriptTurn | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
   const roomRef = React.useRef<ConnectedRoom | null>(null);
   const localStreamRef = React.useRef<MediaStream | null>(null);
@@ -121,11 +126,15 @@ export function LiveInterviewRoom({
     [],
   );
 
-  // The candidate sees only the interviewer's finalized questions — not their own
-  // speech, and not streaming partials (which flickered and duplicated).
-  const visibleTurns = React.useMemo(
-    () => visibleInterviewerTurns(transcriptTurns),
-    [transcriptTurns],
+  // The candidate sees one foreground line — the interviewer's live caption while
+  // it streams, then the finalized question — above a few dimmed previous ones.
+  const interviewerView = React.useMemo(
+    () =>
+      selectInterviewerView({
+        finalTurns: transcriptTurns,
+        caption: interviewerCaption,
+      }),
+    [interviewerCaption, transcriptTurns],
   );
 
   React.useEffect(() => {
@@ -214,6 +223,7 @@ export function LiveInterviewRoom({
     setError(null);
     setIsAudioPlaybackBlocked(false);
     setTranscriptTurns([]);
+    setInterviewerCaption(null);
     setElapsedSeconds(0);
     serverCompletionScheduledRef.current = false;
     if (completionTimerRef.current) {
@@ -282,6 +292,12 @@ export function LiveInterviewRoom({
           mergeTranscriptTurns([turn]);
           setStatus((currentStatus) =>
             statusFromTranscriptTurn(turn, currentStatus),
+          );
+        },
+        onInterviewerCaption: (caption) => {
+          setInterviewerCaption(caption);
+          setStatus((currentStatus) =>
+            statusFromTranscriptTurn(caption, currentStatus),
           );
         },
       });
@@ -471,16 +487,19 @@ export function LiveInterviewRoom({
   if (isLiveExperience) {
     return (
       <LiveInterviewStage
+        activeText={interviewerView.activeText}
+        activeTurnId={interviewerView.activeTurnId}
         allowedModes={allowedModes}
         elapsedSeconds={elapsedSeconds}
         isAudioPlaybackBlocked={isAudioPlaybackBlocked}
         isRoomActive={isRoomActive}
+        isStreaming={interviewerView.isStreaming}
         isVideoEnabled={isVideoEnabled}
         localStream={localStream}
         onEnableAudio={enableAudio}
         onEndInterview={endInterview}
+        previousTurns={interviewerView.previous}
         status={status}
-        transcriptTurns={visibleTurns}
         videoRef={videoRef}
       />
     );
@@ -846,51 +865,57 @@ function StatusPill({ status }: { status: RoomStatus }) {
 }
 
 function LiveInterviewStage({
+  activeText,
+  activeTurnId,
   allowedModes,
   elapsedSeconds,
   isAudioPlaybackBlocked,
   isRoomActive,
+  isStreaming,
   isVideoEnabled,
   localStream,
   onEnableAudio,
   onEndInterview,
+  previousTurns,
   status,
-  transcriptTurns,
   videoRef,
 }: {
+  activeText: string | null;
+  activeTurnId: string | null;
   allowedModes: string[];
   elapsedSeconds: number;
   isAudioPlaybackBlocked: boolean;
   isRoomActive: boolean;
+  isStreaming: boolean;
   isVideoEnabled: boolean;
   localStream: MediaStream | null;
   onEnableAudio: () => void;
   onEndInterview: () => void;
+  previousTurns: LiveTranscriptTurn[];
   status: RoomStatus;
-  transcriptTurns: LiveTranscriptTurn[];
   videoRef: React.RefObject<HTMLVideoElement | null>;
 }) {
   const showVideo = Boolean(
     localStream && allowedModes.includes("video") && isVideoEnabled,
   );
-  const interviewerTurns = React.useMemo(
-    () => transcriptTurns.filter((turn) => turn.speaker === "interviewer"),
-    [transcriptTurns],
-  );
-  const activeInterviewerTurn =
-    interviewerTurns.length > 0
-      ? interviewerTurns[interviewerTurns.length - 1]
-      : null;
-  const previousInterviewerTurns = activeInterviewerTurn
-    ? interviewerTurns.slice(Math.max(0, interviewerTurns.length - 3), -1)
-    : [];
+  const activeDisplayText = activeText ?? statusDescription(status);
   const activeWords = React.useMemo(
-    () =>
-      splitTranscriptWords(
-        activeInterviewerTurn?.text ?? statusDescription(status),
-      ),
-    [activeInterviewerTurn?.text, status],
+    () => splitTranscriptWords(activeDisplayText),
+    [activeDisplayText],
   );
+  const activeSizeClass = activeTextSizeClass(activeDisplayText);
+  const stageScrollRef = React.useRef<HTMLDivElement | null>(null);
+  // Keep the live edge (the word being spoken) in view when a long turn — the
+  // closing especially — grows past the viewport, instead of letting it clip.
+  React.useEffect(() => {
+    const container = stageScrollRef.current;
+    if (!container || !isStreaming) {
+      return;
+    }
+    if (container.scrollHeight > container.clientHeight) {
+      container.scrollTop = container.scrollHeight;
+    }
+  }, [activeWords.length, isStreaming]);
   const isConnectingOnly =
     status === "preparing" ||
     status === "permission_required" ||
@@ -918,15 +943,18 @@ function LiveInterviewStage({
         <StatusPill status={status} />
       </div>
 
-      <div className="relative grid min-h-0 flex-1 place-items-center py-4 sm:py-10">
-        <div className="w-full max-w-4xl">
+      <div
+        className="relative flex min-h-0 flex-1 flex-col overflow-y-auto py-4 sm:py-10"
+        ref={stageScrollRef}
+      >
+        <div className="m-auto w-full max-w-4xl">
           {isConnectingOnly ? (
             <ConnectingInterviewState status={status} />
           ) : (
             <div
               aria-live="polite"
               className="mx-auto max-w-3xl text-left"
-              key={activeInterviewerTurn?.turnId ?? status}
+              key={activeTurnId ?? status}
             >
               <div className="mb-5 inline-flex items-center gap-2 sm:mb-7">
                 <span className="h-2 w-2 rounded-full bg-olive-200 motion-safe:animate-[cc-livedot_1.6s_ease-in-out_infinite]" />
@@ -936,7 +964,7 @@ function LiveInterviewStage({
               </div>
 
               <div className="flex flex-col gap-3">
-                {previousInterviewerTurns.map((turn) => (
+                {previousTurns.map((turn) => (
                   <p
                     className="max-w-2xl animate-[cc-histIn_.5s_ease_both] text-base font-medium leading-7 text-white/32 sm:text-xl"
                     key={turn.turnId}
@@ -944,17 +972,34 @@ function LiveInterviewStage({
                     {turn.text}
                   </p>
                 ))}
-                <p className="text-3xl font-semibold leading-[1.22] tracking-normal text-[#fef9f2] sm:text-5xl lg:text-6xl">
-                  {activeWords.map((word, index) => (
-                    <span
-                      className="mr-[0.24em] inline-block animate-[cc-wordIn_.5s_cubic-bezier(.2,.7,.2,1)_both]"
-                      key={`${word}-${index}`}
-                      style={{ animationDelay: `${Math.min(index, 12) * 28}ms` }}
-                    >
-                      {word}
-                    </span>
-                  ))}
-                  <span className="inline-block h-[0.92em] w-[3px] translate-y-[0.08em] bg-olive-200 motion-safe:animate-[cc-blink_1s_step-end_infinite]" />
+                <p
+                  className={`font-semibold leading-[1.2] tracking-normal text-[#fef9f2] ${activeSizeClass}`}
+                >
+                  {activeWords.map((word, index) => {
+                    // Each word mounts exactly when its delta arrives, so the
+                    // entrance animation tracks the voice. Keying by turn+index
+                    // (not by text) keeps a growing word stable in place while a
+                    // new question re-keys and replays the reveal. The last word
+                    // while streaming is the one being spoken — gently lit.
+                    const isLiveWord =
+                      isStreaming && index === activeWords.length - 1;
+
+                    return (
+                      <span
+                        className={`mr-[0.24em] inline-block${
+                          isStreaming
+                            ? " animate-[cc-wordIn_.42s_cubic-bezier(.2,.7,.2,1)_both]"
+                            : ""
+                        }${isLiveWord ? " text-[oklch(0.9_0.14_121.3)]" : ""}`}
+                        key={`${activeTurnId ?? "status"}:${index}`}
+                      >
+                        {word}
+                      </span>
+                    );
+                  })}
+                  {isStreaming ? (
+                    <span className="inline-block h-[0.92em] w-[3px] translate-y-[0.08em] bg-olive-200 motion-safe:animate-[cc-blink_1s_step-end_infinite]" />
+                  ) : null}
                 </p>
               </div>
 
@@ -1224,4 +1269,19 @@ function statusDescription(status: RoomStatus) {
 
 function splitTranscriptWords(text: string) {
   return text.trim().split(/\s+/).filter(Boolean);
+}
+
+// The active line is sized to its length: short questions stay large and
+// theatrical, long statements (the closing especially) shrink so they fit the
+// viewport rather than overflowing off the bottom. The scroll container is the
+// safety net for anything still taller than the screen.
+function activeTextSizeClass(text: string): string {
+  const length = text.trim().length;
+  if (length > 220) {
+    return "text-xl sm:text-2xl lg:text-3xl";
+  }
+  if (length > 120) {
+    return "text-2xl sm:text-3xl lg:text-4xl";
+  }
+  return "text-3xl sm:text-5xl lg:text-6xl";
 }

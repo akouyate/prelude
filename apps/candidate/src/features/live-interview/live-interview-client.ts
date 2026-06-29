@@ -102,6 +102,7 @@ export async function connectRoom({
   session,
   stream,
   onTranscriptTurn,
+  onInterviewerCaption,
   onInterviewerJoined,
   onInterviewerReady,
   onDisconnected,
@@ -113,6 +114,10 @@ export async function connectRoom({
   session: LiveInterviewSession;
   stream: MediaStream;
   onTranscriptTurn?: LiveTranscriptTurnHandler;
+  // Fired for every delta of the interviewer's audio-synced transcription, so
+  // the candidate UI can reveal the question word by word, in step with the
+  // voice (the finalized turn still arrives via onTranscriptTurn for history).
+  onInterviewerCaption?: LiveTranscriptTurnHandler;
   onInterviewerJoined: () => void;
   onInterviewerReady: () => void;
   onDisconnected: (event: RoomDisconnectedEvent) => void;
@@ -192,21 +197,13 @@ export async function connectRoom({
   room.registerTextStreamHandler?.(
     LIVEKIT_TRANSCRIPTION_TOPIC,
     (reader, participantInfo) => {
-      void reader
-        .readAll()
-        .then((text) => {
-          const turn = livekitTextStreamToTranscriptTurn({
-            attributes: reader.info.attributes,
-            participantIdentity: participantInfo.identity,
-            sessionId: session.sessionId,
-            text,
-            timestamp: reader.info.timestamp,
-          });
-          if (turn) {
-            onTranscriptTurn?.(turn);
-          }
-        })
-        .catch(() => undefined);
+      void consumeTranscriptionStream({
+        reader,
+        participantIdentity: participantInfo.identity,
+        sessionId: session.sessionId,
+        onCaption: onInterviewerCaption,
+        onTurn: onTranscriptTurn,
+      }).catch(() => undefined);
     },
   );
   room.on(RoomEvent.TrackSubscribed, (track) => {
@@ -298,18 +295,89 @@ export function decodeRealtimeTranscriptPacket(
   }
 }
 
-function livekitTextStreamToTranscriptTurn({
+// The minimal slice of a LiveKit TextStreamReader we depend on: its header
+// (info) and async iteration, which yields each delta chunk as the agent's
+// synchronized transcription arrives paced to the audio.
+type TranscriptionStreamReader = {
+  info: { attributes?: Record<string, string>; timestamp: number };
+  [Symbol.asyncIterator](): AsyncIterator<string>;
+};
+
+// consumeTranscriptionStream drains one LiveKit transcription stream (one spoken
+// segment) incrementally. For the interviewer it republishes the running text on
+// every delta (onCaption) so the candidate UI tracks the voice word by word;
+// when the segment closes it emits the finalized turn (onTurn) for history. The
+// candidate's own speech is not shown live, so only its final turn is emitted.
+// Reading with readAll() instead would discard the audio-synced pacing the agent
+// emits and collapse the whole segment into one late block.
+export async function consumeTranscriptionStream({
+  reader,
+  participantIdentity,
+  sessionId,
+  onCaption,
+  onTurn,
+}: {
+  reader: TranscriptionStreamReader;
+  participantIdentity: string;
+  sessionId: string;
+  onCaption?: LiveTranscriptTurnHandler;
+  onTurn?: LiveTranscriptTurnHandler;
+}): Promise<void> {
+  const isInterviewer = participantIdentity.startsWith("agent-");
+  let accumulated = "";
+
+  for await (const chunk of reader) {
+    accumulated += chunk;
+    if (!isInterviewer) {
+      continue;
+    }
+
+    const partial = livekitTranscriptTurn({
+      attributes: reader.info.attributes,
+      participantIdentity,
+      sessionId,
+      text: accumulated,
+      timestamp: reader.info.timestamp,
+      isFinal: false,
+    });
+    if (partial) {
+      onCaption?.(partial);
+    }
+  }
+
+  const finalTurn = livekitTranscriptTurn({
+    attributes: reader.info.attributes,
+    participantIdentity,
+    sessionId,
+    text: accumulated,
+    timestamp: reader.info.timestamp,
+  });
+  if (!finalTurn) {
+    return;
+  }
+
+  if (isInterviewer) {
+    onCaption?.(finalTurn);
+  }
+  onTurn?.(finalTurn);
+}
+
+export function livekitTranscriptTurn({
   attributes,
   participantIdentity,
   sessionId,
   text,
   timestamp,
+  isFinal,
 }: {
   attributes?: Record<string, string>;
   participantIdentity: string;
   sessionId: string;
   text: string;
   timestamp: number;
+  // Override the finality of the turn. While streaming, partials pass false; the
+  // closing turn omits it and falls back to the stream's own final attribute.
+  isFinal?: boolean;
 }): LiveTranscriptTurn | null {
   const normalizedText = text.trim();
   if (!normalizedText) {
@@ -317,7 +385,8 @@ function livekitTextStreamToTranscriptTurn({
   }
 
   const segmentId = attributes?.lk_segment_id ?? attributes?.segment_id;
-  const isFinal = attributes?.lk_transcription_final !== "false";
+  const resolvedIsFinal =
+    isFinal ?? (attributes?.lk_transcription_final !== "false");
   const transcribedTrackId =
     attributes?.lk_transcribed_track_id ?? attributes?.transcribed_track_id;
   const speaker = participantIdentity.startsWith("agent-")
@@ -332,9 +401,9 @@ function livekitTextStreamToTranscriptTurn({
     sessionId,
     speaker,
     text: normalizedText,
-    isFinal,
+    isFinal: resolvedIsFinal,
     startedAt,
-    endedAt: isFinal ? startedAt : undefined,
+    endedAt: resolvedIsFinal ? startedAt : undefined,
   };
 }
 
