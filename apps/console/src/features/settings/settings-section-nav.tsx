@@ -1,35 +1,24 @@
 "use client";
 
-import type { ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useClerk } from "@clerk/nextjs";
-import {
-  Bell,
-  Building,
-  Community,
-  CreditCard,
-  LogOut,
-  Microphone,
-  Usb,
-  User,
-} from "iconoir-react";
+import { LogOut } from "iconoir-react";
 import { useTranslation } from "react-i18next";
-import { cn } from "@prelude/ui";
+import { UnderlineTabs } from "@prelude/ui";
 
 import type { SettingsSection } from "./settings-types";
 
 const settingsNavItems: Array<{
-  icon: ReactNode;
   labelKey: string;
   value: SettingsSection;
 }> = [
-  { icon: <User aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.profile", value: "profile" },
-  { icon: <Building aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.workspace", value: "workspace" },
-  { icon: <Community aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.team", value: "team" },
-  { icon: <Microphone aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.interview", value: "interview" },
-  { icon: <Usb aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.integrations", value: "integrations" },
-  { icon: <Bell aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.notifications", value: "notifications" },
-  { icon: <CreditCard aria-hidden={true} className="h-[17px] w-[17px]" />, labelKey: "settings.nav.billing", value: "billing" },
+  { labelKey: "settings.nav.profile", value: "profile" },
+  { labelKey: "settings.nav.workspace", value: "workspace" },
+  { labelKey: "settings.nav.team", value: "team" },
+  { labelKey: "settings.nav.interview", value: "interview" },
+  { labelKey: "settings.nav.integrations", value: "integrations" },
+  { labelKey: "settings.nav.notifications", value: "notifications" },
+  { labelKey: "settings.nav.billing", value: "billing" },
 ];
 
 export function SettingsSectionNav({
@@ -44,35 +33,19 @@ export function SettingsSectionNav({
   const { t } = useTranslation();
 
   return (
-    <nav className="sticky top-6 hidden flex-col gap-px lg:flex">
-      {settingsNavItems.map((item) => {
-        const active = section === item.value;
-
-        return (
-          <button
-            className={cn(
-              "flex h-[37px] w-full cursor-pointer items-center gap-3 rounded-[11px] px-3 text-left text-[13.5px] transition",
-              active
-                ? "bg-[#eef0e3] font-semibold text-olive-900"
-                : "bg-transparent font-medium text-ink-600 hover:bg-white/60 hover:text-ink-950",
-            )}
-            key={item.value}
-            onClick={() => onSectionChange(item.value)}
-            type="button"
-          >
-            <span
-              className={cn(
-                "grid h-5 w-5 place-items-center",
-                active ? "text-olive-800" : "text-ink-400",
-              )}
-            >
-              {item.icon}
-            </span>
-            <span className="flex-1">{t(item.labelKey)}</span>
-          </button>
-        );
-      })}
-      <div className="mx-1 my-2.5 h-px bg-[#ece8de]" />
+    <nav className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+      <UnderlineTabs
+        ariaLabel={t("settings.nav.aria")}
+        className="min-w-0 flex-1"
+        listClassName="gap-[26px]"
+        onValueChange={onSectionChange}
+        options={settingsNavItems.map((item) => ({
+          label: t(item.labelKey),
+          value: item.value,
+        }))}
+        tabClassName="h-[45px] text-[13.5px]"
+        value={section}
+      />
       {authProvider === "clerk" ? (
         <ClerkSignOutButton label={t("settings.nav.signOut")} />
       ) : (
@@ -117,7 +90,7 @@ function SignOutButton({
 }) {
   return (
     <button
-      className="flex h-[37px] w-full cursor-pointer items-center gap-3 rounded-[11px] px-3 text-left text-[13.5px] font-medium text-coral-700 transition hover:bg-coral-50"
+      className="flex h-[37px] w-full cursor-pointer items-center gap-3 rounded-[11px] px-3 text-left text-[13.5px] font-medium text-coral-700 transition hover:bg-coral-50 md:w-auto md:shrink-0"
       onClick={onClick}
       type="button"
     >

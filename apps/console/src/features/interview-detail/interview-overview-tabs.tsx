@@ -1,16 +1,11 @@
 "use client";
 
 import * as React from "react";
-import {
-  Check,
-  Copy,
-  Link as LinkIcon,
-  Pause,
-  WarningTriangle,
-} from "iconoir-react";
+import { Check, Link as LinkIcon, Pause, WarningTriangle } from "iconoir-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { UnderlineTabs, cn } from "@prelude/ui";
+import type { CandidateInvitationSummary } from "../../server/interviews/candidate-invitations";
 
 import { updateInterviewPublicationStatusAction } from "../../server/interviews/interview-actions";
 import {
@@ -18,9 +13,22 @@ import {
   isCandidateScreenInProgress,
   type CandidateScreenListItem,
 } from "../candidate-screens";
+import { CandidateInvitationsPanel } from "./candidate-invitations-panel";
+import { CopyCandidateLinkButton } from "./copy-candidate-link-button";
+import { InterviewSectionTitle } from "./interview-section-title";
 
-type ReviewFilter = "all" | "archived" | "in_progress" | "to_call" | "to_review";
-type OverviewTab = "candidates" | "overview" | "questions" | "settings";
+type ReviewFilter =
+  | "all"
+  | "archived"
+  | "in_progress"
+  | "to_call"
+  | "to_review";
+type OverviewTab =
+  | "candidates"
+  | "invitations"
+  | "overview"
+  | "questions"
+  | "settings";
 
 export type InterviewOverviewQuestion = {
   id: string;
@@ -63,6 +71,7 @@ export type InterviewOverviewTabsProps = {
   criteria: InterviewOverviewCriterion[];
   guardrails: string[];
   interviewId: string;
+  invitations: CandidateInvitationSummary[];
   publicationStatus: string;
   questions: InterviewOverviewQuestion[];
   roleBrief: string;
@@ -107,6 +116,7 @@ export function InterviewOverviewTabs({
   criteria,
   guardrails,
   interviewId,
+  invitations,
   publicationStatus,
   questions,
   roleBrief,
@@ -140,6 +150,11 @@ export function InterviewOverviewTabs({
             value: "candidates",
           },
           {
+            count: invitations.length > 0 ? invitations.length : undefined,
+            label: t("interviewDetail.tabInvitations"),
+            value: "invitations",
+          },
+          {
             count: questions.length,
             label: t("interviewDetail.tabQuestions"),
             value: "questions",
@@ -160,9 +175,15 @@ export function InterviewOverviewTabs({
       {tab === "candidates" ? (
         <CandidatesPanel candidates={candidates} summaryLine={summaryLine} />
       ) : null}
-      {tab === "questions" ? (
-        <QuestionsPanel questions={questions} />
+      {tab === "invitations" ? (
+        <CandidateInvitationsPanel
+          interviewId={interviewId}
+          invitations={invitations}
+          publicationStatus={publicationStatus}
+          roleTitle={roleTitle}
+        />
       ) : null}
+      {tab === "questions" ? <QuestionsPanel questions={questions} /> : null}
       {tab === "settings" ? (
         <SettingsPanel
           candidatePath={candidatePath}
@@ -174,46 +195,6 @@ export function InterviewOverviewTabs({
         />
       ) : null}
     </section>
-  );
-}
-
-export function CopyCandidateLinkButton({
-  candidatePath,
-  children,
-}: {
-  candidatePath: string;
-  children: React.ReactNode;
-}) {
-  const { t } = useTranslation();
-  const [copied, setCopied] = React.useState(false);
-
-  const handleCopy = React.useCallback(async () => {
-    const origin = typeof window === "undefined" ? "" : window.location.origin;
-    await navigator.clipboard?.writeText(`${origin}${candidatePath}`);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  }, [candidatePath]);
-
-  return (
-    <button
-      className={cn(
-        "inline-flex h-[42px] max-w-[280px] cursor-pointer items-center justify-center gap-[9px] rounded-full border px-3.5 text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
-        copied
-          ? "border-[#cdd9b6] bg-[#eef0e3] text-olive-950"
-          : "border-[#ddd8cc] bg-white text-ink-950 hover:border-ink-950",
-      )}
-      onClick={handleCopy}
-      type="button"
-    >
-      {copied ? (
-        <Check aria-hidden={true} className="h-[15px] w-[15px]" />
-      ) : (
-        <Copy aria-hidden={true} className="h-[15px] w-[15px] text-[#8a8178]" />
-      )}
-      <span className="truncate text-[#5b574f]">
-        {copied ? t("interviewDetail.copyLinkCopied") : children}
-      </span>
-    </button>
   );
 }
 
@@ -289,7 +270,7 @@ function OverviewPanel({
       </section>
 
       <section>
-        <SectionTitle
+        <InterviewSectionTitle
           description={t("interviewDetail.criteriaDescription")}
           title={t("interviewDetail.criteriaTitle")}
         />
@@ -327,8 +308,7 @@ function CandidatesPanel({
   const { t } = useTranslation();
   const [filter, setFilter] = React.useState<ReviewFilter>("all");
   const visibleCandidates = React.useMemo(
-    () =>
-      candidates.filter((candidate) => matchesFilter(candidate, filter)),
+    () => candidates.filter((candidate) => matchesFilter(candidate, filter)),
     [candidates, filter],
   );
 
@@ -390,7 +370,7 @@ function QuestionsPanel({
 
   return (
     <div className="mt-6">
-      <SectionTitle
+      <InterviewSectionTitle
         description={t("interviewDetail.scriptDescription")}
         title={t("interviewDetail.scriptTitle")}
       />
@@ -449,7 +429,7 @@ function SettingsPanel({
   return (
     <div className="mt-6 flex flex-col gap-[30px]">
       <section>
-        <SectionTitle
+        <InterviewSectionTitle
           description={t("interviewDetail.configDescription")}
           title={t("interviewDetail.configTitle")}
         />
@@ -485,7 +465,7 @@ function SettingsPanel({
       </section>
 
       <section>
-        <SectionTitle
+        <InterviewSectionTitle
           description={t("interviewDetail.guardrailsDescription")}
           title={t("interviewDetail.guardrailsTitle")}
         />
@@ -565,23 +545,6 @@ function SettingsPanel({
         />
         <p>{t("interviewDetail.humanReviewNotice")}</p>
       </section>
-    </div>
-  );
-}
-
-function SectionTitle({
-  description,
-  title,
-}: {
-  description: string;
-  title: string;
-}) {
-  return (
-    <div>
-      <h2 className="text-[17px] font-semibold tracking-[-0.01em] text-ink-950">
-        {title}
-      </h2>
-      <p className="mt-[5px] text-[13.5px] text-[#777166]">{description}</p>
     </div>
   );
 }

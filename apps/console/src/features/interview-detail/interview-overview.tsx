@@ -1,8 +1,5 @@
 import Link from "next/link";
-import {
-  ArrowLeft,
-  EditPencil,
-} from "iconoir-react";
+import { ArrowLeft, EditPencil } from "iconoir-react";
 import type { TFunction } from "i18next";
 import { StatusBadge } from "@prelude/ui";
 import type { CandidateScreenListItem } from "../candidate-screens";
@@ -10,9 +7,9 @@ import type { CandidateScreenListItem } from "../candidate-screens";
 import { getServerT } from "../../libs/i18n-server";
 import { getAuthenticatedUserLocale } from "../../server/users/user-locale";
 import type { getInterviewDetail } from "../../server/interviews/interview-loaders";
+import { CopyCandidateLinkButton } from "./copy-candidate-link-button";
 import {
   InterviewOverviewTabs,
-  CopyCandidateLinkButton,
   type InterviewOverviewConfigItem,
   type InterviewOverviewCriterion,
   type InterviewOverviewQuestion,
@@ -61,6 +58,7 @@ export async function InterviewOverview({
     startedAt: session.startedAt,
     status: session.status,
   })) satisfies CandidateScreenListItem[];
+  const invitations = interview.candidateInvitations;
   const questions = interview.questions.map((question, index) => ({
     id: question.id,
     numberLabel: String(index + 1).padStart(2, "0"),
@@ -89,7 +87,9 @@ export async function InterviewOverview({
     },
     {
       label: t("interviewDetail.statAvgLength"),
-      value: t("interviewDetail.statAvgLengthValue", { minutes: estimatedMinutes }),
+      value: t("interviewDetail.statAvgLengthValue", {
+        minutes: estimatedMinutes,
+      }),
     },
   ] satisfies InterviewOverviewStat[];
   const config = [
@@ -99,7 +99,9 @@ export async function InterviewOverview({
     },
     {
       label: t("interviewDetail.configLengthCap"),
-      value: t("interviewDetail.configLengthCapValue", { minutes: estimatedMinutes }),
+      value: t("interviewDetail.configLengthCapValue", {
+        minutes: estimatedMinutes,
+      }),
     },
     {
       label: t("interviewDetail.configLanguage"),
@@ -191,6 +193,7 @@ export async function InterviewOverview({
         criteria={criteria}
         guardrails={interview.guardrails}
         interviewId={interview.id}
+        invitations={invitations}
         publicationStatus={interview.status}
         questions={questions}
         roleBrief={interview.roleBrief}

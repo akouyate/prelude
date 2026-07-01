@@ -2,25 +2,24 @@
 
 ## Objective
 
-Ship GitHub issue #110: finalize V1 candidate lifecycle and business rules.
+Ship GitHub issue #111: recruiter candidate invitation workflow.
 
 ## Scope
 
-- Represent the candidate lifecycle in code with explicit product statuses,
-  allowed transitions, consent gates, retry/resume policy, and terminal states.
-- Use the lifecycle in the candidate start/complete endpoints instead of raw
-  string status checks.
-- Keep V1 audio-first with form fallback; do not surface video as a V1 mode.
-- Prevent misleading recruiter analysis: full candidate briefs only for
-  completed sessions, with partial/failed/insufficient cases clearly labelled.
-- Preserve human-review-only, protected-trait exclusion, and idempotent
-  completion behavior.
+- Let an authenticated recruiter create a candidate invitation for a published
+  role/interview from the role detail view.
+- Support candidate name, optional email, default/custom expiry, generated
+  `ci_...` link, manual copy-link delivery, and a clear invitation status list.
+- Reissue expired or failed invitations by creating a new invitation while
+  keeping the old invitation auditable.
+- Keep completed invitations immutable and organization-scoped.
+- Prepare the server boundary for future email delivery without coupling this
+  slice to Resend.
 
 ## Phases
 
 - [x] Intake
 - [x] Repository investigation
-- [x] Issue refinement
 - [x] Skill loading
 - [x] Architecture review
 - [x] Plan
@@ -29,27 +28,31 @@ Ship GitHub issue #110: finalize V1 candidate lifecycle and business rules.
 - [x] Review
 - [x] Simplification
 - [x] Final validation
-- [x] Delivery
+- [ ] Delivery
 
 ## Validation
 
-- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5432/prelude?schema=public' node node_modules/.pnpm/prisma@6.19.3_typescript@6.0.3/node_modules/prisma/build/index.js validate --schema packages/db/prisma/schema.prisma`
-- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5432/prelude?schema=public' node node_modules/.pnpm/prisma@6.19.3_typescript@6.0.3/node_modules/prisma/build/index.js generate --schema packages/db/prisma/schema.prisma`
-- `rtk ./node_modules/.bin/vitest run packages/core/src/domain/candidate-lifecycle.test.ts packages/contracts/src/schemas/brief.test.ts apps/candidate/app/api/live-interview-sessions/route.test.ts 'apps/candidate/app/api/candidate-sessions/[sessionId]/complete/route.test.ts' 'apps/candidate/app/api/candidate-sessions/[sessionId]/lifecycle/route.test.ts' apps/candidate/src/features/live-interview/live-interview-client.test.ts apps/candidate/src/features/live-interview/live-interview-runtime.test.ts apps/console/src/server/interviews/interview-drafts.publish.test.ts apps/console/src/server/interviews/candidate-brief-generation.test.ts apps/console/src/server/interviews/live-session-evidence.test.ts apps/console/src/server/interviews/live-session-insights.test.ts`
-- `rtk ./node_modules/.bin/tsc --noEmit -p packages/core/tsconfig.json`
-- `rtk ./node_modules/.bin/tsc --noEmit -p packages/contracts/tsconfig.json`
-- `rtk ./node_modules/.bin/tsc --noEmit -p packages/types/tsconfig.json`
-- `rtk ./node_modules/.bin/tsc --noEmit -p apps/candidate/tsconfig.json`
+- `rtk ./node_modules/.bin/vitest run apps/console/src/server/interviews/candidate-invitations.test.ts`
+  - 11 tests passed.
+- `rtk ./node_modules/.bin/vitest run apps/console/src/server/interviews/candidate-invitations.test.ts apps/console/src/server/interviews/interview-drafts.publish.test.ts apps/console/src/server/interviews/candidate-review-workflow.test.ts apps/console/src/server/interviews/live-session-insights.test.ts apps/console/src/server/interviews/live-session-evidence.test.ts`
+  - 46 tests passed.
 - `rtk ./node_modules/.bin/tsc --noEmit -p apps/console/tsconfig.json`
-- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5440/prelude?schema=public' node node_modules/.pnpm/prisma@6.19.3_typescript@6.0.3/node_modules/prisma/build/index.js migrate deploy --schema packages/db/prisma/schema.prisma`
-- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5440/prelude?schema=public' node scripts/e2e-smoke.mjs --strict --reset --run-id codex-110-invite --console-url http://localhost:3000`
-- `rtk ./node_modules/.bin/playwright test -c apps/candidate/playwright.config.ts`
-  - mobile audio primary smoke
-  - microphone-denied written fallback smoke
-- `rtk ./node_modules/.bin/prettier --check apps/candidate/src/server/public-interviews.ts apps/candidate/app/api/form-interview-sessions/route.ts apps/candidate/src/features/live-interview/live-interview-client.ts apps/candidate/src/features/live-interview/live-interview-room.tsx apps/candidate/e2e/interview.spec.ts apps/candidate/playwright.config.ts docs/architecture/v1-domain-spine.md .ship/state/current.md scripts/e2e-smoke.mjs`
+  - Passed.
+- `rtk ./node_modules/.bin/tsc --noEmit -p packages/core/tsconfig.json`
+  - Passed.
 - `rtk git diff --check`
+  - Passed.
+- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5440/prelude?schema=public' node node_modules/.pnpm/prisma@6.19.3_typescript@6.0.3/node_modules/prisma/build/index.js migrate deploy --schema packages/db/prisma/schema.prisma`
+  - No pending migrations.
+- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5440/prelude?schema=public' node scripts/e2e-smoke.mjs --strict --reset --run-id codex-111-invite --console-url http://localhost:3000`
+  - Decision Pass.
+- Playwright smoke for role invitations:
+  - `/roles/interview_e2e_codex-111-invite` exposes a `ci_...` candidate link, Invitations tab, create form, and created test invite.
+- Playwright smoke for settings underline tabs:
+  - `/settings` renders one underline tablist, defaults to profile, and updates to `/settings?view=workspace`.
 
-## Remaining Follow-Up
+## Notes
 
-- Named invite creation UI and notification delivery are follow-up workflow
-  tickets, not blockers for the core lifecycle/business-rules slice.
+- User requested underline tab navigation for contextual views; invitations
+  should live as a role-detail tab.
+- Settings now use the shared underline tab nav with `nuqs` query-state routing.

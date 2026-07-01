@@ -36,6 +36,11 @@ import {
   type CriteriaDistribution,
 } from "./candidate-review-signals";
 import {
+  expireStaleCandidateInvitations,
+  toCandidateInvitationSummary,
+  type CandidateInvitationSummary,
+} from "./candidate-invitations";
+import {
   formatReviewUserLabel,
   getReviewNotePreview,
 } from "./candidate-review-display";
@@ -72,6 +77,7 @@ export type InterviewDetailData =
       organizationName: string;
       interview: {
         candidatePath: string;
+        candidateInvitations: CandidateInvitationSummary[];
         candidateSessions: CandidateSessionSummary[];
         criteria: InterviewCriterionDraft[];
         draftId: string | null;
@@ -209,15 +215,26 @@ export async function getInterviewDetail(
     where: { id: scope.organizationId },
   });
 
+  await expireStaleCandidateInvitations({
+    interviewId: idOrSessionId,
+    organizationId: scope.organizationId,
+  });
+
   const interview = await prisma.interview.findFirst({
     include: {
       candidateInvitations: {
-        orderBy: { createdAt: "desc" },
-        take: 1,
-        where: {
-          expiresAt: { gt: new Date() },
-          status: { notIn: ["completed", "expired", "superseded"] },
+        include: {
+          candidateSessions: {
+            orderBy: { updatedAt: "desc" },
+            select: {
+              id: true,
+              realtimeSessionId: true,
+              status: true,
+            },
+            take: 1,
+          },
         },
+        orderBy: { createdAt: "desc" },
       },
       candidateSessions: {
         include: {
@@ -259,6 +276,9 @@ export async function getInterviewDetail(
     return {
       interview: {
         candidatePath: candidatePathForInterview(interview),
+        candidateInvitations: interview.candidateInvitations.map((invitation) =>
+          toCandidateInvitationSummary(invitation),
+        ),
         candidateSessions: interview.candidateSessions.map((session) =>
           toCandidateSessionSummary({
             eventStatsBySessionId,
@@ -366,12 +386,41 @@ export async function getInterviewDetail(
 }
 
 function candidatePathForInterview(interview: {
-  candidateInvitations?: Array<{ token: string }>;
+  candidateInvitations?: Array<{
+    candidateEmail: string | null;
+    candidateName: string | null;
+    expiresAt: Date;
+    status: string;
+    token: string;
+  }>;
   publicToken: string;
 }) {
-  return `/interview/${
-    interview.candidateInvitations?.[0]?.token ?? interview.publicToken
-  }`;
+  const now = new Date();
+  const invitation =
+    interview.candidateInvitations?.find(
+      (candidateInvitation) =>
+        !candidateInvitation.candidateEmail &&
+        !candidateInvitation.candidateName &&
+        candidateInvitation.expiresAt > now &&
+        !["completed", "expired", "superseded"].includes(
+          candidateInvitation.status,
+        ),
+    ) ??
+    interview.candidateInvitations?.find(
+      (candidateInvitation) =>
+        candidateInvitation.expiresAt > now &&
+        !["completed", "expired", "superseded"].includes(
+          candidateInvitation.status,
+        ),
+    ) ??
+    interview.candidateInvitations?.find(
+      (candidateInvitation) =>
+        !candidateInvitation.candidateEmail &&
+        !candidateInvitation.candidateName,
+    ) ??
+    interview.candidateInvitations?.[0];
+
+  return `/interview/${invitation?.token ?? interview.publicToken}`;
 }
 
 function toCandidateSessionSummary({

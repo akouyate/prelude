@@ -84,13 +84,9 @@ export function WorkspaceSettings({ data }: { data: WorkspaceSettingsData }) {
         </h1>
       </div>
 
-      <div className="grid gap-7 lg:grid-cols-[236px_minmax(0,1fr)] lg:items-start">
+      <div className="flex flex-col gap-7">
         <SettingsSectionNav
           authProvider={data.authProvider}
-          onSectionChange={handleSectionChange}
-          section={section}
-        />
-        <SettingsMobileNav
           onSectionChange={handleSectionChange}
           section={section}
         />
@@ -100,36 +96,6 @@ export function WorkspaceSettings({ data }: { data: WorkspaceSettingsData }) {
         </div>
       </div>
     </section>
-  );
-}
-
-function SettingsMobileNav({
-  onSectionChange,
-  section,
-}: {
-  onSectionChange: (section: SettingsSection) => void;
-  section: SettingsSection;
-}) {
-  const { t } = useTranslation();
-
-  return (
-    <div className="flex gap-2 overflow-x-auto pb-1 lg:hidden">
-      {settingsSectionOrder.map((value) => (
-        <button
-          className={cn(
-            "h-9 shrink-0 cursor-pointer rounded-full px-3 text-xs font-semibold transition",
-            section === value
-              ? "bg-ink-900 text-white"
-              : "border border-ink-100 bg-white/70 text-ink-600",
-          )}
-          key={value}
-          onClick={() => onSectionChange(value)}
-          type="button"
-        >
-          {t(sectionLabelKeys[value])}
-        </button>
-      ))}
-    </div>
   );
 }
 
