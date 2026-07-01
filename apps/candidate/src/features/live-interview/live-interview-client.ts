@@ -36,7 +36,9 @@ export async function createSession(input: {
   });
 
   if (!response.ok) {
-    throw new Error("session_unavailable");
+    throw new Error(
+      (await readApiErrorCode(response)) ?? "session_unavailable",
+    );
   }
 
   return (await response.json()) as LiveInterviewSession;
@@ -51,6 +53,56 @@ export async function completeProductSession(session: LiveInterviewSession) {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ resumeToken: session.resumeToken }),
+  }).catch(() => undefined);
+}
+
+export async function submitFormInterview(input: {
+  answers: Array<{ questionId: string; text: string }>;
+  candidateEmail: string;
+  candidateName: string;
+  consentAccepted: boolean;
+  resumeToken?: string | null;
+  token: string;
+}) {
+  const response = await fetch("/api/form-interview-sessions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      answers: input.answers,
+      candidateEmail: input.candidateEmail,
+      candidateName: input.candidateName,
+      candidateToken: input.token,
+      consentAccepted: input.consentAccepted,
+      resumeToken: input.resumeToken,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      (await readApiErrorCode(response)) ?? "form_submission_unavailable",
+    );
+  }
+
+  return (await response.json()) as {
+    completed: true;
+    productSessionId: string;
+    resumeToken: string | null;
+    sessionId: string;
+  };
+}
+
+export async function markProductSessionLifecycle(
+  session: LiveInterviewSession,
+  action: "abandon" | "fail",
+) {
+  if (!session.productSessionId || !session.resumeToken) {
+    return;
+  }
+
+  await fetch(`/api/candidate-sessions/${session.productSessionId}/lifecycle`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ action, resumeToken: session.resumeToken }),
   }).catch(() => undefined);
 }
 
@@ -386,13 +438,15 @@ export function livekitTranscriptTurn({
 
   const segmentId = attributes?.lk_segment_id ?? attributes?.segment_id;
   const resolvedIsFinal =
-    isFinal ?? (attributes?.lk_transcription_final !== "false");
+    isFinal ?? attributes?.lk_transcription_final !== "false";
   const transcribedTrackId =
     attributes?.lk_transcribed_track_id ?? attributes?.transcribed_track_id;
   const speaker = participantIdentity.startsWith("agent-")
     ? "interviewer"
     : "candidate";
-  const startedAt = new Date(normalizeLivekitTimestamp(timestamp)).toISOString();
+  const startedAt = new Date(
+    normalizeLivekitTimestamp(timestamp),
+  ).toISOString();
 
   return {
     turnId:
@@ -426,7 +480,9 @@ function normalizeRealtimeTranscriptTurn(
     !sessionId ||
     !text ||
     !startedAt ||
-    (speaker !== "candidate" && speaker !== "interviewer" && speaker !== "system")
+    (speaker !== "candidate" &&
+      speaker !== "interviewer" &&
+      speaker !== "system")
   ) {
     return null;
   }
@@ -491,6 +547,63 @@ export function toCandidateError(cause: unknown) {
     return "We could not prepare the interview room. Please retry in a moment.";
   }
 
+  if (cause instanceof Error && cause.message === "consent_required") {
+    return "Please accept the consent notice before starting the interview.";
+  }
+
+  if (
+    cause instanceof Error &&
+    cause.message === "candidate_session_already_completed"
+  ) {
+    return "This interview has already been completed. Ask the recruiter for a new link if you need another attempt.";
+  }
+
+  if (cause instanceof Error && cause.message === "candidate_session_expired") {
+    return "This interview link has expired. Ask the recruiter for a fresh link.";
+  }
+
+  if (
+    cause instanceof Error &&
+    cause.message === "candidate_session_superseded"
+  ) {
+    return "This interview attempt was replaced by a newer one. Refresh the page or use the latest link from the recruiter.";
+  }
+
+  if (
+    cause instanceof Error &&
+    cause.message === "candidate_session_not_resumable"
+  ) {
+    return "This interview attempt cannot be resumed. Please refresh the page to start a new attempt.";
+  }
+
+  if (cause instanceof Error && cause.message === "form_fallback_unavailable") {
+    return "Written answers are not enabled for this interview. Please retry the live audio interview or ask the recruiter for help.";
+  }
+
+  if (cause instanceof Error && cause.message === "form_answers_missing") {
+    return "Add an answer before submitting the written fallback.";
+  }
+
+  if (
+    cause instanceof Error &&
+    cause.message === "form_submission_unavailable"
+  ) {
+    return "We could not submit your written answers. Please retry in a moment.";
+  }
+
+  if (cause instanceof Error && cause.message === "interview_not_found") {
+    return "This interview link is no longer available. Check the link or ask the recruiter for a fresh invite.";
+  }
+
+  if (
+    cause instanceof Error &&
+    (cause.message === "realtime_api_unavailable" ||
+      cause.message === "realtime_api_failed" ||
+      cause.message === "mock_interview_refused")
+  ) {
+    return "The live interviewer is not available right now. Please retry in a moment.";
+  }
+
   if (
     cause instanceof Error &&
     cause.message === "candidate_ready_unavailable"
@@ -506,6 +619,19 @@ export function toCandidateError(cause: unknown) {
   }
 
   return "We could not join the live interview room. Please check your connection and retry.";
+}
+
+async function readApiErrorCode(response: Response) {
+  try {
+    const payload = (await response.json()) as {
+      error?: { code?: unknown };
+    };
+    return typeof payload.error?.code === "string"
+      ? payload.error.code
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function markCandidateJoined(

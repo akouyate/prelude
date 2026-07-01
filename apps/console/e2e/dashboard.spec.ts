@@ -30,9 +30,7 @@ test("login explains the local auth mock when Clerk keys are missing", async ({
 test("interview agent saves and publishes a draft", async ({ page }) => {
   await page.goto("/roles/new");
 
-  await expect(
-    page.getByPlaceholder("Senior Product Designer"),
-  ).toBeVisible();
+  await expect(page.getByPlaceholder("Senior Product Designer")).toBeVisible();
   await expect(
     page.getByPlaceholder(/Paste the job description/u),
   ).toBeVisible();
@@ -47,7 +45,10 @@ test("interview agent saves and publishes a draft", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Questions", exact: true }),
   ).toHaveCount(0);
-  await page.locator("section").getByRole("button", { name: "Calibrate" }).click();
+  await page
+    .locator("section")
+    .getByRole("button", { name: "Calibrate" })
+    .click();
 
   await expect(
     page.getByRole("heading", { name: "Calibrate the role screen" }),
@@ -78,7 +79,9 @@ test("interview agent saves and publishes a draft", async ({ page }) => {
     .fill("Tell us about one customer onboarding project with a clear result.");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(
-    page.getByText("Tell us about one customer onboarding project with a clear result."),
+    page.getByText(
+      "Tell us about one customer onboarding project with a clear result.",
+    ),
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Add question" }).click();
@@ -95,9 +98,7 @@ test("interview agent saves and publishes a draft", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "Publish the role screen" }),
   ).toBeVisible();
-  await expect(
-    page.locator("section").getByText("Draft saved"),
-  ).toBeVisible();
+  await expect(page.locator("section").getByText("Draft saved")).toBeVisible();
   await expect(page.getByText("Candidate preview")).toHaveCount(0);
 
   await page
@@ -110,5 +111,5 @@ test("interview agent saves and publishes a draft", async ({ page }) => {
 
   await page.getByRole("button", { name: "Publish role screen" }).click();
   await expect(page.getByText("Role screen published")).toBeVisible();
-  await expect(page.getByText("prelude.ai/interview/iv_")).toBeVisible();
+  await expect(page.getByText("prelude.ai/interview/ci_")).toBeVisible();
 });

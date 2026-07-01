@@ -14,7 +14,10 @@ export type LiveAnalysisStatus =
   | "available"
   | "pending"
   | "not_ready"
-  | "failed";
+  | "failed"
+  | "insufficient_signal"
+  | "partial"
+  | "technical_failure";
 export type { RecruiterReviewStatus };
 
 export type LiveEventStats = {
@@ -127,7 +130,12 @@ export function resolveReviewStatus(
     return status;
   }
 
-  if (status === "failed" || status === "expired") {
+  if (
+    status === "abandoned" ||
+    status === "failed" ||
+    status === "expired" ||
+    status === "superseded"
+  ) {
     return "archived";
   }
 
@@ -143,6 +151,14 @@ function resolveBriefAnalysisStatus(
 
   if (status === "failed") {
     return "failed";
+  }
+
+  if (
+    status === "insufficient_signal" ||
+    status === "partial" ||
+    status === "technical_failure"
+  ) {
+    return status;
   }
 
   return "pending";

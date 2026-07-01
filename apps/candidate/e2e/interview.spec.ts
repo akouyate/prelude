@@ -3,25 +3,22 @@ import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 
 type CandidateFixture = {
+  candidateToken: string;
   organizationId: string;
-  publicToken: string;
 };
 
 test.use({ viewport: { width: 390, height: 844 } });
 
 let fixture: CandidateFixture;
 
-test.beforeAll(async () => {
-  fixture = await seedPublishedInterview();
-});
-
 test.beforeEach(async () => {
   await fetch("http://127.0.0.1:18081/__debug/reset", {
     method: "POST",
   }).catch(() => undefined);
+  fixture = await seedPublishedInterview();
 });
 
-test.afterAll(async () => {
+test.afterEach(async () => {
   await cleanupPublishedInterview(fixture);
 });
 
@@ -29,9 +26,9 @@ test("candidate can join a mocked LiveKit interview room on mobile", async ({
   context,
   page,
 }) => {
-  await context.grantPermissions(["microphone", "camera"]);
+  await context.grantPermissions(["microphone"]);
 
-  await page.goto(`/interview/${fixture.publicToken}`);
+  await page.goto(`/interview/${fixture.candidateToken}`);
   await expect(
     page.getByRole("heading", {
       name: "Customer Success Manager",
@@ -49,11 +46,14 @@ test("candidate can join a mocked LiveKit interview room on mobile", async ({
   await expect(page.getByRole("button", { name: "Quit" })).toBeVisible();
   await page.getByRole("button", { name: "Quit" }).click();
   await expect(
-    page.getByRole("heading", { name: /Thank you, Ada/ }),
+    page.getByRole("heading", { name: "Interview ended" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Start a new attempt" }),
   ).toBeVisible();
 });
 
-test("candidate sees a clear error when microphone permission is denied", async ({
+test("candidate can complete the written fallback when microphone permission is denied", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -67,7 +67,7 @@ test("candidate sees a clear error when microphone permission is denied", async 
     });
   });
 
-  await page.goto(`/interview/${fixture.publicToken}`);
+  await page.goto(`/interview/${fixture.candidateToken}`);
   await page.getByRole("button", { name: "Get started" }).click();
   await page.getByLabel("Your name").fill("Ada Lovelace");
   await page.getByLabel(/I understand that I am joining/).check();
@@ -80,6 +80,24 @@ test("candidate sees a clear error when microphone permission is denied", async 
     page.getByText(
       "Microphone access is required to start the live interview.",
     ),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Use written fallback" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Answer in writing" }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Answer question 1")
+    .fill(
+      "I am interested in customer onboarding because I enjoy improving the handoff between sales, support, and product teams.",
+    );
+  await page
+    .getByLabel("Answer question 2")
+    .fill(
+      "I would acknowledge the implementation issue, clarify the business impact, align owners, and give the customer a concrete recovery plan.",
+    );
+  await page.getByRole("button", { name: "Submit answers" }).click();
+  await expect(
+    page.getByRole("heading", { name: /Thank you, Ada/i }),
   ).toBeVisible();
 });
 
@@ -102,7 +120,7 @@ async function seedPublishedInterview(): Promise<CandidateFixture> {
     },
   });
 
-  await prisma.interview.create({
+  const interview = await prisma.interview.create({
     data: {
       criteria: [
         {
@@ -131,18 +149,34 @@ async function seedPublishedInterview(): Promise<CandidateFixture> {
             "Can you briefly introduce yourself and explain why this role interests you?",
           signal: "Clear and relevant introduction.",
         },
+        {
+          id: "customer_recovery",
+          prompt:
+            "How would you handle an at-risk customer after a difficult implementation?",
+          signal: "Customer judgement and communication.",
+        },
       ],
-      responseModes: ["audio", "video"],
+      responseModes: ["audio", "text"],
       roleBrief:
         "Customer success first screen focused on customer judgement and communication.",
       roleTitle: "Customer Success Manager",
       status: "published",
     },
   });
+  const invitation = await prisma.candidateInvitation.create({
+    data: {
+      expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+      interviewId: interview.id,
+      jobId: job.id,
+      organizationId: organization.id,
+      status: "invited",
+      token: `ci_${id}`,
+    },
+  });
 
   return {
+    candidateToken: invitation.token,
     organizationId: organization.id,
-    publicToken,
   };
 }
 
@@ -171,5 +205,5 @@ function loadRootEnv() {
   process.env.DATABASE_URL =
     process.env.E2E_DATABASE_URL ??
     (process.env.CI ? process.env.DATABASE_URL : undefined) ??
-    "postgresql://postgres:postgres@localhost:55432/prelude?schema=public";
+    "postgresql://postgres:postgres@localhost:5440/prelude?schema=public";
 }

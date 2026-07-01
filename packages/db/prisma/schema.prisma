@@ -20,6 +20,7 @@ model Organization {
   onboardingCompletedAt DateTime?
   createdAt             DateTime                      @default(now())
   candidateBriefs       CandidateBrief[]
+  candidateInvitations  CandidateInvitation[]
   candidateReviewEvents CandidateSessionReviewEvent[]
   candidateSessions     CandidateSession[]
   interviewDrafts       InterviewDraft[]
@@ -74,20 +75,21 @@ model OrganizationInvitation {
 }
 
 model Job {
-  id                String             @id @default(cuid())
-  organizationId    String
-  title             String
-  location          String?
-  description       String             @default("")
-  sourceProvider    String?
-  sourceExternalId  String?
-  status            String             @default("draft")
-  createdAt         DateTime           @default(now())
-  organization      Organization       @relation(fields: [organizationId], references: [id])
-  interviewDrafts   InterviewDraft[]
-  interviews        Interview[]
-  candidates        Candidate[]
-  candidateSessions CandidateSession[]
+  id                   String                @id @default(cuid())
+  organizationId       String
+  title                String
+  location             String?
+  description          String                @default("")
+  sourceProvider       String?
+  sourceExternalId     String?
+  status               String                @default("draft")
+  createdAt            DateTime              @default(now())
+  organization         Organization          @relation(fields: [organizationId], references: [id])
+  interviewDrafts      InterviewDraft[]
+  interviews           Interview[]
+  candidates           Candidate[]
+  candidateInvitations CandidateInvitation[]
+  candidateSessions    CandidateSession[]
 
   @@index([organizationId, sourceProvider])
 }
@@ -122,35 +124,36 @@ model InterviewDraft {
 }
 
 model Interview {
-  id                String             @id @default(cuid())
-  organizationId    String
-  jobId             String
-  draftId           String?            @unique
-  publicToken       String             @unique
-  status            String             @default("published")
-  roleTitle         String
-  roleBrief         String             @default("")
-  seniority         String?
-  focus             Json               @default("[]")
-  responseModes     Json               @default("[]")
-  questions         Json               @default("[]")
-  criteria          Json               @default("[]")
-  guardrails        Json               @default("[]")
-  estimatedMinutes  Int?
-  rationale         String?
-  schemaVersion     Int                @default(1)
-  generatorProvider String?
-  generatorModel    String?
+  id                   String                @id @default(cuid())
+  organizationId       String
+  jobId                String
+  draftId              String?               @unique
+  publicToken          String                @unique
+  status               String                @default("published")
+  roleTitle            String
+  roleBrief            String                @default("")
+  seniority            String?
+  focus                Json                  @default("[]")
+  responseModes        Json                  @default("[]")
+  questions            Json                  @default("[]")
+  criteria             Json                  @default("[]")
+  guardrails           Json                  @default("[]")
+  estimatedMinutes     Int?
+  rationale            String?
+  schemaVersion        Int                   @default(1)
+  generatorProvider    String?
+  generatorModel       String?
   // N6b: immutable audit record of a recruiter override of an LLM protected-topic
   // flag at publish (null on a clean publish). Append-only; never edited.
-  complianceOverride Json?
-  publishedAt       DateTime           @default(now())
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  organization      Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  job               Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  draft             InterviewDraft?    @relation(fields: [draftId], references: [id], onDelete: SetNull)
-  candidateSessions CandidateSession[]
+  complianceOverride   Json?
+  publishedAt          DateTime              @default(now())
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  organization         Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job                  Job                   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  draft                InterviewDraft?       @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  candidateInvitations CandidateInvitation[]
+  candidateSessions    CandidateSession[]
 
   @@index([organizationId, status, updatedAt])
   @@index([jobId, status])
@@ -176,11 +179,37 @@ model ComplianceOverrideEvent {
   @@index([organizationId, createdAt])
 }
 
+model CandidateInvitation {
+  id                 String             @id @default(cuid())
+  organizationId     String
+  jobId              String
+  interviewId        String
+  token              String             @unique
+  candidateName      String?
+  candidateEmail     String?
+  status             String             @default("invited")
+  expiresAt          DateTime
+  openedAt           DateTime?
+  consentedAt        DateTime?
+  consentCopyVersion String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  organization       Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job                Job                @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  interview          Interview          @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  candidateSessions  CandidateSession[]
+
+  @@index([organizationId, status, expiresAt])
+  @@index([interviewId, status])
+  @@index([jobId, status])
+}
+
 model CandidateSession {
   id                      String                        @id @default(cuid())
   organizationId          String
   jobId                   String
   interviewId             String
+  candidateInvitationId   String?
   realtimeSessionId       String?                       @unique
   candidateName           String?
   candidateEmail          String?
@@ -201,6 +230,7 @@ model CandidateSession {
   organization            Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   job                     Job                           @relation(fields: [jobId], references: [id], onDelete: Cascade)
   interview               Interview                     @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  candidateInvitation     CandidateInvitation?          @relation(fields: [candidateInvitationId], references: [id], onDelete: SetNull)
   candidateBrief          CandidateBrief?
   reviewEvents            CandidateSessionReviewEvent[]
   reviewStatusUpdatedBy   User?                         @relation("CandidateSessionReviewStatusAuthor", fields: [reviewStatusUpdatedById], references: [id], onDelete: SetNull)
@@ -210,6 +240,7 @@ model CandidateSession {
   @@index([organizationId, reviewStatus, updatedAt])
   @@index([jobId, status])
   @@index([interviewId, status])
+  @@index([candidateInvitationId, status])
   @@index([reviewStatusUpdatedById])
   @@index([reviewNoteUpdatedById])
 }
@@ -279,14 +310,14 @@ model Candidate {
 }
 
 model LiveInterviewSession {
-  id                String               @id
-  interviewPlanId   String               @map("interview_plan_id")
-  candidateId       String               @map("candidate_id")
+  id                String                   @id
+  interviewPlanId   String                   @map("interview_plan_id")
+  candidateId       String                   @map("candidate_id")
   status            String
-  livekitRoomName   String               @map("livekit_room_name")
-  allowedModalities Json                 @map("allowed_modalities")
-  createdAt         DateTime             @map("created_at")
-  updatedAt         DateTime             @map("updated_at")
+  livekitRoomName   String                   @map("livekit_room_name")
+  allowedModalities Json                     @map("allowed_modalities")
+  createdAt         DateTime                 @map("created_at")
+  updatedAt         DateTime                 @map("updated_at")
   events            LiveInterviewEvent[]
   recordings        LiveInterviewRecording[]
 

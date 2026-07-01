@@ -13,6 +13,11 @@ const draftRecord = vi.hoisted(() => ({
 }));
 
 const tx = vi.hoisted(() => ({
+  candidateInvitation: {
+    create: vi.fn(),
+    findFirst: vi.fn(),
+    findUnique: vi.fn(),
+  },
   interview: {
     create: vi.fn(),
     findUnique: vi.fn(),
@@ -28,7 +33,9 @@ const tx = vi.hoisted(() => ({
 }));
 
 const prismaMock = vi.hoisted(() => ({
-  $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+  $transaction: vi.fn((callback: (client: typeof tx) => unknown) =>
+    callback(tx),
+  ),
   complianceOverrideEvent: {
     count: vi.fn(async () => 0),
   },
@@ -143,7 +150,11 @@ function captureTelemetry() {
 
 const passThroughClassifier = (): ProtectedTopicClassifier => ({
   classify: vi.fn(async (texts: string[]) =>
-    texts.map(() => ({ flagged: false, category: "none" as const, reason: "" })),
+    texts.map(() => ({
+      flagged: false,
+      category: "none" as const,
+      reason: "",
+    })),
   ),
   modelName: "test",
   provider: "test",
@@ -152,25 +163,53 @@ const passThroughClassifier = (): ProtectedTopicClassifier => ({
 beforeEach(() => {
   vi.clearAllMocks();
   draftRecord.current = publishableDraft();
-  tx.interviewDraft.findFirst.mockImplementation(async () => draftRecord.current);
+  tx.interviewDraft.findFirst.mockImplementation(
+    async () => draftRecord.current,
+  );
   tx.interviewDraft.update.mockResolvedValue({});
+  tx.candidateInvitation.create.mockResolvedValue({
+    id: "cinv_1",
+    token: "ci_public",
+  });
+  tx.candidateInvitation.findFirst.mockResolvedValue(null);
+  tx.candidateInvitation.findUnique.mockResolvedValue(null);
   tx.interview.findUnique.mockResolvedValue(null);
   tx.interview.update.mockResolvedValue({});
-  tx.interview.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
-    id: "interview_1",
-    publicToken: data.publicToken,
-    status: "published",
-  }));
+  tx.interview.create.mockImplementation(
+    async ({ data }: { data: Record<string, unknown> }) => ({
+      id: "interview_1",
+      jobId: data.jobId,
+      organizationId: data.organizationId,
+      publicToken: data.publicToken,
+      status: "published",
+    }),
+  );
   tx.complianceOverrideEvent.create.mockResolvedValue({});
   prismaMock.complianceOverrideEvent.count.mockResolvedValue(0);
 });
 
 describe("publishInterviewDraft N6 classifier wiring", () => {
   it("publishes when the classifier returns no flags", async () => {
-    const result = await publishInterviewDraft("draft_1", passThroughClassifier());
+    const result = await publishInterviewDraft(
+      "draft_1",
+      passThroughClassifier(),
+    );
 
     expect(result.ok).toBe(true);
     expect(tx.interview.create).toHaveBeenCalledTimes(1);
+    if (result.ok) {
+      expect(result.candidatePath).toBe("/interview/ci_public");
+      expect(result.candidateInvitationToken).toBe("ci_public");
+    }
+    expect(tx.candidateInvitation.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        interviewId: "interview_1",
+        jobId: "job_1",
+        organizationId: "org_123",
+        status: "invited",
+        token: expect.stringMatching(/^ci_/),
+      }),
+    });
   });
 
   it("persists a canonical Hybrid snapshot that forms a valid live plan", async () => {
@@ -235,7 +274,8 @@ describe("publishInterviewDraft N6 classifier wiring", () => {
             ? {
                 flagged: true,
                 category: "age" as const,
-                reason: "asks indirectly about candidate age via graduation decade",
+                reason:
+                  "asks indirectly about candidate age via graduation decade",
               }
             : { flagged: false, category: "none" as const, reason: "" },
         ),
@@ -337,7 +377,8 @@ describe("N10 publishInterviewDraft compliance + snapshot canonicalization", () 
         {
           id: "c1",
           label: "Pregnancy plans",
-          description: "Whether the candidate is pregnant or planning a family.",
+          description:
+            "Whether the candidate is pregnant or planning a family.",
         },
         ...publishableDraft().criteria.slice(1),
       ],
@@ -385,7 +426,10 @@ describe("N10 publishInterviewDraft compliance + snapshot canonicalization", () 
       ],
     };
 
-    const result = await publishInterviewDraft("draft_1", passThroughClassifier());
+    const result = await publishInterviewDraft(
+      "draft_1",
+      passThroughClassifier(),
+    );
     expect(result.ok).toBe(true);
 
     const createCall = tx.interview.create.mock.calls[0]?.[0] as
@@ -478,7 +522,11 @@ describe("publishInterviewDraft N9 provenance + telemetry", () => {
     const { events, telemetry } = captureTelemetry();
     const disabled: ProtectedTopicClassifier = {
       classify: vi.fn(async (texts: string[]) =>
-        texts.map(() => ({ flagged: false, category: "none" as const, reason: "" })),
+        texts.map(() => ({
+          flagged: false,
+          category: "none" as const,
+          reason: "",
+        })),
       ),
       modelName: "disabled",
       provider: "disabled",

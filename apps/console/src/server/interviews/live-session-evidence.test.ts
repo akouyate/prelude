@@ -137,6 +137,24 @@ describe("live session evidence", () => {
     expect(evidence.transcriptTurns).toHaveLength(1);
   });
 
+  it("keeps V1 product lifecycle states visible in evidence", () => {
+    const startingEvidence = buildCandidateSessionEvidence({
+      events: [],
+      productSession: productSession({ status: "starting" }),
+      questionCount: 2,
+      runtimeSession: runtimeSession({ status: "waiting_candidate" }),
+    });
+    const abandonedEvidence = buildCandidateSessionEvidence({
+      events: [],
+      productSession: productSession({ status: "abandoned" }),
+      questionCount: 2,
+      runtimeSession: runtimeSession({ status: "in_progress" }),
+    });
+
+    expect(startingEvidence.status).toBe("starting");
+    expect(abandonedEvidence.status).toBe("abandoned");
+  });
+
   it("detects transcript turns in snake_case and camelCase payloads", () => {
     const snakeCasePayload = {
       transcript_turn: transcriptTurn({

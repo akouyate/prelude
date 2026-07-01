@@ -27,6 +27,7 @@ import { shouldAutoGenerateBrief } from "../../../../src/features/interview-deta
 import { updateCandidateReviewAction } from "../../../../src/server/interviews/candidate-review-actions";
 import { getInterviewDetail } from "../../../../src/server/interviews/interview-loaders";
 import type { CandidateSessionEvidence } from "../../../../src/server/interviews/live-session-evidence";
+import type { LiveAnalysisStatus } from "../../../../src/server/interviews/live-session-insights";
 import {
   canManageCandidateReview,
   candidateReviewNoteMaxLength,
@@ -84,7 +85,7 @@ function CandidateSessionReview({
   canDelete: boolean;
   canManageReview: boolean;
   session: {
-    analysisStatus: "available" | "pending" | "not_ready" | "failed";
+    analysisStatus: LiveAnalysisStatus;
     brief: CandidateBriefDto | null;
     candidateLabel: string;
     completedAt: string | null;
@@ -170,7 +171,9 @@ function CandidateSessionReview({
               <h1 className="text-[clamp(23px,2.6vw,29px)] font-semibold leading-[1.15] tracking-[-0.025em] text-ink-950">
                 {session.candidateLabel}
               </h1>
-              <StatusBadge tone={candidateReviewStatusTone(session.reviewStatus)}>
+              <StatusBadge
+                tone={candidateReviewStatusTone(session.reviewStatus)}
+              >
                 {formatCandidateReviewStatus(session.reviewStatus)}
               </StatusBadge>
             </div>
@@ -278,119 +281,119 @@ function CandidateRecordingView({
 
   return (
     <div className="min-w-0 space-y-7">
-        <section className="rounded-[18px] border border-[#e7e2d8] bg-white/75 px-[19px] py-[17px] backdrop-blur">
-          <div className="flex items-start gap-[13px]">
-            <span
-              className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full text-white"
-              style={{ backgroundColor: "#171612" }}
-            >
-              <Sparks aria-hidden={true} className="h-[17px] w-[17px]" />
-            </span>
-            <div className="min-w-0">
-              <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-[#a29b8d]">
-                Prelude summary
-              </p>
-              <p className="mt-[5px] max-w-[60ch] text-[14.5px] leading-[1.6] text-[#3c392f]">
-                {session.brief?.summary ??
-                  "The candidate interview is recorded. Generate the recruiter brief once the completed transcript has enough persisted evidence."}
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <CandidateVoicePlayer
-          fallbackDurationMs={getRecordingDurationMs(
-            session.evidence.transcriptTurns,
-          )}
-          recording={session.evidence.recording}
-        />
-        <DeleteRecordingButton
-          candidateSessionId={session.id}
-          canDelete={canDelete}
-          recordingStatus={session.evidence.recording?.status ?? null}
-        />
-
-        <section className="overflow-hidden rounded-[20px] border border-[#e7e2d8] bg-white">
-          <div className="flex items-center justify-between gap-3">
-            <p className="px-[22px] pt-[18px] text-[11px] font-bold uppercase tracking-[0.12em] text-[#a29b8d]">
-              Key moments
+      <section className="rounded-[18px] border border-[#e7e2d8] bg-white/75 px-[19px] py-[17px] backdrop-blur">
+        <div className="flex items-start gap-[13px]">
+          <span
+            className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full text-white"
+            style={{ backgroundColor: "#171612" }}
+          >
+            <Sparks aria-hidden={true} className="h-[17px] w-[17px]" />
+          </span>
+          <div className="min-w-0">
+            <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-[#a29b8d]">
+              Prelude summary
             </p>
+            <p className="mt-[5px] max-w-[60ch] text-[14.5px] leading-[1.6] text-[#3c392f]">
+              {session.brief?.summary ??
+                "The candidate interview is recorded. Generate the recruiter brief once the completed transcript has enough persisted evidence."}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <CandidateVoicePlayer
+        fallbackDurationMs={getRecordingDurationMs(
+          session.evidence.transcriptTurns,
+        )}
+        recording={session.evidence.recording}
+      />
+      <DeleteRecordingButton
+        candidateSessionId={session.id}
+        canDelete={canDelete}
+        recordingStatus={session.evidence.recording?.status ?? null}
+      />
+
+      <section className="overflow-hidden rounded-[20px] border border-[#e7e2d8] bg-white">
+        <div className="flex items-center justify-between gap-3">
+          <p className="px-[22px] pt-[18px] text-[11px] font-bold uppercase tracking-[0.12em] text-[#a29b8d]">
+            Key moments
+          </p>
+          <button
+            className="mr-[22px] mt-[18px] inline-flex cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold text-[#5b574f] transition hover:text-ink-950"
+            type="button"
+          >
+            Full transcript
+            <ArrowRight aria-hidden={true} className="h-3.5 w-3.5" />
+          </button>
+        </div>
+        <div className="flex flex-col gap-2 px-[22px] pb-5 pt-3">
+          {moments.map((moment) => (
             <button
-              className="mr-[22px] mt-[18px] inline-flex cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold text-[#5b574f] transition hover:text-ink-950"
+              className="flex w-full cursor-pointer items-start gap-[13px] rounded-[13px] border border-[#ece8de] bg-white px-[14px] py-3 text-left transition hover:border-[#cbc4b6]"
+              key={`${moment.time}-${moment.quote}`}
               type="button"
             >
-              Full transcript
-              <ArrowRight aria-hidden={true} className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          <div className="flex flex-col gap-2 px-[22px] pb-5 pt-3">
-            {moments.map((moment) => (
-              <button
-                className="flex w-full cursor-pointer items-start gap-[13px] rounded-[13px] border border-[#ece8de] bg-white px-[14px] py-3 text-left transition hover:border-[#cbc4b6]"
-                key={`${moment.time}-${moment.quote}`}
-                type="button"
-              >
-                <span className="mt-px inline-flex h-[21px] shrink-0 items-center rounded-md border border-[#e7e2d8] bg-white px-2 font-mono text-[11px] font-medium text-[#5b574f]">
-                  {moment.time}
-                </span>
-                <div className="min-w-0">
-                  <p className="mb-[3px] flex items-center gap-2 text-[11px] font-semibold text-ink-700">
-                    <span
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{ background: moment.dot }}
-                    />
-                    {moment.label}
-                  </p>
-                  <p className="text-[13.5px] leading-[1.5] text-[#3c392f]">
-                    {moment.quote}
-                  </p>
-                </div>
-              </button>
-            ))}
-          </div>
-        </section>
-
-        <section>
-          <h2 className="text-lg font-semibold tracking-[-0.01em] text-ink-950">
-            Evidence by criterion
-          </h2>
-          <p className="mt-[3px] text-[13.5px] leading-6 text-[#777166]">
-            How each requirement held up from the conversation, with
-            representative evidence when available.
-          </p>
-          <div className="mt-4 flex flex-col gap-2.5">
-            {criteria.map((criterion) => (
-              <article
-                className="rounded-2xl border border-[#e7e2d8] bg-white px-[18px] py-4"
-                key={criterion.id}
-              >
-                <div className="flex items-center gap-3">
+              <span className="mt-px inline-flex h-[21px] shrink-0 items-center rounded-md border border-[#e7e2d8] bg-white px-2 font-mono text-[11px] font-medium text-[#5b574f]">
+                {moment.time}
+              </span>
+              <div className="min-w-0">
+                <p className="mb-[3px] flex items-center gap-2 text-[11px] font-semibold text-ink-700">
                   <span
-                    className="h-[9px] w-[9px] shrink-0 rounded-full"
-                    style={{ background: criterion.dot }}
+                    className="h-1.5 w-1.5 rounded-full"
+                    style={{ background: moment.dot }}
                   />
-                  <p className="min-w-0 flex-1 text-[14.5px] font-semibold text-ink-950">
-                    {criterion.label}
-                  </p>
-                  <StatusBadge tone={briefCriterionTone(criterion.status)}>
-                    {criterion.status}
-                  </StatusBadge>
-                </div>
-                <p className="mt-2.5 text-[13.5px] leading-[1.55] text-[#5b574f]">
-                  {criterion.note}
+                  {moment.label}
                 </p>
-                {criterion.quote ? (
-                  <blockquote
-                    className="mt-3 border-l-2 py-0.5 pl-[13px] text-[13px] italic leading-[1.55] text-[#6f6a5f]"
-                    style={{ borderColor: criterion.dot }}
-                  >
-                    {criterion.quote}
-                  </blockquote>
-                ) : null}
-              </article>
-            ))}
-          </div>
-        </section>
+                <p className="text-[13.5px] leading-[1.5] text-[#3c392f]">
+                  {moment.quote}
+                </p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-lg font-semibold tracking-[-0.01em] text-ink-950">
+          Evidence by criterion
+        </h2>
+        <p className="mt-[3px] text-[13.5px] leading-6 text-[#777166]">
+          How each requirement held up from the conversation, with
+          representative evidence when available.
+        </p>
+        <div className="mt-4 flex flex-col gap-2.5">
+          {criteria.map((criterion) => (
+            <article
+              className="rounded-2xl border border-[#e7e2d8] bg-white px-[18px] py-4"
+              key={criterion.id}
+            >
+              <div className="flex items-center gap-3">
+                <span
+                  className="h-[9px] w-[9px] shrink-0 rounded-full"
+                  style={{ background: criterion.dot }}
+                />
+                <p className="min-w-0 flex-1 text-[14.5px] font-semibold text-ink-950">
+                  {criterion.label}
+                </p>
+                <StatusBadge tone={briefCriterionTone(criterion.status)}>
+                  {criterion.status}
+                </StatusBadge>
+              </div>
+              <p className="mt-2.5 text-[13.5px] leading-[1.55] text-[#5b574f]">
+                {criterion.note}
+              </p>
+              {criterion.quote ? (
+                <blockquote
+                  className="mt-3 border-l-2 py-0.5 pl-[13px] text-[13px] italic leading-[1.55] text-[#6f6a5f]"
+                  style={{ borderColor: criterion.dot }}
+                >
+                  {criterion.quote}
+                </blockquote>
+              ) : null}
+            </article>
+          ))}
+        </div>
+      </section>
     </div>
   );
 }
@@ -558,9 +561,7 @@ function CandidateDecisionPanel({
 }) {
   return (
     <section className="rounded-[18px] border border-[#e7e2d8] bg-white p-[18px]">
-      <h2 className="mb-3 text-sm font-semibold text-ink-950">
-        Your decision
-      </h2>
+      <h2 className="mb-3 text-sm font-semibold text-ink-950">Your decision</h2>
       <form action={updateCandidateReviewAction}>
         <input name="candidateSessionId" type="hidden" value={sessionId} />
         <input name="detailPath" type="hidden" value={detailPath} />
@@ -747,7 +748,10 @@ function QuestionAnswerCard({
                   </span>
                 </span>
                 <span className="mt-1 text-[#bdb6a8] transition group-open:rotate-180">
-                  <NavArrowDown aria-hidden={true} className="h-[18px] w-[18px]" />
+                  <NavArrowDown
+                    aria-hidden={true}
+                    className="h-[18px] w-[18px]"
+                  />
                 </span>
               </summary>
               <div className="px-[18px] pb-[18px] pl-[60px]">
@@ -808,7 +812,6 @@ function QuestionAnswerCard({
           </div>
         </div>
       ) : null}
-
     </section>
   );
 }
@@ -1093,9 +1096,7 @@ function AuditGuardrailsPanel({
         recommendation. Excluded from analysis: age, family status, national
         origin.
         {realtimeSessionId ? (
-          <span className="block break-all">
-            Session {realtimeSessionId}.
-          </span>
+          <span className="block break-all">Session {realtimeSessionId}.</span>
         ) : null}
       </p>
     </section>
@@ -1125,7 +1126,9 @@ function getSignalSummary(distribution: {
 function getKeyMoments(session: CandidateSessionReviewSession) {
   const firstStartedAt = session.evidence.transcriptTurns[0]?.startedAt ?? null;
 
-  if (session.brief?.criteria.some((criterion) => criterion.evidence.length > 0)) {
+  if (
+    session.brief?.criteria.some((criterion) => criterion.evidence.length > 0)
+  ) {
     return session.brief.criteria
       .flatMap((criterion) =>
         criterion.evidence.slice(0, 1).map((item) => {
@@ -1186,8 +1189,7 @@ function getCriterionEvidenceCards(session: CandidateSessionReviewSession) {
     dot: "#ddd8cc",
     id: question.id,
     label: question.expectedSignal,
-    note:
-      "AI synthesis has not been persisted yet. Review the transcript before making a decision.",
+    note: "AI synthesis has not been persisted yet. Review the transcript before making a decision.",
     quote: null,
     status: "Not assessable" as const,
   }));
@@ -1235,9 +1237,7 @@ function normalizePrepItem(value: string) {
 function uniqueNonEmpty(values: string[]) {
   return Array.from(
     new Set(
-      values
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0),
+      values.map((value) => value.trim()).filter((value) => value.length > 0),
     ),
   );
 }

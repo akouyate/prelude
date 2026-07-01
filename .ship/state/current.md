@@ -2,19 +2,19 @@
 
 ## Objective
 
-Ship GitHub issue #86: Harden real candidate room lifecycle and realtime UX.
+Ship GitHub issue #110: finalize V1 candidate lifecycle and business rules.
 
 ## Scope
 
-- Keep the Redis auto-worker path as the normal real live interviewer launch.
-- Add candidate runtime state visibility for joining, joined, speaking,
-  listening, reconnecting, closing, completed, and failed states.
-- Keep LiveKit transcript packets/streams primary with HTTP transcript polling
-  as fallback.
-- Prevent silent completion by surfacing a closing/checkout state before the
-  final completion panel.
-- Strengthen live smoke reporting for lifecycle anomalies and closing evidence.
-- Preserve the simple full-height candidate room UX.
+- Represent the candidate lifecycle in code with explicit product statuses,
+  allowed transitions, consent gates, retry/resume policy, and terminal states.
+- Use the lifecycle in the candidate start/complete endpoints instead of raw
+  string status checks.
+- Keep V1 audio-first with form fallback; do not surface video as a V1 mode.
+- Prevent misleading recruiter analysis: full candidate briefs only for
+  completed sessions, with partial/failed/insufficient cases clearly labelled.
+- Preserve human-review-only, protected-trait exclusion, and idempotent
+  completion behavior.
 
 ## Phases
 
@@ -29,36 +29,27 @@ Ship GitHub issue #86: Harden real candidate room lifecycle and realtime UX.
 - [x] Review
 - [x] Simplification
 - [x] Final validation
-- [ ] Delivery
+- [x] Delivery
 
 ## Validation
 
-- `pnpm --dir apps/candidate test`: passed, 6 files / 31 tests.
-- `pnpm --dir apps/candidate typecheck`: passed.
-- `pnpm --dir apps/candidate lint`: passed.
-- `env E2E_DATABASE_URL='postgresql://postgres:postgres@localhost:15432/prelude?schema=public' pnpm --dir apps/candidate test:e2e`: passed, 2 mobile Chromium tests.
-- `make e2e-smoke POSTGRES_PORT=15432 REDIS_PORT=16379 DATABASE_URL='postgresql://postgres:postgres@localhost:15432/prelude?schema=public' E2E_SMOKE_RUN_ID=live-86-smoke E2E_SMOKE_CONSOLE_URL=http://localhost:3000`: passed.
-- `go test ./...` from `services/realtime`: passed, 45 tests / 7 packages.
-- `.venv/bin/python -m pytest tests/test_auto_worker.py tests/test_live_worker.py tests/test_business_rules.py` from `services/interviewer-agent`: passed, 15 tests.
-- `node --check scripts/live-smoke-report.mjs`: passed.
-- `make help`: passed and lists `live-smoke-report-strict`.
-- `pnpm run typecheck`: passed, 15 turbo tasks.
-- `pnpm lint`: passed, 15 turbo tasks.
-- `pnpm test`: passed, 15 turbo tasks.
-- `git diff --check`: passed.
-- `node scripts/live-smoke-report.mjs --strict` against a synthetic realtime
-  replay: passed, including `session_closing` before `session_completed` and a
-  closing interviewer transcript turn.
-
-## Not Run
-
-- A paid real OpenAI/LiveKit mobile tunnel session was not run in this pass.
-  Required credentials are present, but no interactive candidate session was
-  available to complete a real mobile interview during implementation. The
-  strict smoke command is now available for that live run.
+- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5432/prelude?schema=public' node node_modules/.pnpm/prisma@6.19.3_typescript@6.0.3/node_modules/prisma/build/index.js validate --schema packages/db/prisma/schema.prisma`
+- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5432/prelude?schema=public' node node_modules/.pnpm/prisma@6.19.3_typescript@6.0.3/node_modules/prisma/build/index.js generate --schema packages/db/prisma/schema.prisma`
+- `rtk ./node_modules/.bin/vitest run packages/core/src/domain/candidate-lifecycle.test.ts packages/contracts/src/schemas/brief.test.ts apps/candidate/app/api/live-interview-sessions/route.test.ts 'apps/candidate/app/api/candidate-sessions/[sessionId]/complete/route.test.ts' 'apps/candidate/app/api/candidate-sessions/[sessionId]/lifecycle/route.test.ts' apps/candidate/src/features/live-interview/live-interview-client.test.ts apps/candidate/src/features/live-interview/live-interview-runtime.test.ts apps/console/src/server/interviews/interview-drafts.publish.test.ts apps/console/src/server/interviews/candidate-brief-generation.test.ts apps/console/src/server/interviews/live-session-evidence.test.ts apps/console/src/server/interviews/live-session-insights.test.ts`
+- `rtk ./node_modules/.bin/tsc --noEmit -p packages/core/tsconfig.json`
+- `rtk ./node_modules/.bin/tsc --noEmit -p packages/contracts/tsconfig.json`
+- `rtk ./node_modules/.bin/tsc --noEmit -p packages/types/tsconfig.json`
+- `rtk ./node_modules/.bin/tsc --noEmit -p apps/candidate/tsconfig.json`
+- `rtk ./node_modules/.bin/tsc --noEmit -p apps/console/tsconfig.json`
+- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5440/prelude?schema=public' node node_modules/.pnpm/prisma@6.19.3_typescript@6.0.3/node_modules/prisma/build/index.js migrate deploy --schema packages/db/prisma/schema.prisma`
+- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5440/prelude?schema=public' node scripts/e2e-smoke.mjs --strict --reset --run-id codex-110-invite --console-url http://localhost:3000`
+- `rtk ./node_modules/.bin/playwright test -c apps/candidate/playwright.config.ts`
+  - mobile audio primary smoke
+  - microphone-denied written fallback smoke
+- `rtk ./node_modules/.bin/prettier --check apps/candidate/src/server/public-interviews.ts apps/candidate/app/api/form-interview-sessions/route.ts apps/candidate/src/features/live-interview/live-interview-client.ts apps/candidate/src/features/live-interview/live-interview-room.tsx apps/candidate/e2e/interview.spec.ts apps/candidate/playwright.config.ts docs/architecture/v1-domain-spine.md .ship/state/current.md scripts/e2e-smoke.mjs`
+- `rtk git diff --check`
 
 ## Remaining Follow-Up
 
-- #87 answer quality/business evaluation rules, recruiter dashboard analytics,
-  and replacing Redis/LiveKit architecture remain out of scope for this V1
-  slice.
+- Named invite creation UI and notification delivery are follow-up workflow
+  tickets, not blockers for the core lifecycle/business-rules slice.

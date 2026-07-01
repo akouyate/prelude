@@ -4,8 +4,8 @@ import * as React from "react";
 import { candidateConsentCopy, candidateDisclosureCopy } from "@prelude/core";
 import { Button, Input } from "@prelude/ui";
 import {
-  Camera,
   CheckCircle,
+  EditPencil,
   Mail,
   Microphone as Mic,
   PhoneXmark as PhoneOff,
@@ -21,8 +21,10 @@ import {
   createSession,
   fetchLiveSessionState,
   fetchLiveTranscript,
+  markProductSessionLifecycle,
   resumeStorageKey,
   stopLocalStream,
+  submitFormInterview,
   toCandidateError,
 } from "./live-interview-client";
 import type {
@@ -41,7 +43,7 @@ import {
 } from "./live-interview-runtime";
 import { prepareVoiceLevelMeter, VoiceLevelMeter } from "./voice-level-meter";
 
-type CandidateStep = "welcome" | "setup";
+type CandidateStep = "welcome" | "setup" | "form";
 
 type PublishedInterview = Extract<
   PublicInterviewContext,
@@ -63,6 +65,7 @@ const statusCopy: Record<RoomStatus, string> = {
   closing: "Wrapping up",
   failed: "Needs attention",
   completed: "Completed",
+  abandoned: "Ended",
 };
 
 export function LiveInterviewRoom({
@@ -81,7 +84,6 @@ export function LiveInterviewRoom({
   const [candidateEmail, setCandidateEmail] = React.useState("");
   const [hasAcceptedConsent, setHasAcceptedConsent] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [isVideoEnabled, setIsVideoEnabled] = React.useState(false);
   const [isAudioPlaybackBlocked, setIsAudioPlaybackBlocked] =
     React.useState(false);
   const [localStream, setLocalStream] = React.useState<MediaStream | null>(
@@ -95,14 +97,18 @@ export function LiveInterviewRoom({
   // finalized turns live in transcriptTurns for history.
   const [interviewerCaption, setInterviewerCaption] =
     React.useState<LiveTranscriptTurn | null>(null);
+  const [formAnswers, setFormAnswers] = React.useState<Record<string, string>>(
+    {},
+  );
+  const [isSubmittingForm, setIsSubmittingForm] = React.useState(false);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
   const roomRef = React.useRef<ConnectedRoom | null>(null);
   const localStreamRef = React.useRef<MediaStream | null>(null);
   const startInFlightRef = React.useRef(false);
   const completionTimerRef = React.useRef<number | null>(null);
   const serverCompletionScheduledRef = React.useRef(false);
+  const userAbandoningRef = React.useRef(false);
   const completedProductSessionIdsRef = React.useRef(new Set<string>());
-  const videoRef = React.useRef<HTMLVideoElement | null>(null);
   const mergeTranscriptTurns = React.useCallback(
     (incomingTurns: LiveTranscriptTurn[]) => {
       setTranscriptTurns((currentTurns) => {
@@ -139,9 +145,6 @@ export function LiveInterviewRoom({
 
   React.useEffect(() => {
     localStreamRef.current = localStream;
-    if (videoRef.current) {
-      videoRef.current.srcObject = localStream;
-    }
   }, [localStream]);
 
   React.useEffect(() => {
@@ -155,7 +158,12 @@ export function LiveInterviewRoom({
   }, []);
 
   React.useEffect(() => {
-    if (status === "ready" || status === "failed" || status === "completed") {
+    if (
+      status === "ready" ||
+      status === "failed" ||
+      status === "completed" ||
+      status === "abandoned"
+    ) {
       return undefined;
     }
 
@@ -219,6 +227,7 @@ export function LiveInterviewRoom({
     prepareVoiceLevelMeter();
     startInFlightRef.current = true;
     let grantedStream: MediaStream | null = null;
+    let nextSession: LiveInterviewSession | null = null;
 
     setError(null);
     setIsAudioPlaybackBlocked(false);
@@ -226,6 +235,7 @@ export function LiveInterviewRoom({
     setInterviewerCaption(null);
     setElapsedSeconds(0);
     serverCompletionScheduledRef.current = false;
+    userAbandoningRef.current = false;
     if (completionTimerRef.current) {
       window.clearTimeout(completionTimerRef.current);
       completionTimerRef.current = null;
@@ -233,14 +243,14 @@ export function LiveInterviewRoom({
     setStatus("preparing");
 
     try {
-      const nextSession = await createSession({
+      nextSession = await createSession({
         candidateEmail,
         candidateName,
         consentAccepted: hasAcceptedConsent,
         resumeToken:
           window.localStorage.getItem(resumeStorageKey(token)) ?? undefined,
         token,
-        videoEnabled: isVideoEnabled,
+        videoEnabled: false,
       });
       if (nextSession.resumeToken) {
         window.localStorage.setItem(
@@ -253,8 +263,7 @@ export function LiveInterviewRoom({
       setStatus("permission_required");
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video:
-          nextSession.allowedModalities.includes("video") && isVideoEnabled,
+        video: false,
       });
       grantedStream = stream;
       setLocalStream(stream);
@@ -269,6 +278,10 @@ export function LiveInterviewRoom({
         onInterviewerReady: () => setStatus("connected"),
         onDisconnected: ({ intentional }) => {
           if (intentional) {
+            if (userAbandoningRef.current) {
+              setStatus("abandoned");
+              return;
+            }
             if (!serverCompletionScheduledRef.current) {
               completeCurrentSession(nextSession);
               setStatus("completed");
@@ -279,6 +292,9 @@ export function LiveInterviewRoom({
           roomRef.current = null;
           stopLocalStream(stream);
           setLocalStream(null);
+          if (nextSession) {
+            void markProductSessionLifecycle(nextSession, "fail");
+          }
           setError(
             "The live interview connection closed unexpectedly. Please refresh the page and retry.",
           );
@@ -304,6 +320,9 @@ export function LiveInterviewRoom({
     } catch (cause) {
       roomRef.current?.disconnect();
       roomRef.current = null;
+      if (nextSession) {
+        await markProductSessionLifecycle(nextSession, "fail");
+      }
       stopLocalStream(grantedStream);
       setLocalStream(null);
       setStatus("failed");
@@ -317,20 +336,48 @@ export function LiveInterviewRoom({
     completeCurrentSession,
     context.kind,
     hasAcceptedConsent,
-    isVideoEnabled,
     mergeTranscriptTurns,
     token,
   ]);
 
   const endInterview = React.useCallback(() => {
-    completeCurrentSession(session);
+    userAbandoningRef.current = true;
+    if (session) {
+      void markProductSessionLifecycle(session, "abandon");
+    }
     roomRef.current?.disconnect();
     roomRef.current = null;
     stopLocalStream(localStream);
     setLocalStream(null);
     setIsAudioPlaybackBlocked(false);
-    setStatus("completed");
-  }, [completeCurrentSession, localStream, session]);
+    setStatus("abandoned");
+  }, [localStream, session]);
+
+  const retryAfterAbandon = React.useCallback(() => {
+    userAbandoningRef.current = false;
+    setSession(null);
+    setTranscriptTurns([]);
+    setInterviewerCaption(null);
+    setError(null);
+    setStatus("ready");
+    setStep("setup");
+  }, []);
+
+  const openFormFallback = React.useCallback(() => {
+    setError(null);
+    setStatus("ready");
+    setStep("form");
+  }, []);
+
+  const updateFormAnswer = React.useCallback(
+    (questionId: string, value: string) => {
+      setFormAnswers((currentAnswers) => ({
+        ...currentAnswers,
+        [questionId]: value,
+      }));
+    },
+    [],
+  );
 
   const enableAudio = React.useCallback(async () => {
     try {
@@ -355,9 +402,64 @@ export function LiveInterviewRoom({
     status === "closing" ||
     status === "reconnecting";
   const interview = context.kind === "not_found" ? null : context.interview;
-  const allowedModes = interview?.responseModes ?? ["audio", "video"];
+  const allowedModes = interview?.responseModes ?? ["audio"];
+  const formQuestions = interview?.questions ?? [];
+  const isFormFallbackAvailable =
+    allowedModes.includes("form") && formQuestions.length > 0;
   const canStart = hasAcceptedConsent && candidateName.trim().length > 1;
   const isLiveExperience = isBusy || isRoomActive;
+
+  const submitWrittenAnswers = React.useCallback(async () => {
+    if (context.kind === "not_found" || !canStart || !isFormFallbackAvailable) {
+      return;
+    }
+
+    const answers = formQuestions.map((question) => ({
+      questionId: question.id,
+      text: formAnswers[question.id]?.trim() ?? "",
+    }));
+    if (answers.some((answer) => answer.text.length <= 1)) {
+      setError("Please answer each question before submitting.");
+      return;
+    }
+
+    setError(null);
+    setIsSubmittingForm(true);
+    try {
+      const result = await submitFormInterview({
+        answers,
+        candidateEmail,
+        candidateName,
+        consentAccepted: hasAcceptedConsent,
+        resumeToken:
+          window.localStorage.getItem(resumeStorageKey(token)) ?? undefined,
+        token,
+      });
+      if (result.resumeToken) {
+        window.localStorage.setItem(
+          resumeStorageKey(token),
+          result.resumeToken,
+        );
+      }
+      setSession(null);
+      setElapsedSeconds(0);
+      setStatus("completed");
+    } catch (cause) {
+      setError(toCandidateError(cause));
+    } finally {
+      setIsSubmittingForm(false);
+    }
+  }, [
+    canStart,
+    candidateEmail,
+    candidateName,
+    context.kind,
+    formAnswers,
+    formQuestions,
+    hasAcceptedConsent,
+    isFormFallbackAvailable,
+    token,
+  ]);
 
   React.useEffect(() => {
     if (!isLiveExperience) {
@@ -451,15 +553,22 @@ export function LiveInterviewRoom({
       isCancelled = true;
       window.clearInterval(interval);
     };
-  }, [
-    isRoomActive,
-    mergeTranscriptTurns,
-    scheduleServerCompletion,
-    session,
-  ]);
+  }, [isRoomActive, mergeTranscriptTurns, scheduleServerCompletion, session]);
 
   if (!interview) {
     return <UnavailableInterview />;
+  }
+
+  const blockedInvitation = blockingInvitationCopy(
+    context.kind === "published" ? context.invitation?.status : null,
+  );
+  if (blockedInvitation) {
+    return (
+      <UnavailableInterview
+        message={blockedInvitation.message}
+        title={blockedInvitation.title}
+      />
+    );
   }
 
   if (status === "ready" && step === "welcome") {
@@ -484,23 +593,52 @@ export function LiveInterviewRoom({
     );
   }
 
+  if (status === "abandoned") {
+    return (
+      <section className="mx-auto flex flex-1 items-center justify-center py-10">
+        <AbandonedPanel
+          companyName={interview.companyName}
+          onRetry={retryAfterAbandon}
+        />
+      </section>
+    );
+  }
+
+  if (step === "form") {
+    return (
+      <section className="mx-auto flex w-full max-w-3xl flex-1 items-center py-8">
+        <FormFallbackPanel
+          answers={formAnswers}
+          canSubmit={canStart && !isSubmittingForm}
+          error={error}
+          isSubmitting={isSubmittingForm}
+          onAnswerChange={updateFormAnswer}
+          onBack={() => {
+            setError(null);
+            setStep("setup");
+          }}
+          onSubmit={submitWrittenAnswers}
+          questions={formQuestions}
+          roleTitle={interview.roleTitle}
+        />
+      </section>
+    );
+  }
+
   if (isLiveExperience) {
     return (
       <LiveInterviewStage
         activeText={interviewerView.activeText}
         activeTurnId={interviewerView.activeTurnId}
-        allowedModes={allowedModes}
         elapsedSeconds={elapsedSeconds}
         isAudioPlaybackBlocked={isAudioPlaybackBlocked}
         isRoomActive={isRoomActive}
         isStreaming={interviewerView.isStreaming}
-        isVideoEnabled={isVideoEnabled}
         localStream={localStream}
         onEnableAudio={enableAudio}
         onEndInterview={endInterview}
         previousTurns={interviewerView.previous}
         status={status}
-        videoRef={videoRef}
       />
     );
   }
@@ -510,17 +648,14 @@ export function LiveInterviewRoom({
       <InterviewIntro allowedModes={allowedModes} interview={interview} />
       <div className="rounded-[2rem] border border-ink-100 bg-white/82 p-5 text-ink-900 backdrop-blur">
         <PreflightPanel
-          allowedModes={allowedModes}
           candidateEmail={candidateEmail}
           candidateName={candidateName}
           consentAccepted={hasAcceptedConsent}
           estimatedMinutes={interview.estimatedMinutes}
-          isVideoEnabled={isVideoEnabled}
           jobTitle={interview.jobTitle}
           onCandidateEmailChange={setCandidateEmail}
           onCandidateNameChange={setCandidateName}
           onConsentChange={setHasAcceptedConsent}
-          onVideoEnabledChange={setIsVideoEnabled}
         />
 
         {error ? <InlineAlert message={error} /> : null}
@@ -569,6 +704,17 @@ export function LiveInterviewRoom({
               })}
             </Button>
           )}
+          {isFormFallbackAvailable ? (
+            <Button
+              className="mt-3 h-12 w-full"
+              disabled={isBusy || !canStart}
+              onClick={openFormFallback}
+              variant="secondary"
+            >
+              <EditPencil aria-hidden="true" className="h-4 w-4" />
+              Use written fallback
+            </Button>
+          ) : null}
         </div>
       </div>
     </section>
@@ -731,33 +877,56 @@ function CompletionPanel({
   );
 }
 
+function AbandonedPanel({
+  companyName,
+  onRetry,
+}: {
+  companyName: string;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="rounded-[2rem] border border-ink-100 bg-white/82 p-6 text-center text-ink-900 backdrop-blur">
+      <span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-ink-100 text-ink-700">
+        <PhoneOff aria-hidden="true" className="h-8 w-8" />
+      </span>
+      <h2 className="mt-5 text-2xl font-semibold leading-tight sm:text-3xl">
+        Interview ended
+      </h2>
+      <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-ink-600">
+        We stopped this attempt and did not mark it as complete. If that was
+        accidental, you can start a new attempt for {companyName}.
+      </p>
+      <Button className="mt-6 h-12 w-full" onClick={onRetry}>
+        <RefreshCcw aria-hidden="true" className="h-4 w-4" />
+        Start a new attempt
+      </Button>
+      <p className="mt-4 text-sm text-ink-400">
+        You can also close this window and use the latest link from the
+        recruiter.
+      </p>
+    </div>
+  );
+}
+
 function PreflightPanel({
-  allowedModes,
   candidateEmail,
   candidateName,
   consentAccepted,
   estimatedMinutes,
-  isVideoEnabled,
   jobTitle,
   onCandidateEmailChange,
   onCandidateNameChange,
   onConsentChange,
-  onVideoEnabledChange,
 }: {
-  allowedModes: string[];
   candidateEmail: string;
   candidateName: string;
   consentAccepted: boolean;
   estimatedMinutes: number | null;
-  isVideoEnabled: boolean;
   jobTitle: string;
   onCandidateEmailChange: (value: string) => void;
   onCandidateNameChange: (value: string) => void;
   onConsentChange: (value: boolean) => void;
-  onVideoEnabledChange: (value: boolean) => void;
 }) {
-  const canUseVideo = allowedModes.includes("video");
-
   return (
     <>
       <div className="flex items-start gap-3">
@@ -795,33 +964,9 @@ function PreflightPanel({
         </label>
       </div>
 
-      {canUseVideo ? (
-        <fieldset className="mt-5">
-          <legend className="text-sm font-semibold text-ink-900">
-            How would you like to join?
-          </legend>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            <ModeChoice
-              active={isVideoEnabled}
-              description="Best signal if you are comfortable."
-              icon={Camera}
-              label="Audio + camera"
-              onClick={() => onVideoEnabledChange(true)}
-            />
-            <ModeChoice
-              active={!isVideoEnabled}
-              description="Your microphone stays on."
-              icon={Mic}
-              label="Audio only"
-              onClick={() => onVideoEnabledChange(false)}
-            />
-          </div>
-        </fieldset>
-      ) : (
-        <div className="mt-5 rounded-3xl border border-ink-100 bg-ink-50/70 p-4 text-sm leading-6 text-ink-600">
-          This interview is configured for audio. Your camera will not be used.
-        </div>
-      )}
+      <div className="mt-5 rounded-3xl border border-ink-100 bg-ink-50/70 p-4 text-sm leading-6 text-ink-600">
+        This interview is audio-first. You only need your microphone.
+      </div>
 
       <label className="mt-5 flex cursor-pointer gap-3 rounded-3xl border border-ink-100 bg-ink-50/70 p-4 text-sm leading-6 text-ink-700">
         <input
@@ -836,16 +981,110 @@ function PreflightPanel({
   );
 }
 
-function UnavailableInterview() {
+function FormFallbackPanel({
+  answers,
+  canSubmit,
+  error,
+  isSubmitting,
+  onAnswerChange,
+  onBack,
+  onSubmit,
+  questions,
+  roleTitle,
+}: {
+  answers: Record<string, string>;
+  canSubmit: boolean;
+  error: string | null;
+  isSubmitting: boolean;
+  onAnswerChange: (questionId: string, value: string) => void;
+  onBack: () => void;
+  onSubmit: () => void;
+  questions: PublishedInterview["questions"];
+  roleTitle: string;
+}) {
+  return (
+    <div className="w-full rounded-[2rem] border border-ink-100 bg-white/82 p-5 text-ink-900 backdrop-blur sm:p-7">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full bg-[#eef0e3] px-3 py-1 text-xs font-semibold uppercase tracking-[0.13em] text-olive-900">
+            <EditPencil aria-hidden="true" className="h-4 w-4" />
+            Written fallback
+          </div>
+          <h2 className="mt-5 text-2xl font-semibold leading-tight sm:text-3xl">
+            Answer in writing
+          </h2>
+          <p className="mt-2 max-w-xl text-sm leading-6 text-ink-600">
+            {roleTitle}. Use this fallback only if audio is not available on
+            your device. The recruiter still reviews your answers manually.
+          </p>
+        </div>
+        <Button className="h-11" onClick={onBack} variant="secondary">
+          Back to audio
+        </Button>
+      </div>
+
+      <div className="mt-6 space-y-4">
+        {questions.map((question, index) => (
+          <label
+            className="block rounded-3xl border border-ink-100 bg-ink-50/60 p-4"
+            key={question.id}
+          >
+            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-500">
+              Question {index + 1}
+            </span>
+            <span className="mt-2 block text-base font-semibold leading-6 text-ink-950">
+              {question.prompt}
+            </span>
+            {question.signal ? (
+              <span className="mt-1 block text-sm leading-6 text-ink-500">
+                {question.signal}
+              </span>
+            ) : null}
+            <textarea
+              aria-label={`Answer question ${index + 1}`}
+              className="mt-4 min-h-32 w-full resize-y rounded-3xl border border-ink-100 bg-white px-4 py-3 text-sm leading-6 text-ink-900 outline-none transition focus:border-ink-300"
+              onChange={(event) =>
+                onAnswerChange(question.id, event.target.value)
+              }
+              placeholder="Write your answer..."
+              value={answers[question.id] ?? ""}
+            />
+          </label>
+        ))}
+      </div>
+
+      {error ? <InlineAlert message={error} /> : null}
+
+      <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+        <Button className="h-12" onClick={onBack} variant="secondary">
+          Back
+        </Button>
+        <Button className="h-12" disabled={!canSubmit} onClick={onSubmit}>
+          {isSubmitting ? (
+            <RefreshCcw aria-hidden="true" className="h-4 w-4 animate-spin" />
+          ) : (
+            <CheckCircle aria-hidden="true" className="h-4 w-4" />
+          )}
+          Submit answers
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function UnavailableInterview({
+  message = "This link is invalid, unpublished, or no longer available. Ask the recruiter for a fresh interview link.",
+  title = "Interview unavailable",
+}: {
+  message?: string;
+  title?: string;
+}) {
   return (
     <section className="flex flex-1 flex-col justify-center py-10">
       <div className="max-w-lg rounded-[2rem] border border-ink-100 bg-white/82 p-6 text-ink-900 backdrop-blur">
         <AlertTriangle aria-hidden="true" className="h-6 w-6 text-coral-800" />
-        <h1 className="mt-4 text-3xl font-semibold">Interview unavailable</h1>
-        <p className="mt-3 text-sm leading-6 text-ink-600">
-          This link is invalid, unpublished, or no longer available. Ask the
-          recruiter for a fresh interview link.
-        </p>
+        <h1 className="mt-4 text-3xl font-semibold">{title}</h1>
+        <p className="mt-3 text-sm leading-6 text-ink-600">{message}</p>
       </div>
     </section>
   );
@@ -867,37 +1106,28 @@ function StatusPill({ status }: { status: RoomStatus }) {
 function LiveInterviewStage({
   activeText,
   activeTurnId,
-  allowedModes,
   elapsedSeconds,
   isAudioPlaybackBlocked,
   isRoomActive,
   isStreaming,
-  isVideoEnabled,
   localStream,
   onEnableAudio,
   onEndInterview,
   previousTurns,
   status,
-  videoRef,
 }: {
   activeText: string | null;
   activeTurnId: string | null;
-  allowedModes: string[];
   elapsedSeconds: number;
   isAudioPlaybackBlocked: boolean;
   isRoomActive: boolean;
   isStreaming: boolean;
-  isVideoEnabled: boolean;
   localStream: MediaStream | null;
   onEnableAudio: () => void;
   onEndInterview: () => void;
   previousTurns: LiveTranscriptTurn[];
   status: RoomStatus;
-  videoRef: React.RefObject<HTMLVideoElement | null>;
 }) {
-  const showVideo = Boolean(
-    localStream && allowedModes.includes("video") && isVideoEnabled,
-  );
   const activeDisplayText = activeText ?? statusDescription(status);
   const activeWords = React.useMemo(
     () => splitTranscriptWords(activeDisplayText),
@@ -1010,19 +1240,6 @@ function LiveInterviewStage({
             </div>
           )}
 
-          {showVideo ? (
-            <div className="absolute bottom-24 left-5 w-28 overflow-hidden rounded-3xl border border-white/10 bg-ink-950 sm:bottom-8 sm:left-8 sm:w-44">
-              <video
-                ref={videoRef}
-                aria-label="Local camera preview"
-                autoPlay
-                className="aspect-video w-full object-cover"
-                muted
-                playsInline
-              />
-            </div>
-          ) : null}
-
           {isAudioPlaybackBlocked ? (
             <div className="mx-auto mt-6 max-w-sm rounded-3xl border border-gold-200/30 bg-white/8 p-4 text-sm text-white">
               <p className="font-semibold">Audio paused by your browser</p>
@@ -1081,40 +1298,6 @@ function ConnectingInterviewState({ status }: { status: RoomStatus }) {
         One moment while we set up your private room.
       </p>
     </div>
-  );
-}
-
-function ModeChoice({
-  active,
-  description,
-  icon: Icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  description: string;
-  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      className={`cursor-pointer rounded-3xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
-        active
-          ? "border-ink-900 bg-[#eef0e3]"
-          : "border-ink-100 bg-white/70 hover:border-ink-300"
-      }`}
-      onClick={onClick}
-      type="button"
-    >
-      <span className="flex items-center gap-2 text-sm font-semibold text-ink-950">
-        <Icon aria-hidden={true} className="h-4 w-4" />
-        {label}
-      </span>
-      <span className="mt-2 block text-xs leading-5 text-ink-600">
-        {description}
-      </span>
-    </button>
   );
 }
 
@@ -1184,6 +1367,34 @@ function startButtonLabel({
   return "Join the interview";
 }
 
+function blockingInvitationCopy(status: string | null | undefined) {
+  if (status === "expired") {
+    return {
+      message:
+        "This interview link has expired. Ask the recruiter for a fresh link.",
+      title: "Interview expired",
+    };
+  }
+
+  if (status === "completed") {
+    return {
+      message:
+        "This interview has already been completed. Ask the recruiter for a new link if you need another attempt.",
+      title: "Interview completed",
+    };
+  }
+
+  if (status === "superseded") {
+    return {
+      message:
+        "This interview attempt was replaced by a newer one. Refresh the page or use the latest link from the recruiter.",
+      title: "Interview replaced",
+    };
+  }
+
+  return null;
+}
+
 function formatDuration(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -1214,10 +1425,6 @@ function formatModes(modes: string[]) {
 
     if (mode === "audio") {
       return "audio";
-    }
-
-    if (mode === "video") {
-      return "camera optional";
     }
 
     return mode;
@@ -1262,6 +1469,9 @@ function statusDescription(status: RoomStatus) {
   }
   if (status === "failed") {
     return "Something needs your attention before the interview can start.";
+  }
+  if (status === "abandoned") {
+    return "This interview attempt was ended before completion.";
   }
 
   return "Ready when you are.";

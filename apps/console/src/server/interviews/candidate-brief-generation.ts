@@ -48,7 +48,7 @@ export type CandidateBriefSynthesizer = {
 export type GenerateCandidateBriefResult =
   | {
       brief: CandidateBriefDto;
-      status: "completed";
+      status: CandidateBriefDto["status"];
     }
   | {
       reason: "candidate_session_not_found" | "runtime_not_ready";
@@ -90,25 +90,6 @@ export async function generateCandidateBriefForSession({
     questionCount: readQuestions(session.interview.questions).length,
   });
 
-  if (evidence.status !== "completed") {
-    await prisma.candidateBrief.upsert({
-      create: {
-        candidateSessionId: session.id,
-        failedReason: "Runtime evidence is not complete yet.",
-        organizationId: session.organizationId,
-        schemaVersion: candidateBriefSchemaVersion,
-        status: "pending",
-      },
-      update: {
-        failedReason: "Runtime evidence is not complete yet.",
-        status: "pending",
-      },
-      where: { candidateSessionId: session.id },
-    });
-
-    return { reason: "runtime_not_ready", status: "skipped" };
-  }
-
   await prisma.candidateBrief.upsert({
     create: {
       candidateSessionId: session.id,
@@ -124,18 +105,34 @@ export async function generateCandidateBriefForSession({
   });
 
   try {
+    const shouldUseConservativeLocalBrief =
+      evidence.status !== "completed" ||
+      evidence.transcriptTurns.filter((turn) => turn.speaker === "candidate")
+        .length === 0;
     const brief = candidateBriefSchema.parse(
-      await synthesizer.synthesize({
-        candidateLabel:
-          session.candidateName ??
-          session.candidateEmail ??
-          `Candidate ${session.id.slice(-6)}`,
-        candidateSessionId: session.id,
-        criteria,
-        evidence,
-        jobTitle: session.job.title,
-        roleTitle: session.interview.roleTitle,
-      }),
+      shouldUseConservativeLocalBrief
+        ? buildLocalCandidateBrief({
+            candidateLabel:
+              session.candidateName ??
+              session.candidateEmail ??
+              `Candidate ${session.id.slice(-6)}`,
+            candidateSessionId: session.id,
+            criteria,
+            evidence,
+            jobTitle: session.job.title,
+            roleTitle: session.interview.roleTitle,
+          })
+        : await synthesizer.synthesize({
+            candidateLabel:
+              session.candidateName ??
+              session.candidateEmail ??
+              `Candidate ${session.id.slice(-6)}`,
+            candidateSessionId: session.id,
+            criteria,
+            evidence,
+            jobTitle: session.job.title,
+            roleTitle: session.interview.roleTitle,
+          }),
     );
     const evidenceRefs = brief.criteria.flatMap((criterion) =>
       criterion.evidence.map((item) => ({
@@ -156,13 +153,13 @@ export async function generateCandidateBriefForSession({
         modelProvider: synthesizer.provider,
         recommendation: brief.suggestedNextStep ?? "to_review",
         schemaVersion: candidateBriefSchemaVersion,
-        status: "completed",
+        status: brief.status,
         summaryJson: brief as unknown as Prisma.InputJsonValue,
       },
       where: { candidateSessionId: session.id },
     });
 
-    return { brief, status: "completed" };
+    return { brief, status: brief.status };
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Candidate brief failed.";
@@ -249,6 +246,10 @@ export function buildLocalCandidateBrief(
   const reviewableCandidateTurns = candidateTurns
     .filter(isReviewableTurn)
     .filter((turn) => !containsSensitiveTopic(turn.text));
+  const briefStatus = resolveLocalBriefStatus({
+    evidence: input.evidence,
+    reviewableCandidateTurns,
+  });
   const limitations = getLimitations(
     input.evidence,
     candidateTurns,
@@ -271,6 +272,8 @@ export function buildLocalCandidateBrief(
   const summary = buildSummary({
     candidateLabel: input.candidateLabel,
     candidateTurns,
+    briefStatus,
+    evidenceStatus: input.evidence.status,
     roleTitle: input.roleTitle,
   });
 
@@ -308,7 +311,7 @@ export function buildLocalCandidateBrief(
       criteria,
       roleTitle: input.roleTitle,
     }),
-    status: "completed",
+    status: briefStatus,
     strengths: strongOrMedium
       .slice(0, 3)
       .map((criterion) => `${criterion.label}: ${criterion.rationale}`),
@@ -477,7 +480,9 @@ function buildLocalEvaluationMatrix({
 function toMatrixStatus(
   status: CandidateBriefDto["criteria"][number]["status"],
   evidenceCount: number,
-): NonNullable<CandidateBriefDto["evaluationMatrix"]>["criteria"][number]["status"] {
+): NonNullable<
+  CandidateBriefDto["evaluationMatrix"]
+>["criteria"][number]["status"] {
   switch (status) {
     case "Strong":
       return "satisfied";
@@ -492,7 +497,9 @@ function toMatrixStatus(
 
 function toMatrixConfidence(
   status: CandidateBriefDto["criteria"][number]["status"],
-): NonNullable<CandidateBriefDto["evaluationMatrix"]>["criteria"][number]["confidence"] {
+): NonNullable<
+  CandidateBriefDto["evaluationMatrix"]
+>["criteria"][number]["confidence"] {
   switch (status) {
     case "Strong":
       return "high";
@@ -506,7 +513,9 @@ function toMatrixConfidence(
 
 function categorizeCriterion(
   label: string,
-): NonNullable<CandidateBriefDto["evaluationMatrix"]>["criteria"][number]["category"] {
+): NonNullable<
+  CandidateBriefDto["evaluationMatrix"]
+>["criteria"][number]["category"] {
   const normalized = normalizeText(label);
 
   if (containsAny(normalized, ["availability", "available", "mobility"])) {
@@ -531,12 +540,28 @@ function categorizeCriterion(
 function buildSummary({
   candidateLabel,
   candidateTurns,
+  briefStatus,
+  evidenceStatus,
   roleTitle,
 }: {
+  briefStatus: CandidateBriefDto["status"];
   candidateLabel: string;
   candidateTurns: CandidateTranscriptTurn[];
+  evidenceStatus: string;
   roleTitle: string;
 }) {
+  if (briefStatus === "technical_failure") {
+    return `${candidateLabel}'s ${roleTitle} screen ended with a technical failure. Use any captured transcript only as context and invite a retry if the profile still matters.`;
+  }
+
+  if (briefStatus === "partial") {
+    return `${candidateLabel}'s ${roleTitle} screen is partial (${evidenceStatus}). Review the captured evidence only as directional context before deciding the next human step.`;
+  }
+
+  if (briefStatus === "insufficient_signal") {
+    return `${candidateLabel}'s ${roleTitle} screen does not contain enough reviewable candidate evidence for a substantive brief. Treat the result as insufficient signal.`;
+  }
+
   if (candidateTurns.length === 0) {
     return `${candidateLabel} completed the ${roleTitle} screen, but the transcript does not contain enough candidate evidence for a substantive brief.`;
   }
@@ -567,6 +592,21 @@ function getLimitations(
     limitations.push("No candidate transcript turns were available.");
   }
 
+  if (evidence.status !== "completed") {
+    limitations.push(
+      `Interview status is ${evidence.status}; do not treat this as a full completed screen.`,
+    );
+  }
+
+  if (
+    evidence.status === "failed" ||
+    evidence.terminalEventType === "session_failed"
+  ) {
+    limitations.push(
+      "The interview had a technical failure; do not interpret this as candidate weakness.",
+    );
+  }
+
   if (
     evidence.questionCompletionRate !== null &&
     evidence.questionCompletionRate < 100
@@ -581,6 +621,31 @@ function getLimitations(
   }
 
   return limitations;
+}
+
+function resolveLocalBriefStatus({
+  evidence,
+  reviewableCandidateTurns,
+}: {
+  evidence: CandidateSessionEvidence;
+  reviewableCandidateTurns: CandidateTranscriptTurn[];
+}): CandidateBriefDto["status"] {
+  if (
+    evidence.status === "failed" ||
+    evidence.terminalEventType === "session_failed"
+  ) {
+    return "technical_failure";
+  }
+
+  if (reviewableCandidateTurns.length === 0) {
+    return "insufficient_signal";
+  }
+
+  if (evidence.status !== "completed") {
+    return "partial";
+  }
+
+  return "completed";
 }
 
 function isReviewableTurn(turn: CandidateTranscriptTurn) {

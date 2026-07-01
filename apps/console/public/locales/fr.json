@@ -104,6 +104,9 @@
       "criteriaAnalysisPending": "Analyse en attente",
       "criteriaBriefPending": "Brief en attente",
       "criteriaAnalysisReady": "Analyse prête",
+      "criteriaPartial": "Brief partiel",
+      "criteriaInsufficientSignal": "Signal insuffisant",
+      "criteriaTechnicalFailure": "Échec technique",
       "criteriaNotReady": "Pas prêt"
     },
     "roles": {

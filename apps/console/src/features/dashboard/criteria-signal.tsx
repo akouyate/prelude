@@ -186,6 +186,14 @@ function getCriteriaSignalLabel(
     return t("dashboard.criteriaAnalysisPending");
   }
 
+  if (
+    analysisStatus === "insufficient_signal" ||
+    analysisStatus === "partial" ||
+    analysisStatus === "technical_failure"
+  ) {
+    return formatAnalysisStatus(analysisStatus, t);
+  }
+
   if (!hasCompletedBrief) {
     return t("dashboard.criteriaBriefPending");
   }
@@ -196,6 +204,18 @@ function getCriteriaSignalLabel(
 function formatAnalysisStatus(status: string, t: TFunction) {
   if (status === "available") {
     return t("dashboard.criteriaAnalysisReady");
+  }
+
+  if (status === "partial") {
+    return t("dashboard.criteriaPartial");
+  }
+
+  if (status === "insufficient_signal") {
+    return t("dashboard.criteriaInsufficientSignal");
+  }
+
+  if (status === "technical_failure") {
+    return t("dashboard.criteriaTechnicalFailure");
   }
 
   return t("dashboard.criteriaNotReady");

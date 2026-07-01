@@ -19,34 +19,40 @@ export const interviewDraftStatuses = [
 
 export type InterviewDraftStatus = (typeof interviewDraftStatuses)[number];
 
-export const interviewStatuses = [
-  "published",
-  "paused",
-  "archived",
-] as const;
+export const interviewStatuses = ["published", "paused", "archived"] as const;
 
 export type InterviewStatus = (typeof interviewStatuses)[number];
 
 export const candidateSessionStatuses = [
-  "created",
-  "started",
-  "waiting_candidate",
-  "agent_joining",
-  "in_progress",
-  "paused",
-  "completed",
-  "failed",
-  "expired",
   "abandoned",
+  "agent_joining",
+  "completed",
+  "consent_required",
+  "created",
+  "expired",
+  "failed",
+  "in_progress",
+  "invited",
+  "opened",
+  "paused",
+  "ready",
+  "reconnecting",
+  "started",
+  "starting",
+  "superseded",
+  "waiting_candidate",
 ] as const;
 
 export type CandidateSessionStatus = (typeof candidateSessionStatuses)[number];
 
 export const candidateBriefStatuses = [
-  "pending",
-  "processing",
   "completed",
   "failed",
+  "insufficient_signal",
+  "partial",
+  "pending",
+  "processing",
+  "technical_failure",
 ] as const;
 
 export type CandidateBriefStatus = (typeof candidateBriefStatuses)[number];

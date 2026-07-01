@@ -19,7 +19,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   if (!result.ok) {
     return NextResponse.json(
-      { error: { code: "candidate_session_not_found" } },
+      { error: { code: result.error ?? "candidate_session_not_found" } },
       { status: result.status },
     );
   }

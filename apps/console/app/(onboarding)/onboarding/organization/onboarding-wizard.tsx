@@ -23,10 +23,16 @@ import {
   Shop,
   Suitcase,
   TaskList,
-  VideoCamera,
 } from "iconoir-react";
 import type { OrganizationOnboardingJobSource } from "@prelude/contracts";
-import { Button, ChoiceTile, Input, StepProgress, StepShell, cn } from "@prelude/ui";
+import {
+  Button,
+  ChoiceTile,
+  Input,
+  StepProgress,
+  StepShell,
+  cn,
+} from "@prelude/ui";
 
 import {
   completeOrganizationOnboarding,
@@ -67,23 +73,22 @@ const steps: StepId[] = [
   "source",
   "jobs",
   "mode",
-  "ready"
+  "ready",
 ];
 
 const indeedLogo = {
   color: "#003A9B",
-  path: "M11.566 21.5633v-8.762c.2553.0231.5009.0346.758.0346 1.2225 0 2.3739-.3206 3.3506-.8928v9.6182c0 .8219-.1957 1.4287-.5757 1.8338-.378.4033-.8808.6049-1.491.6049-.6007 0-1.0766-.2016-1.468-.6183-.3781-.4032-.5739-1.01-.5739-1.8184zM11.589.5659c2.5447-.8929 5.4424-.8449 7.6186.987.405.3687.8673.8334 1.0515 1.3806.2207.6913-.7695-.073-.9057-.167-.71-.4532-1.4182-.8334-2.2127-1.0946C12.8614.3873 8.8122 2.709 6.2945 6.315c-1.0516 1.5939-1.7367 3.2721-2.299 5.1174-.0614.2017-.1094.4647-.2207.6413-.1113.2036-.048-.5453-.048-.5702.0845-.7623.2438-1.4997.4414-2.237C5.3292 5.3375 7.897 2.0655 11.5891.5658zm4.9281 7.0587c0 1.6686-1.353 3.0224-3.0205 3.0224-1.6677 0-3.0186-1.3538-3.0186-3.0224 0-1.6687 1.351-3.0224 3.0186-3.0224 1.6676 0 3.0205 1.3518 3.0205 3.0224Z"
+  path: "M11.566 21.5633v-8.762c.2553.0231.5009.0346.758.0346 1.2225 0 2.3739-.3206 3.3506-.8928v9.6182c0 .8219-.1957 1.4287-.5757 1.8338-.378.4033-.8808.6049-1.491.6049-.6007 0-1.0766-.2016-1.468-.6183-.3781-.4032-.5739-1.01-.5739-1.8184zM11.589.5659c2.5447-.8929 5.4424-.8449 7.6186.987.405.3687.8673.8334 1.0515 1.3806.2207.6913-.7695-.073-.9057-.167-.71-.4532-1.4182-.8334-2.2127-1.0946C12.8614.3873 8.8122 2.709 6.2945 6.315c-1.0516 1.5939-1.7367 3.2721-2.299 5.1174-.0614.2017-.1094.4647-.2207.6413-.1113.2036-.048-.5453-.048-.5702.0845-.7623.2438-1.4997.4414-2.237C5.3292 5.3375 7.897 2.0655 11.5891.5658zm4.9281 7.0587c0 1.6686-1.353 3.0224-3.0205 3.0224-1.6677 0-3.0186-1.3538-3.0186-3.0224 0-1.6687 1.351-3.0224 3.0186-3.0224 1.6676 0 3.0205 1.3518 3.0205 3.0224Z",
 };
 
 const linkedinLogo = {
   viewBox: "0 0 455.731 455.731",
-  background:
-    "M0 0h455.731v455.731H0z",
+  background: "M0 0h455.731v455.731H0z",
   paths: [
     "M107.255 69.215c20.873.017 38.088 17.257 38.043 38.234-.05 21.965-18.278 38.52-38.3 38.043-20.308.411-38.155-16.551-38.151-38.188 0-20.985 17.282-38.105 38.408-38.089z",
     "M129.431 386.471H84.71c-5.804 0-10.509-4.705-10.509-10.509V185.18c0-5.804 4.705-10.509 10.509-10.509h44.721c5.804 0 10.509 4.705 10.509 10.509v190.783c-.001 5.803-4.705 10.508-10.509 10.508z",
-    "M386.884 241.682c0-39.996-32.423-72.42-72.42-72.42h-11.47c-21.882 0-41.214 10.918-52.842 27.606-1.268 1.819-2.442 3.708-3.52 5.658-.373-.056-.594-.085-.599-.075v-23.418c0-2.409-1.953-4.363-4.363-4.363h-55.795c-2.409 0-4.363 1.953-4.363 4.363V382.11c0 2.409 1.952 4.362 4.361 4.363l57.011.014c2.41.001 4.364-1.953 4.364-4.363V264.801c0-20.28 16.175-37.119 36.454-37.348 10.352-.117 19.737 4.031 26.501 10.799 6.675 6.671 10.802 15.895 10.802 26.079v117.808c0 2.409 1.953 4.362 4.361 4.363l57.152.014c2.41.001 4.364-1.953 4.364-4.363V241.682z"
-  ]
+    "M386.884 241.682c0-39.996-32.423-72.42-72.42-72.42h-11.47c-21.882 0-41.214 10.918-52.842 27.606-1.268 1.819-2.442 3.708-3.52 5.658-.373-.056-.594-.085-.599-.075v-23.418c0-2.409-1.953-4.363-4.363-4.363h-55.795c-2.409 0-4.363 1.953-4.363 4.363V382.11c0 2.409 1.952 4.362 4.361 4.363l57.011.014c2.41.001 4.364-1.953 4.364-4.363V264.801c0-20.28 16.175-37.119 36.454-37.348 10.352-.117 19.737 4.031 26.501 10.799 6.675 6.671 10.802 15.895 10.802 26.079v117.808c0 2.409 1.953 4.362 4.361 4.363l57.152.014c2.41.001 4.364-1.953 4.364-4.363V241.682z",
+  ],
 };
 
 const companySizes = [
@@ -91,7 +96,7 @@ const companySizes = [
   { label: "11-50", value: "11-50" },
   { label: "51-200", value: "51-200" },
   { label: "201-1000", value: "201-1000" },
-  { label: "1000+", value: "1000+" }
+  { label: "1000+", value: "1000+" },
 ];
 
 const roles = [
@@ -99,26 +104,26 @@ const roles = [
     description: "I screen, qualify, and coordinate candidates.",
     icon: Community,
     label: "Recruiter",
-    value: "Recruiter"
+    value: "Recruiter",
   },
   {
     description: "I own the role and need better first filters.",
     icon: Suitcase,
     label: "Hiring manager",
-    value: "Hiring manager"
+    value: "Hiring manager",
   },
   {
     description: "I need a lean hiring setup for a growing team.",
     icon: Building,
     label: "Founder / operator",
-    value: "Founder / operator"
+    value: "Founder / operator",
   },
   {
     description: "We manage hiring processes across the company.",
     icon: TaskList,
     label: "HR team",
-    value: "HR team"
-  }
+    value: "HR team",
+  },
 ];
 
 const hiringFocuses = [
@@ -126,50 +131,51 @@ const hiringFocuses = [
     description: "Restaurants, hotels, tourism, and guest-facing roles.",
     icon: Shop,
     label: "Hospitality",
-    value: "Hospitality"
+    value: "Hospitality",
   },
   {
     description: "Warehouse, transport, field operations, and shifts.",
     icon: DeliveryTruck,
     label: "Logistics",
-    value: "Logistics"
+    value: "Logistics",
   },
   {
     description: "Retail, customer support, sales, and service teams.",
     icon: Shop,
     label: "Customer-facing",
-    value: "Customer-facing"
+    value: "Customer-facing",
   },
   {
     description: "Product, engineering, data, and specialist roles.",
     icon: Industry,
     label: "Specialist roles",
-    value: "Specialist roles"
+    value: "Specialist roles",
   },
   {
-    description: "Use this when your hiring needs do not fit a preset category.",
+    description:
+      "Use this when your hiring needs do not fit a preset category.",
     icon: MoreHoriz,
     label: "Other roles",
-    value: "Other roles"
-  }
+    value: "Other roles",
+  },
 ];
 
 const jobSources = [
   {
     description: "Mock connection to active LinkedIn job posts.",
     label: "LinkedIn",
-    value: "linkedin"
+    value: "linkedin",
   },
   {
     description: "Mock connection to active Indeed job posts.",
     label: "Indeed",
-    value: "indeed"
+    value: "indeed",
   },
   {
     description: "Start from a role title and add details later.",
     label: "Add manually",
-    value: "manual"
-  }
+    value: "manual",
+  },
 ] satisfies Array<{
   description: string;
   label: string;
@@ -181,26 +187,26 @@ const importedJobs = [
     id: "restaurant-manager",
     location: "Paris",
     source: "LinkedIn",
-    title: "Restaurant Manager"
+    title: "Restaurant Manager",
   },
   {
     id: "warehouse-supervisor",
     location: "Lyon",
     source: "Indeed",
-    title: "Warehouse Supervisor"
+    title: "Warehouse Supervisor",
   },
   {
     id: "customer-support-agent",
     location: "Remote",
     source: "LinkedIn",
-    title: "Customer Support Agent"
+    title: "Customer Support Agent",
   },
   {
     id: "sales-development-rep",
     location: "Paris",
     source: "Indeed",
-    title: "Sales Development Representative"
-  }
+    title: "Sales Development Representative",
+  },
 ];
 
 const interviewModes = [
@@ -208,31 +214,30 @@ const interviewModes = [
     description: "Prelude speaks with the candidate and adapts live.",
     icon: Microphone,
     label: "Voice first",
-    value: "Voice first"
-  },
-  {
-    description: "Candidates can answer on camera when it makes sense.",
-    icon: VideoCamera,
-    label: "Video optional",
-    value: "Video optional"
+    value: "Voice first",
   },
   {
     description: "Keep a quiet Typeform-like fallback for candidates.",
     icon: EditPencil,
     label: "Form fallback",
-    value: "Form fallback"
-  }
+    value: "Form fallback",
+  },
 ];
+
+const defaultInterviewMode = "Voice first";
+const supportedInterviewModes = new Set(
+  interviewModes.map((mode) => mode.value),
+);
 
 const initialState: OnboardingState = {
   companyName: "",
   companySize: "",
   hiringFocus: "",
-  interviewMode: "Voice first",
+  interviewMode: defaultInterviewMode,
   jobSource: "",
   manualJobTitle: "",
   role: "",
-  selectedJobId: ""
+  selectedJobId: "",
 };
 
 export function OnboardingWizard() {
@@ -252,13 +257,13 @@ export function OnboardingWizard() {
       state.jobSource === "manual"
         ? []
         : importedJobs.filter(
-            (job) => job.source.toLowerCase() === state.jobSource
+            (job) => job.source.toLowerCase() === state.jobSource,
           ),
-    [state.jobSource]
+    [state.jobSource],
   );
   const selectedJob = useMemo(
     () => availableJobs.find((job) => job.id === state.selectedJobId),
-    [availableJobs, state.selectedJobId]
+    [availableJobs, state.selectedJobId],
   );
   const firstJobTitle =
     state.jobSource === "manual"
@@ -268,7 +273,7 @@ export function OnboardingWizard() {
 
   function update<Key extends keyof OnboardingState>(
     key: Key,
-    value: OnboardingState[Key]
+    value: OnboardingState[Key],
   ) {
     setState((current) => ({ ...current, [key]: value }));
   }
@@ -386,7 +391,10 @@ export function OnboardingWizard() {
         title={
           <>
             Preparing your{" "}
-            <span className="font-display italic text-olive-700">workspace</span>.
+            <span className="font-display italic text-olive-700">
+              workspace
+            </span>
+            .
           </>
         }
         description="We are loading your saved setup progress."
@@ -505,7 +513,7 @@ export function OnboardingWizard() {
                 "flex w-full cursor-pointer items-center justify-between rounded-3xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
                 state.selectedJobId === job.id
                   ? "border-olive-700 bg-[#eef0e3]"
-                  : "border-ink-100 bg-white/60 hover:border-ink-300 hover:bg-white"
+                  : "border-ink-100 bg-white/60 hover:border-ink-300 hover:bg-white",
               )}
               onClick={() => update("selectedJobId", job.id)}
               type="button"
@@ -547,7 +555,10 @@ export function OnboardingWizard() {
               label="Job source"
               value={formatJobSource(state.jobSource)}
             />
-            <SummaryItem label="First job" value={firstJobTitle ?? "Not selected"} />
+            <SummaryItem
+              label="First job"
+              value={firstJobTitle ?? "Not selected"}
+            />
             <SummaryItem label="Candidate mode" value={state.interviewMode} />
           </dl>
           {submitError ? (
@@ -578,7 +589,7 @@ export function OnboardingWizard() {
 function JobSourceGrid({
   onSelect,
   options,
-  selected
+  selected,
 }: {
   onSelect: (value: JobSource) => void;
   options: Array<{
@@ -603,14 +614,14 @@ function JobSourceGrid({
               isManual ? "sm:col-span-2" : undefined,
               isSelected
                 ? "border-olive-700 bg-[#eef0e3]"
-                : "border-ink-100 bg-white/55 hover:border-ink-300 hover:bg-white"
+                : "border-ink-100 bg-white/55 hover:border-ink-300 hover:bg-white",
             )}
             onClick={() => onSelect(option.value)}
             type="button"
           >
             <span className="flex items-start justify-between gap-4">
               <span className="flex items-center gap-3">
-                  <span className="grid h-12 w-12 place-items-center rounded-2xl border border-ink-100 bg-white">
+                <span className="grid h-12 w-12 place-items-center rounded-2xl border border-ink-100 bg-white">
                   <SourceLogo source={option.value} />
                 </span>
                 <span>
@@ -675,7 +686,7 @@ function SourceLogo({ source }: { source: JobSource }) {
 function ChoiceGrid({
   onSelect,
   options,
-  selected
+  selected,
 }: {
   onSelect: (value: string) => void;
   options: Array<{
@@ -737,7 +748,8 @@ function StepTitle({ state, step }: { state: OnboardingState; step: StepId }) {
     return (
       <>
         Import your{" "}
-        <span className="font-display italic text-olive-700">active roles</span>.
+        <span className="font-display italic text-olive-700">active roles</span>
+        .
       </>
     );
   }
@@ -825,7 +837,7 @@ function WizardFooter({
   isLast,
   isSaving,
   onBack,
-  onNext
+  onNext,
 }: {
   canContinue: boolean;
   isFirst: boolean;
@@ -865,12 +877,14 @@ function stepIndex(step: StepId) {
   return Math.max(0, steps.indexOf(step));
 }
 
-function toLocalState(state: ReturnType<typeof toPersistedState>): OnboardingState {
+function toLocalState(
+  state: ReturnType<typeof toPersistedState>,
+): OnboardingState {
   return {
     companyName: state.companyName,
     companySize: state.companySize,
     hiringFocus: state.hiringFocus,
-    interviewMode: state.interviewMode,
+    interviewMode: normalizeInterviewMode(state.interviewMode),
     jobSource: state.jobSource,
     manualJobTitle: state.manualJobTitle,
     role: state.onboardingRole,
@@ -883,7 +897,7 @@ function toPersistedState(state: OnboardingState) {
     companyName: state.companyName,
     companySize: state.companySize,
     hiringFocus: state.hiringFocus,
-    interviewMode: state.interviewMode,
+    interviewMode: normalizeInterviewMode(state.interviewMode),
     jobSource: state.jobSource,
     manualJobTitle: state.manualJobTitle,
     onboardingRole: state.role,
@@ -891,13 +905,20 @@ function toPersistedState(state: OnboardingState) {
   };
 }
 
+function normalizeInterviewMode(value: string) {
+  return supportedInterviewModes.has(value) ? value : defaultInterviewMode;
+}
+
 function WelcomeStep() {
   return (
     <div className="grid gap-4 sm:grid-cols-3">
       <div className="rounded-3xl border border-ink-100 bg-white/55 p-4">
-        <p className="text-sm font-semibold text-ink-900">One question at a time</p>
+        <p className="text-sm font-semibold text-ink-900">
+          One question at a time
+        </p>
         <p className="mt-2 text-sm leading-6 text-ink-600">
-          The setup stays focused, closer to Typeform and Tally than a settings form.
+          The setup stays focused, closer to Typeform and Tally than a settings
+          form.
         </p>
       </div>
       <div className="rounded-3xl border border-ink-100 bg-white/55 p-4">

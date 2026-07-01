@@ -6,8 +6,14 @@ import type {
 } from "./live-interview-types";
 
 export function statusFromSessionState(state: LiveSessionState): RoomStatus {
-  if (state.status === "failed" || hasEventType(state.events, "session_failed")) {
+  if (
+    state.status === "failed" ||
+    hasEventType(state.events, "session_failed")
+  ) {
     return "failed";
+  }
+  if (state.status === "abandoned") {
+    return "abandoned";
   }
   if (
     state.status === "completed" ||
@@ -64,7 +70,8 @@ export function statusFromTranscriptTurn(
     currentStatus === "reconnecting" ||
     currentStatus === "closing" ||
     currentStatus === "completed" ||
-    currentStatus === "failed"
+    currentStatus === "failed" ||
+    currentStatus === "abandoned"
   ) {
     return currentStatus;
   }
@@ -88,7 +95,11 @@ export function shouldKeepCurrentRuntimeStatus(
   if (currentStatus === "closing" && nextStatus !== "failed") {
     return true;
   }
-  if (currentStatus === "completed" || currentStatus === "failed") {
+  if (
+    currentStatus === "completed" ||
+    currentStatus === "failed" ||
+    currentStatus === "abandoned"
+  ) {
     return true;
   }
 
@@ -261,7 +272,8 @@ function lastTurns(turns: LiveTranscriptTurn[], count: number) {
 export function hasClosingTranscript(state: LiveSessionState) {
   return state.events.some(
     (event) =>
-      event.type === "session_closing" && transcriptTurnFromEvent(event) !== null,
+      event.type === "session_closing" &&
+      transcriptTurnFromEvent(event) !== null,
   );
 }
 
@@ -274,6 +286,9 @@ function statusFromRealtimeSessionStatus(status: string): RoomStatus {
   }
   if (status === "failed") {
     return "failed";
+  }
+  if (status === "abandoned") {
+    return "abandoned";
   }
   if (status === "completed") {
     return "completed";
@@ -362,6 +377,7 @@ const runtimeEventTypes = new Set([
 ]);
 
 const terminalStatuses = new Set<RoomStatus>([
+  "abandoned",
   "closing",
   "completed",
   "failed",

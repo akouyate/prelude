@@ -104,6 +104,9 @@
       "criteriaAnalysisPending": "Analysis pending",
       "criteriaBriefPending": "Brief pending",
       "criteriaAnalysisReady": "Analysis ready",
+      "criteriaPartial": "Partial brief",
+      "criteriaInsufficientSignal": "Insufficient signal",
+      "criteriaTechnicalFailure": "Technical failure",
       "criteriaNotReady": "Not ready"
     },
     "roles": {

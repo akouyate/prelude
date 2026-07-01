@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@prelude/db";
 
-import { prepareCandidateSession } from "../../../src/server/public-interviews";
+import {
+  prepareCandidateSession,
+  toProductCandidateLifecycleStatus,
+} from "../../../src/server/public-interviews";
 import { realtimeAuthHeaders } from "../../../src/server/realtime-api";
 
 const REALTIME_API_URL =
@@ -73,7 +76,10 @@ export async function POST(request: Request) {
       `${REALTIME_API_URL}/v1/interview-sessions`,
       {
         method: "POST",
-        headers: { "content-type": "application/json", ...realtimeAuthHeaders() },
+        headers: {
+          "content-type": "application/json",
+          ...realtimeAuthHeaders(),
+        },
         body: JSON.stringify({
           interview_plan_id: prepared.interviewPlanId,
           candidate_id: prepared.candidateId,
@@ -89,6 +95,15 @@ export async function POST(request: Request) {
         where: { id: prepared.productSession.id },
       });
     }
+    if (prepared.candidateInvitationId) {
+      await prisma.candidateInvitation.updateMany({
+        data: { status: "failed" },
+        where: {
+          id: prepared.candidateInvitationId,
+          status: { notIn: ["completed", "expired", "superseded"] },
+        },
+      });
+    }
 
     return NextResponse.json(
       { error: { code: "realtime_api_unavailable" } },
@@ -101,6 +116,15 @@ export async function POST(request: Request) {
       await prisma.candidateSession.update({
         data: { status: "failed" },
         where: { id: prepared.productSession.id },
+      });
+    }
+    if (prepared.candidateInvitationId) {
+      await prisma.candidateInvitation.updateMany({
+        data: { status: "failed" },
+        where: {
+          id: prepared.candidateInvitationId,
+          status: { notIn: ["completed", "expired", "superseded"] },
+        },
       });
     }
 
@@ -118,13 +142,25 @@ export async function POST(request: Request) {
   const payload = (await realtimeResponse.json()) as RealtimeSessionResponse;
 
   if (prepared.productSession) {
+    const productStatus = toProductCandidateLifecycleStatus(
+      payload.session.status,
+    );
     await prisma.candidateSession.update({
       data: {
         realtimeSessionId: payload.session.id,
-        status: payload.session.status,
+        status: productStatus,
       },
       where: { id: prepared.productSession.id },
     });
+    if (prepared.candidateInvitationId) {
+      await prisma.candidateInvitation.updateMany({
+        data: { status: productStatus },
+        where: {
+          id: prepared.candidateInvitationId,
+          status: { notIn: ["completed", "expired", "superseded"] },
+        },
+      });
+    }
   }
 
   const isMock = payload.livekit_join.token.startsWith("mock_lk_");
@@ -140,6 +176,15 @@ export async function POST(request: Request) {
         where: { id: prepared.productSession.id },
       });
     }
+    if (prepared.candidateInvitationId) {
+      await prisma.candidateInvitation.updateMany({
+        data: { status: "failed" },
+        where: {
+          id: prepared.candidateInvitationId,
+          status: { notIn: ["completed", "expired", "superseded"] },
+        },
+      });
+    }
 
     return NextResponse.json(
       {
@@ -151,6 +196,13 @@ export async function POST(request: Request) {
       },
       { status: 502 },
     );
+  }
+
+  if (prepared.supersededSessionId) {
+    await prisma.candidateSession.update({
+      data: { status: "superseded" },
+      where: { id: prepared.supersededSessionId },
+    });
   }
 
   return NextResponse.json({

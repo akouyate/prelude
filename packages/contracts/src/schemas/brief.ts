@@ -6,6 +6,9 @@ export const candidateBriefStatusSchema = z.enum([
   "pending",
   "processing",
   "completed",
+  "partial",
+  "insufficient_signal",
+  "technical_failure",
   "failed",
 ]);
 
@@ -24,11 +27,7 @@ export const candidateBriefEvaluationStatusSchema = z.enum([
   "risk",
 ]);
 
-export const candidateBriefConfidenceSchema = z.enum([
-  "low",
-  "medium",
-  "high",
-]);
+export const candidateBriefConfidenceSchema = z.enum(["low", "medium", "high"]);
 
 export const candidateBriefCriterionCategorySchema = z.enum([
   "experience",

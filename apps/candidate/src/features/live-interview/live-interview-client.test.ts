@@ -8,6 +8,7 @@ import {
   fetchLiveSessionState,
   decodeRealtimeTranscriptPacket,
   fetchLiveTranscript,
+  markProductSessionLifecycle,
   resumeStorageKey,
   stopLocalStream,
   toCandidateError,
@@ -166,6 +167,23 @@ describe("live interview client", () => {
         videoEnabled: false,
       }),
     });
+  });
+
+  it("preserves candidate lifecycle error codes from the session API", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      errorResponse("candidate_session_expired", 410),
+    );
+
+    await expect(
+      createSession({
+        candidateEmail: "ada@example.com",
+        candidateName: "Ada Lovelace",
+        consentAccepted: true,
+        resumeToken: "resume_expired",
+        token: "public_token",
+        videoEnabled: false,
+      }),
+    ).rejects.toThrow("candidate_session_expired");
   });
 
   it("announces candidate readiness when connecting to a mock room", async () => {
@@ -521,6 +539,25 @@ describe("live interview client", () => {
     );
   });
 
+  it("marks product sessions abandoned or failed without blocking the UI", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new Error("network"));
+
+    await expect(
+      markProductSessionLifecycle(sessionFixture(), "abandon"),
+    ).resolves.toBeUndefined();
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/candidate-sessions/cs_123/lifecycle",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "abandon",
+          resumeToken: "resume_123",
+        }),
+      },
+    );
+  });
+
   it("loads normalized live transcript turns", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(
       jsonResponse({
@@ -618,6 +655,18 @@ describe("live interview client", () => {
     expect(toCandidateError(new Error("session_unavailable"))).toContain(
       "prepare the interview room",
     );
+    expect(toCandidateError(new Error("candidate_session_expired"))).toContain(
+      "link has expired",
+    );
+    expect(
+      toCandidateError(new Error("candidate_session_already_completed")),
+    ).toContain("already been completed");
+    expect(
+      toCandidateError(new Error("candidate_session_superseded")),
+    ).toContain("replaced by a newer one");
+    expect(toCandidateError(new Error("realtime_api_failed"))).toContain(
+      "live interviewer is not available",
+    );
     expect(
       toCandidateError(new Error("candidate_media_ready_unavailable")),
     ).toContain("confirm your microphone status");
@@ -631,6 +680,13 @@ function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body), {
     headers: { "content-type": "application/json" },
     status: 200,
+  });
+}
+
+function errorResponse(code: string, status: number) {
+  return new Response(JSON.stringify({ error: { code } }), {
+    headers: { "content-type": "application/json" },
+    status,
   });
 }
 

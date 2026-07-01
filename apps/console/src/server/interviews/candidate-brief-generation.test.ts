@@ -35,10 +35,9 @@ describe("candidate brief generation", () => {
       recommendationLabel: "targeted_follow_up",
       recommendedNextStep: "to_review",
     });
-    expect(brief.evaluationMatrix?.criteria.map((criterion) => criterion.status)).toEqual([
-      "partial",
-      "partial",
-    ]);
+    expect(
+      brief.evaluationMatrix?.criteria.map((criterion) => criterion.status),
+    ).toEqual(["partial", "partial"]);
   });
 
   it("marks criteria not assessable when transcript evidence is missing", () => {
@@ -57,6 +56,7 @@ describe("candidate brief generation", () => {
         (criterion) => criterion.status === "Not assessable",
       ),
     ).toBe(true);
+    expect(brief.status).toBe("insufficient_signal");
     expect(brief.limitations).toContain(
       "No candidate transcript turns were available.",
     );
@@ -88,9 +88,10 @@ describe("candidate brief generation", () => {
       }),
     );
 
-    expect(brief.criteria.every((criterion) => criterion.status === "Weak")).toBe(
-      true,
-    );
+    expect(
+      brief.criteria.every((criterion) => criterion.status === "Weak"),
+    ).toBe(true);
+    expect(brief.status).toBe("insufficient_signal");
     expect(
       brief.criteria.every((criterion) => criterion.evidence.length === 0),
     ).toBe(true);
@@ -119,14 +120,61 @@ describe("candidate brief generation", () => {
       }),
     );
 
-    expect(brief.complianceFlags).toContain(
-      "sensitive_signal_review_required",
-    );
-    expect(brief.criteria.every((criterion) => criterion.evidence.length === 0)).toBe(
-      true,
-    );
+    expect(brief.complianceFlags).toContain("sensitive_signal_review_required");
+    expect(brief.status).toBe("insufficient_signal");
+    expect(
+      brief.criteria.every((criterion) => criterion.evidence.length === 0),
+    ).toBe(true);
     expect(brief.limitations.join(" ")).toContain(
       "sensitive information was excluded",
+    );
+  });
+
+  it("labels incomplete sessions with useful candidate evidence as partial", () => {
+    const brief = buildLocalCandidateBrief(
+      input({
+        evidence: {
+          ...input().evidence,
+          completedAt: null,
+          questionCompletionRate: 50,
+          runtimeStatus: "in_progress",
+          status: "abandoned",
+          terminalEventType: null,
+        },
+      }),
+    );
+
+    expect(brief.status).toBe("partial");
+    expect(brief.summary).toContain("partial");
+    expect(brief.limitations).toContain(
+      "Interview status is abandoned; do not treat this as a full completed screen.",
+    );
+    expect(brief.evaluationMatrix?.recommendationLabel).toBe(
+      "targeted_follow_up",
+    );
+  });
+
+  it("labels runtime failures as technical_failure without inventing a full brief", () => {
+    const brief = buildLocalCandidateBrief(
+      input({
+        evidence: {
+          ...input().evidence,
+          completedAt: null,
+          failedAt: "2026-06-20T10:03:00.000Z",
+          questionCompletionRate: 0,
+          runtimeStatus: "failed",
+          status: "failed",
+          terminalEventType: "session_failed",
+          transcriptTurns: [],
+        },
+      }),
+    );
+
+    expect(brief.status).toBe("technical_failure");
+    expect(brief.summary).toContain("technical failure");
+    expect(brief.evaluationMatrix?.recommendationLabel).toBe("inconclusive");
+    expect(brief.limitations).toContain(
+      "The interview had a technical failure; do not interpret this as candidate weakness.",
     );
   });
 

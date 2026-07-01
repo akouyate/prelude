@@ -19,14 +19,18 @@ describe("live interview runtime state", () => {
     expect(statusFromSessionState(state("agent_joining", []))).toBe(
       "interviewer_joining",
     );
-    expect(statusFromSessionState(state("in_progress", [event("agent_joined")]))).toBe(
-      "agent_joined",
-    );
     expect(
-      statusFromSessionState(state("in_progress", [event("agent_speech_started")])),
+      statusFromSessionState(state("in_progress", [event("agent_joined")])),
+    ).toBe("agent_joined");
+    expect(
+      statusFromSessionState(
+        state("in_progress", [event("agent_speech_started")]),
+      ),
     ).toBe("interviewer_speaking");
     expect(
-      statusFromSessionState(state("in_progress", [event("candidate_turn_started")])),
+      statusFromSessionState(
+        state("in_progress", [event("candidate_turn_started")]),
+      ),
     ).toBe("candidate_speaking");
     expect(
       statusFromSessionState(state("in_progress", [event("answer_evaluated")])),
@@ -34,6 +38,7 @@ describe("live interview runtime state", () => {
     expect(
       statusFromSessionState(state("completed", [event("session_closing")])),
     ).toBe("completed");
+    expect(statusFromSessionState(state("abandoned", []))).toBe("abandoned");
   });
 
   it("keeps reconnecting and closing stable until terminal states arrive", () => {
@@ -42,6 +47,7 @@ describe("live interview runtime state", () => {
     );
     expect(shouldKeepCurrentRuntimeStatus("closing", "listening")).toBe(true);
     expect(shouldKeepCurrentRuntimeStatus("closing", "failed")).toBe(false);
+    expect(shouldKeepCurrentRuntimeStatus("abandoned", "listening")).toBe(true);
   });
 
   it("derives speaking state from realtime transcript packets", () => {
@@ -115,7 +121,9 @@ function event(type: string, payload: Record<string, unknown> = {}) {
 }
 
 describe("visibleInterviewerTurns", () => {
-  const turn = (overrides: Partial<LiveTranscriptTurn>): LiveTranscriptTurn => ({
+  const turn = (
+    overrides: Partial<LiveTranscriptTurn>,
+  ): LiveTranscriptTurn => ({
     isFinal: true,
     sessionId: "is_1",
     speaker: "interviewer",
@@ -127,11 +135,34 @@ describe("visibleInterviewerTurns", () => {
 
   it("shows only finalized interviewer turns — never the candidate, never partials", () => {
     const turns = [
-      turn({ startedAt: "2026-06-23T10:00:00Z", text: "First question.", turnId: "i1" }),
-      turn({ speaker: "candidate", startedAt: "2026-06-23T10:00:30Z", text: "My answer.", turnId: "c1" }),
-      turn({ isFinal: false, startedAt: "2026-06-23T10:01:00Z", text: "And how", turnId: "i2_partial" }),
-      turn({ startedAt: "2026-06-23T10:01:02Z", text: "Second question.", turnId: "i2" }),
-      turn({ speaker: "system", startedAt: "2026-06-23T10:01:05Z", text: "noise", turnId: "sys" }),
+      turn({
+        startedAt: "2026-06-23T10:00:00Z",
+        text: "First question.",
+        turnId: "i1",
+      }),
+      turn({
+        speaker: "candidate",
+        startedAt: "2026-06-23T10:00:30Z",
+        text: "My answer.",
+        turnId: "c1",
+      }),
+      turn({
+        isFinal: false,
+        startedAt: "2026-06-23T10:01:00Z",
+        text: "And how",
+        turnId: "i2_partial",
+      }),
+      turn({
+        startedAt: "2026-06-23T10:01:02Z",
+        text: "Second question.",
+        turnId: "i2",
+      }),
+      turn({
+        speaker: "system",
+        startedAt: "2026-06-23T10:01:05Z",
+        text: "noise",
+        turnId: "sys",
+      }),
     ];
 
     expect(visibleInterviewerTurns(turns).map((item) => item.turnId)).toEqual([
@@ -142,8 +173,16 @@ describe("visibleInterviewerTurns", () => {
 
   it("sorts by start time with a stable turnId tiebreak (no reorder flicker)", () => {
     const turns = [
-      turn({ startedAt: "2026-06-23T10:00:00Z", text: "B question.", turnId: "b" }),
-      turn({ startedAt: "2026-06-23T10:00:00Z", text: "A question.", turnId: "a" }),
+      turn({
+        startedAt: "2026-06-23T10:00:00Z",
+        text: "B question.",
+        turnId: "b",
+      }),
+      turn({
+        startedAt: "2026-06-23T10:00:00Z",
+        text: "A question.",
+        turnId: "a",
+      }),
     ];
 
     expect(visibleInterviewerTurns(turns).map((item) => item.turnId)).toEqual([
@@ -156,11 +195,21 @@ describe("visibleInterviewerTurns", () => {
     // The realtime stream sometimes finalizes the same phrase twice with
     // different turn ids — that showed as duplicated lines in the live UI.
     const turns = [
-      turn({ startedAt: "2026-06-23T10:00:00Z", text: "Tell us about a project.", turnId: "a" }),
-      turn({ startedAt: "2026-06-23T10:00:01Z", text: "Tell us about a project.", turnId: "b" }),
+      turn({
+        startedAt: "2026-06-23T10:00:00Z",
+        text: "Tell us about a project.",
+        turnId: "a",
+      }),
+      turn({
+        startedAt: "2026-06-23T10:00:01Z",
+        text: "Tell us about a project.",
+        turnId: "b",
+      }),
     ];
 
-    expect(visibleInterviewerTurns(turns).map((item) => item.turnId)).toEqual(["a"]);
+    expect(visibleInterviewerTurns(turns).map((item) => item.turnId)).toEqual([
+      "a",
+    ]);
   });
 
   it("collapses a leaked streaming partial into its finalized phrase", () => {
@@ -168,19 +217,37 @@ describe("visibleInterviewerTurns", () => {
     // defaulted to final, plus the full turn). The truncated fragment must fold
     // into the complete one instead of showing as its own dimmed line.
     const turns = [
-      turn({ startedAt: "2026-06-23T10:00:00Z", text: "Bonjour, qu'est-ce qui vous a", turnId: "partial" }),
-      turn({ startedAt: "2026-06-23T10:00:01Z", text: "Bonjour, qu'est-ce qui vous a donné envie ?", turnId: "full" }),
+      turn({
+        startedAt: "2026-06-23T10:00:00Z",
+        text: "Bonjour, qu'est-ce qui vous a",
+        turnId: "partial",
+      }),
+      turn({
+        startedAt: "2026-06-23T10:00:01Z",
+        text: "Bonjour, qu'est-ce qui vous a donné envie ?",
+        turnId: "full",
+      }),
     ];
 
-    expect(visibleInterviewerTurns(turns).map((item) => item.turnId)).toEqual(["full"]);
+    expect(visibleInterviewerTurns(turns).map((item) => item.turnId)).toEqual([
+      "full",
+    ]);
   });
 
   it("keeps two complete questions even when one is a prefix of the other", () => {
     // A finished question ends with terminal punctuation, so a genuine pair is
     // never merged — only unterminated fragments fold in.
     const turns = [
-      turn({ startedAt: "2026-06-23T10:00:00Z", text: "Parlez-moi de votre parcours.", turnId: "q1" }),
-      turn({ startedAt: "2026-06-23T10:00:01Z", text: "Parlez-moi de votre parcours en gestion de projet.", turnId: "q2" }),
+      turn({
+        startedAt: "2026-06-23T10:00:00Z",
+        text: "Parlez-moi de votre parcours.",
+        turnId: "q1",
+      }),
+      turn({
+        startedAt: "2026-06-23T10:00:01Z",
+        text: "Parlez-moi de votre parcours en gestion de projet.",
+        turnId: "q2",
+      }),
     ];
 
     expect(visibleInterviewerTurns(turns).map((item) => item.turnId)).toEqual([
@@ -191,7 +258,9 @@ describe("visibleInterviewerTurns", () => {
 });
 
 describe("selectInterviewerView", () => {
-  const turn = (overrides: Partial<LiveTranscriptTurn>): LiveTranscriptTurn => ({
+  const turn = (
+    overrides: Partial<LiveTranscriptTurn>,
+  ): LiveTranscriptTurn => ({
     isFinal: true,
     sessionId: "is_1",
     speaker: "interviewer",
@@ -203,7 +272,11 @@ describe("selectInterviewerView", () => {
 
   it("streams the live caption as the active line while the agent is speaking", () => {
     const finals = [
-      turn({ startedAt: "2026-06-23T10:00:00Z", text: "First question.", turnId: "i1" }),
+      turn({
+        startedAt: "2026-06-23T10:00:00Z",
+        text: "First question.",
+        turnId: "i1",
+      }),
     ];
     const caption = turn({
       isFinal: false,
@@ -224,7 +297,11 @@ describe("selectInterviewerView", () => {
     const caption = turn({ text: "Second question.", turnId: "i2" });
     const view = selectInterviewerView({
       finalTurns: [
-        turn({ startedAt: "2026-06-23T10:00:00Z", text: "First question.", turnId: "i1" }),
+        turn({
+          startedAt: "2026-06-23T10:00:00Z",
+          text: "First question.",
+          turnId: "i1",
+        }),
       ],
       caption,
     });
@@ -238,8 +315,16 @@ describe("selectInterviewerView", () => {
     // prelude data packet, or HTTP polling). It must not render twice.
     const caption = turn({ text: "Second question.", turnId: "i2" });
     const finals = [
-      turn({ startedAt: "2026-06-23T10:00:00Z", text: "First question.", turnId: "i1" }),
-      turn({ startedAt: "2026-06-23T10:01:02Z", text: "second question.", turnId: "i2-http" }),
+      turn({
+        startedAt: "2026-06-23T10:00:00Z",
+        text: "First question.",
+        turnId: "i1",
+      }),
+      turn({
+        startedAt: "2026-06-23T10:01:02Z",
+        text: "second question.",
+        turnId: "i2-http",
+      }),
     ];
 
     const view = selectInterviewerView({ finalTurns: finals, caption });
@@ -250,11 +335,21 @@ describe("selectInterviewerView", () => {
 
   it("falls back to the latest finalized turn when there is no caption", () => {
     const finals = [
-      turn({ startedAt: "2026-06-23T10:00:00Z", text: "First question.", turnId: "i1" }),
-      turn({ startedAt: "2026-06-23T10:01:00Z", text: "Second question.", turnId: "i2" }),
+      turn({
+        startedAt: "2026-06-23T10:00:00Z",
+        text: "First question.",
+        turnId: "i1",
+      }),
+      turn({
+        startedAt: "2026-06-23T10:01:00Z",
+        text: "Second question.",
+        turnId: "i2",
+      }),
     ];
 
-    expect(selectInterviewerView({ finalTurns: finals, caption: null })).toEqual({
+    expect(
+      selectInterviewerView({ finalTurns: finals, caption: null }),
+    ).toEqual({
       activeText: "Second question.",
       activeTurnId: "i2",
       isStreaming: false,
@@ -280,8 +375,16 @@ describe("selectInterviewerView", () => {
     // The greeting arrives as a finalized full turn AND a leaked truncated
     // partial AND is re-streamed as the live caption. Only the caption shows.
     const finals = [
-      turn({ startedAt: "2026-06-23T10:00:00Z", text: "Bonjour, qu'est-ce qui vous a", turnId: "partial" }),
-      turn({ startedAt: "2026-06-23T10:00:01Z", text: "Bonjour, qu'est-ce qui vous a donné envie de rejoindre ?", turnId: "full" }),
+      turn({
+        startedAt: "2026-06-23T10:00:00Z",
+        text: "Bonjour, qu'est-ce qui vous a",
+        turnId: "partial",
+      }),
+      turn({
+        startedAt: "2026-06-23T10:00:01Z",
+        text: "Bonjour, qu'est-ce qui vous a donné envie de rejoindre ?",
+        turnId: "full",
+      }),
     ];
     const caption = turn({
       isFinal: false,
@@ -297,10 +400,22 @@ describe("selectInterviewerView", () => {
 
   it("keeps an older distinct question that merely shares a prefix with the caption", () => {
     const finals = [
-      turn({ startedAt: "2026-06-23T10:00:00Z", text: "Parlez-moi de votre parcours.", turnId: "old" }),
-      turn({ startedAt: "2026-06-23T10:01:00Z", text: "Pouvez-vous décrire le contexte ?", turnId: "recent" }),
+      turn({
+        startedAt: "2026-06-23T10:00:00Z",
+        text: "Parlez-moi de votre parcours.",
+        turnId: "old",
+      }),
+      turn({
+        startedAt: "2026-06-23T10:01:00Z",
+        text: "Pouvez-vous décrire le contexte ?",
+        turnId: "recent",
+      }),
     ];
-    const caption = turn({ isFinal: false, text: "Parlez-moi de", turnId: "live" });
+    const caption = turn({
+      isFinal: false,
+      text: "Parlez-moi de",
+      turnId: "live",
+    });
 
     const view = selectInterviewerView({ finalTurns: finals, caption });
 

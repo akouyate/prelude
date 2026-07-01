@@ -68,7 +68,9 @@ describe("candidate brief schema", () => {
             status: "partial",
           },
         ],
-        facts: ["The candidate mentioned onboarding and cross-functional work."],
+        facts: [
+          "The candidate mentioned onboarding and cross-functional work.",
+        ],
         inferredSignals: [
           {
             confidence: "medium",
@@ -121,4 +123,17 @@ describe("candidate brief schema", () => {
 
     expect(parsed.success).toBe(false);
   });
+
+  it.each(["partial", "insufficient_signal", "technical_failure"] as const)(
+    "accepts non-complete lifecycle-aware brief status %s",
+    (status) => {
+      const parsed = candidateBriefSchema.parse({
+        candidateSessionId: `cs_${status}`,
+        limitations: ["Human review is required before any hiring decision."],
+        status,
+      });
+
+      expect(parsed.status).toBe(status);
+    },
+  );
 });

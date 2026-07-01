@@ -100,6 +100,7 @@ export type PublishInterviewDraftResult =
   | {
       ok: true;
       candidatePath: string;
+      candidateInvitationToken: string;
       detailPath: string;
       interviewId: string;
       publicToken: string;
@@ -122,6 +123,7 @@ const allowedFocus = new Set<InterviewFocus>([
   "situational_judgment",
 ]);
 const allowedModes = new Set<InterviewResponseMode>(["audio", "text"]);
+const DEFAULT_CANDIDATE_INVITATION_TTL_DAYS = 30;
 
 // N6b role-gate: only an owner or admin may consciously override an LLM
 // protected-topic flag. A basic recruiter/viewer must escalate to one of them.
@@ -338,7 +340,9 @@ export async function publishInterviewDraft(
       (question) =>
         `${question.prompt} ${question.expectedSignal ?? ""} ${question.followUpPrompt ?? ""}`,
     ),
-    ...criteria.map((criterion) => `${criterion.label} ${criterion.description}`),
+    ...criteria.map(
+      (criterion) => `${criterion.label} ${criterion.description}`,
+    ),
   ];
 
   // N6e: a thrown error means the classifier could not run. It is recorded below
@@ -574,8 +578,9 @@ export async function publishInterviewDraft(
               data: { status: "published" },
               where: { id: draft.interview.id },
             });
+      const invitation = await ensureDefaultCandidateInvitation(tx, interview);
 
-      return { interview, kind: "published" as const };
+      return { interview, invitation, kind: "published" as const };
     }
 
     if (publicationMode === "create_republished_snapshot" && draft.interview) {
@@ -615,8 +620,9 @@ export async function publishInterviewDraft(
       data: { status: "published" },
       where: { id: draft.id },
     });
+    const invitation = await ensureDefaultCandidateInvitation(tx, interview);
 
-    return { interview, kind: "published" as const };
+    return { interview, invitation, kind: "published" as const };
   });
 
   revalidatePath("/");
@@ -626,7 +632,8 @@ export async function publishInterviewDraft(
 
   return {
     ok: true,
-    candidatePath: `/interview/${result.interview.publicToken}`,
+    candidateInvitationToken: result.invitation.token,
+    candidatePath: `/interview/${result.invitation.token}`,
     detailPath: `/roles/${result.interview.id}`,
     interviewId: result.interview.id,
     publicToken: result.interview.publicToken,
@@ -854,6 +861,66 @@ async function createPublicToken(
   }
 
   throw new Error("Could not generate a unique interview token.");
+}
+
+async function ensureDefaultCandidateInvitation(
+  tx: Pick<Prisma.TransactionClient, "candidateInvitation">,
+  interview: {
+    id: string;
+    jobId: string;
+    organizationId: string;
+  },
+) {
+  const now = new Date();
+  const existing = await tx.candidateInvitation.findFirst({
+    orderBy: { createdAt: "desc" },
+    where: {
+      candidateEmail: null,
+      candidateName: null,
+      expiresAt: { gt: now },
+      interviewId: interview.id,
+      status: { notIn: ["expired", "superseded"] },
+    },
+  });
+
+  if (existing) {
+    return existing;
+  }
+
+  return tx.candidateInvitation.create({
+    data: {
+      expiresAt: addDays(now, DEFAULT_CANDIDATE_INVITATION_TTL_DAYS),
+      interviewId: interview.id,
+      jobId: interview.jobId,
+      organizationId: interview.organizationId,
+      status: "invited",
+      token: await createCandidateInvitationToken(tx),
+    },
+  });
+}
+
+async function createCandidateInvitationToken(
+  tx: Pick<Prisma.TransactionClient, "candidateInvitation">,
+) {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const token = `ci_${randomBytes(12).toString("base64url")}`;
+    const existing = await tx.candidateInvitation.findUnique({
+      select: { id: true },
+      where: { token },
+    });
+
+    if (!existing) {
+      return token;
+    }
+  }
+
+  throw new Error("Could not generate a unique candidate invitation token.");
+}
+
+function addDays(value: Date, days: number) {
+  const next = new Date(value);
+  next.setDate(next.getDate() + days);
+  return next;
 }
 
 function slugify(value: string) {

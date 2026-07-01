@@ -60,6 +60,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
     process.env.MOCK_CLERK_USER_EMAIL || "recruiter@prelude.ai";
   const draft = interviewDraft();
   const publicToken = `iv_e2e_${runId}`;
+  const candidateInvitationToken = `ci_e2e_${runId}`;
   const resumeToken = `resume_e2e_${runId}`;
   const realtimeSessionId = `is_e2e_${runId}`;
   const candidateSessionId = `cs_e2e_${runId}`;
@@ -203,7 +204,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
       where: { id: ids.draftId },
     });
 
-    await tx.interview.upsert({
+    const interview = await tx.interview.upsert({
       create: {
         criteria: draft.criteria,
         draftId: interviewDraftRecord.id,
@@ -242,8 +243,40 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
       where: { id: ids.interviewId },
     });
 
+    await tx.candidateInvitation.upsert({
+      create: {
+        candidateEmail: `candidate+${runId}@example.com`,
+        candidateName: "Ada Martin",
+        consentCopyVersion: "candidate-consent-v1",
+        consentedAt: addSeconds(now, 10),
+        expiresAt: addDays(now, 30),
+        id: ids.candidateInvitationId,
+        interviewId: interview.id,
+        jobId: job.id,
+        openedAt: now,
+        organizationId: organization.id,
+        status: "completed",
+        token: candidateInvitationToken,
+      },
+      update: {
+        candidateEmail: `candidate+${runId}@example.com`,
+        candidateName: "Ada Martin",
+        consentCopyVersion: "candidate-consent-v1",
+        consentedAt: addSeconds(now, 10),
+        expiresAt: addDays(now, 30),
+        interviewId: interview.id,
+        jobId: job.id,
+        openedAt: now,
+        organizationId: organization.id,
+        status: "completed",
+        token: candidateInvitationToken,
+      },
+      where: { id: ids.candidateInvitationId },
+    });
+
     await tx.candidateSession.upsert({
       create: {
+        candidateInvitationId: ids.candidateInvitationId,
         candidateEmail: `candidate+${runId}@example.com`,
         candidateName: "Ada Martin",
         completedAt: addSeconds(now, 180),
@@ -260,6 +293,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         status: "completed",
       },
       update: {
+        candidateInvitationId: ids.candidateInvitationId,
         candidateEmail: `candidate+${runId}@example.com`,
         candidateName: "Ada Martin",
         completedAt: addSeconds(now, 180),
@@ -354,7 +388,12 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
   const [candidateSession, runtimeSession, brief, eventCount, transcriptTurns] =
     await Promise.all([
       prisma.candidateSession.findUniqueOrThrow({
-        include: { interview: true, job: true, organization: true },
+        include: {
+          candidateInvitation: true,
+          interview: true,
+          job: true,
+          organization: true,
+        },
         where: { id: candidateSessionId },
       }),
       prisma.liveInterviewSession.findUniqueOrThrow({
@@ -377,14 +416,16 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
   const dashboardUrl = `${baseUrl}/`;
   const interviewDetailUrl = `${baseUrl}/interviews/${candidateSession.interviewId}`;
   const candidateDetailUrl = `${baseUrl}/interviews/${candidateSession.realtimeSessionId}`;
-  const candidateUrl = `${baseUrl}/interview/${candidateSession.interview.publicToken}`;
+  const candidateUrl = `${baseUrl}/interview/${
+    candidateSession.candidateInvitation?.token ??
+    candidateSession.interview.publicToken
+  }`;
   const summaryJson = isRecord(brief.summaryJson) ? brief.summaryJson : {};
   const evaluationMatrix = isRecord(summaryJson.evaluationMatrix)
     ? summaryJson.evaluationMatrix
     : null;
   const matrixRecommendation =
-    evaluationMatrix &&
-    typeof evaluationMatrix.recommendationLabel === "string"
+    evaluationMatrix && typeof evaluationMatrix.recommendationLabel === "string"
       ? evaluationMatrix.recommendationLabel
       : null;
   const decision =
@@ -411,6 +452,8 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
     },
     interview: {
       id: candidateSession.interviewId,
+      candidateInvitationToken:
+        candidateSession.candidateInvitation?.token ?? null,
       publicToken: candidateSession.interview.publicToken,
     },
     candidateSession: {
@@ -623,7 +666,9 @@ function buildEvents({
 }
 
 function buildBrief({ candidateSessionId, criteria, runId }) {
-  const assessments = criteria.map((criterion) => smokeCriterionAssessment(criterion));
+  const assessments = criteria.map((criterion) =>
+    smokeCriterionAssessment(criterion),
+  );
   const evidenceRefs = assessments.map((assessment) => ({
     criterionId: assessment.criterion.id,
     eventId: null,
@@ -904,6 +949,9 @@ async function deleteSmokeData(runId) {
       await tx.candidateSession.deleteMany({
         where: { organizationId: organization.id },
       });
+      await tx.candidateInvitation.deleteMany({
+        where: { organizationId: organization.id },
+      });
       await tx.interview.deleteMany({
         where: { organizationId: organization.id },
       });
@@ -933,6 +981,7 @@ function idsFor(runId) {
   return {
     clerkOrganizationId: process.env.MOCK_CLERK_ORG_ID || "org_demo",
     clerkUserId: process.env.MOCK_CLERK_USER_ID || "user_demo",
+    candidateInvitationId: `cinv_e2e_${runId}`,
     draftId: `idraft_e2e_${runId}`,
     interviewId: `interview_e2e_${runId}`,
     jobId: `job_e2e_${runId}`,
@@ -981,6 +1030,7 @@ function formatMarkdown(report) {
 - Organization: \`${report.organization.id}\` (${report.organization.name})
 - Job: \`${report.job.id}\` (${report.job.title})
 - Interview: \`${report.interview.id}\`
+- Candidate invitation: \`${report.interview.candidateInvitationToken ?? "n/a"}\`
 - Candidate session: \`${report.candidateSession.id}\`
 - Runtime session: \`${report.runtime.sessionId}\`
 - Candidate brief: \`${report.brief.id}\` (${report.brief.status})
@@ -1037,6 +1087,10 @@ function timestampRunId() {
 
 function addSeconds(date, seconds) {
   return new Date(date.getTime() + seconds * 1000);
+}
+
+function addDays(date, days) {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
 }
 
 function trimTrailingSlash(value) {

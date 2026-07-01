@@ -12,7 +12,8 @@ export type RoomStatus =
   | "reconnecting"
   | "closing"
   | "failed"
-  | "completed";
+  | "completed"
+  | "abandoned";
 
 export type LiveInterviewSession = {
   sessionId: string;

@@ -1,4 +1,5 @@
 import { liveInterviewWireEventSchema } from "@prelude/contracts";
+import { normalizeCandidateLifecycleStatus } from "@prelude/core";
 import { prisma, type Prisma } from "@prelude/db";
 
 import {
@@ -7,14 +8,23 @@ import {
 } from "./recording-playback";
 
 export type CandidateEvidenceStatus =
-  | "created"
-  | "waiting_candidate"
+  | "abandoned"
   | "agent_joining"
-  | "in_progress"
-  | "paused"
   | "completed"
+  | "consent_required"
+  | "created"
+  | "expired"
   | "failed"
-  | "expired";
+  | "in_progress"
+  | "invited"
+  | "opened"
+  | "paused"
+  | "ready"
+  | "reconnecting"
+  | "started"
+  | "starting"
+  | "superseded"
+  | "waiting_candidate";
 
 export type CandidateTranscriptTurn = {
   endedAt: string | null;
@@ -351,6 +361,28 @@ function resolveEvidenceStatus({
     return "failed";
   }
 
+  const normalizedProductStatus =
+    normalizeCandidateLifecycleStatus(productStatus);
+  if (
+    normalizedProductStatus === "abandoned" ||
+    normalizedProductStatus === "completed" ||
+    normalizedProductStatus === "expired" ||
+    normalizedProductStatus === "failed" ||
+    normalizedProductStatus === "superseded"
+  ) {
+    return normalizedProductStatus;
+  }
+
+  const normalizedRuntimeStatus =
+    normalizeCandidateLifecycleStatus(runtimeStatus);
+  if (normalizedRuntimeStatus) {
+    return normalizedRuntimeStatus;
+  }
+
+  if (normalizedProductStatus) {
+    return normalizedProductStatus;
+  }
+
   if (isEvidenceStatus(runtimeStatus)) {
     return runtimeStatus;
   }
@@ -364,14 +396,23 @@ function resolveEvidenceStatus({
 
 function isEvidenceStatus(value: unknown): value is CandidateEvidenceStatus {
   return (
-    value === "created" ||
-    value === "waiting_candidate" ||
+    value === "abandoned" ||
     value === "agent_joining" ||
+    value === "created" ||
+    value === "consent_required" ||
+    value === "waiting_candidate" ||
     value === "in_progress" ||
+    value === "invited" ||
+    value === "opened" ||
     value === "paused" ||
+    value === "ready" ||
+    value === "reconnecting" ||
+    value === "started" ||
+    value === "starting" ||
     value === "completed" ||
     value === "failed" ||
-    value === "expired"
+    value === "expired" ||
+    value === "superseded"
   );
 }
 

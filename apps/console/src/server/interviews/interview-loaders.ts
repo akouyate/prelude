@@ -211,6 +211,14 @@ export async function getInterviewDetail(
 
   const interview = await prisma.interview.findFirst({
     include: {
+      candidateInvitations: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        where: {
+          expiresAt: { gt: new Date() },
+          status: { notIn: ["completed", "expired", "superseded"] },
+        },
+      },
       candidateSessions: {
         include: {
           candidateBrief: true,
@@ -250,7 +258,7 @@ export async function getInterviewDetail(
 
     return {
       interview: {
-        candidatePath: `/interview/${interview.publicToken}`,
+        candidatePath: candidatePathForInterview(interview),
         candidateSessions: interview.candidateSessions.map((session) =>
           toCandidateSessionSummary({
             eventStatsBySessionId,
@@ -357,6 +365,15 @@ export async function getInterviewDetail(
   return null;
 }
 
+function candidatePathForInterview(interview: {
+  candidateInvitations?: Array<{ token: string }>;
+  publicToken: string;
+}) {
+  return `/interview/${
+    interview.candidateInvitations?.[0]?.token ?? interview.publicToken
+  }`;
+}
+
 function toCandidateSessionSummary({
   eventStatsBySessionId,
   liveStatusById,
@@ -424,8 +441,7 @@ function toCandidateSessionSummary({
     reviewNotePreview: getReviewNotePreview(session.reviewNote),
     reviewNoteUpdatedAt: session.reviewNoteUpdatedAt?.toISOString() ?? null,
     reviewStatus: resolveReviewStatus(session.reviewStatus),
-    reviewStatusUpdatedAt:
-      session.reviewStatusUpdatedAt?.toISOString() ?? null,
+    reviewStatusUpdatedAt: session.reviewStatusUpdatedAt?.toISOString() ?? null,
     startedAt: session.startedAt?.toISOString() ?? null,
     status,
     transcriptTurnCount: eventStats?.transcriptTurnCount ?? 0,
@@ -478,7 +494,8 @@ function upgradeStoredQuestion(value: unknown): InterviewQuestionDraft | null {
   return {
     category: parsed.data.category as InterviewQuestionCategory,
     durationSeconds: parsed.data.durationSeconds,
-    expectedSignal: parsed.data.expectedSignal ?? "Job-related screening signal",
+    expectedSignal:
+      parsed.data.expectedSignal ?? "Job-related screening signal",
     id: parsed.data.id,
     maxFollowups: parsed.data.maxFollowups,
     prompt: parsed.data.prompt,
