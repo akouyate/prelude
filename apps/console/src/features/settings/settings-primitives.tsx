@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -54,16 +55,22 @@ export function SettingsField({
   required?: boolean;
   value: string;
 }) {
+  const [currentValue, setCurrentValue] = React.useState(value);
+
+  React.useEffect(() => {
+    setCurrentValue(value);
+  }, [value]);
+
   return (
     <TextField
-      defaultValue={value}
-      key={`${name ?? label}:${value}`}
       label={label}
       maxLength={maxLength}
       name={name}
+      onValueChange={setCurrentValue}
       placeholder={placeholder}
       readOnly={readOnly}
       required={required}
+      value={currentValue}
     />
   );
 }
@@ -102,12 +109,21 @@ export function SettingsSelectField({
   options: Array<{ label: string; value: string }>;
   value: string;
 }) {
+  const [currentValue, setCurrentValue] = React.useState(value);
+
+  React.useEffect(() => {
+    setCurrentValue(value);
+  }, [value]);
+
   return (
     <SelectField
-      defaultValue={value}
       label={label}
       name={name}
+      onValueChange={(nextValue) => {
+        setCurrentValue(nextValue ?? "");
+      }}
       options={options}
+      value={currentValue}
     />
   );
 }

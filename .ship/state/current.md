@@ -43,6 +43,8 @@ Ship GitHub issue #102: complete DB-backed V1 settings forms.
   Postgres: default profile view, workspace persistence, disabled workspace
   logo, notification persistence, Gmail/Microsoft integration cards, and
   disabled Clerk Billing entry.
+- Additional workspace save smoke passed after converting settings fields to
+  controlled controls; no Base UI warning or browser console issue was emitted.
 
 ## Notes
 
@@ -55,5 +57,5 @@ Ship GitHub issue #102: complete DB-backed V1 settings forms.
   - Billing plan management is represented as a disabled Clerk Billing entry.
   - Integrations include Gmail and Microsoft Teams status cards alongside
     existing job-source, calendar, and ATS entries.
-  - Settings text fields remount on refreshed server values to avoid stale Base
-    UI default-value warnings after server-action saves.
+  - Settings text and select controls now keep controlled local values synced
+    with refreshed server values.
