@@ -28,7 +28,7 @@ Ship GitHub issue #102: complete DB-backed V1 settings forms.
 - [x] Review
 - [x] Simplification
 - [x] Final validation
-- [ ] Delivery
+- [x] Delivery
 
 ## Validation
 
