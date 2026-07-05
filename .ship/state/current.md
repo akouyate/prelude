@@ -2,19 +2,19 @@
 
 ## Objective
 
-Ship GitHub issue #10: stabilize Prelude UI foundations and reusable
-components.
+Ship GitHub issue #102: complete DB-backed V1 settings forms.
 
 ## Scope
 
-- Consolidate shared console primitives for actions, icon actions, metrics,
-  selection cards, radio cards, fields, tabs, panels, badges, and empty states.
-- Normalize active/inactive selection states across role builder, onboarding,
-  settings, and candidate-detail patterns.
-- Keep candidate table/list implementations shared across dashboard, role
-  detail, and candidates views.
-- Keep the left sidebar shell consistent, fixed, and reusable.
-- Document the current design-system component rules.
+- Keep `/settings?view=profile` as the default `nuqs`-controlled settings view.
+- Ensure every visible settings control is functional, delegated, disabled with
+  honest copy, or represented as integration status only.
+- Preserve authenticated organization scoping through the existing settings data
+  loader and Server Actions.
+- Persist workspace basics, interview preferences, notification preferences, and
+  user language in Postgres.
+- Keep team and billing actions permission-aware and non-fake.
+- Prepare third-party integrations as status records only; no OAuth secrets.
 
 ## Phases
 
@@ -32,29 +32,28 @@ components.
 
 ## Validation
 
-- `rtk ../../node_modules/.bin/vitest run src/components/button.test.tsx src/components/radio-card.test.tsx src/components/metric-card.test.tsx`
-  - 3 files / 3 tests passed from `packages/ui`.
-- `rtk ./node_modules/.bin/tsc --noEmit -p packages/ui/tsconfig.json`
-  - Passed.
+- `rtk ./node_modules/.bin/vitest run apps/console/src/server/settings/workspace-settings-data.test.ts`
+  passed.
 - `rtk ./node_modules/.bin/tsc --noEmit -p apps/console/tsconfig.json`
-  - Passed.
-- `rtk ./node_modules/.bin/tsc --noEmit -p packages/design-system/tsconfig.json`
-  - Passed.
-- `rtk git diff --check`
-  - Passed.
-- `rtk ./node_modules/.bin/prettier --check ...changed UI files...`
-  - Passed after formatting five changed files.
-- Playwright smoke against `http://localhost:3000` with mock auth:
-  - `/`, `/roles`, `/roles/new`, `/settings`, `/candidates` returned 200 with no runtime error text.
-  - Discovered candidate detail `/interviews/is_e2e_codex-111-invite` returned 200 with no runtime error text.
-  - `/roles/new` desktop/mobile screenshots written to `/tmp/prelude-issue10-roles-new-desktop.png` and `/tmp/prelude-issue10-roles-new-mobile.png`.
-  - `/roles/new` Calibrate screenshot written to `/tmp/prelude-issue10-calibrate-desktop.png`.
-  - Candidate detail screenshot written to `/tmp/prelude-issue10-candidate-detail-desktop.png`.
+  passed.
+- `rtk ./node_modules/.bin/prettier --check ...` passed for changed
+  settings, locale, i18n, test, and ship-state files.
+- `rtk git diff --check` passed.
+- Browser smoke passed on `http://localhost:3000/settings` with mock auth and
+  Postgres: default profile view, workspace persistence, disabled workspace
+  logo, notification persistence, Gmail/Microsoft integration cards, and
+  disabled Clerk Billing entry.
 
 ## Notes
 
-- Existing tracked work before this pass already added `Surface`, `Field`,
-  `TextField`, `SelectField`, `UnderlineTabs`, `SegmentedTabs`, shared candidate
-  screen table usage, and settings `nuqs` routing.
-- This pass adds the missing icon-button, metric, selection-card, and radio-card
-  pieces, then migrates the duplicated feature surfaces that block #10.
+- Existing implementation already has `nuqs` settings tabs, scoped settings
+  loader, workspace/interview/notification Server Actions, persisted language
+  select, and team invite/member actions.
+- Completed fixes:
+  - Profile photo controls are now delegated/disabled with provider-aware copy.
+  - Workspace logo upload is disabled with honest V1 copy.
+  - Billing plan management is represented as a disabled Clerk Billing entry.
+  - Integrations include Gmail and Microsoft Teams status cards alongside
+    existing job-source, calendar, and ATS entries.
+  - Settings text fields remount on refreshed server values to avoid stale Base
+    UI default-value warnings after server-action saves.

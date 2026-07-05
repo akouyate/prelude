@@ -346,7 +346,10 @@
         "language": "Language",
         "changePhoto": "Change photo",
         "remove": "Remove",
-        "avatarHint": "JPG or PNG, at least 256x256px."
+        "avatarHint": "JPG or PNG, at least 256x256px.",
+        "accountManaged": "Managed by account provider",
+        "clerkAccountHint": "Name, email, password, and avatar changes are delegated to Clerk for V1.",
+        "mockAccountHint": "This mock account cannot edit profile identity locally."
       },
       "language": {
         "english": "English",
@@ -360,7 +363,7 @@
         "title": "Workspace",
         "description": "General details for your organization on Prelude.",
         "uploadLogo": "Upload logo",
-        "logoHint": "Square SVG or PNG works best.",
+        "logoHint": "Logo upload is not available in V1 yet. Workspace initials are used for now.",
         "name": "Workspace name",
         "url": "Workspace URL",
         "hiringFocus": "Hiring focus",
@@ -431,6 +434,8 @@
         "jobPosts": "Import active job posts",
         "ats": "ATS · push qualified candidates",
         "calendar": "Schedule follow-up calls",
+        "gmail": "Send candidate and recruiter email notifications",
+        "microsoft": "Schedule follow-up calls and team notifications",
         "connected": "Connected",
         "comingSoon": "Coming soon"
       },
@@ -452,7 +457,8 @@
         "currentPlan": "Current plan",
         "planName": "V1 workspace",
         "planDescription": "Clerk Billing is not connected yet. Usage is tracked from workspace data.",
-        "managePlan": "Configure billing",
+        "managePlan": "Clerk Billing coming soon",
+        "clerkManaged": "Paid plans will be managed by Clerk Billing when billing is enabled.",
         "interviewsThisMonth": "Interviews this month",
         "activeRoles": "Active roles"
       }

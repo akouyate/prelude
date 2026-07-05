@@ -57,6 +57,7 @@ export function SettingsField({
   return (
     <TextField
       defaultValue={value}
+      key={`${name ?? label}:${value}`}
       label={label}
       maxLength={maxLength}
       name={name}
@@ -111,7 +112,11 @@ export function SettingsSelectField({
   );
 }
 
-export function SettingsActionRow({ disabled = false }: { disabled?: boolean }) {
+export function SettingsActionRow({
+  disabled = false,
+}: {
+  disabled?: boolean;
+}) {
   const { t } = useTranslation();
 
   return (

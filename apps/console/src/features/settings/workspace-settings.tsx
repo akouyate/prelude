@@ -146,6 +146,10 @@ function SettingsSectionContent({
 
 function ProfileSection({ data }: { data: WorkspaceSettingsData }) {
   const { t } = useTranslation();
+  const accountHint =
+    data.authProvider === "clerk"
+      ? t("settings.profile.clerkAccountHint")
+      : t("settings.profile.mockAccountHint");
 
   return (
     <div className="flex flex-col gap-[18px]">
@@ -160,16 +164,11 @@ function ProfileSection({ data }: { data: WorkspaceSettingsData }) {
           </AvatarToken>
           <div>
             <div className="flex flex-wrap gap-2">
-              <Button type="button" variant="secondary">
-                {t("settings.profile.changePhoto")}
-              </Button>
-              <Button type="button" variant="ghost">
-                {t("settings.profile.remove")}
-              </Button>
+              <UnavailableSettingsButton title={accountHint}>
+                {t("settings.profile.accountManaged")}
+              </UnavailableSettingsButton>
             </div>
-            <p className="mt-2 text-xs text-ink-400">
-              {t("settings.profile.avatarHint")}
-            </p>
+            <p className="mt-2 text-xs text-ink-400">{accountHint}</p>
           </div>
         </div>
 
@@ -225,9 +224,9 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
             {initialsFor(data.organization.name)}
           </AvatarToken>
           <div>
-            <Button type="button" variant="secondary">
+            <UnavailableSettingsButton title={t("settings.workspace.logoHint")}>
               {t("settings.workspace.uploadLogo")}
-            </Button>
+            </UnavailableSettingsButton>
             <p className="mt-2 text-xs text-ink-400">
               {t("settings.workspace.logoHint")}
             </p>
@@ -759,6 +758,18 @@ function IntegrationsSection({
       name: "Google Calendar",
       provider: "google_calendar",
     },
+    {
+      description: t("settings.integrations.gmail"),
+      logo: <GenericIntegrationLogo label="G" muted />,
+      name: "Gmail",
+      provider: "google_gmail",
+    },
+    {
+      description: t("settings.integrations.microsoft"),
+      logo: <GenericIntegrationLogo label="M" muted />,
+      name: "Microsoft Teams",
+      provider: "microsoft_teams",
+    },
   ];
 
   return (
@@ -910,9 +921,12 @@ function BillingSection({
             {t("settings.billing.planDescription")}
           </p>
         </div>
-        <Button type="button" variant="secondary">
+        <UnavailableSettingsButton
+          className="bg-white text-ink-900"
+          title={t("settings.billing.clerkManaged")}
+        >
           {t("settings.billing.managePlan")}
-        </Button>
+        </UnavailableSettingsButton>
       </div>
       <div className="mt-6 grid gap-5 sm:grid-cols-2">
         <UsageMeter
@@ -927,6 +941,28 @@ function BillingSection({
         />
       </div>
     </section>
+  );
+}
+
+function UnavailableSettingsButton({
+  children,
+  className,
+  title,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  title: string;
+}) {
+  return (
+    <Button
+      className={className}
+      disabled
+      title={title}
+      type="button"
+      variant="secondary"
+    >
+      {children}
+    </Button>
   );
 }
 

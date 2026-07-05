@@ -11,7 +11,7 @@ import { initReactI18next } from "react-i18next";
 // `getServerT` in `i18n-server.ts` instead.
 
 // Cache-busting version for the translation catalogs. Bump when copy changes.
-const TRANSLATION_VERSION = "1";
+const TRANSLATION_VERSION = "2";
 
 // Guard against double-init across fast-refresh / multiple imports.
 if (!i18n.isInitialized) {

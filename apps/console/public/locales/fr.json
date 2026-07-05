@@ -346,7 +346,10 @@
         "language": "Langue",
         "changePhoto": "Changer la photo",
         "remove": "Retirer",
-        "avatarHint": "JPG ou PNG, au moins 256x256px."
+        "avatarHint": "JPG ou PNG, au moins 256x256px.",
+        "accountManaged": "Géré par le fournisseur de compte",
+        "clerkAccountHint": "Les changements de nom, e-mail, mot de passe et avatar sont délégués à Clerk pour la V1.",
+        "mockAccountHint": "Ce compte mock ne peut pas modifier l'identité du profil localement."
       },
       "language": {
         "english": "English",
@@ -360,7 +363,7 @@
         "title": "Espace de travail",
         "description": "Les informations générales de votre organisation dans Prelude.",
         "uploadLogo": "Importer un logo",
-        "logoHint": "Un SVG ou PNG carré fonctionne le mieux.",
+        "logoHint": "L'import de logo n'est pas encore disponible en V1. Les initiales de l'espace sont utilisées pour l'instant.",
         "name": "Nom de l'espace",
         "url": "URL de l'espace",
         "hiringFocus": "Priorité de recrutement",
@@ -431,6 +434,8 @@
         "jobPosts": "Importer les offres actives",
         "ats": "ATS · pousser les candidats qualifiés",
         "calendar": "Planifier les appels de suivi",
+        "gmail": "Envoyer les notifications e-mail candidat et recruteur",
+        "microsoft": "Planifier les suivis et notifier l'équipe",
         "connected": "Connecté",
         "comingSoon": "Bientôt"
       },
@@ -452,7 +457,8 @@
         "currentPlan": "Forfait actuel",
         "planName": "Espace V1",
         "planDescription": "Clerk Billing n'est pas encore connecté. L'usage vient des données de l'espace.",
-        "managePlan": "Configurer la facturation",
+        "managePlan": "Clerk Billing bientôt",
+        "clerkManaged": "Les forfaits payants seront gérés par Clerk Billing quand la facturation sera activée.",
         "interviewsThisMonth": "Entretiens ce mois-ci",
         "activeRoles": "Rôles actifs"
       }
