@@ -4,7 +4,14 @@ import * as React from "react";
 import { Calendar, Mail, RefreshCircle, User } from "iconoir-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { cn } from "@prelude/ui";
+import {
+  Button,
+  Notice,
+  Pill,
+  Surface,
+  TextField,
+  type PillProps,
+} from "@prelude/ui";
 import type { CandidateInvitationSummary } from "../../server/interviews/candidate-invitations";
 
 import {
@@ -34,7 +41,7 @@ export function CandidateInvitationsPanel({
 
   return (
     <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]">
-      <section className="rounded-[20px] border border-[#e7e2d8] bg-white px-[18px] py-5">
+      <Surface padding="md">
         <InterviewSectionTitle
           description={t("interviewDetail.inviteCandidateDescription")}
           title={t("interviewDetail.inviteCandidateTitle")}
@@ -42,8 +49,8 @@ export function CandidateInvitationsPanel({
 
         <form action={formAction} className="mt-5 space-y-3.5">
           <input name="interviewId" type="hidden" value={interviewId} />
-          <div className="rounded-2xl border border-[#e7e2d8] bg-[#f9f8f3] px-4 py-3">
-            <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-[#a29b8d]">
+          <div className="rounded-2xl border border-ink-100 bg-[#f9f8f3] px-4 py-3">
+            <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-ink-400">
               {t("interviewDetail.inviteTargetLabel")}
             </p>
             <p className="mt-1 text-sm font-semibold text-ink-950">
@@ -51,96 +58,87 @@ export function CandidateInvitationsPanel({
             </p>
           </div>
 
-          <label className="block">
-            <span className="mb-1.5 flex items-center gap-2 text-[12.5px] font-semibold text-[#5b574f]">
-              <User aria-hidden={true} className="h-4 w-4" />
-              {t("interviewDetail.inviteCandidateNameLabel")}
-            </span>
-            <input
-              className="h-11 w-full rounded-2xl border border-[#ddd8cc] bg-white px-4 text-[13.5px] text-ink-950 outline-none transition placeholder:text-[#b2aa9a] focus:border-ink-800 focus:ring-2 focus:ring-[#e5e8d6]"
-              disabled={!canInvite || pending}
-              name="candidateName"
-              placeholder={t("interviewDetail.inviteCandidateNamePlaceholder")}
-            />
-          </label>
+          <TextField
+            disabled={!canInvite || pending}
+            label={
+              <>
+                <User aria-hidden={true} className="h-4 w-4" />
+                {t("interviewDetail.inviteCandidateNameLabel")}
+              </>
+            }
+            name="candidateName"
+            placeholder={t("interviewDetail.inviteCandidateNamePlaceholder")}
+          />
 
-          <label className="block">
-            <span className="mb-1.5 flex items-center gap-2 text-[12.5px] font-semibold text-[#5b574f]">
-              <Mail aria-hidden={true} className="h-4 w-4" />
-              {t("interviewDetail.inviteCandidateEmailLabel")}
-            </span>
-            <input
-              className="h-11 w-full rounded-2xl border border-[#ddd8cc] bg-white px-4 text-[13.5px] text-ink-950 outline-none transition placeholder:text-[#b2aa9a] focus:border-ink-800 focus:ring-2 focus:ring-[#e5e8d6]"
-              disabled={!canInvite || pending}
-              name="candidateEmail"
-              placeholder={t("interviewDetail.inviteCandidateEmailPlaceholder")}
-              type="email"
-            />
-            <span className="mt-1.5 block text-[12px] leading-[1.45] text-[#8a8178]">
-              {t("interviewDetail.inviteCandidateEmailHint")}
-            </span>
-          </label>
+          <TextField
+            description={t("interviewDetail.inviteCandidateEmailHint")}
+            disabled={!canInvite || pending}
+            label={
+              <>
+                <Mail aria-hidden={true} className="h-4 w-4" />
+                {t("interviewDetail.inviteCandidateEmailLabel")}
+              </>
+            }
+            name="candidateEmail"
+            placeholder={t("interviewDetail.inviteCandidateEmailPlaceholder")}
+            type="email"
+          />
 
-          <label className="block">
-            <span className="mb-1.5 flex items-center gap-2 text-[12.5px] font-semibold text-[#5b574f]">
-              <Calendar aria-hidden={true} className="h-4 w-4" />
-              {t("interviewDetail.inviteExpiresAtLabel")}
-            </span>
-            <input
-              className="h-11 w-full rounded-2xl border border-[#ddd8cc] bg-white px-4 text-[13.5px] text-ink-950 outline-none transition placeholder:text-[#b2aa9a] focus:border-ink-800 focus:ring-2 focus:ring-[#e5e8d6]"
-              disabled={!canInvite || pending}
-              name="expiresAt"
-              type="date"
-            />
-            <span className="mt-1.5 block text-[12px] leading-[1.45] text-[#8a8178]">
-              {t("interviewDetail.inviteExpiresAtHint")}
-            </span>
-          </label>
+          <TextField
+            description={t("interviewDetail.inviteExpiresAtHint")}
+            disabled={!canInvite || pending}
+            label={
+              <>
+                <Calendar aria-hidden={true} className="h-4 w-4" />
+                {t("interviewDetail.inviteExpiresAtLabel")}
+              </>
+            }
+            name="expiresAt"
+            type="date"
+          />
 
           {state.error ? (
-            <p className="rounded-2xl border border-[#efdcd5] bg-[#fdf6f3] px-3 py-2 text-[12.5px] font-medium text-[#9a3417]">
-              {state.error}
-            </p>
+            <Notice tone="danger">{state.error}</Notice>
           ) : null}
           {state.ok ? (
-            <p className="rounded-2xl border border-[#dfe7ca] bg-[#f7f9ef] px-3 py-2 text-[12.5px] font-medium text-olive-900">
+            <Notice tone="success">
               {t("interviewDetail.inviteCreated")}
-            </p>
+            </Notice>
           ) : null}
 
-          <button
-            className="inline-flex h-[42px] w-full cursor-pointer items-center justify-center gap-2 rounded-full bg-[#171715] px-4 text-[13px] font-semibold text-white transition hover:bg-[#2a2925] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300 disabled:pointer-events-none disabled:opacity-50"
+          <Button
+            className="h-[42px] w-full text-[13px] font-semibold"
             disabled={!canInvite || pending}
             type="submit"
           >
             {pending
               ? t("interviewDetail.inviteCreating")
               : t("interviewDetail.inviteCreateButton")}
-          </button>
+          </Button>
         </form>
 
         {!canInvite ? (
-          <p className="mt-4 rounded-2xl border border-[#efdcd5] bg-[#fdf6f3] px-3 py-2 text-[12.5px] leading-[1.45] text-[#9a3417]">
+          <Notice className="mt-4" tone="danger">
             {t("interviewDetail.invitePausedNotice")}
-          </p>
+          </Notice>
         ) : null}
-      </section>
+      </Surface>
 
-      <section className="rounded-[20px] border border-[#e7e2d8] bg-white">
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#f0ece1] px-[18px] py-5">
+      <Surface padding="none">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-ink-100 px-[18px] py-5">
           <InterviewSectionTitle
             description={t("interviewDetail.invitationsDescription")}
             title={t("interviewDetail.invitationsTitle")}
           />
-          <span className="rounded-full bg-[#eef0e3] px-2.5 py-1 text-xs font-semibold text-olive-900">
+          <Pill>
             {t("interviewDetail.invitationsCount", {
               count: invitations.length,
             })}
-          </span>
+          </Pill>
         </div>
 
         {invitations.length > 0 ? (
-          <div className="divide-y divide-[#f0ece1]">
+          <div className="divide-y divide-ink-100">
             {invitations.map((invitation) => (
               <InvitationRow
                 invitation={invitation}
@@ -163,7 +161,7 @@ export function CandidateInvitationsPanel({
             </p>
           </div>
         )}
-      </section>
+      </Surface>
     </div>
   );
 }
@@ -193,16 +191,11 @@ function InvitationRow({
           <p className="truncate text-[14px] font-semibold text-ink-950">
             {invitation.candidateLabel}
           </p>
-          <span
-            className={cn(
-              "rounded-full px-2.5 py-1 text-[11.5px] font-semibold",
-              invitationStatusClass(invitation.status),
-            )}
-          >
+          <Pill tone={invitationStatusTone(invitation.status)}>
             {formatInvitationStatus(invitation.status, t)}
-          </span>
+          </Pill>
         </div>
-        <p className="mt-1 truncate text-[12.5px] text-[#8a8178]">
+        <p className="mt-1 truncate text-[12.5px] text-ink-400">
           {invitation.candidateEmail ??
             t("interviewDetail.invitationManualDelivery")}{" "}
           · {openedLabel}
@@ -210,10 +203,10 @@ function InvitationRow({
       </div>
 
       <div>
-        <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-[#a29b8d]">
+        <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-ink-400">
           {t("interviewDetail.invitationExpires")}
         </p>
-        <p className="mt-1 text-[13px] font-semibold text-[#5b574f]">
+        <p className="mt-1 text-[13px] font-semibold text-ink-600">
           {formatDate(invitation.expiresAt, locale)}
         </p>
       </div>
@@ -221,7 +214,7 @@ function InvitationRow({
       <div className="flex flex-wrap items-center gap-2 md:justify-end">
         {invitation.latestCandidateSessionHref ? (
           <a
-            className="inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-[#ddd8cc] bg-white px-3.5 text-[12.5px] font-semibold text-ink-950 transition hover:border-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+            className="inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-white px-3.5 text-[12.5px] font-semibold text-ink-950 transition hover:border-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
             href={invitation.latestCandidateSessionHref}
           >
             {t("interviewDetail.invitationOpenSession")}
@@ -234,13 +227,14 @@ function InvitationRow({
           <form action={reissueCandidateInvitationAction}>
             <input name="interviewId" type="hidden" value={interviewId} />
             <input name="invitationId" type="hidden" value={invitation.id} />
-            <button
-              className="inline-flex h-9 cursor-pointer items-center justify-center gap-1.5 rounded-full border border-[#ddd8cc] bg-white px-3.5 text-[12.5px] font-semibold text-ink-950 transition hover:border-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+            <Button
+              className="h-9 px-3.5 text-[12.5px]"
               type="submit"
+              variant="secondary"
             >
               <RefreshCircle aria-hidden={true} className="h-4 w-4" />
               {t("interviewDetail.invitationReissue")}
-            </button>
+            </Button>
           </form>
         ) : null}
       </div>
@@ -304,17 +298,17 @@ function formatInvitationStatus(status: string, t: TFunction) {
   return status.replace(/_/g, " ");
 }
 
-function invitationStatusClass(status: string) {
+function invitationStatusTone(status: string): NonNullable<PillProps["tone"]> {
   if (status === "completed") {
-    return "bg-[#e7f3eb] text-[#1f7a4c]";
+    return "success";
   }
 
   if (status === "failed" || status === "expired") {
-    return "bg-coral-50 text-coral-800";
+    return "danger";
   }
 
   if (status === "superseded" || status === "abandoned") {
-    return "bg-ink-100 text-ink-600";
+    return "muted";
   }
 
   if (
@@ -322,8 +316,8 @@ function invitationStatusClass(status: string) {
     status === "starting" ||
     status === "reconnecting"
   ) {
-    return "bg-gold-100 text-gold-800";
+    return "gold";
   }
 
-  return "bg-[#eef0e3] text-olive-900";
+  return "olive";
 }

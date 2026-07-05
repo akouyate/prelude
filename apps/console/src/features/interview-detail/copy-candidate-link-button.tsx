@@ -3,7 +3,7 @@
 import * as React from "react";
 import { Check, Copy } from "iconoir-react";
 import { useTranslation } from "react-i18next";
-import { cn } from "@prelude/ui";
+import { Button, cn } from "@prelude/ui";
 
 export function CopyCandidateLinkButton({
   candidatePath,
@@ -23,24 +23,23 @@ export function CopyCandidateLinkButton({
   }, [candidatePath]);
 
   return (
-    <button
+    <Button
       className={cn(
-        "inline-flex h-[42px] max-w-[280px] cursor-pointer items-center justify-center gap-[9px] rounded-full border px-3.5 text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
-        copied
-          ? "border-[#cdd9b6] bg-[#eef0e3] text-olive-950"
-          : "border-[#ddd8cc] bg-white text-ink-950 hover:border-ink-950",
+        "h-[42px] max-w-[280px] gap-[9px] px-3.5 text-[13px] font-semibold",
+        copied && "border-[#cdd9b6] bg-[#eef0e3] text-olive-950",
       )}
       onClick={handleCopy}
       type="button"
+      variant="secondary"
     >
       {copied ? (
         <Check aria-hidden={true} className="h-[15px] w-[15px]" />
       ) : (
         <Copy aria-hidden={true} className="h-[15px] w-[15px] text-[#8a8178]" />
       )}
-      <span className="truncate text-[#5b574f]">
+      <span className="truncate">
         {copied ? t("interviewDetail.copyLinkCopied") : children}
       </span>
-    </button>
+    </Button>
   );
 }

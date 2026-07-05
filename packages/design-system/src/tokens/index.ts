@@ -1,7 +1,9 @@
 import { colors } from "./colors";
+import { semantic } from "./semantic";
 
 export const tokens = {
   colors,
+  semantic,
   fontFamily: {
     sans: "var(--font-sans), Inter, ui-sans-serif, system-ui, sans-serif",
     title: "var(--font-title-sans), ui-sans-serif, system-ui, sans-serif",

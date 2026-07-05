@@ -1,8 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { NavArrowDown } from "iconoir-react";
 import { useTranslation } from "react-i18next";
+import { SelectField } from "@prelude/ui";
 
 import useLanguageStore, {
   type Language,
@@ -39,26 +39,19 @@ export function SettingsLanguageSelect({
   };
 
   return (
-    <label className="flex flex-col gap-2">
-      <span className="text-[12.5px] font-semibold text-ink-700">
-        {t("settings.profile.language")}
-      </span>
-      <div className="relative">
-        <select
-          aria-label={t("settings.profile.language")}
-          className="h-11 w-full cursor-pointer appearance-none rounded-[13px] border border-[#e2ddd2] bg-white px-3.5 pr-10 text-left text-sm text-ink-950 transition hover:border-[#c8c1b2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300 disabled:opacity-60"
-          disabled={isPending}
-          onChange={(event) => handleChange(event.target.value as Language)}
-          value={value}
-        >
-          <option value="en">{t("settings.language.english")}</option>
-          <option value="fr">{t("settings.language.french")}</option>
-        </select>
-        <NavArrowDown
-          aria-hidden={true}
-          className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400"
-        />
-      </div>
-    </label>
+    <SelectField
+      disabled={isPending}
+      label={t("settings.profile.language")}
+      onValueChange={(nextValue) => {
+        if (nextValue === "en" || nextValue === "fr") {
+          handleChange(nextValue);
+        }
+      }}
+      options={[
+        { label: t("settings.language.english"), value: "en" },
+        { label: t("settings.language.french"), value: "fr" },
+      ]}
+      value={value}
+    />
   );
 }

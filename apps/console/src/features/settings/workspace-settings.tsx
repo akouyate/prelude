@@ -1,10 +1,19 @@
 "use client";
 
 import * as React from "react";
-import { CheckCircle, NavArrowDown, Trash } from "iconoir-react";
+import { CheckCircle, Trash } from "iconoir-react";
 import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { useTranslation } from "react-i18next";
-import { Badge, Button, Input, StatusBadge, cn } from "@prelude/ui";
+import {
+  Badge,
+  Button,
+  Notice,
+  SelectControl,
+  SelectField,
+  StatusBadge,
+  TextField,
+  cn,
+} from "@prelude/ui";
 import type { OrganizationRole } from "@prelude/types";
 
 import {
@@ -360,43 +369,29 @@ function InviteTeammatePanel() {
         className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-end"
         onSubmit={handleSubmit}
       >
-        <label className="flex flex-1 flex-col gap-2">
-          <span className="text-[12.5px] font-semibold text-ink-700">
-            {t("settings.team.emailLabel")}
-          </span>
-          <Input
-            className="h-11 rounded-[13px] border-[#e2ddd2] bg-white px-3.5 focus:border-ink-900 focus:ring-[#e5e8d6]"
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder={t("settings.team.emailPlaceholder")}
-            required
-            type="email"
-            value={email}
-          />
-        </label>
-        <label className="flex flex-col gap-2 sm:w-44">
-          <span className="text-[12.5px] font-semibold text-ink-700">
-            {t("settings.team.roleLabel")}
-          </span>
-          <div className="relative">
-            <select
-              className="h-11 w-full cursor-pointer appearance-none rounded-[13px] border border-[#e2ddd2] bg-white px-3.5 pr-10 text-left text-sm text-ink-950 transition hover:border-[#c8c1b2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-              onChange={(event) =>
-                setRole(event.target.value as OrganizationRole)
-              }
-              value={role}
-            >
-              {ASSIGNABLE_ROLE_OPTIONS.map((option) => (
-                <option key={option} value={option}>
-                  {roleName(option)}
-                </option>
-              ))}
-            </select>
-            <NavArrowDown
-              aria-hidden={true}
-              className="pointer-events-none absolute right-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400"
-            />
-          </div>
-        </label>
+        <TextField
+          className="flex-1"
+          label={t("settings.team.emailLabel")}
+          onValueChange={setEmail}
+          placeholder={t("settings.team.emailPlaceholder")}
+          required
+          type="email"
+          value={email}
+        />
+        <SelectField
+          className="sm:w-44"
+          label={t("settings.team.roleLabel")}
+          onValueChange={(nextRole) => {
+            if (nextRole) {
+              setRole(nextRole as OrganizationRole);
+            }
+          }}
+          options={ASSIGNABLE_ROLE_OPTIONS.map((option) => ({
+            label: roleName(option),
+            value: option,
+          }))}
+          value={role}
+        />
         <Button
           className="h-11"
           disabled={pending || email.trim().length === 0}
@@ -406,14 +401,12 @@ function InviteTeammatePanel() {
         </Button>
       </form>
       {feedback ? (
-        <p
-          className={cn(
-            "mt-3 text-[13px]",
-            feedback.tone === "error" ? "text-red-600" : "text-olive-700",
-          )}
+        <Notice
+          className="mt-3"
+          tone={feedback.tone === "error" ? "danger" : "success"}
         >
           {feedback.message}
-        </p>
+        </Notice>
       ) : null}
     </SettingsPanel>
   );
@@ -547,8 +540,7 @@ function TeamMemberRow({
   const canRemove = manageable && canRemoveMember(viewerRole, memberRole);
   const roleOptions = [...new Set([memberRole, ...assignableRoles])];
 
-  function handleRoleChange(event: React.ChangeEvent<HTMLSelectElement>) {
-    const newRole = event.target.value as OrganizationRole;
+  function handleRoleChange(newRole: OrganizationRole) {
     if (newRole === memberRole) {
       return;
     }
@@ -579,25 +571,21 @@ function TeamMemberRow({
         ) : null}
       </div>
       {canEditRole ? (
-        <div className="relative shrink-0">
-          <select
-            aria-label={t("settings.team.changeRoleAria", { name: member.name })}
-            className="h-9 cursor-pointer appearance-none rounded-[10px] border border-[#e2ddd2] bg-white pl-3 pr-8 text-[12.5px] font-semibold text-ink-900 transition hover:border-[#c8c1b2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300 disabled:opacity-50"
-            disabled={pending}
-            onChange={handleRoleChange}
-            value={memberRole}
-          >
-            {roleOptions.map((option) => (
-              <option key={option} value={option}>
-                {roleName(option)}
-              </option>
-            ))}
-          </select>
-          <NavArrowDown
-            aria-hidden={true}
-            className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-400"
-          />
-        </div>
+        <SelectControl
+          ariaLabel={t("settings.team.changeRoleAria", { name: member.name })}
+          className="h-9 rounded-[10px] pl-3 pr-2.5 text-[12.5px] font-semibold"
+          disabled={pending}
+          onValueChange={(nextRole) => {
+            if (nextRole) {
+              handleRoleChange(nextRole as OrganizationRole);
+            }
+          }}
+          options={roleOptions.map((option) => ({
+            label: roleName(option),
+            value: option,
+          }))}
+          value={memberRole}
+        />
       ) : (
         <StatusBadge
           className="shrink-0"
