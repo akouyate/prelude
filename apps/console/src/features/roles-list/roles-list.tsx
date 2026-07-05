@@ -13,7 +13,13 @@ import {
 } from "iconoir-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { SegmentedTabs, StatusBadge, cn } from "@prelude/ui";
+import {
+  IconButton,
+  MetricCard,
+  SegmentedTabs,
+  StatusBadge,
+  cn,
+} from "@prelude/ui";
 
 export type RoleScreenState =
   | "candidate_started"
@@ -113,36 +119,36 @@ export function RolesList({
       </section>
 
       <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryButton
+        <MetricCard
           active={filter === "needs_review"}
           icon={<CheckCircle aria-hidden={true} className="h-4 w-4" />}
           label={t("roles.summaryNeedsReviewLabel")}
+          meta={t("roles.summaryNeedsReviewSub")}
           onClick={() => setFilter("needs_review")}
-          sub={t("roles.summaryNeedsReviewSub")}
           value={String(counts.needs_review)}
         />
-        <SummaryButton
+        <MetricCard
           active={filter === "live"}
           icon={<Microphone aria-hidden={true} className="h-4 w-4" />}
           label={t("roles.summaryLiveLabel")}
+          meta={t("roles.summaryLiveSub")}
           onClick={() => setFilter("live")}
-          sub={t("roles.summaryLiveSub")}
           value={String(counts.live)}
         />
-        <SummaryButton
+        <MetricCard
           active={filter === "draft"}
           icon={<EditPencil aria-hidden={true} className="h-4 w-4" />}
           label={t("roles.summaryDraftLabel")}
+          meta={t("roles.summaryDraftSub")}
           onClick={() => setFilter("draft")}
-          sub={t("roles.summaryDraftSub")}
           value={String(counts.draft)}
         />
-        <SummaryButton
+        <MetricCard
           active={filter === "completed"}
           icon={<CheckCircle aria-hidden={true} className="h-4 w-4" />}
           label={t("roles.summaryCompletedLabel")}
+          meta={t("roles.summaryCompletedSub")}
           onClick={() => setFilter("completed")}
-          sub={t("roles.summaryCompletedSub")}
           value={String(counts.completed)}
         />
       </section>
@@ -233,60 +239,6 @@ export function RolesList({
   );
 }
 
-function SummaryButton({
-  active,
-  icon,
-  label,
-  onClick,
-  sub,
-  value,
-}: {
-  active: boolean;
-  icon: React.ReactNode;
-  label: string;
-  onClick: () => void;
-  sub: string;
-  value: string;
-}) {
-  return (
-    <button
-      className={cn(
-        "cursor-pointer rounded-[20px] border p-[17px] text-left transition hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
-        active
-          ? "border-[#e2e6d3] bg-[#eef0e3]"
-          : "border-ink-100 bg-white/72 hover:bg-white",
-      )}
-      onClick={onClick}
-      type="button"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <span
-          className={cn(
-            "text-[12.5px] font-semibold",
-            active ? "text-olive-950" : "text-ink-700",
-          )}
-        >
-          {label}
-        </span>
-        <span
-          className={cn(
-            "grid h-[26px] w-[26px] place-items-center rounded-full",
-            active
-              ? "bg-white/60 text-olive-900"
-              : "bg-[#f4f2ea] text-ink-600",
-          )}
-        >
-          {icon}
-        </span>
-      </div>
-      <p className="mt-3 text-[32px] font-semibold leading-none tracking-[-0.03em] text-ink-950">
-        {value}
-      </p>
-      <p className="mt-2 text-xs text-ink-500">{sub}</p>
-    </button>
-  );
-}
-
 function RoleRow({
   copied,
   onCopy,
@@ -352,21 +304,20 @@ function RoleRow({
         </span>
         <span className="flex items-center gap-1.5">
           {role.candidatePath ? (
-            <button
+            <IconButton
               aria-label={
                 copied ? t("roles.copyLinkCopied") : t("roles.copyLink")
               }
-              className={cn(
-                "grid h-[30px] w-[30px] cursor-pointer place-items-center rounded-[10px] border transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
+              className={
                 copied
                   ? "border-[#cdd9b6] bg-[#eef0e3] text-olive-900"
-                  : "border-ink-100 bg-white text-ink-600 hover:border-ink-900 hover:text-ink-950",
-              )}
+                  : undefined
+              }
               onClick={onCopy}
-              type="button"
+              size="sm"
             >
               <Copy aria-hidden={true} className="h-4 w-4" />
-            </button>
+            </IconButton>
           ) : null}
           <Link
             aria-label={t("roles.openRole")}
@@ -428,7 +379,9 @@ function sortRoles(left: RoleListItem, right: RoleListItem, sort: RoleSort) {
     return left.title.localeCompare(right.title);
   }
 
-  return new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+  return (
+    new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+  );
 }
 
 function nextSort(sort: RoleSort): RoleSort {

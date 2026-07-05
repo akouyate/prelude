@@ -4,7 +4,7 @@ import * as React from "react";
 import { Search, Sort } from "iconoir-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { SegmentedTabs, cn } from "@prelude/ui";
+import { MetricCard, SegmentedTabs } from "@prelude/ui";
 
 import {
   CandidateScreensTable,
@@ -59,25 +59,25 @@ export function CandidatesList({
       </section>
 
       <section className="mt-6 grid gap-3 sm:grid-cols-3">
-        <SummaryCard
+        <MetricCard
           active={filter === "to_review"}
           label={t("candidates.summaryToReviewLabel")}
+          meta={t("candidates.summaryToReviewSub")}
           onClick={() => setFilter("to_review")}
-          sub={t("candidates.summaryToReviewSub")}
           value={String(counts.to_review)}
         />
-        <SummaryCard
+        <MetricCard
           active={filter === "to_call"}
           label={t("candidates.summaryToCallLabel")}
+          meta={t("candidates.summaryToCallSub")}
           onClick={() => setFilter("to_call")}
-          sub={t("candidates.summaryToCallSub")}
           value={String(counts.to_call)}
         />
-        <SummaryCard
+        <MetricCard
           active={filter === "archived"}
           label={t("candidates.summaryArchivedLabel")}
+          meta={t("candidates.summaryArchivedSub")}
           onClick={() => setFilter("archived")}
-          sub={t("candidates.summaryArchivedSub")}
           value={String(counts.archived)}
         />
       </section>
@@ -87,7 +87,10 @@ export function CandidatesList({
           ariaLabel={t("candidates.filterAria")}
           onValueChange={setFilter}
           options={[
-            { label: t("candidates.tabAll", { count: counts.all }), value: "all" },
+            {
+              label: t("candidates.tabAll", { count: counts.all }),
+              value: "all",
+            },
             {
               label: t("candidates.tabToReview", { count: counts.to_review }),
               value: "to_review",
@@ -131,46 +134,15 @@ export function CandidatesList({
   );
 }
 
-function SummaryCard({
-  active,
-  label,
-  onClick,
-  sub,
-  value,
-}: {
-  active: boolean;
-  label: string;
-  onClick: () => void;
-  sub: string;
-  value: string;
-}) {
-  return (
-    <button
-      className={cn(
-        "cursor-pointer rounded-[20px] border p-[17px] text-left transition hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
-        active
-          ? "border-[#e2e6d3] bg-[#eef0e3]"
-          : "border-ink-100 bg-white/72 hover:bg-white",
-      )}
-      onClick={onClick}
-      type="button"
-    >
-      <p className="text-[12.5px] font-semibold text-ink-700">{label}</p>
-      <p className="mt-3 text-[32px] font-semibold leading-none tracking-[-0.03em] text-ink-950">
-        {value}
-      </p>
-      <p className="mt-2 text-xs text-ink-500">{sub}</p>
-    </button>
-  );
-}
-
 function getCounts(candidates: CandidateScreenListItem[]) {
   return {
     all: candidates.length,
-    archived: candidates.filter((candidate) => candidate.reviewStatus === "archived")
-      .length,
-    to_call: candidates.filter((candidate) => candidate.reviewStatus === "to_call")
-      .length,
+    archived: candidates.filter(
+      (candidate) => candidate.reviewStatus === "archived",
+    ).length,
+    to_call: candidates.filter(
+      (candidate) => candidate.reviewStatus === "to_call",
+    ).length,
     to_review: candidates.filter(
       (candidate) => candidate.reviewStatus === "to_review",
     ).length,

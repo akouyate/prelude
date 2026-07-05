@@ -1,5 +1,4 @@
 import * as React from "react";
-import { Button as BaseButton } from "@base-ui-components/react/button";
 import {
   Community,
   NavArrowLeft,
@@ -11,6 +10,7 @@ import {
 } from "iconoir-react";
 
 import { BrandMark } from "../components/brand-mark";
+import { IconButton } from "../components/icon-button";
 import { cn } from "../lib/cn";
 
 type ShellNavItem = {
@@ -247,20 +247,19 @@ function SidebarToggleButton({
   const Icon = collapsed ? NavArrowRight : NavArrowLeft;
 
   return (
-    <BaseButton
+    <IconButton
       aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
       className={cn(
-        "grid shrink-0 cursor-pointer place-items-center text-ink-400 transition hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
         collapsed
-          ? "mt-[18px] h-9 w-full rounded-[11px] border border-ink-100 bg-white/60 hover:border-ink-200 hover:bg-white/80"
-          : "h-7 w-7 rounded-lg border border-transparent bg-transparent hover:bg-white/70",
+          ? "mt-[18px] h-9 w-full rounded-[11px] border-ink-100 bg-white/60 hover:border-ink-200 hover:bg-white/80"
+          : "h-7 w-7 rounded-lg",
       )}
-      nativeButton
       onClick={() => onCollapsedChange(!collapsed)}
-      type="button"
+      size="sm"
+      variant={collapsed ? "secondary" : "ghost"}
     >
       <Icon aria-hidden={true} className="h-[17px] w-[17px]" />
-    </BaseButton>
+    </IconButton>
   );
 }
 

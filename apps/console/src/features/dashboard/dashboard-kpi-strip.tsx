@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { CheckCircle, Microphone, ShieldCheck, Suitcase } from "iconoir-react";
+import { MetricCard } from "@prelude/ui";
 
 import { getServerT } from "../../libs/i18n-server";
 import { getAuthenticatedUserLocale } from "../../server/users/user-locale";
@@ -64,29 +65,14 @@ function KpiCard({
   value: string;
 }) {
   return (
-    <div
-      className={
-        active
-          ? "rounded-[22px] border border-[#e2e6d3] bg-[#eef0e3] p-5"
-          : "rounded-[22px] border border-ink-100 bg-white/72 p-5 backdrop-blur"
-      }
-    >
-      <div className="flex items-center justify-between gap-4">
-        <span
-          className={
-            active
-              ? "grid h-8 w-8 place-items-center rounded-full bg-white/60 text-olive-900"
-              : "grid h-8 w-8 place-items-center rounded-full bg-[#f4f2ea] text-ink-600"
-          }
-        >
-          {icon}
-        </span>
-        <span className="text-4xl font-semibold leading-none tracking-normal text-ink-950">
-          {value}
-        </span>
-      </div>
-      <p className="mt-5 text-sm font-semibold text-ink-800">{label}</p>
-      <p className="mt-2 text-xs text-ink-500">{meta}</p>
-    </div>
+    <MetricCard
+      active={active}
+      className="rounded-[22px] p-5"
+      icon={icon}
+      label={label}
+      meta={meta}
+      variant="kpi"
+      value={value}
+    />
   );
 }

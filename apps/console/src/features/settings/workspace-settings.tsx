@@ -1,13 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { CheckCircle, Trash } from "iconoir-react";
+import { Trash } from "iconoir-react";
 import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { useTranslation } from "react-i18next";
 import {
   Badge,
   Button,
+  IconButton,
   Notice,
+  SelectionCard,
   SelectControl,
   SelectField,
   StatusBadge,
@@ -209,7 +211,10 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
   ];
 
   return (
-    <form action={updateWorkspaceSettingsAction} className="flex flex-col gap-[18px]">
+    <form
+      action={updateWorkspaceSettingsAction}
+      className="flex flex-col gap-[18px]"
+    >
       <SettingsPanel>
         <SettingsPanelHeading
           description={t("settings.workspace.description")}
@@ -455,16 +460,12 @@ function PendingInvitationRow({
           {roleName(invitation.role)}
         </p>
       </div>
-      {error ? (
-        <span className="text-[12px] text-red-600">{error}</span>
-      ) : null}
+      {error ? <span className="text-[12px] text-red-600">{error}</span> : null}
       <button
         className="shrink-0 rounded-[10px] px-3 py-1.5 text-[12.5px] font-semibold text-ink-500 transition hover:bg-[#f4f2ea] hover:text-ink-900 disabled:opacity-50"
         disabled={pending}
         onClick={() =>
-          run(() =>
-            revokeTeamInvitationAction({ invitationId: invitation.id }),
-          )
+          run(() => revokeTeamInvitationAction({ invitationId: invitation.id }))
         }
         type="button"
       >
@@ -595,17 +596,18 @@ function TeamMemberRow({
         </StatusBadge>
       )}
       {canRemove ? (
-        <button
+        <IconButton
           aria-label={t("settings.team.removeAria", { name: member.name })}
-          className="grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-[10px] text-ink-400 transition hover:bg-[#fbeceb] hover:text-red-600 disabled:opacity-50"
+          className="h-8 w-8 text-ink-400 hover:bg-[#fbeceb] hover:text-red-600"
           disabled={pending}
           onClick={() =>
             run(() => removeTeamMemberAction({ userId: member.clerkUserId }))
           }
-          type="button"
+          size="sm"
+          variant="ghost"
         >
           <Trash aria-hidden={true} className="h-[18px] w-[18px]" />
-        </button>
+        </IconButton>
       ) : null}
     </div>
   );
@@ -697,7 +699,9 @@ function InterviewDefaultsSection({ data }: { data: WorkspaceSettingsData }) {
         />
         <SettingsToggleRow
           checked={preferences.autoGenerateTranscript}
-          description={t("settings.interview.autoGenerateTranscriptDescription")}
+          description={t(
+            "settings.interview.autoGenerateTranscriptDescription",
+          )}
           label={t("settings.interview.autoGenerateTranscript")}
           name="autoGenerateTranscript"
           onCheckedChange={(checked) =>
@@ -706,7 +710,9 @@ function InterviewDefaultsSection({ data }: { data: WorkspaceSettingsData }) {
         />
         <SettingsToggleRow
           checked={preferences.requireRecordingConsent}
-          description={t("settings.interview.requireRecordingConsentDescription")}
+          description={t(
+            "settings.interview.requireRecordingConsentDescription",
+          )}
           label={t("settings.interview.requireRecordingConsent")}
           name="requireRecordingConsent"
           onCheckedChange={(checked) =>
@@ -823,53 +829,57 @@ function NotificationsSection({
   return (
     <form action={updateNotificationPreferencesAction}>
       <SettingsPanel className="px-6 py-2">
-      <div className="py-5">
-        <SettingsPanelHeading
-          description={t("settings.notifications.description")}
-          title={t("settings.notifications.title")}
+        <div className="py-5">
+          <SettingsPanelHeading
+            description={t("settings.notifications.description")}
+            title={t("settings.notifications.title")}
+          />
+        </div>
+        <SettingsToggleRow
+          checked={values.screensReadyForReview}
+          description={t("settings.notifications.screensReadyDescription")}
+          label={t("settings.notifications.screensReady")}
+          name="screensReadyForReview"
+          onCheckedChange={(checked) =>
+            setPreference("screensReadyForReview", checked)
+          }
         />
-      </div>
-      <SettingsToggleRow
-        checked={values.screensReadyForReview}
-        description={t("settings.notifications.screensReadyDescription")}
-        label={t("settings.notifications.screensReady")}
-        name="screensReadyForReview"
-        onCheckedChange={(checked) =>
-          setPreference("screensReadyForReview", checked)
-        }
-      />
-      <SettingsToggleRow
-        checked={values.interviewCompleted}
-        description={t("settings.notifications.interviewCompletedDescription")}
-        label={t("settings.notifications.interviewCompleted")}
-        name="interviewCompleted"
-        onCheckedChange={(checked) =>
-          setPreference("interviewCompleted", checked)
-        }
-      />
-      <SettingsToggleRow
-        checked={values.mentionsAndComments}
-        description={t("settings.notifications.mentionsDescription")}
-        label={t("settings.notifications.mentions")}
-        name="mentionsAndComments"
-        onCheckedChange={(checked) =>
-          setPreference("mentionsAndComments", checked)
-        }
-      />
-      <SettingsToggleRow
-        checked={values.weeklyDigest}
-        description={t("settings.notifications.weeklyDigestDescription")}
-        label={t("settings.notifications.weeklyDigest")}
-        name="weeklyDigest"
-        onCheckedChange={(checked) => setPreference("weeklyDigest", checked)}
-      />
-      <SettingsToggleRow
-        checked={values.productUpdates}
-        description={t("settings.notifications.productUpdatesDescription")}
-        label={t("settings.notifications.productUpdates")}
-        name="productUpdates"
-        onCheckedChange={(checked) => setPreference("productUpdates", checked)}
-      />
+        <SettingsToggleRow
+          checked={values.interviewCompleted}
+          description={t(
+            "settings.notifications.interviewCompletedDescription",
+          )}
+          label={t("settings.notifications.interviewCompleted")}
+          name="interviewCompleted"
+          onCheckedChange={(checked) =>
+            setPreference("interviewCompleted", checked)
+          }
+        />
+        <SettingsToggleRow
+          checked={values.mentionsAndComments}
+          description={t("settings.notifications.mentionsDescription")}
+          label={t("settings.notifications.mentions")}
+          name="mentionsAndComments"
+          onCheckedChange={(checked) =>
+            setPreference("mentionsAndComments", checked)
+          }
+        />
+        <SettingsToggleRow
+          checked={values.weeklyDigest}
+          description={t("settings.notifications.weeklyDigestDescription")}
+          label={t("settings.notifications.weeklyDigest")}
+          name="weeklyDigest"
+          onCheckedChange={(checked) => setPreference("weeklyDigest", checked)}
+        />
+        <SettingsToggleRow
+          checked={values.productUpdates}
+          description={t("settings.notifications.productUpdatesDescription")}
+          label={t("settings.notifications.productUpdates")}
+          name="productUpdates"
+          onCheckedChange={(checked) =>
+            setPreference("productUpdates", checked)
+          }
+        />
       </SettingsPanel>
       <div className="mt-[18px]">
         <SettingsActionRow />
@@ -930,32 +940,13 @@ function ResidencyChoice({
   label: string;
 }) {
   return (
-    <button
-      className={cn(
-        "flex cursor-pointer items-start gap-3 rounded-[15px] border p-4 text-left transition",
-        active
-          ? "border-olive-700 bg-[#f7faef]"
-          : "border-[#e2ddd2] bg-white hover:border-[#c8c1b2]",
-      )}
-      type="button"
-    >
-      <span
-        className={cn(
-          "mt-0.5 grid h-[18px] w-[18px] shrink-0 place-items-center rounded-full",
-          active ? "bg-olive-700 text-white" : "border border-[#ddd8cc]",
-        )}
-      >
-        {active ? <CheckCircle aria-hidden={true} className="h-3 w-3" /> : null}
-      </span>
-      <span>
-        <span className="block text-sm font-semibold text-ink-950">
-          {label}
-        </span>
-        <span className="mt-1 block text-xs text-ink-500">
-          {description}
-        </span>
-      </span>
-    </button>
+    <SelectionCard
+      className="rounded-[15px]"
+      description={description}
+      indicatorShape="circle"
+      selected={active}
+      title={label}
+    />
   );
 }
 

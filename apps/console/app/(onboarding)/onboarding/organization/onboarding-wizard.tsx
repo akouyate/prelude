@@ -29,6 +29,7 @@ import {
   Button,
   ChoiceTile,
   Input,
+  RadioCardGroup,
   StepProgress,
   StepShell,
   cn,
@@ -505,35 +506,18 @@ export function OnboardingWizard() {
       ) : null}
 
       {step === "jobs" && state.jobSource !== "manual" ? (
-        <div className="space-y-3">
-          {availableJobs.map((job) => (
-            <button
-              key={job.id}
-              className={cn(
-                "flex w-full cursor-pointer items-center justify-between rounded-3xl border p-4 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
-                state.selectedJobId === job.id
-                  ? "border-olive-700 bg-[#eef0e3]"
-                  : "border-ink-100 bg-white/60 hover:border-ink-300 hover:bg-white",
-              )}
-              onClick={() => update("selectedJobId", job.id)}
-              type="button"
-            >
-              <span>
-                <span className="block text-base font-semibold text-ink-900">
-                  {job.title}
-                </span>
-                <span className="mt-1 block text-sm text-ink-600">
-                  {job.location} · {job.source}
-                </span>
-              </span>
-              {state.selectedJobId === job.id ? (
-                <span className="grid h-8 w-8 place-items-center rounded-full bg-olive-800 text-white">
-                  <Check aria-hidden="true" className="h-4 w-4" />
-                </span>
-              ) : null}
-            </button>
-          ))}
-        </div>
+        <RadioCardGroup
+          ariaLabel="Select first job"
+          className="space-y-3"
+          indicatorShape="circle"
+          onValueChange={(value) => update("selectedJobId", value)}
+          options={availableJobs.map((job) => ({
+            description: `${job.location} · ${job.source}`,
+            label: job.title,
+            value: job.id,
+          }))}
+          value={state.selectedJobId}
+        />
       ) : null}
 
       {step === "mode" ? (

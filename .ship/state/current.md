@@ -2,19 +2,19 @@
 
 ## Objective
 
-Ship GitHub issue #111: recruiter candidate invitation workflow.
+Ship GitHub issue #10: stabilize Prelude UI foundations and reusable
+components.
 
 ## Scope
 
-- Let an authenticated recruiter create a candidate invitation for a published
-  role/interview from the role detail view.
-- Support candidate name, optional email, default/custom expiry, generated
-  `ci_...` link, manual copy-link delivery, and a clear invitation status list.
-- Reissue expired or failed invitations by creating a new invitation while
-  keeping the old invitation auditable.
-- Keep completed invitations immutable and organization-scoped.
-- Prepare the server boundary for future email delivery without coupling this
-  slice to Resend.
+- Consolidate shared console primitives for actions, icon actions, metrics,
+  selection cards, radio cards, fields, tabs, panels, badges, and empty states.
+- Normalize active/inactive selection states across role builder, onboarding,
+  settings, and candidate-detail patterns.
+- Keep candidate table/list implementations shared across dashboard, role
+  detail, and candidates views.
+- Keep the left sidebar shell consistent, fixed, and reusable.
+- Document the current design-system component rules.
 
 ## Phases
 
@@ -32,27 +32,29 @@ Ship GitHub issue #111: recruiter candidate invitation workflow.
 
 ## Validation
 
-- `rtk ./node_modules/.bin/vitest run apps/console/src/server/interviews/candidate-invitations.test.ts`
-  - 11 tests passed.
-- `rtk ./node_modules/.bin/vitest run apps/console/src/server/interviews/candidate-invitations.test.ts apps/console/src/server/interviews/interview-drafts.publish.test.ts apps/console/src/server/interviews/candidate-review-workflow.test.ts apps/console/src/server/interviews/live-session-insights.test.ts apps/console/src/server/interviews/live-session-evidence.test.ts`
-  - 46 tests passed.
+- `rtk ../../node_modules/.bin/vitest run src/components/button.test.tsx src/components/radio-card.test.tsx src/components/metric-card.test.tsx`
+  - 3 files / 3 tests passed from `packages/ui`.
+- `rtk ./node_modules/.bin/tsc --noEmit -p packages/ui/tsconfig.json`
+  - Passed.
 - `rtk ./node_modules/.bin/tsc --noEmit -p apps/console/tsconfig.json`
   - Passed.
-- `rtk ./node_modules/.bin/tsc --noEmit -p packages/core/tsconfig.json`
+- `rtk ./node_modules/.bin/tsc --noEmit -p packages/design-system/tsconfig.json`
   - Passed.
 - `rtk git diff --check`
   - Passed.
-- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5440/prelude?schema=public' node node_modules/.pnpm/prisma@6.19.3_typescript@6.0.3/node_modules/prisma/build/index.js migrate deploy --schema packages/db/prisma/schema.prisma`
-  - No pending migrations.
-- `rtk env DATABASE_URL='postgresql://postgres:postgres@localhost:5440/prelude?schema=public' node scripts/e2e-smoke.mjs --strict --reset --run-id codex-111-invite --console-url http://localhost:3000`
-  - Decision Pass.
-- Playwright smoke for role invitations:
-  - `/roles/interview_e2e_codex-111-invite` exposes a `ci_...` candidate link, Invitations tab, create form, and created test invite.
-- Playwright smoke for settings underline tabs:
-  - `/settings` renders one underline tablist, defaults to profile, and updates to `/settings?view=workspace`.
+- `rtk ./node_modules/.bin/prettier --check ...changed UI files...`
+  - Passed after formatting five changed files.
+- Playwright smoke against `http://localhost:3000` with mock auth:
+  - `/`, `/roles`, `/roles/new`, `/settings`, `/candidates` returned 200 with no runtime error text.
+  - Discovered candidate detail `/interviews/is_e2e_codex-111-invite` returned 200 with no runtime error text.
+  - `/roles/new` desktop/mobile screenshots written to `/tmp/prelude-issue10-roles-new-desktop.png` and `/tmp/prelude-issue10-roles-new-mobile.png`.
+  - `/roles/new` Calibrate screenshot written to `/tmp/prelude-issue10-calibrate-desktop.png`.
+  - Candidate detail screenshot written to `/tmp/prelude-issue10-candidate-detail-desktop.png`.
 
 ## Notes
 
-- User requested underline tab navigation for contextual views; invitations
-  should live as a role-detail tab.
-- Settings now use the shared underline tab nav with `nuqs` query-state routing.
+- Existing tracked work before this pass already added `Surface`, `Field`,
+  `TextField`, `SelectField`, `UnderlineTabs`, `SegmentedTabs`, shared candidate
+  screen table usage, and settings `nuqs` routing.
+- This pass adds the missing icon-button, metric, selection-card, and radio-card
+  pieces, then migrates the duplicated feature surfaces that block #10.

@@ -3,6 +3,7 @@ import { Check } from "iconoir-react";
 import { Button as BaseButton } from "@base-ui-components/react/button";
 
 import { cn } from "../lib/cn";
+import { selectionCardClasses } from "./selection-card";
 
 export type ChoiceTileProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   description?: string;
@@ -34,10 +35,8 @@ export const ChoiceTile = React.forwardRef<HTMLElement, ChoiceTileProps>(
         nativeButton
         type={type}
         className={cn(
-          "group relative flex min-h-36 w-full cursor-pointer flex-col items-center justify-center rounded-3xl border p-5 text-center transition duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
-          selected
-            ? "border-[#d8deca] bg-[#f3f4ea] text-ink-950"
-            : "border-[#e7e2d8] bg-white/72 text-ink-900 hover:border-[#d1cbbf] hover:bg-white",
+          selectionCardClasses({ disabled: props.disabled, selected }),
+          "group relative flex min-h-36 w-full flex-col items-center justify-center rounded-3xl p-5 text-center duration-200 disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50",
           className
         )}
         {...props}

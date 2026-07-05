@@ -11,9 +11,16 @@ export {
   type FieldProps,
   type TextFieldProps,
 } from "./components/field";
+export { IconButton, type IconButtonProps } from "./components/icon-button";
 export { Input, type InputProps } from "./components/input";
+export { MetricCard, type MetricCardProps } from "./components/metric-card";
 export { Notice, type NoticeProps } from "./components/notice";
 export { Pill, type PillProps } from "./components/pill";
+export {
+  RadioCardGroup,
+  type RadioCardGroupProps,
+  type RadioCardOption,
+} from "./components/radio-card";
 export { Select } from "./components/select";
 export {
   SelectControl,
@@ -31,6 +38,12 @@ export {
   type SegmentedTabOption,
   type SegmentedTabsProps,
 } from "./components/segmented-tabs";
+export {
+  SelectionCard,
+  SelectionIndicator,
+  selectionCardClasses,
+  type SelectionCardProps,
+} from "./components/selection-card";
 export { StatusBadge } from "./components/status-badge";
 export { Surface, type SurfaceProps } from "./components/surface";
 export { Switch, type SwitchProps } from "./components/switch";

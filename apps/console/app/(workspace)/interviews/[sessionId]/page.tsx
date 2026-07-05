@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import type { ComponentType, ReactNode } from "react";
 import { type CandidateBriefDto } from "@prelude/contracts";
 import { recruiterLimitationCopy } from "@prelude/core";
-import { Button, Card, StatusBadge, Textarea } from "@prelude/ui";
+import { Button, Card, IconButton, StatusBadge, Textarea } from "@prelude/ui";
 import {
   ArrowLeft,
   ArrowRight,
@@ -144,20 +144,20 @@ function CandidateSessionReview({
           <span className="text-[12.5px] font-medium text-[#a29b8d]">
             1 of 1
           </span>
-          <button
+          <IconButton
             aria-label="Previous candidate"
-            className="grid h-[30px] w-[30px] cursor-pointer place-items-center rounded-[9px] border border-[#e2ddd2] bg-white text-ink-600 transition hover:border-ink-950 hover:text-ink-950"
-            type="button"
+            className="rounded-[9px] border-[#e2ddd2]"
+            size="sm"
           >
             <NavArrowLeft aria-hidden={true} className="h-4 w-4" />
-          </button>
-          <button
+          </IconButton>
+          <IconButton
             aria-label="Next candidate"
-            className="grid h-[30px] w-[30px] cursor-pointer place-items-center rounded-[9px] border border-[#e2ddd2] bg-white text-ink-600 transition hover:border-ink-950 hover:text-ink-950"
-            type="button"
+            className="rounded-[9px] border-[#e2ddd2]"
+            size="sm"
           >
             <NavArrowRight aria-hidden={true} className="h-4 w-4" />
-          </button>
+          </IconButton>
         </div>
       </div>
 
