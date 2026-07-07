@@ -15,10 +15,14 @@ export type WorkspaceSettingsData = {
     preferredLanguage: "en" | "fr";
   };
   authProvider: "clerk" | "mock";
+  connectedAccounts: SettingsConnectedAccount[];
   connectors: Array<{
     provider: string;
     status: string;
   }>;
+  integrationAvailability: {
+    googleOAuth: boolean;
+  };
   interviewPreferences: SettingsInterviewPreferences;
   metrics: {
     activeRoles: number;
@@ -50,6 +54,26 @@ export type WorkspaceSettingsData = {
     id: string;
     role: string;
   }>;
+};
+
+export type SettingsConnectedAccountStatus =
+  | "connected"
+  | "connecting"
+  | "error"
+  | "expired"
+  | "needs_reconnect"
+  | "not_connected"
+  | "revoked";
+
+export type SettingsConnectedAccount = {
+  capabilities: string[];
+  connectedAt: string | null;
+  disconnectedAt: string | null;
+  externalAccountEmail: string | null;
+  externalAccountId: string | null;
+  provider: "google";
+  scopes: string[];
+  status: SettingsConnectedAccountStatus;
 };
 
 export type SettingsInterviewPreferences = {

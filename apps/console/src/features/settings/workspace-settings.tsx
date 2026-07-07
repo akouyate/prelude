@@ -1,11 +1,18 @@
 "use client";
 
 import * as React from "react";
-import { Trash } from "iconoir-react";
+import {
+  Calendar,
+  Check,
+  GoogleCircle,
+  Refresh,
+  Trash,
+  WarningTriangle,
+  Xmark,
+} from "iconoir-react";
 import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { useTranslation } from "react-i18next";
 import {
-  Badge,
   Button,
   IconButton,
   Notice,
@@ -30,6 +37,10 @@ import {
   revokeTeamInvitationAction,
 } from "../../server/organizations/team-actions";
 import {
+  connectGoogleCalendarAction,
+  disconnectGoogleCalendarAction,
+} from "../../server/integrations/connected-account-actions";
+import {
   updateInterviewPreferencesAction,
   updateNotificationPreferencesAction,
   updateWorkspaceSettingsAction,
@@ -48,15 +59,6 @@ import {
   SettingsUrlField,
 } from "./settings-primitives";
 
-const sectionLabelKeys: Record<SettingsSection, string> = {
-  profile: "settings.nav.profile",
-  workspace: "settings.nav.workspace",
-  team: "settings.nav.team",
-  interview: "settings.nav.interview",
-  integrations: "settings.nav.integrations",
-  notifications: "settings.nav.notifications",
-  billing: "settings.nav.billing",
-};
 const settingsSectionOrder = [
   "profile",
   "workspace",
@@ -130,7 +132,13 @@ function SettingsSectionContent({
   }
 
   if (section === "integrations") {
-    return <IntegrationsSection connectors={data.connectors} />;
+    return (
+      <IntegrationsSection
+        connectedAccounts={data.connectedAccounts}
+        connectors={data.connectors}
+        googleOAuthAvailable={data.integrationAvailability.googleOAuth}
+      />
+    );
   }
 
   if (section === "notifications") {
@@ -725,13 +733,22 @@ function InterviewDefaultsSection({ data }: { data: WorkspaceSettingsData }) {
 }
 
 function IntegrationsSection({
+  connectedAccounts,
   connectors,
+  googleOAuthAvailable,
 }: {
+  connectedAccounts: WorkspaceSettingsData["connectedAccounts"];
   connectors: WorkspaceSettingsData["connectors"];
+  googleOAuthAvailable: boolean;
 }) {
   const { t } = useTranslation();
   const normalized = new Map(
     connectors.map((connector) => [connector.provider, connector.status]),
+  );
+  const googleAccount = connectedAccounts.find(
+    (account) =>
+      account.provider === "google" &&
+      account.capabilities.includes("calendar"),
   );
   const integrations = [
     {
@@ -739,36 +756,50 @@ function IntegrationsSection({
       logo: <LinkedInLogo />,
       name: "LinkedIn",
       provider: "linkedin",
+      type: "status",
     },
     {
       description: t("settings.integrations.jobPosts"),
       logo: <IndeedLogo />,
       name: "Indeed",
       provider: "indeed",
+      type: "status",
     },
     {
       description: t("settings.integrations.ats"),
       logo: <GenericIntegrationLogo label="GH" />,
       name: "Greenhouse",
       provider: "greenhouse",
+      type: "status",
     },
     {
       description: t("settings.integrations.calendar"),
-      logo: <GenericIntegrationLogo label="G" muted />,
+      logo: (
+        <IconIntegrationLogo>
+          <GoogleCircle aria-hidden={true} className="h-6 w-6" />
+        </IconIntegrationLogo>
+      ),
       name: "Google Calendar",
       provider: "google_calendar",
+      type: "google_calendar",
     },
     {
       description: t("settings.integrations.gmail"),
-      logo: <GenericIntegrationLogo label="G" muted />,
+      logo: (
+        <IconIntegrationLogo muted>
+          <GoogleCircle aria-hidden={true} className="h-6 w-6" />
+        </IconIntegrationLogo>
+      ),
       name: "Gmail",
       provider: "google_gmail",
+      type: "status",
     },
     {
       description: t("settings.integrations.microsoft"),
       logo: <GenericIntegrationLogo label="M" muted />,
       name: "Microsoft Teams",
       provider: "microsoft_teams",
+      type: "status",
     },
   ];
 
@@ -781,6 +812,18 @@ function IntegrationsSection({
       <div className="mt-5 flex flex-col gap-2.5">
         {integrations.map((integration) => {
           const connected = normalized.has(integration.provider);
+          if (integration.type === "google_calendar") {
+            return (
+              <GoogleCalendarIntegrationRow
+                account={googleAccount ?? null}
+                available={googleOAuthAvailable}
+                description={integration.description}
+                key={integration.provider}
+                logo={integration.logo}
+                name={integration.name}
+              />
+            );
+          }
 
           return (
             <div
@@ -800,23 +843,146 @@ function IntegrationsSection({
                     : integration.description}
                 </p>
               </div>
-              <Badge
-                className={cn(
-                  "shrink-0",
-                  connected
-                    ? "bg-meadow-50 text-meadow-800"
-                    : "border border-ink-200 bg-white text-ink-900",
-                )}
+              <StatusBadge
+                className="shrink-0"
+                tone={connected ? "success" : "neutral"}
               >
                 {connected
                   ? t("settings.integrations.connected")
                   : t("settings.integrations.comingSoon")}
-              </Badge>
+              </StatusBadge>
             </div>
           );
         })}
       </div>
     </SettingsPanel>
+  );
+}
+
+function GoogleCalendarIntegrationRow({
+  account,
+  available,
+  description,
+  logo,
+  name,
+}: {
+  account: WorkspaceSettingsData["connectedAccounts"][number] | null;
+  available: boolean;
+  description: string;
+  logo: React.ReactNode;
+  name: string;
+}) {
+  const { t } = useTranslation();
+  const status = account?.status ?? "not_connected";
+  const connected = status === "connected";
+  const reconnect =
+    status === "expired" || status === "needs_reconnect" || status === "error";
+  const disabled = !available;
+
+  return (
+    <div className="flex flex-col gap-3 rounded-2xl border border-[#f1ede4] bg-white/60 px-4 py-3.5 sm:flex-row sm:items-center">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        {logo}
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="truncate text-sm font-semibold text-ink-950">
+              {name}
+            </p>
+            <IntegrationStatusBadge available={available} status={status} />
+          </div>
+          <p className="mt-0.5 text-[12.5px] leading-5 text-ink-500">
+            {account?.externalAccountEmail
+              ? t("settings.integrations.connectedAs", {
+                  email: account.externalAccountEmail,
+                })
+              : description}
+          </p>
+        </div>
+      </div>
+
+      {connected ? (
+        <form action={disconnectGoogleCalendarAction}>
+          <Button
+            className="w-full sm:w-auto"
+            type="submit"
+            variant="secondary"
+          >
+            <Xmark aria-hidden={true} className="h-4 w-4" />
+            {t("settings.integrations.disconnect")}
+          </Button>
+        </form>
+      ) : (
+        <form action={connectGoogleCalendarAction}>
+          <Button
+            className="w-full sm:w-auto"
+            disabled={disabled}
+            title={
+              disabled ? t("settings.integrations.googleSetupHint") : undefined
+            }
+            type="submit"
+            variant={reconnect ? "secondary" : "primary"}
+          >
+            {reconnect ? (
+              <Refresh aria-hidden={true} className="h-4 w-4" />
+            ) : (
+              <Calendar aria-hidden={true} className="h-4 w-4" />
+            )}
+            {reconnect
+              ? t("settings.integrations.reconnect")
+              : t("settings.integrations.connect")}
+          </Button>
+        </form>
+      )}
+    </div>
+  );
+}
+
+function IntegrationStatusBadge({
+  available,
+  status,
+}: {
+  available: boolean;
+  status: WorkspaceSettingsData["connectedAccounts"][number]["status"];
+}) {
+  const { t } = useTranslation();
+  if (!available) {
+    return (
+      <StatusBadge tone="warning">
+        <WarningTriangle aria-hidden={true} className="h-3.5 w-3.5" />
+        {t("settings.integrations.setupRequired")}
+      </StatusBadge>
+    );
+  }
+
+  if (status === "connected") {
+    return (
+      <StatusBadge tone="success">
+        <Check aria-hidden={true} className="h-3.5 w-3.5" />
+        {t("settings.integrations.connected")}
+      </StatusBadge>
+    );
+  }
+
+  if (status === "needs_reconnect" || status === "expired") {
+    return (
+      <StatusBadge tone="warning">
+        {t("settings.integrations.needsReconnect")}
+      </StatusBadge>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <StatusBadge tone="danger">
+        {t("settings.integrations.error")}
+      </StatusBadge>
+    );
+  }
+
+  return (
+    <StatusBadge tone="neutral">
+      {t("settings.integrations.notConnected")}
+    </StatusBadge>
   );
 }
 
@@ -1048,6 +1214,27 @@ function GenericIntegrationLogo({
       )}
     >
       {label}
+    </span>
+  );
+}
+
+function IconIntegrationLogo({
+  children,
+  muted = false,
+}: {
+  children: React.ReactNode;
+  muted?: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "grid h-[42px] w-[42px] shrink-0 place-items-center rounded-[11px]",
+        muted
+          ? "border border-ink-100 bg-white text-ink-500"
+          : "bg-white text-ink-900",
+      )}
+    >
+      {children}
     </span>
   );
 }

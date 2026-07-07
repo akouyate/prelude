@@ -12,6 +12,10 @@ import type {
   WorkspaceSettingsData,
 } from "../../features/settings/settings-types";
 import { coerceConsoleLocale } from "../../libs/i18n-server";
+import {
+  googleOAuthAvailable,
+  listConnectedAccountSummaries,
+} from "../integrations/connected-account-service";
 
 const defaultInterviewPreferences: SettingsInterviewPreferences = {
   allowAudio: true,
@@ -51,6 +55,7 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
     needsReviewCount,
     user,
     pendingInvitations,
+    connectedAccounts,
   ] = await Promise.all([
     prisma.organization.findUniqueOrThrow({
       include: {
@@ -94,9 +99,14 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
       where: { id: scope.userId },
     }),
     loadPendingInvitations(canManage, scope.clerkOrganizationId),
+    listConnectedAccountSummaries({
+      organizationId: scope.organizationId,
+      userId: scope.userId,
+    }),
   ]);
 
   const preferences = parseOrganizationSettings(organization.settings);
+  const isGoogleOAuthAvailable = googleOAuthAvailable();
 
   const viewerClerkUserId =
     organization.memberships.find(
@@ -111,10 +121,23 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
       role: scope.role,
     },
     authProvider: identity.value.source,
+    connectedAccounts: connectedAccounts.map((account) => ({
+      capabilities: account.capabilities,
+      connectedAt: account.connectedAt?.toISOString() ?? null,
+      disconnectedAt: account.disconnectedAt?.toISOString() ?? null,
+      externalAccountEmail: account.externalAccountEmail,
+      externalAccountId: account.externalAccountId,
+      provider: account.provider,
+      scopes: account.scopes,
+      status: account.status,
+    })),
     connectors: organization.jobSourceConnections.map((connector) => ({
       provider: connector.provider,
       status: connector.status,
     })),
+    integrationAvailability: {
+      googleOAuth: isGoogleOAuthAvailable,
+    },
     interviewPreferences: preferences.interview,
     metrics: {
       activeRoles: activeRoleCount,
