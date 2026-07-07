@@ -23,6 +23,7 @@ model Organization {
   candidateInvitations  CandidateInvitation[]
   candidateReviewEvents CandidateSessionReviewEvent[]
   candidateSessions     CandidateSession[]
+  connectedAccounts     ConnectedAccount[]
   interviewDrafts       InterviewDraft[]
   interviews            Interview[]
   jobs                  Job[]
@@ -41,6 +42,7 @@ model User {
   candidateReviewEvents               CandidateSessionReviewEvent[] @relation("CandidateReviewEventAuthor")
   candidateSessionReviewNoteUpdates   CandidateSession[]            @relation("CandidateSessionReviewNoteAuthor")
   candidateSessionReviewStatusUpdates CandidateSession[]            @relation("CandidateSessionReviewStatusAuthor")
+  connectedAccounts                   ConnectedAccount[]
   memberships                         OrganizationMembership[]
 }
 
@@ -297,6 +299,33 @@ model JobSourceConnection {
 
   @@unique([organizationId, provider])
   @@index([provider])
+}
+
+model ConnectedAccount {
+  id                     String       @id @default(cuid())
+  organizationId         String
+  userId                 String
+  provider               String
+  status                 String       @default("connected")
+  capabilities           Json         @default("[]")
+  scopes                 Json         @default("[]")
+  externalAccountId      String?
+  externalAccountEmail   String?
+  accessTokenCiphertext  String?
+  refreshTokenCiphertext String?
+  accessTokenExpiresAt   DateTime?
+  lastRefreshAttemptAt   DateTime?
+  lastRefreshError       String?
+  connectedAt            DateTime?
+  disconnectedAt         DateTime?
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+  organization           Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user                   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId, provider])
+  @@index([organizationId, provider, status])
+  @@index([userId, provider])
 }
 
 model Candidate {

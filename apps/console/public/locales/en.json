@@ -437,7 +437,16 @@
         "gmail": "Send candidate and recruiter email notifications",
         "microsoft": "Schedule follow-up calls and team notifications",
         "connected": "Connected",
-        "comingSoon": "Coming soon"
+        "connectedAs": "Connected as {{email}}.",
+        "comingSoon": "Coming soon",
+        "connect": "Connect",
+        "disconnect": "Disconnect",
+        "error": "Error",
+        "googleSetupHint": "Set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET to enable Google OAuth.",
+        "needsReconnect": "Needs reconnect",
+        "notConnected": "Not connected",
+        "reconnect": "Reconnect",
+        "setupRequired": "Setup required"
       },
       "notifications": {
         "title": "Notifications",
