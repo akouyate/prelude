@@ -30,7 +30,7 @@ model.
 - [x] Review
 - [x] Simplification
 - [x] Final validation
-- [ ] Delivery
+- [x] Delivery
 
 ## Validation
 
@@ -56,6 +56,7 @@ model.
   outgoing authorization request: Connect is enabled, the request targets
   Google OAuth, includes `calendar.events`, includes signed `state`, and does
   not request Gmail scopes.
+- PR #112 was merged into `main`, closing GitHub issue #104.
 
 ## Notes
 
