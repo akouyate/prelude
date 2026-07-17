@@ -30,6 +30,8 @@ test("login explains the local auth mock when Clerk keys are missing", async ({
 test("interview agent saves and publishes a draft", async ({ page }) => {
   await page.goto("/roles/new");
 
+  await page.getByRole("link", { name: "Start manually" }).click();
+
   await expect(page.getByPlaceholder("Senior Product Designer")).toBeVisible();
   await expect(
     page.getByPlaceholder(/Paste the job description/u),
@@ -38,7 +40,7 @@ test("interview agent saves and publishes a draft", async ({ page }) => {
     .getByRole("textbox", { name: "Role" })
     .fill("Customer Success Manager");
   await page
-    .getByLabel("Job description")
+    .getByPlaceholder(/Paste the job description/u)
     .fill(
       "We are hiring a Customer Success Manager to onboard SMB customers, reduce churn risk, coordinate with product teams, and turn customer feedback into practical improvements. The role needs clear communication, prioritization, and comfort handling ambiguous customer situations.",
     );

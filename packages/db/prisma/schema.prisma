@@ -30,6 +30,7 @@ model Organization {
   interviews             Interview[]
   jobs                   Job[]
   jobSourceConnections   JobSourceConnection[]
+  roleIntakes            RoleIntake[]
   memberships            OrganizationMembership[]
   invitations            OrganizationInvitation[]
 }
@@ -46,6 +47,7 @@ model User {
   candidateSessionReviewNoteUpdates   CandidateSession[]            @relation("CandidateSessionReviewNoteAuthor")
   candidateSessionReviewStatusUpdates CandidateSession[]            @relation("CandidateSessionReviewStatusAuthor")
   connectedAccounts                   ConnectedAccount[]
+  createdRoleIntakes                  RoleIntake[]                  @relation("RoleIntakeCreator")
   memberships                         OrganizationMembership[]
 }
 
@@ -87,6 +89,7 @@ model Job {
   description          String                @default("")
   sourceProvider       String?
   sourceExternalId     String?
+  sourceAttachmentName String?
   status               String                @default("draft")
   createdAt            DateTime              @default(now())
   organization         Organization          @relation(fields: [organizationId], references: [id])
@@ -95,8 +98,67 @@ model Job {
   candidates           Candidate[]
   candidateInvitations CandidateInvitation[]
   candidateSessions    CandidateSession[]
+  roleIntake           RoleIntake?
 
   @@index([organizationId, sourceProvider])
+}
+
+// A private staging object for imported role sources. It deliberately becomes a
+// visible Job only after the recruiter has reviewed the extracted fields.
+model RoleIntake {
+  id                       String            @id @default(cuid())
+  organizationId           String
+  createdByUserId          String
+  sourceKind               String            @default("file")
+  status                   String            @default("uploading")
+  originalFileName         String
+  declaredMimeType         String
+  detectedMimeType         String?
+  byteSize                 Int?
+  sha256                   String?
+  quarantineObjectKey      String?
+  sealedObjectKey          String?
+  extractedDraft           Json              @default("{}")
+  reviewedDraft            Json              @default("{}")
+  warnings                 Json              @default("[]")
+  scannerVersion           String?
+  parserVersion            String?
+  attemptCount             Int               @default(0)
+  nextAttemptAt            DateTime?
+  processingStartedAt      DateTime?
+  processingLeaseExpiresAt DateTime?
+  lastErrorCode            String?
+  lastErrorSummary         String?
+  expiresAt                DateTime
+  cleanupRequestedAt       DateTime?
+  cleanedUpAt              DateTime?
+  jobId                    String?           @unique
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+  organization             Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy                User              @relation("RoleIntakeCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  job                      Job?              @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  events                   RoleIntakeEvent[]
+
+  @@index([organizationId, status, updatedAt])
+  @@unique([organizationId, sha256])
+  @@index([status, nextAttemptAt])
+  @@index([createdByUserId, createdAt])
+}
+
+// Audit and pilot telemetry for an intake. The metadata is intentionally
+// structural only; it must never include document text, filenames, hashes or
+// candidate data.
+model RoleIntakeEvent {
+  id           String     @id @default(cuid())
+  roleIntakeId String
+  eventType    String
+  metadata     Json       @default("{}")
+  createdAt    DateTime   @default(now())
+  roleIntake   RoleIntake @relation(fields: [roleIntakeId], references: [id], onDelete: Cascade)
+
+  @@index([roleIntakeId, createdAt])
+  @@index([eventType, createdAt])
 }
 
 model InterviewDraft {
