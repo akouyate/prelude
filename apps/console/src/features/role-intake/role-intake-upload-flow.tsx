@@ -5,20 +5,12 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Attachment,
-  CheckCircle,
   NavArrowLeft,
   RefreshCircle,
   WarningTriangle,
 } from "iconoir-react";
 
-import {
-  Button,
-  Field,
-  Input,
-  Notice,
-  Textarea,
-  cn,
-} from "@prelude/ui";
+import { Button, Notice, cn } from "@prelude/ui";
 import type { RoleIntakeSummary } from "@prelude/contracts";
 
 import {
@@ -28,6 +20,10 @@ import {
   getRoleIntakeSummaryAction,
   saveRoleIntakeReviewAction,
 } from "../../server/role-intakes/role-intake-actions";
+import {
+  RoleIntakeReview,
+  toRoleIntakeReviewDraft,
+} from "./role-intake-review";
 
 const inFlightStatuses = new Set(["uploading", "quarantined", "queued", "processing"]);
 
@@ -41,11 +37,11 @@ export function RoleIntakeUploadFlow({
   const [error, setError] = React.useState<string | null>(null);
   const [isUploading, setIsUploading] = React.useState(false);
   const [isCreatingRole, setIsCreatingRole] = React.useState(false);
-  const [review, setReview] = React.useState(() => toReviewDraft(initialIntake));
+  const [review, setReview] = React.useState(() => toRoleIntakeReviewDraft(initialIntake));
   const resumeIntakeId = intake?.duplicateOfIntakeId;
 
   React.useEffect(() => {
-    setReview(toReviewDraft(intake));
+    setReview(toRoleIntakeReviewDraft(intake));
   }, [intake?.id]);
 
   React.useEffect(() => {
@@ -107,6 +103,7 @@ export function RoleIntakeUploadFlow({
     setIsCreatingRole(true);
     try {
       const saved = await saveRoleIntakeReviewAction({
+        expectedReviewVersion: intake.reviewVersion,
         intakeId: intake.id,
         reviewedDraft: review,
       });
@@ -129,11 +126,11 @@ export function RoleIntakeUploadFlow({
     return (
       <RoleIntakeReview
         error={error}
+        intake={intake}
         isCreatingRole={isCreatingRole}
         onCreateRole={createRole}
         onReviewChange={setReview}
         review={review}
-        warnings={intake.warnings}
       />
     );
   }
@@ -248,97 +245,4 @@ function RoleIntakeProgress({ intake }: { intake: RoleIntakeSummary }) {
       </div>
     </div>
   );
-}
-
-function RoleIntakeReview({
-  error,
-  isCreatingRole,
-  onCreateRole,
-  onReviewChange,
-  review,
-  warnings,
-}: {
-  error: string | null;
-  isCreatingRole: boolean;
-  onCreateRole: () => void;
-  onReviewChange: React.Dispatch<React.SetStateAction<ReviewDraft>>;
-  review: ReviewDraft;
-  warnings: RoleIntakeSummary["warnings"];
-}) {
-  return (
-    <main className="mx-auto min-h-screen w-full max-w-3xl px-6 py-14 sm:px-10">
-      <Link
-        className="inline-flex cursor-pointer items-center gap-1.5 text-sm font-medium text-ink-600 transition hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-        href="/roles/new"
-      >
-        <NavArrowLeft aria-hidden="true" className="h-4 w-4" />
-        Start over
-      </Link>
-      <header className="mt-10">
-        <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#eef0e3] text-olive-900">
-          <CheckCircle aria-hidden="true" className="h-6 w-6" />
-        </span>
-        <h1 className="mt-5 font-display text-4xl font-medium tracking-normal text-ink-950">
-          Review the role details
-        </h1>
-        <p className="mt-3 max-w-2xl text-base leading-7 text-ink-600">
-          Prelude extracted the text without changing it. Confirm the details below before drafting interview questions.
-        </p>
-      </header>
-
-      {warnings.length ? (
-        <Notice className="mt-7" tone="warning">
-          {warnings.map((warning) => warning.message).join(" ")}
-        </Notice>
-      ) : null}
-      {error ? <Notice className="mt-7" tone="danger">{error}</Notice> : null}
-
-      <section className="mt-8 space-y-6 rounded-[32px] border border-ink-200 bg-white/82 p-6 sm:p-8">
-        <Field label="Role title">
-          <Input
-            onChange={(event) => onReviewChange((current) => ({ ...current, title: event.target.value }))}
-            placeholder="e.g. Customer Success Manager"
-            value={review.title}
-          />
-        </Field>
-        <Field label="Location" description="Optional">
-          <Input
-            onChange={(event) => onReviewChange((current) => ({ ...current, location: event.target.value }))}
-            placeholder="e.g. Paris or remote"
-            value={review.location}
-          />
-        </Field>
-        <Field label="Job description">
-          <Textarea
-            onChange={(event) => onReviewChange((current) => ({ ...current, description: event.target.value }))}
-            placeholder="Describe the role, responsibilities, and the context candidates should know."
-            value={review.description}
-          />
-        </Field>
-      </section>
-
-      <div className="mt-8 flex flex-wrap items-center justify-between gap-4 border-t border-ink-200 pt-6">
-        <p className="max-w-md text-sm leading-6 text-ink-600">
-          The original file is already removed after extraction. Only these reviewed role details continue to the builder.
-        </p>
-        <Button disabled={isCreatingRole || !review.title.trim() || !review.description.trim()} onClick={onCreateRole}>
-          {isCreatingRole ? "Creating role..." : "Continue to questions"}
-        </Button>
-      </div>
-    </main>
-  );
-}
-
-type ReviewDraft = {
-  description: string;
-  location: string;
-  title: string;
-};
-
-function toReviewDraft(intake?: RoleIntakeSummary): ReviewDraft {
-  return {
-    description: intake?.reviewedDraft.description ?? "",
-    location: intake?.reviewedDraft.location ?? "",
-    title: intake?.reviewedDraft.title ?? "",
-  };
 }

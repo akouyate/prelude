@@ -110,6 +110,10 @@ model RoleIntake {
   organizationId           String
   createdByUserId          String
   sourceKind               String            @default("file")
+  submittedUrl             String?
+  canonicalUrl             String?
+  sourceIdentity           String?
+  sourceMetadata           Json              @default("{}")
   status                   String            @default("uploading")
   originalFileName         String
   declaredMimeType         String
@@ -121,6 +125,9 @@ model RoleIntake {
   extractedDraft           Json              @default("{}")
   reviewedDraft            Json              @default("{}")
   warnings                 Json              @default("[]")
+  reviewVersion            Int               @default(0)
+  reviewedAt               DateTime?
+  reviewedByUserId         String?
   scannerVersion           String?
   parserVersion            String?
   attemptCount             Int               @default(0)
@@ -143,6 +150,7 @@ model RoleIntake {
 
   @@index([organizationId, status, updatedAt])
   @@unique([organizationId, sha256])
+  @@unique([organizationId, sourceIdentity])
   @@index([duplicateOfIntakeId])
   @@index([status, nextAttemptAt])
   @@index([createdByUserId, createdAt])
