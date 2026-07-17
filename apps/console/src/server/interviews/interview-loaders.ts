@@ -44,6 +44,7 @@ import {
   formatReviewUserLabel,
   getReviewNotePreview,
 } from "./candidate-review-display";
+import { toScheduledCallSummary } from "./candidate-call-scheduling";
 import { findCandidateSessionSpineForOrganization } from "./candidate-session-spine";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
@@ -102,6 +103,7 @@ export type InterviewDetailData =
       organizationName: string;
       candidateSession: CandidateSessionSummary & {
         brief: CandidateBriefDto | null;
+        candidateEmail: string | null;
         evidence: CandidateSessionEvidence;
         interviewId: string;
         jobTitle: string;
@@ -112,6 +114,7 @@ export type InterviewDetailData =
         reviewStatusUpdatedAt: string | null;
         reviewStatusUpdatedBy: string | null;
         roleTitle: string;
+        scheduledCall: ReturnType<typeof toScheduledCallSummary> | null;
       };
     };
 
@@ -356,6 +359,10 @@ export async function getInterviewDetail(
         ),
         completedAt: evidence.completedAt ?? summary.completedAt,
         brief: toCandidateBriefDto(candidateSession.candidateBrief),
+        candidateEmail:
+          candidateSession.candidateEmail ??
+          candidateSession.candidateInvitation?.candidateEmail ??
+          null,
         eventCount: evidence.eventCount,
         evidence,
         interviewId: candidateSession.interviewId,
@@ -374,6 +381,9 @@ export async function getInterviewDetail(
           candidateSession.reviewStatusUpdatedBy,
         ),
         roleTitle: candidateSession.interview.roleTitle,
+        scheduledCall: candidateSession.scheduledCalls[0]
+          ? toScheduledCallSummary(candidateSession.scheduledCalls[0])
+          : null,
         status: evidence.status,
         transcriptTurnCount: evidence.transcriptTurns.length,
       },

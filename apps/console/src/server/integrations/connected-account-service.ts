@@ -57,7 +57,18 @@ type OAuthCallbackResult =
 
 type DisconnectResult = { ok: true; status: "disconnected" };
 
-export async function createGoogleCalendarAuthorizationUrl(): Promise<OAuthStartResult> {
+export type GoogleCalendarConnection =
+  | {
+      accessToken: string;
+      accountId: string;
+      accountLabel: string | null;
+      ok: true;
+    }
+  | { ok: false; status: ConnectedAccountStatus };
+
+export async function createGoogleCalendarAuthorizationUrl(input?: {
+  returnTo?: string;
+}): Promise<OAuthStartResult> {
   const [identity, scope] = await Promise.all([
     getConsoleAuthIdentity(),
     getCompletedOrganizationScope(),
@@ -77,6 +88,7 @@ export async function createGoogleCalendarAuthorizationUrl(): Promise<OAuthStart
     capability: connectedAccountCapabilityCalendar,
     organizationId: scope.organizationId,
     provider: connectedAccountProviderGoogle,
+    returnTo: safeCalendarReturnTo(input?.returnTo),
     userId: scope.userId,
   });
 
@@ -302,6 +314,68 @@ export async function getConnectedAccountCapabilityStatus(input: {
   return getCapabilityStatus(account, input.capability);
 }
 
+export async function getGoogleCalendarConnection(input: {
+  forceRefresh?: boolean;
+  organizationId: string;
+  userId: string;
+}): Promise<GoogleCalendarConnection> {
+  let account = await prisma.connectedAccount.findUnique({
+    where: {
+      organizationId_userId_provider: {
+        organizationId: input.organizationId,
+        provider: connectedAccountProviderGoogle,
+        userId: input.userId,
+      },
+    },
+  });
+  const status = getCapabilityStatus(
+    account,
+    connectedAccountCapabilityCalendar,
+  );
+
+  if (!account || status !== "connected") {
+    return { ok: false, status };
+  }
+
+  const refreshSkewMs = 60_000;
+  const shouldRefresh =
+    input.forceRefresh ||
+    !account.accessTokenCiphertext ||
+    !account.accessTokenExpiresAt ||
+    account.accessTokenExpiresAt.getTime() <= Date.now() + refreshSkewMs;
+
+  if (shouldRefresh) {
+    const refreshed = await refreshConnectedAccountAccessToken(account.id);
+    if (!refreshed.ok) {
+      return { ok: false, status: refreshed.status };
+    }
+
+    account = await prisma.connectedAccount.findUnique({
+      where: { id: account.id },
+    });
+  }
+
+  if (!account?.accessTokenCiphertext) {
+    return { ok: false, status: "needs_reconnect" };
+  }
+
+  return {
+    accessToken: decryptConnectedAccountSecret(account.accessTokenCiphertext),
+    accountId: account.id,
+    accountLabel: account.externalAccountEmail,
+    ok: true,
+  };
+}
+
+export async function markGoogleCalendarConnectionNeedsReconnect(
+  connectionId: string,
+) {
+  await markConnectionNeedsReconnect(
+    connectionId,
+    "Google Calendar access token was rejected after refresh.",
+  );
+}
+
 export function googleOAuthAvailable() {
   return getGoogleOAuthConfig().ok;
 }
@@ -408,4 +482,16 @@ function createProvider(
   config: Extract<GoogleOAuthConfig, { ok: true }>,
 ): ConnectedAccountProvider {
   return createGoogleConnectedAccountProvider(config.value);
+}
+
+function safeCalendarReturnTo(value: string | undefined) {
+  if (
+    value &&
+    (value.startsWith("/settings") || value.startsWith("/interviews/")) &&
+    !value.startsWith("//")
+  ) {
+    return value;
+  }
+
+  return "/settings?view=integrations";
 }

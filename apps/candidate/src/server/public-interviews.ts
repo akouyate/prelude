@@ -7,7 +7,10 @@ import {
   resolveCandidateStartPolicy,
 } from "@prelude/core";
 import { prisma } from "@prelude/db";
+import { createNotificationDispatcher } from "@prelude/notifications";
 import type { Prisma } from "@prelude/db";
+
+const notificationDispatcher = createNotificationDispatcher();
 
 type PublicCandidateInvitation = {
   candidateEmail: string | null;
@@ -426,6 +429,7 @@ export async function completeCandidateSession(
       sessionId: input.sessionId,
       status: "completed",
     });
+    await notifyCandidateInterviewCompleted(input.sessionId);
     return { ok: true as const };
   }
 
@@ -453,6 +457,7 @@ export async function completeCandidateSession(
       sessionId: input.sessionId,
       status: "completed",
     });
+    await notifyCandidateInterviewCompleted(input.sessionId);
     return { ok: true as const };
   }
 
@@ -634,6 +639,18 @@ export async function submitCandidateFormInterview(
 
 export function toProductCandidateLifecycleStatus(realtimeStatus: string) {
   return mapRealtimeStatusToCandidateLifecycleStatus(realtimeStatus);
+}
+
+async function notifyCandidateInterviewCompleted(candidateSessionId: string) {
+  try {
+    await notificationDispatcher.notifyCandidateInterviewCompleted({
+      candidateSessionId,
+    });
+  } catch (error) {
+    // Completion is already durable. An unavailable notification dependency must
+    // never change the candidate-facing outcome.
+    console.error("[notifications] completion dispatch failed", error);
+  }
 }
 
 async function updateCandidateInvitationStatusForSession({

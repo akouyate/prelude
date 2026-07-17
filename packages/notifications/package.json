@@ -1,0 +1,30 @@
+{
+  "name": "@prelude/notifications",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./preferences": "./src/preferences.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@prelude/core": "workspace:*",
+    "@prelude/db": "workspace:*",
+    "react": "^19.2.7",
+    "react-email": "^6.9.0",
+    "resend": "^6.17.2"
+  },
+  "devDependencies": {
+    "@prelude/config": "workspace:*",
+    "@types/node": "^20.19.5",
+    "@types/react": "^19.2.7",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}

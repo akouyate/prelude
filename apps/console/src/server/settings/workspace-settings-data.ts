@@ -1,6 +1,7 @@
 import "server-only";
 
 import { prisma, type Prisma } from "@prelude/db";
+import { readWorkspaceNotificationPreferences } from "@prelude/notifications/preferences";
 
 import { canManageTeam } from "../../domain/organization-permissions";
 import { getConsoleAuthIdentity } from "../auth/console-auth-provider";
@@ -25,14 +26,6 @@ const defaultInterviewPreferences: SettingsInterviewPreferences = {
   interviewerVoice: "maya",
   requireRecordingConsent: true,
   showReviewGuardrail: true,
-};
-
-const defaultNotificationPreferences: SettingsNotificationPreferences = {
-  interviewCompleted: true,
-  mentionsAndComments: true,
-  productUpdates: false,
-  screensReadyForReview: true,
-  weeklyDigest: false,
 };
 
 export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData> {
@@ -197,7 +190,6 @@ export function parseOrganizationSettings(input: Prisma.JsonValue): {
 } {
   const root = isRecord(input) ? input : {};
   const interview = isRecord(root.interview) ? root.interview : {};
-  const notifications = isRecord(root.notifications) ? root.notifications : {};
 
   return {
     interview: {
@@ -231,28 +223,7 @@ export function parseOrganizationSettings(input: Prisma.JsonValue): {
         defaultInterviewPreferences.showReviewGuardrail,
       ),
     },
-    notifications: {
-      interviewCompleted: readBoolean(
-        notifications.interviewCompleted,
-        defaultNotificationPreferences.interviewCompleted,
-      ),
-      mentionsAndComments: readBoolean(
-        notifications.mentionsAndComments,
-        defaultNotificationPreferences.mentionsAndComments,
-      ),
-      productUpdates: readBoolean(
-        notifications.productUpdates,
-        defaultNotificationPreferences.productUpdates,
-      ),
-      screensReadyForReview: readBoolean(
-        notifications.screensReadyForReview,
-        defaultNotificationPreferences.screensReadyForReview,
-      ),
-      weeklyDigest: readBoolean(
-        notifications.weeklyDigest,
-        defaultNotificationPreferences.weeklyDigest,
-      ),
-    },
+    notifications: readWorkspaceNotificationPreferences(input),
   };
 }
 
