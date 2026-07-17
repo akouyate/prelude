@@ -7,7 +7,7 @@ const authProvider = process.env.CONSOLE_AUTH_PROVIDER ?? "mock";
 export default defineConfig({
   testDir: "./e2e",
   webServer: {
-    command: `CONSOLE_AUTH_PROVIDER=${authProvider} INTERVIEW_DRAFT_GENERATOR=deterministic pnpm exec next dev --port ${port}`,
+    command: `CONSOLE_AUTH_PROVIDER=${authProvider} INTERVIEW_DRAFT_GENERATOR=deterministic PROTECTED_TOPIC_CLASSIFIER=deterministic dotenvx run -f ../../.env -- pnpm exec next dev --port ${port}`,
     reuseExistingServer:
       !process.env.CI && process.env.PLAYWRIGHT_REUSE_SERVER === "1",
     url: baseURL,

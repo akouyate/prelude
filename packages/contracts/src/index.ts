@@ -59,6 +59,18 @@ export {
   type SaveOrganizationOnboardingProgressInput,
 } from "./schemas/onboarding";
 export {
+  importedRoleDraftSchema,
+  roleIntakeSourceKindSchema,
+  roleIntakeStatusSchema,
+  roleIntakeSummarySchema,
+  roleIntakeWarningSchema,
+  type ImportedRoleDraft,
+  type RoleIntakeSourceKind,
+  type RoleIntakeStatus,
+  type RoleIntakeSummary,
+  type RoleIntakeWarning,
+} from "./schemas/role-intake";
+export {
   COMPLIANCE_OVERRIDE_MAX_JUSTIFICATION,
   COMPLIANCE_OVERRIDE_MIN_JUSTIFICATION,
   COMPLIANCE_OVERRIDE_MIN_JUSTIFICATION_WORDS,

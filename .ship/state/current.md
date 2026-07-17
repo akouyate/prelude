@@ -2,56 +2,47 @@
 
 ## Goal
 
-Ship GitHub issue #65: transactional email infrastructure with Resend and React
-Email.
+Ship GitHub issue #116: secure PDF/DOCX role brief intake.
 
 ## Scope
 
-- Add a shared, server-only notification package that candidate and console
-  workflows can call after durable state changes.
-- Send a candidate confirmation only after completed consented sessions, and
-  recruiter brief-ready or actionable brief-failure updates only when the
-  workspace has enabled review notifications.
-- Persist an idempotent delivery outbox record and immutable provider attempts.
-- Keep Resend disabled unless explicitly enabled; tests and normal local smoke
-  use a fake provider and never hit a live email API.
+- Add a private `RoleIntake` staging aggregate before a role is created.
+- Upload a PDF/DOCX to a dedicated, quarantined R2 path, then scan and extract
+  text in a private worker before recruiter review.
+- Let an authorized recruiter edit the extracted job title, location and
+  description, then create exactly one existing `Job` and enter the current
+  question builder.
+- Keep manual role creation unchanged and leave the feature disabled until
+  explicitly configured.
 
 ## Workflow
 
-- [x] Intake, repository investigation, and existing-settings audit
-- [x] Architecture review and delivery-contract refinement
-- [x] Implement durable outbox, provider boundary, and templates
-- [x] Connect candidate completion and brief generation workflows
-- [x] Add mocked tests and a non-live smoke path
-- [x] Review, simplify, and validate
+- [x] Intake, issue refinement, product/data and backend challenge
+- [x] Repository investigation and architecture decision
+- [x] Implement `RoleIntake` contracts, migration and state policy
+- [x] Implement private storage, scanner, extractor and durable worker
+- [x] Implement upload/review UI and builder hand-off
+- [x] Add tests, local environment, documentation and pilot instrumentation
+- [x] Review, simplify and validate
 
-## Validation
+## Decisions
 
-- `pnpm test` passed: 17 Turbo tasks completed; 62 candidate, 274 console,
-  382 core, 69 contract, 12 notification, and package UI/database tests passed.
-  Four explicitly live LLM tests remained skipped by design.
-- `pnpm lint` passed: all 17 Turbo tasks completed.
-- Targeted typechecks passed for `@prelude/notifications`, `@prelude/console`,
-  and `@prelude/candidate`.
-- `prisma validate` passed and `prisma migrate status` reported the local
-  PostgreSQL schema up to date (25 migrations).
-- `git diff --check` and Prettier checks for all parser-supported changed files
-  passed.
-- Notification smoke uses a fake provider. `NOTIFICATIONS_ENABLED` stays `0`,
-  so this delivery did not send live email.
+- `RoleIntake` is a private staging object; it is not a visible role and cannot
+  publish an interview.
+- The worker uses a database-backed leased queue stored on `RoleIntake`, not a
+  new Redis dependency.
+- PDF/DOCX parsing is deterministic and isolated behind scanner/extractor
+  ports. OCR, previews, downloads and LLM extraction are out of scope.
+- A successful intake creates a single `Job`, then redirects to
+  `/roles/new?jobId=...`; the existing builder remains the sole owner of
+  `InterviewDraft` creation.
+- Upload is feature-flagged and requires dedicated R2 + ClamAV configuration.
 
-## Review decisions
+## Validation target
 
-- Use the existing workspace settings as the V1 delivery policy. The former
-  `interviewCompleted` setting becomes candidate completion confirmation;
-  `screensReadyForReview` covers the recruiter brief-ready and actionable
-  brief-failure messages. Generic recruiter "interview completed" mail is not
-  sent because it would duplicate the brief-ready event.
-- The database is the long-lived duplicate guard. Resend receives the same
-  stable idempotency key for retries, but its 24-hour key retention is not used
-  as Prelude's only guarantee.
-- Notification sending runs after the underlying completion or brief state has
-  committed and errors are persisted without failing the product workflow.
-- The existing uncommitted Calendar migration is already applied locally. Its
-  generated index rename remains in the later notification migration to keep
-  Prisma's applied migration history immutable; it has no data effect.
+- Unit tests mock storage, scanning and extraction; no network or paid LLM call
+  occurs in CI.
+- Integration tests cover lifecycle, authorization, retry and exactly-once job
+  conversion.
+- Local smoke uses Docker ClamAV plus an in-memory/test storage adapter when
+  dedicated R2 credentials are unavailable.

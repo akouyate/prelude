@@ -32,8 +32,30 @@ services:
       retries: 10
       start_period: 3s
 
+  clamav:
+    image: clamav/clamav:1.5.3_base-debian
+    restart: unless-stopped
+    profiles: ["role-intake"]
+    environment:
+      # ClamAV's signature set is large. Avoid a second in-memory copy while
+      # definitions reload; Railway should allocate this service at least 2 GB.
+      CLAMD_CONF_ConcurrentDatabaseReload: "no"
+    mem_limit: 2g
+    ports:
+      - "${CLAMAV_PORT:-3310}:3310"
+    volumes:
+      - prelude_clamav_data:/var/lib/clamav
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping=1:1 --quiet"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 90s
+
 volumes:
   prelude_postgres_data:
     name: prelude_postgres_data
   prelude_redis_data:
     name: prelude_redis_data
+  prelude_clamav_data:
+    name: prelude_clamav_data

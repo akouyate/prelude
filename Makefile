@@ -39,7 +39,7 @@ VOICE_SMOKE_PYTHON ?= 3.13
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke dev
+.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell role-intake-env-up role-intake-worker db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "Prelude local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -97,6 +97,13 @@ db-shell: ## Open a psql shell inside the local Postgres container.
 
 redis-shell: ## Open a redis-cli shell inside the local Redis container.
 	$(COMPOSE) exec redis redis-cli
+
+role-intake-env-up: ## Start ClamAV for private role brief import (Docker profile).
+	COMPOSE_PROFILES=role-intake $(COMPOSE) up -d clamav
+
+role-intake-worker: role-intake-env-up ## Run the durable PDF/DOCX intake worker.
+	@$(LOAD_ENV); \
+	pnpm --filter @prelude/console role-intake:worker
 
 db-migrate: ## Run Prisma migrations against local Postgres.
 	@$(LOAD_ENV); \
