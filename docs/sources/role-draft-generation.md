@@ -18,23 +18,20 @@ It is product and engineering guidance, not legal advice.
 
 - [OpenAI Responses API: create a response](https://platform.openai.com/docs/api-reference/responses/create)
 - [OpenAI structured outputs guide](https://platform.openai.com/docs/guides/structured-outputs)
+- [OpenAI Model Spec: handling untrusted data](https://model-spec.openai.com/2025-09-12.html): job briefs and titles are structurally delimited as untrusted reference data; they cannot override generation instructions.
 
 ## Compliance Sources
 
 - See [`docs/sources/compliance-guardrails.md`](compliance-guardrails.md).
 - See [`docs/sources/evaluation-matrix.md`](evaluation-matrix.md).
 
-## Attachment Ingestion (Deferred)
+## Role Intake
 
-- The generator and prompt already consume `sourceAttachmentName` so an
-  attachment-derived brief can be tailored once one exists.
-- There is intentionally **no** upload UI or setter in the role builder yet. A
-  real upload -> blob storage -> parse -> `sourceAttachmentName` pipeline is out
-  of scope for the current console work because it needs blob storage that is
-  not yet provisioned.
-- Attachment ingestion will be handled by a separate, future flow. Until then
-  `sourceAttachmentName` is populated only by persisted/legacy drafts and is
-  surfaced read-only ("Attachment-aware" vs "Job brief only" badge).
+- A private `RoleIntake` pipeline now handles PDF/DOCX and public URL sources.
+  It creates a visible Job only after recruiter review; the question generator
+  receives the reviewed draft, never raw documents or raw HTML.
+- `sourceAttachmentName` remains provenance only. URL-derived roles retain their
+  canonical public source as Job provenance without treating it as an attachment.
 
 ## Test Rule
 

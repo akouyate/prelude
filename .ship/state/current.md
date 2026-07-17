@@ -2,47 +2,49 @@
 
 ## Goal
 
-Ship GitHub issue #116: secure PDF/DOCX role brief intake.
+Ship GitHub issue #117: safely import a public job URL into an editable role
+draft.
 
 ## Scope
 
-- Add a private `RoleIntake` staging aggregate before a role is created.
-- Upload a PDF/DOCX to a dedicated, quarantined R2 path, then scan and extract
-  text in a private worker before recruiter review.
-- Let an authorized recruiter edit the extracted job title, location and
-  description, then create exactly one existing `Job` and enter the current
-  question builder.
-- Keep manual role creation unchanged and leave the feature disabled until
-  explicitly configured.
+- Extend the private `RoleIntake` aggregate with a URL source variant while
+  retaining the existing file-import lifecycle.
+- Retrieve exactly one public job page in the durable worker through a pinned,
+  policy-controlled HTTPS client; never use the recruiter session or a browser.
+- Extract bounded, deterministic static HTML text and provenance, then require
+  recruiter review before the existing interview-question builder can open.
+- Keep LinkedIn/Indeed, authenticated content, crawling, previews, OCR and LLM
+  source extraction out of scope.
 
 ## Workflow
 
-- [x] Intake, issue refinement, product/data and backend challenge
-- [x] Repository investigation and architecture decision
-- [x] Implement `RoleIntake` contracts, migration and state policy
-- [x] Implement private storage, scanner, extractor and durable worker
-- [x] Implement upload/review UI and builder hand-off
-- [x] Add tests, local environment, documentation and pilot instrumentation
-- [x] Review, simplify and validate
+- [x] Intake, repository investigation and issue refinement
+- [x] AI/data-quality and backend/security architecture reviews
+- [x] Architecture decision and test matrix
+- [x] Implement contracts, schema and URL source policy
+- [x] Implement safe outbound retrieval and deterministic extraction
+- [x] Implement worker, actions and reusable review UI
+- [x] Test, security review, simplify and validate
+- [ ] Deliver PR and close the issue
 
 ## Decisions
 
-- `RoleIntake` is a private staging object; it is not a visible role and cannot
-  publish an interview.
-- The worker uses a database-backed leased queue stored on `RoleIntake`, not a
-  new Redis dependency.
-- PDF/DOCX parsing is deterministic and isolated behind scanner/extractor
-  ports. OCR, previews, downloads and LLM extraction are out of scope.
-- A successful intake creates a single `Job`, then redirects to
-  `/roles/new?jobId=...`; the existing builder remains the sole owner of
-  `InterviewDraft` creation.
-- Upload is feature-flagged and requires dedicated R2 + ClamAV configuration.
+- `RoleIntake` remains private staging; only a recruiter-approved
+  `reviewedDraft` can create one `Job`.
+- URL acquisition runs as a durable, leased worker task and is a distinct port
+  from PDF/DOCX storage, scanning and parsing.
+- Requests are HTTPS-only with a public-DNS check on every hop and the selected
+  address pinned into the TLS connection to prevent DNS rebinding.
+- The extractor is deterministic and non-executing. Raw HTML, IPs, headers and
+  remote responses are not persisted or handed to the question-generation LLM.
+- A controlled provider policy blocks LinkedIn and Indeed. `robots.txt` is
+  honored through the same outbound boundary; failure falls back to manual.
 
 ## Validation target
 
-- Unit tests mock storage, scanning and extraction; no network or paid LLM call
-  occurs in CI.
-- Integration tests cover lifecycle, authorization, retry and exactly-once job
-  conversion.
-- Local smoke uses Docker ClamAV plus an in-memory/test storage adapter when
-  dedicated R2 credentials are unavailable.
+- Unit tests inject resolver, transport, robots policy and clock. CI has no
+  external web or LLM call.
+- Tests cover special/private IPs, redirects, robots, limits, hostile markup,
+  deterministic extraction, idempotency, review revisions and one Job creation.
+- Local smoke imports a public job page through the worker, reviews the draft,
+  creates one role with URL provenance, then cleans up its test data.
