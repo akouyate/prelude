@@ -8,28 +8,30 @@ datasource db {
 }
 
 model Organization {
-  id                    String                        @id @default(cuid())
-  clerkOrganizationId   String?                       @unique
-  name                  String
-  companySize           String?
-  hiringFocus           String?
-  defaultInterviewMode  String?
-  settings              Json                          @default("{}")
-  onboardingState       Json                          @default("{}")
-  onboardingStep        String                        @default("welcome")
-  onboardingCompletedAt DateTime?
-  createdAt             DateTime                      @default(now())
-  candidateBriefs       CandidateBrief[]
-  candidateInvitations  CandidateInvitation[]
-  candidateReviewEvents CandidateSessionReviewEvent[]
-  candidateSessions     CandidateSession[]
-  connectedAccounts     ConnectedAccount[]
-  interviewDrafts       InterviewDraft[]
-  interviews            Interview[]
-  jobs                  Job[]
-  jobSourceConnections  JobSourceConnection[]
-  memberships           OrganizationMembership[]
-  invitations           OrganizationInvitation[]
+  id                     String                        @id @default(cuid())
+  clerkOrganizationId    String?                       @unique
+  name                   String
+  companySize            String?
+  hiringFocus            String?
+  defaultInterviewMode   String?
+  settings               Json                          @default("{}")
+  onboardingState        Json                          @default("{}")
+  onboardingStep         String                        @default("welcome")
+  onboardingCompletedAt  DateTime?
+  createdAt              DateTime                      @default(now())
+  candidateBriefs        CandidateBrief[]
+  candidateInvitations   CandidateInvitation[]
+  notificationDeliveries NotificationDelivery[]
+  candidateReviewEvents  CandidateSessionReviewEvent[]
+  candidateSessions      CandidateSession[]
+  scheduledCalls         CandidateScheduledCall[]
+  connectedAccounts      ConnectedAccount[]
+  interviewDrafts        InterviewDraft[]
+  interviews             Interview[]
+  jobs                   Job[]
+  jobSourceConnections   JobSourceConnection[]
+  memberships            OrganizationMembership[]
+  invitations            OrganizationInvitation[]
 }
 
 model User {
@@ -40,6 +42,7 @@ model User {
   preferredLanguage                   String                        @default("en")
   createdAt                           DateTime                      @default(now())
   candidateReviewEvents               CandidateSessionReviewEvent[] @relation("CandidateReviewEventAuthor")
+  scheduledCalls                      CandidateScheduledCall[]      @relation("CandidateScheduledCallCreatedBy")
   candidateSessionReviewNoteUpdates   CandidateSession[]            @relation("CandidateSessionReviewNoteAuthor")
   candidateSessionReviewStatusUpdates CandidateSession[]            @relation("CandidateSessionReviewStatusAuthor")
   connectedAccounts                   ConnectedAccount[]
@@ -234,6 +237,8 @@ model CandidateSession {
   interview               Interview                     @relation(fields: [interviewId], references: [id], onDelete: Cascade)
   candidateInvitation     CandidateInvitation?          @relation(fields: [candidateInvitationId], references: [id], onDelete: SetNull)
   candidateBrief          CandidateBrief?
+  notificationDeliveries  NotificationDelivery[]
+  scheduledCalls          CandidateScheduledCall[]
   reviewEvents            CandidateSessionReviewEvent[]
   reviewStatusUpdatedBy   User?                         @relation("CandidateSessionReviewStatusAuthor", fields: [reviewStatusUpdatedById], references: [id], onDelete: SetNull)
   reviewNoteUpdatedBy     User?                         @relation("CandidateSessionReviewNoteAuthor", fields: [reviewNoteUpdatedById], references: [id], onDelete: SetNull)
@@ -288,6 +293,51 @@ model CandidateBrief {
   @@index([organizationId, status, updatedAt])
 }
 
+model NotificationDelivery {
+  id                 String                @id @default(cuid())
+  organizationId     String
+  candidateSessionId String?
+  eventType          String
+  recipientEmail     String
+  dedupeKey          String                @unique
+  status             String                @default("pending")
+  provider           String?
+  providerMessageId  String?
+  payloadVersion     Int                   @default(1)
+  attemptCount       Int                   @default(0)
+  attemptedAt        DateTime?
+  sentAt             DateTime?
+  skippedAt          DateTime?
+  failedAt           DateTime?
+  errorCode          String?
+  errorSummary       String?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  organization       Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  candidateSession   CandidateSession?     @relation(fields: [candidateSessionId], references: [id], onDelete: Cascade)
+  attempts           NotificationAttempt[]
+
+  @@index([organizationId, status, updatedAt])
+  @@index([candidateSessionId, eventType])
+  @@index([recipientEmail, createdAt])
+}
+
+model NotificationAttempt {
+  id                String               @id @default(cuid())
+  notificationId    String
+  attemptNumber     Int
+  provider          String?
+  providerMessageId String?
+  status            String
+  errorCode         String?
+  errorSummary      String?
+  createdAt         DateTime             @default(now())
+  notification      NotificationDelivery @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, attemptNumber])
+  @@index([status, createdAt])
+}
+
 model JobSourceConnection {
   id             String       @id @default(cuid())
   organizationId String
@@ -302,13 +352,13 @@ model JobSourceConnection {
 }
 
 model ConnectedAccount {
-  id                     String       @id @default(cuid())
+  id                     String                   @id @default(cuid())
   organizationId         String
   userId                 String
   provider               String
-  status                 String       @default("connected")
-  capabilities           Json         @default("[]")
-  scopes                 Json         @default("[]")
+  status                 String                   @default("connected")
+  capabilities           Json                     @default("[]")
+  scopes                 Json                     @default("[]")
   externalAccountId      String?
   externalAccountEmail   String?
   accessTokenCiphertext  String?
@@ -318,14 +368,51 @@ model ConnectedAccount {
   lastRefreshError       String?
   connectedAt            DateTime?
   disconnectedAt         DateTime?
-  createdAt              DateTime     @default(now())
-  updatedAt              DateTime     @updatedAt
-  organization           Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  user                   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt              DateTime                 @default(now())
+  updatedAt              DateTime                 @updatedAt
+  organization           Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  scheduledCalls         CandidateScheduledCall[]
+  user                   User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([organizationId, userId, provider])
   @@index([organizationId, provider, status])
   @@index([userId, provider])
+}
+
+model CandidateScheduledCall {
+  id                    String            @id @default(cuid())
+  organizationId        String
+  candidateSessionId    String
+  createdByUserId       String
+  connectedAccountId    String?
+  activeScheduleKey     String?           @unique
+  provider              String            @default("google_calendar")
+  providerCalendarId    String            @default("primary")
+  providerEventId       String
+  providerEventUrl      String?
+  status                String            @default("creating")
+  startsAt              DateTime
+  endsAt                DateTime
+  timeZone              String
+  summary               String
+  attendeeEmails        Json              @default("[]")
+  inviteCandidate       Boolean           @default(false)
+  conferenceRequested   Boolean           @default(false)
+  conferenceStatus      String?
+  location              String?
+  conferenceJoinUrl     String?
+  lastProviderErrorCode String?
+  lastProviderErrorAt   DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+  organization          Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  candidateSession      CandidateSession  @relation(fields: [candidateSessionId], references: [id], onDelete: Cascade)
+  createdBy             User              @relation("CandidateScheduledCallCreatedBy", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  connectedAccount      ConnectedAccount? @relation(fields: [connectedAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([connectedAccountId, providerCalendarId, providerEventId])
+  @@index([organizationId, status, startsAt])
+  @@index([candidateSessionId, createdAt])
 }
 
 model Candidate {

@@ -4,6 +4,7 @@ import { prisma, type Prisma } from "@prelude/db";
 
 const candidateSessionSpineInclude = {
   candidateBrief: true,
+  candidateInvitation: true,
   interview: true,
   job: true,
   reviewNoteUpdatedBy: {
@@ -17,6 +18,11 @@ const candidateSessionSpineInclude = {
       email: true,
       name: true,
     },
+  },
+  scheduledCalls: {
+    orderBy: { createdAt: "desc" },
+    take: 1,
+    where: { activeScheduleKey: { not: null } },
   },
 } satisfies Prisma.CandidateSessionInclude;
 

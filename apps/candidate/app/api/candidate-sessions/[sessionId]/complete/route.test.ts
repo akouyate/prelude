@@ -10,8 +10,16 @@ const prismaMock = vi.hoisted(() => ({
   },
 }));
 
+const notificationMock = vi.hoisted(() => ({
+  notifyCandidateInterviewCompleted: vi.fn(),
+}));
+
 vi.mock("@prelude/db", () => ({
   prisma: prismaMock,
+}));
+
+vi.mock("@prelude/notifications", () => ({
+  createNotificationDispatcher: () => notificationMock,
 }));
 
 import { POST } from "./route";
@@ -21,6 +29,7 @@ describe("POST /api/candidate-sessions/[sessionId]/complete", () => {
     prismaMock.candidateInvitation.updateMany.mockReset();
     prismaMock.candidateSession.findFirst.mockReset();
     prismaMock.candidateSession.updateMany.mockReset();
+    notificationMock.notifyCandidateInterviewCompleted.mockReset();
   });
 
   afterEach(() => {
@@ -74,6 +83,11 @@ describe("POST /api/candidate-sessions/[sessionId]/complete", () => {
         status: { notIn: ["expired", "superseded"] },
       },
     });
+    expect(
+      notificationMock.notifyCandidateInterviewCompleted,
+    ).toHaveBeenCalledWith({
+      candidateSessionId: "cs_123",
+    });
   });
 
   it("treats duplicate completion as idempotent when the same session is already completed", async () => {
@@ -98,6 +112,11 @@ describe("POST /api/candidate-sessions/[sessionId]/complete", () => {
         id: "cs_123",
         resumeToken: "cs_resume",
       },
+    });
+    expect(
+      notificationMock.notifyCandidateInterviewCompleted,
+    ).toHaveBeenCalledWith({
+      candidateSessionId: "cs_123",
     });
   });
 

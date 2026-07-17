@@ -86,10 +86,5 @@ export type SettingsInterviewPreferences = {
   showReviewGuardrail: boolean;
 };
 
-export type SettingsNotificationPreferences = {
-  interviewCompleted: boolean;
-  mentionsAndComments: boolean;
-  productUpdates: boolean;
-  screensReadyForReview: boolean;
-  weeklyDigest: boolean;
-};
+export type SettingsNotificationPreferences = WorkspaceNotificationPreferences;
+import type { WorkspaceNotificationPreferences } from "@prelude/notifications/preferences";

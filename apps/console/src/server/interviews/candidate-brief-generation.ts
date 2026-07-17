@@ -10,6 +10,7 @@ import {
   sensitiveInformationHandlingRule,
 } from "@prelude/core";
 import { prisma, type Prisma } from "@prelude/db";
+import { createNotificationDispatcher } from "@prelude/notifications";
 
 import { createOpenAICandidateBriefSynthesizer } from "./candidate-brief-openai";
 import {
@@ -21,6 +22,8 @@ import {
 export const candidateBriefPromptVersion = "candidate-brief-v1";
 export const candidateBriefSchemaVersion = 1;
 export const defaultCandidateBriefLlmModel = "gpt-4.1-mini";
+
+const notificationDispatcher = createNotificationDispatcher();
 
 export type CandidateBriefSynthesizerInput = {
   candidateLabel: string;
@@ -159,6 +162,13 @@ export async function generateCandidateBriefForSession({
       where: { candidateSessionId: session.id },
     });
 
+    if (brief.status === "completed") {
+      await notifyCandidateBrief({
+        candidateSessionId: session.id,
+        status: "completed",
+      });
+    }
+
     return { brief, status: brief.status };
   } catch (error) {
     const message =
@@ -172,8 +182,31 @@ export async function generateCandidateBriefForSession({
       },
       where: { candidateSessionId: session.id },
     });
+    await notifyCandidateBrief({
+      candidateSessionId: session.id,
+      status: "failed",
+    });
 
     return { error: message, status: "failed" };
+  }
+}
+
+async function notifyCandidateBrief({
+  candidateSessionId,
+  status,
+}: {
+  candidateSessionId: string;
+  status: "completed" | "failed";
+}) {
+  try {
+    await notificationDispatcher.notifyCandidateBrief({
+      candidateSessionId,
+      status,
+    });
+  } catch (error) {
+    // Brief persistence remains the source of truth; a notification failure is
+    // recorded when possible but must not turn a generated brief into a failure.
+    console.error("[notifications] recruiter brief dispatch failed", error);
   }
 }
 

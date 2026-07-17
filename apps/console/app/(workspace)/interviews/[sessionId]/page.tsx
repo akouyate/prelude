@@ -7,7 +7,6 @@ import { Button, Card, IconButton, StatusBadge, Textarea } from "@prelude/ui";
 import {
   ArrowLeft,
   ArrowRight,
-  Calendar,
   Clock,
   NavArrowDown,
   NavArrowLeft,
@@ -25,6 +24,11 @@ import { generateCandidateBriefAction } from "../../../../src/server/interviews/
 import { AutoGenerateBrief } from "../../../../src/features/interview-detail/auto-generate-brief";
 import { shouldAutoGenerateBrief } from "../../../../src/features/interview-detail/brief-auto-generation";
 import { updateCandidateReviewAction } from "../../../../src/server/interviews/candidate-review-actions";
+import { getConnectedAccountCapabilityStatus } from "../../../../src/server/integrations/connected-account-service";
+import {
+  connectedAccountCapabilityCalendar,
+  connectedAccountProviderGoogle,
+} from "../../../../src/server/integrations/connected-account-types";
 import { getInterviewDetail } from "../../../../src/server/interviews/interview-loaders";
 import type { CandidateSessionEvidence } from "../../../../src/server/interviews/live-session-evidence";
 import type { LiveAnalysisStatus } from "../../../../src/server/interviews/live-session-insights";
@@ -40,6 +44,7 @@ import {
 import { CandidateDetailTabs } from "../../../../src/features/interview-detail/candidate-detail-tabs";
 import { CandidateVoicePlayer } from "../../../../src/features/interview-detail/candidate-voice-player";
 import { DeleteRecordingButton } from "../../../../src/features/interview-detail/delete-recording-button";
+import { ScheduleCallDialog } from "../../../../src/features/interview-detail/schedule-call-dialog";
 import { canDeleteRecording } from "../../../../src/domain/recording-policy";
 
 type InterviewDetailPageProps = {
@@ -68,10 +73,18 @@ export default async function InterviewDetailPage({
     redirect(`/roles/${detail.interview.id}`);
   }
 
+  const calendarConnectionStatus = await getConnectedAccountCapabilityStatus({
+    capability: connectedAccountCapabilityCalendar,
+    organizationId: account.organizationId,
+    provider: connectedAccountProviderGoogle,
+    userId: account.userId,
+  });
+
   return (
     <CandidateSessionReview
       canDelete={canDeleteRecording(account.role)}
       canManageReview={canManageCandidateReview(account.role)}
+      calendarConnectionStatus={calendarConnectionStatus}
       session={detail.candidateSession}
     />
   );
@@ -80,13 +93,23 @@ export default async function InterviewDetailPage({
 function CandidateSessionReview({
   canDelete,
   canManageReview,
+  calendarConnectionStatus,
   session,
 }: {
   canDelete: boolean;
   canManageReview: boolean;
+  calendarConnectionStatus:
+    | "connected"
+    | "connecting"
+    | "error"
+    | "expired"
+    | "needs_reconnect"
+    | "not_connected"
+    | "revoked";
   session: {
     analysisStatus: LiveAnalysisStatus;
     brief: CandidateBriefDto | null;
+    candidateEmail: string | null;
     candidateLabel: string;
     completedAt: string | null;
     criteriaDistribution: {
@@ -118,6 +141,15 @@ function CandidateSessionReview({
     reviewStatusUpdatedAt: string | null;
     reviewStatusUpdatedBy: string | null;
     roleTitle: string;
+    scheduledCall: {
+      conferenceJoinUrl: string | null;
+      conferencePending: boolean;
+      eventUrl: string | null;
+      invitationSent: boolean;
+      startsAt: string;
+      status: "provider_error" | "scheduled";
+      timeZone: string;
+    } | null;
     startedAt: string | null;
     status: string;
     transcriptTurnCount: number;
@@ -251,6 +283,7 @@ function CandidateSessionReview({
             canManageReview={canManageReview}
             detailPath={detailPath}
             displayedAnalysisStatus={displayedAnalysisStatus}
+            calendarConnectionStatus={calendarConnectionStatus}
             session={session}
             sessionId={session.id}
             signalSummary={signalSummary}
@@ -400,6 +433,7 @@ function CandidateRecordingView({
 
 function CandidateReviewRail({
   canManageReview,
+  calendarConnectionStatus,
   detailPath,
   displayedAnalysisStatus,
   session,
@@ -407,6 +441,9 @@ function CandidateReviewRail({
   signalSummary,
 }: {
   canManageReview: boolean;
+  calendarConnectionStatus: Parameters<
+    typeof CandidateSessionReview
+  >[0]["calendarConnectionStatus"];
   detailPath: string;
   displayedAnalysisStatus: string;
   session: CandidateSessionReviewSession;
@@ -422,9 +459,14 @@ function CandidateReviewRail({
       />
       <CandidateDecisionPanel
         canManageReview={canManageReview}
+        calendarConnectionStatus={calendarConnectionStatus}
         detailPath={detailPath}
+        candidateEmail={session.candidateEmail}
+        candidateLabel={session.candidateLabel}
         reviewNote={session.reviewNote}
         reviewStatus={session.reviewStatus}
+        roleTitle={session.roleTitle}
+        scheduledCall={session.scheduledCall}
         sessionId={sessionId}
       />
       <CandidateInternalNotePanel
@@ -548,15 +590,27 @@ const candidateDecisionOptions: Array<{
 
 function CandidateDecisionPanel({
   canManageReview,
+  calendarConnectionStatus,
+  candidateEmail,
+  candidateLabel,
   detailPath,
   reviewNote,
   reviewStatus,
+  roleTitle,
+  scheduledCall,
   sessionId,
 }: {
   canManageReview: boolean;
+  calendarConnectionStatus: Parameters<
+    typeof CandidateSessionReview
+  >[0]["calendarConnectionStatus"];
+  candidateEmail: string | null;
+  candidateLabel: string;
   detailPath: string;
   reviewNote: string | null;
   reviewStatus: CandidateReviewStatus;
+  roleTitle: string;
+  scheduledCall: CandidateSessionReviewSession["scheduledCall"];
   sessionId: string;
 }) {
   return (
@@ -593,14 +647,23 @@ function CandidateDecisionPanel({
         </fieldset>
 
         <Button
-          className="mt-3 h-11 w-full justify-center rounded-xl"
+          className="mt-3 h-10 w-full justify-center rounded-xl"
           disabled={!canManageReview}
           type="submit"
         >
-          <Calendar aria-hidden={true} className="h-4 w-4" />
-          Schedule call
+          Save decision
         </Button>
       </form>
+      <ScheduleCallDialog
+        candidateEmail={candidateEmail}
+        candidateLabel={candidateLabel}
+        canSchedule={canManageReview && reviewStatus === "to_call"}
+        connectionStatus={calendarConnectionStatus}
+        detailPath={detailPath}
+        roleTitle={roleTitle}
+        scheduledCall={scheduledCall}
+        sessionId={sessionId}
+      />
     </section>
   );
 }

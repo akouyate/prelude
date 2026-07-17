@@ -106,7 +106,10 @@ export async function updateNotificationPreferencesAction(formData: FormData) {
 
   const nextSettings = mergeSettings(organization.settings, {
     notifications: {
-      interviewCompleted: readBooleanField(formData, "interviewCompleted"),
+      candidateCompletionConfirmation: readBooleanField(
+        formData,
+        "candidateCompletionConfirmation",
+      ),
       mentionsAndComments: readBooleanField(formData, "mentionsAndComments"),
       productUpdates: readBooleanField(formData, "productUpdates"),
       screensReadyForReview: readBooleanField(
@@ -132,7 +135,9 @@ function assertCanEditSettings(role: OrganizationRole) {
 }
 
 function cleanText(value: FormDataEntryValue | null, maxLength: number) {
-  return String(value ?? "").trim().slice(0, maxLength);
+  return String(value ?? "")
+    .trim()
+    .slice(0, maxLength);
 }
 
 function cleanOptionalText(

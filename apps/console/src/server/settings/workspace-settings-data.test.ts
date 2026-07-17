@@ -18,7 +18,7 @@ describe("parseOrganizationSettings", () => {
       showReviewGuardrail: true,
     });
     expect(settings.notifications).toEqual({
-      interviewCompleted: true,
+      candidateCompletionConfirmation: true,
       mentionsAndComments: true,
       productUpdates: false,
       screensReadyForReview: true,
@@ -26,7 +26,7 @@ describe("parseOrganizationSettings", () => {
     });
   });
 
-  it("reads persisted interview and notification preferences defensively", () => {
+  it("reads persisted preferences defensively and migrates the legacy completion key", () => {
     const settings = parseOrganizationSettings({
       interview: {
         allowAudio: false,
@@ -56,7 +56,7 @@ describe("parseOrganizationSettings", () => {
       showReviewGuardrail: false,
     });
     expect(settings.notifications).toMatchObject({
-      interviewCompleted: false,
+      candidateCompletionConfirmation: false,
       mentionsAndComments: false,
       productUpdates: true,
       screensReadyForReview: false,

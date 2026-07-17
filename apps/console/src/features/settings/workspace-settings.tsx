@@ -1022,14 +1022,14 @@ function NotificationsSection({
           }
         />
         <SettingsToggleRow
-          checked={values.interviewCompleted}
+          checked={values.candidateCompletionConfirmation}
           description={t(
-            "settings.notifications.interviewCompletedDescription",
+            "settings.notifications.candidateCompletionDescription",
           )}
-          label={t("settings.notifications.interviewCompleted")}
-          name="interviewCompleted"
+          label={t("settings.notifications.candidateCompletion")}
+          name="candidateCompletionConfirmation"
           onCheckedChange={(checked) =>
-            setPreference("interviewCompleted", checked)
+            setPreference("candidateCompletionConfirmation", checked)
           }
         />
         <SettingsToggleRow
