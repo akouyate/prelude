@@ -26,6 +26,7 @@ export const roleIntakeWarningSchema = z.object({
 });
 
 export const roleIntakeSummarySchema = z.object({
+  duplicateOfIntakeId: z.string().min(1).nullable().default(null),
   expiresAt: z.string().datetime(),
   id: z.string().min(1),
   originalFileName: z.string().min(1).max(255),

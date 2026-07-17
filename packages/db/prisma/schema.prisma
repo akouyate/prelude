@@ -129,6 +129,7 @@ model RoleIntake {
   processingLeaseExpiresAt DateTime?
   lastErrorCode            String?
   lastErrorSummary         String?
+  duplicateOfIntakeId      String?
   expiresAt                DateTime
   cleanupRequestedAt       DateTime?
   cleanedUpAt              DateTime?
@@ -142,6 +143,7 @@ model RoleIntake {
 
   @@index([organizationId, status, updatedAt])
   @@unique([organizationId, sha256])
+  @@index([duplicateOfIntakeId])
   @@index([status, nextAttemptAt])
   @@index([createdByUserId, createdAt])
 }

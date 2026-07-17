@@ -387,6 +387,7 @@ export async function processNextRoleIntake(
     return { kind: "processed", intakeId: intake.id, status: "failed" };
   }
 
+  let extractedHash: string | undefined;
   try {
     const file = await storage.getObjectBytes(intake.sealedObjectKey);
     const scanner = dependencies.scanner ?? { scan: scanRoleIntakeDocument };
@@ -406,8 +407,9 @@ export async function processNextRoleIntake(
     }
 
     const extraction = await extractRoleIntakeDocument(file);
+    extractedHash = extraction.sha256;
     const existing = await prisma.roleIntake.findFirst({
-      select: { id: true },
+      select: { id: true, status: true },
       where: {
         id: { not: intake.id },
         organizationId: intake.organizationId,
@@ -418,8 +420,13 @@ export async function processNextRoleIntake(
     if (existing) {
       await cleanupAndFailRoleIntake({
         code: DUPLICATE_IMPORT_ERROR,
+        duplicateOfIntakeId:
+          existing.status === "consumed" ? undefined : existing.id,
         intake,
-        message: "This exact role brief has already been imported in this workspace.",
+        message:
+          existing.status === "consumed"
+            ? "This exact role brief has already created a role in this workspace."
+            : "This exact role brief is already being processed in this workspace.",
         storage,
         telemetryEvent: "role_intake_duplicate_detected",
       });
@@ -454,11 +461,24 @@ export async function processNextRoleIntake(
     });
     return { kind: "processed", intakeId: intake.id, status: "ready_for_review" };
   } catch (error) {
-    if (isDuplicateRoleIntakeError(error)) {
+    if (isDuplicateRoleIntakeError(error) && extractedHash) {
+      const existing = await prisma.roleIntake.findFirst({
+        select: { id: true, status: true },
+        where: {
+          id: { not: intake.id },
+          organizationId: intake.organizationId,
+          sha256: extractedHash,
+        },
+      });
       await cleanupAndFailRoleIntake({
         code: DUPLICATE_IMPORT_ERROR,
+        duplicateOfIntakeId:
+          existing && existing.status !== "consumed" ? existing.id : undefined,
         intake,
-        message: "This exact role brief has already been imported in this workspace.",
+        message:
+          existing?.status === "consumed"
+            ? "This exact role brief has already created a role in this workspace."
+            : "This exact role brief is already being processed in this workspace.",
         storage,
         telemetryEvent: "role_intake_duplicate_detected",
       });
@@ -549,12 +569,14 @@ async function retryOrFailUnavailableScanner(
 
 async function cleanupAndFailRoleIntake({
   code,
+  duplicateOfIntakeId,
   intake,
   message,
   storage,
   telemetryEvent,
 }: {
   code: string;
+  duplicateOfIntakeId?: string;
   intake: RoleIntakeRecord;
   message: string;
   storage: RoleIntakeStorage;
@@ -579,6 +601,7 @@ async function cleanupAndFailRoleIntake({
             : []),
         ],
       },
+      duplicateOfIntakeId: duplicateOfIntakeId ?? null,
       lastErrorCode: code,
       lastErrorSummary: message,
       processingLeaseExpiresAt: null,
@@ -615,6 +638,7 @@ async function deleteStoredRoleIntakeObjects(
 
 function toSummary(intake: RoleIntakeRecord): RoleIntakeSummary {
   return roleIntakeSummarySchema.parse({
+    duplicateOfIntakeId: intake.duplicateOfIntakeId,
     expiresAt: intake.expiresAt.toISOString(),
     id: intake.id,
     originalFileName: intake.originalFileName,

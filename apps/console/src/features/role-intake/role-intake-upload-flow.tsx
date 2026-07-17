@@ -42,6 +42,7 @@ export function RoleIntakeUploadFlow({
   const [isUploading, setIsUploading] = React.useState(false);
   const [isCreatingRole, setIsCreatingRole] = React.useState(false);
   const [review, setReview] = React.useState(() => toReviewDraft(initialIntake));
+  const resumeIntakeId = intake?.duplicateOfIntakeId;
 
   React.useEffect(() => {
     setReview(toReviewDraft(intake));
@@ -193,6 +194,18 @@ export function RoleIntakeUploadFlow({
         {error ? <Notice className="mt-5" tone="danger">{error}</Notice> : null}
         {intake?.status === "failed" ? (
           <div className="mt-6 flex flex-wrap gap-3">
+            {resumeIntakeId ? (
+              <Button
+                onClick={() =>
+                  router.push(
+                    `/roles/new?source=upload&intakeId=${encodeURIComponent(resumeIntakeId)}`,
+                  )
+                }
+                variant="secondary"
+              >
+                Resume existing import
+              </Button>
+            ) : null}
             <Button onClick={() => setIntake(undefined)} variant="secondary">
               Choose another file
             </Button>
@@ -206,16 +219,21 @@ export function RoleIntakeUploadFlow({
 
 function RoleIntakeProgress({ intake }: { intake: RoleIntakeSummary }) {
   const isFailed = intake.status === "failed";
+  const resumeIntakeId = intake.duplicateOfIntakeId;
   const icon = isFailed ? (
     <WarningTriangle aria-hidden="true" className="h-5 w-5" />
   ) : (
     <RefreshCircle aria-hidden="true" className="h-5 w-5 animate-spin" />
   );
   const title = isFailed
-    ? "This document needs another try"
+    ? resumeIntakeId
+      ? "An existing import is available"
+      : "This document needs another try"
     : "Checking your role brief";
   const copy = isFailed
-    ? "No role was created. The original file has been removed from private staging."
+    ? resumeIntakeId
+      ? "This exact document already has a private intake. Resume it instead of creating a duplicate role."
+      : "No role was created. The original file has been removed from private staging."
     : "Prelude is checking the file and extracting only the role details. This page updates automatically.";
 
   return (

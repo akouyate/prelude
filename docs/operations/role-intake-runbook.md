@@ -58,6 +58,6 @@ Allocate the ClamAV service at least **2 GB RAM**. Its signature database requir
 
 - Input: PDF/DOCX only, maximum 10 MB; MIME declaration is checked before signing and file magic is checked in the worker.
 - DOCX packages with macros, OLE/embedded objects, external relationships, path traversal, or more than 50 MB uncompressed content are rejected.
-- A malware finding, parsing failure, duplicate document, or expiry prevents a Job from being created and triggers raw-object deletion.
+- A malware finding, parsing failure, or expiry prevents a Job from being created and triggers raw-object deletion. A matching pending document also deletes the new raw object, then offers the recruiter a private link to resume the existing intake.
 - Store only structural lifecycle telemetry in `RoleIntakeEvent`; never store document text, filenames, hashes, or recruiter content in event metadata.
 - A recruiter can continue manually whenever import is unavailable or unsuitable.
