@@ -60,12 +60,16 @@ export {
 } from "./schemas/onboarding";
 export {
   importedRoleDraftSchema,
+  roleIntakeFieldSourceSchema,
   roleIntakeSourceKindSchema,
+  roleIntakeSourceProvenanceSchema,
   roleIntakeStatusSchema,
   roleIntakeSummarySchema,
   roleIntakeWarningSchema,
   type ImportedRoleDraft,
+  type RoleIntakeFieldSource,
   type RoleIntakeSourceKind,
+  type RoleIntakeSourceProvenance,
   type RoleIntakeStatus,
   type RoleIntakeSummary,
   type RoleIntakeWarning,

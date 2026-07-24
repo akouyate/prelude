@@ -46,12 +46,14 @@ beforeEach(() => {
     {
       id: "intake_123",
       jobId: null,
+      canonicalUrl: null,
       originalFileName: "platform-engineer.pdf",
       reviewedDraft: {
         description: "Own platform reliability and incident response.",
         location: "Paris",
         title: "Platform Engineer",
       },
+      sourceKind: "file",
       status: "ready_for_review",
     },
   ]);
@@ -92,13 +94,45 @@ describe("consumeRoleIntake", () => {
     );
   });
 
+  it("creates one job with canonical URL provenance without an attachment", async () => {
+    tx.$queryRaw.mockResolvedValueOnce([
+      {
+        id: "intake_url_123",
+        jobId: null,
+        canonicalUrl: "https://careers.example.com/jobs/platform-engineer",
+        originalFileName: null,
+        reviewedDraft: {
+          description: "Own platform reliability and incident response.",
+          location: "Paris",
+          title: "Platform Engineer",
+        },
+        sourceKind: "url",
+        status: "ready_for_review",
+      },
+    ]);
+
+    await expect(consumeRoleIntake(scope, "intake_url_123")).resolves.toEqual({
+      ok: true,
+      value: { jobId: "job_123" },
+    });
+    expect(tx.job.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        sourceAttachmentName: null,
+        sourceExternalId: "https://careers.example.com/jobs/platform-engineer",
+        sourceProvider: "url",
+      }),
+    });
+  });
+
   it("returns the existing job instead of creating a duplicate", async () => {
     tx.$queryRaw.mockResolvedValueOnce([
       {
         id: "intake_123",
         jobId: "job_existing",
+        canonicalUrl: null,
         originalFileName: "platform-engineer.pdf",
         reviewedDraft: {},
+        sourceKind: "file",
         status: "consumed",
       },
     ]);

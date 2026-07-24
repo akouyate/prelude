@@ -10,6 +10,7 @@ export const ROLE_INTAKE_MAX_BYTES = 10 * 1024 * 1024;
 export const ROLE_INTAKE_EXPIRY_MS = 24 * 60 * 60 * 1000;
 export const ROLE_INTAKE_UPLOAD_URL_TTL_SECONDS = 10 * 60;
 export const ROLE_INTAKE_MAX_ATTEMPTS = 3;
+export const ROLE_INTAKE_URL_MAX_ATTEMPTS = 2;
 // A scan has a 20-second network timeout, but extraction can legitimately take
 // longer for a 100-page PDF. Keep the durable lease comfortably above that
 // bound so another worker never races a healthy processor.

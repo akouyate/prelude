@@ -6,6 +6,7 @@ import { revalidatePath } from "next/cache";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import {
   consumeRoleIntake,
+  createRoleIntakeUrl,
   createRoleIntakeUpload,
   finalizeRoleIntakeUpload,
   getRoleIntakeSummary,
@@ -21,6 +22,11 @@ export async function createRoleIntakeUploadAction(input: {
   return createRoleIntakeUpload(scope, input);
 }
 
+export async function createRoleIntakeUrlAction(source: string) {
+  const scope = await getCompletedOrganizationScope();
+  return createRoleIntakeUrl(scope, source);
+}
+
 export async function finalizeRoleIntakeUploadAction(intakeId: string) {
   const scope = await getCompletedOrganizationScope();
   return finalizeRoleIntakeUpload(scope, intakeId);
@@ -32,6 +38,7 @@ export async function getRoleIntakeSummaryAction(intakeId: string) {
 }
 
 export async function saveRoleIntakeReviewAction(input: {
+  expectedReviewVersion: number;
   intakeId: string;
   reviewedDraft: ImportedRoleDraft;
 }) {

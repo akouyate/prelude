@@ -40,7 +40,7 @@ make role-intake-env-up
 make role-intake-worker
 ```
 
-The worker claims one durable DB-backed job at a time. It retries a temporarily unavailable scanner at most three times, reclaims expired leases, and deletes raw objects after extraction or failure. It also expires unfinished intakes after 24 hours.
+The worker claims one durable DB-backed job at a time. It retries a temporarily unavailable scanner at most three times and a transient public URL retrieval once, reclaims expired leases, and deletes raw objects after extraction or failure. It also expires unfinished intakes after 24 hours.
 
 ## Railway topology
 
@@ -56,8 +56,9 @@ Allocate the ClamAV service at least **2 GB RAM**. Its signature database requir
 
 ## Retention and incident behavior
 
-- Input: PDF/DOCX only, maximum 10 MB; MIME declaration is checked before signing and file magic is checked in the worker.
+- File input: PDF/DOCX only, maximum 10 MB; MIME declaration is checked before signing and file magic is checked in the worker.
+- Public URL input: HTTPS DNS hostnames only; no credentials, non-default port, private/special-use DNS result, LinkedIn/Indeed URL, robots denial, redirect downgrade, non-HTML response or response above the bounded limit is imported. The worker sends no browser cookies or authorization headers, pins the validated DNS address into the TLS request and never stores raw HTML, response headers or resolved IP addresses.
 - DOCX packages with macros, OLE/embedded objects, external relationships, path traversal, or more than 50 MB uncompressed content are rejected.
 - A malware finding, parsing failure, or expiry prevents a Job from being created and triggers raw-object deletion. A matching pending document also deletes the new raw object, then offers the recruiter a private link to resume the existing intake.
-- Store only structural lifecycle telemetry in `RoleIntakeEvent`; never store document text, filenames, hashes, or recruiter content in event metadata.
+- Store only structural lifecycle telemetry in `RoleIntakeEvent`; never store document text, URLs, raw HTML, headers, resolved IPs, hashes or recruiter content in event metadata.
 - A recruiter can continue manually whenever import is unavailable or unsuitable.

@@ -4,6 +4,7 @@ import { Xmark } from "iconoir-react";
 import { InterviewAgentBuilder } from "../../../../src/features/interview-agent/interview-agent-builder";
 import { RoleIntakeSourcePicker } from "../../../../src/features/role-intake/role-intake-source-picker";
 import { RoleIntakeUploadFlow } from "../../../../src/features/role-intake/role-intake-upload-flow";
+import { RoleIntakeUrlFlow } from "../../../../src/features/role-intake/role-intake-url-flow";
 import { isRoleIntakeFeatureEnabled } from "../../../../src/domain/role-intake-policy";
 import { getInterviewBuilderContext } from "../../../../src/server/interviews/interview-loaders";
 import { getCompletedOrganizationScope } from "../../../../src/server/organizations/organization-scope";
@@ -25,10 +26,13 @@ export default async function NewRoleScreenPage({
   searchParams,
 }: NewRoleScreenPageProps) {
   const params = await searchParams;
-  const source = params.source === "manual" || params.source === "upload" ? params.source : undefined;
+  const source =
+    params.source === "manual" || params.source === "upload" || params.source === "url"
+      ? params.source
+      : undefined;
 
   if (!params.draftId && !params.jobId && !source) {
-    return <RoleIntakeSourcePicker uploadEnabled={isRoleIntakeFeatureEnabled()} />;
+    return <RoleIntakeSourcePicker importEnabled={isRoleIntakeFeatureEnabled()} />;
   }
 
   if (source === "upload") {
@@ -37,6 +41,14 @@ export default async function NewRoleScreenPage({
       ? await getRoleIntakeSummary(scope, params.intakeId)
       : null;
     return <RoleIntakeUploadFlow initialIntake={intake?.ok ? intake.value : undefined} />;
+  }
+
+  if (source === "url") {
+    const scope = await getCompletedOrganizationScope();
+    const intake = params.intakeId
+      ? await getRoleIntakeSummary(scope, params.intakeId)
+      : null;
+    return <RoleIntakeUrlFlow initialIntake={intake?.ok ? intake.value : undefined} />;
   }
 
   const context = await getInterviewBuilderContext({

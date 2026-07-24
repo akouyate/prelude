@@ -1,12 +1,12 @@
 import Link from "next/link";
-import { Attachment, EditPencil } from "iconoir-react";
+import { Attachment, EditPencil, Link as LinkIcon } from "iconoir-react";
 
 import { cn } from "@prelude/ui";
 
 export function RoleIntakeSourcePicker({
-  uploadEnabled,
+  importEnabled,
 }: {
-  uploadEnabled: boolean;
+  importEnabled: boolean;
 }) {
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-6 py-20 sm:px-10">
@@ -26,13 +26,21 @@ export function RoleIntakeSourcePicker({
             icon={<EditPencil className="h-6 w-6" />}
             title="Start manually"
           />
-          {uploadEnabled ? (
-            <SourceLink
-              description="Securely extract a PDF or DOCX, then review every field."
-              href="/roles/new?source=upload"
-              icon={<Attachment className="h-6 w-6" />}
-              title="Import a role brief"
-            />
+          {importEnabled ? (
+            <>
+              <SourceLink
+                description="Import one public job page, then review every field."
+                href="/roles/new?source=url"
+                icon={<LinkIcon className="h-6 w-6" />}
+                title="Import a public URL"
+              />
+              <SourceLink
+                description="Securely extract a PDF or DOCX, then review every field."
+                href="/roles/new?source=upload"
+                icon={<Attachment className="h-6 w-6" />}
+                title="Import a role brief"
+              />
+            </>
           ) : (
             <div
               aria-disabled="true"
@@ -41,9 +49,9 @@ export function RoleIntakeSourcePicker({
               <span className="grid h-12 w-12 place-items-center rounded-2xl border border-ink-200 bg-[#f7f6f1] text-ink-700">
                 <Attachment aria-hidden="true" className="h-6 w-6" />
               </span>
-              <h2 className="mt-auto text-xl font-semibold text-ink-900">Import a role brief</h2>
+              <h2 className="mt-auto text-xl font-semibold text-ink-900">Import a role source</h2>
               <p className="mt-2 text-sm leading-6 text-ink-600">
-                PDF/DOCX import will be available when private storage is configured.
+                Public URL and PDF/DOCX import will be available when role intake is configured.
               </p>
             </div>
           )}
