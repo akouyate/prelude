@@ -28,8 +28,10 @@ export type RoleIntakeExtractionResult = {
     | "application/pdf"
     | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   draft: ImportedRoleDraft;
+  pageCount: number | null;
   parserVersion: string;
   sha256: string;
+  textLength: number;
   warnings: RoleIntakeWarning[];
 };
 
@@ -110,8 +112,10 @@ export async function extractRoleIntakeDocument(
       location: fields.location,
       title: fields.title,
     },
+    pageCount: extraction.pageCount,
     parserVersion: detectedMimeType === "application/pdf" ? "pdfjs-dist" : "mammoth",
     sha256: createHash("sha256").update(input).digest("hex"),
+    textLength: text.length,
     warnings,
   };
 }
@@ -138,6 +142,7 @@ async function detectMimeType(
 }
 
 async function extractPdfText(input: Buffer): Promise<{
+  pageCount: number;
   text: string;
   warnings: RoleIntakeWarning[];
 }> {
@@ -182,7 +187,11 @@ async function extractPdfText(input: Buffer): Promise<{
     }
     await loadingTask.destroy();
 
-    return { text: pages.join("\n\n"), warnings: [] };
+    return {
+      pageCount: document.numPages,
+      text: pages.join("\n\n"),
+      warnings: [],
+    };
   } catch (error) {
     if (error instanceof RoleIntakeProcessingError) {
       throw error;
@@ -204,12 +213,14 @@ function standardFontDataUrl(): string {
 }
 
 async function extractDocxText(input: Buffer): Promise<{
+  pageCount: null;
   text: string;
   warnings: RoleIntakeWarning[];
 }> {
   try {
     const result = await mammoth.extractRawText({ buffer: input });
     return {
+      pageCount: null,
       text: result.value,
       warnings: result.messages.map((message) => ({
         code: "docx_parser_notice",

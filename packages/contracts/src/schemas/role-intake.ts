@@ -1,6 +1,11 @@
 import { z } from "zod";
 
 export const roleIntakeSourceKindSchema = z.enum(["file", "url"]);
+export const roleIntakeSourceRetentionSchema = z.enum([
+  "pending_deletion",
+  "deleted",
+  "not_stored",
+]);
 
 export const roleIntakeStatusSchema = z.enum([
   "uploading",
@@ -52,6 +57,7 @@ export const roleIntakeSourceProvenanceSchema = z.object({
 export const roleIntakeSummarySchema = z.object({
   duplicateOfIntakeId: z.string().min(1).nullable().default(null),
   expiresAt: z.string().datetime(),
+  failureCode: z.string().trim().min(1).max(80).nullable().default(null),
   failureMessage: z.string().trim().min(1).max(240).nullable().default(null),
   id: z.string().min(1),
   originalFileName: z.string().min(1).max(255),
@@ -59,12 +65,16 @@ export const roleIntakeSummarySchema = z.object({
   reviewedDraft: importedRoleDraftSchema,
   source: roleIntakeSourceProvenanceSchema,
   sourceKind: roleIntakeSourceKindSchema,
+  sourceRetention: roleIntakeSourceRetentionSchema.default("pending_deletion"),
   status: roleIntakeStatusSchema,
   warnings: z.array(roleIntakeWarningSchema),
 });
 
 export type ImportedRoleDraft = z.infer<typeof importedRoleDraftSchema>;
 export type RoleIntakeSourceKind = z.infer<typeof roleIntakeSourceKindSchema>;
+export type RoleIntakeSourceRetention = z.infer<
+  typeof roleIntakeSourceRetentionSchema
+>;
 export type RoleIntakeStatus = z.infer<typeof roleIntakeStatusSchema>;
 export type RoleIntakeSummary = z.infer<typeof roleIntakeSummarySchema>;
 export type RoleIntakeWarning = z.infer<typeof roleIntakeWarningSchema>;

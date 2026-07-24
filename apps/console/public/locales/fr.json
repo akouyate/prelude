@@ -25,6 +25,124 @@
       "publishedRoleLimitReached": "Votre espace de travail a atteint sa limite de postes publiés. Gérez la facturation pour publier un autre poste.",
       "billingUnavailable": "La facturation est indisponible pour cet espace de travail. Réessayez ou demandez au propriétaire de gérer la facturation."
     },
+    "roleIntake": {
+      "back": "Retour",
+      "source": {
+        "eyebrow": "Nouveau poste",
+        "title": "Comment souhaitez-vous ajouter ce poste ?",
+        "description": "Partez d'une fiche de poste existante ou saisissez les informations vous-même. Vous validerez tout avant que Prelude ne rédige les questions.",
+        "manualTitle": "Saisir manuellement",
+        "manualDescription": "Renseignez vous-même l'intitulé, le contexte et les responsabilités.",
+        "manualMeta": "Contrôle total",
+        "uploadTitle": "Importer une fiche de poste",
+        "uploadDescription": "Extrayez un PDF ou DOCX de façon privée, puis vérifiez chaque champ.",
+        "uploadMeta": "Le plus rapide",
+        "urlTitle": "Importer une URL publique",
+        "urlDescription": "Lisez une page d'offre publique sans exécuter ses scripts.",
+        "urlMeta": "Pages publiques",
+        "unavailableTitle": "Importer une source",
+        "unavailableDescription": "L'import par URL publique et par PDF/DOCX sera disponible lorsque l'import privé sera configuré."
+      },
+      "upload": {
+        "title": "Importer une fiche de poste",
+        "description": "Ajoutez un PDF ou DOCX contenant du texte. Prelude le vérifie de façon privée et vous demande de confirmer les informations extraites avant toute création.",
+        "choose": "Choisir un PDF ou DOCX",
+        "dropNow": "Déposez le document ici",
+        "dragHint": "Glissez-déposez ou cliquez pour parcourir",
+        "requirements": "Un document texte, 10 Mo maximum",
+        "errors": {
+          "empty": "Le document sélectionné est vide.",
+          "too_large": "Choisissez un document de moins de 10 Mo ou commencez manuellement.",
+          "unsupported": "Prelude accepte uniquement les fiches de poste PDF et DOCX.",
+          "uploadFailed": "L'import privé n'a pas abouti. Sélectionnez à nouveau le document."
+        }
+      },
+      "url": {
+        "title": "Importer l'URL publique d'une offre",
+        "description": "Prelude lit une page HTML publique, vérifie la politique de la source et vous demande de contrôler chaque champ extrait.",
+        "label": "URL publique de l'offre",
+        "hint": "HTTPS uniquement. Les pages LinkedIn et Indeed ne sont pas prises en charge par cet import.",
+        "placeholder": "https://careers.example.com/jobs/product-designer",
+        "action": "Importer la page",
+        "preparing": "Préparation de l'import…",
+        "errors": {
+          "required": "Saisissez l'URL HTTPS publique d'une offre."
+        }
+      },
+      "progress": {
+        "uploading": "Import de votre fiche de poste",
+        "waiting": "En attente des vérifications privées",
+        "processing": "Vérification et lecture de la fiche de poste",
+        "autoUpdate": "Vous pouvez garder cette page ouverte. Elle se met à jour automatiquement dès que la vérification est prête.",
+        "steps": {
+          "source": "Source ajoutée",
+          "processing": "Vérifications privées",
+          "review": "Vérifier les informations"
+        }
+      },
+      "privacy": {
+        "pending_deletion": "La source reste privée et sera supprimée après l'extraction ou sous 24 heures.",
+        "deleted": "Le fichier source a été supprimé. Son contenu n'est plus conservé.",
+        "not_stored": "Prelude ne conserve ni n'affiche la page publique. Seules les informations validées continuent."
+      },
+      "failure": {
+        "manual": {
+          "title": "Ce document ne contient aucun texte lisible",
+          "description": "Prelude ne devine pas le contenu des documents scannés ou composés d'images. Saisissez le poste manuellement ou choisissez un PDF ou DOCX contenant du texte."
+        },
+        "replace": {
+          "title": "Ce document ne peut pas être importé en sécurité",
+          "description": "Aucun poste n'a été créé. Choisissez un autre PDF ou DOCX, ou saisissez le poste manuellement."
+        },
+        "resume": {
+          "title": "Cette fiche existe déjà dans Prelude",
+          "description": "Reprenez l'import privé existant plutôt que de créer un poste en double.",
+          "action": "Reprendre l'import existant"
+        },
+        "retry": {
+          "title": "L'import n'a pas pu aboutir",
+          "description": "Aucun poste n'a été créé. Réessayez la source ou continuez manuellement."
+        },
+        "chooseAnother": "Choisir un autre fichier",
+        "retryUrl": "Réessayer cette URL",
+        "tryAnotherUrl": "Essayer une autre URL",
+        "startManual": "Saisir manuellement"
+      },
+      "review": {
+        "title": "Vérifiez la fiche de poste",
+        "fileDescription": "Prelude a extrait le document sans inventer les informations manquantes. Confirmez les détails avant la rédaction des questions.",
+        "urlDescription": "Prelude a extrait la page publique sans exécuter ses scripts. Confirmez les détails avant la rédaction des questions.",
+        "warningTitle": "Un détail demande votre attention",
+        "validationSummary": "Ajoutez l'intitulé et la description du poste avant de continuer.",
+        "roleTitle": "Intitulé du poste",
+        "roleTitlePlaceholder": "ex. Customer Success Manager",
+        "location": "Localisation",
+        "locationPlaceholder": "ex. Paris, hybride ou télétravail",
+        "jobDescription": "Description du poste",
+        "jobDescriptionPlaceholder": "Décrivez les responsabilités, les résultats attendus, le contexte de l'équipe et les prérequis.",
+        "descriptionHint": "Conservez uniquement les informations liées au poste qui doivent guider les questions.",
+        "required": "Obligatoire",
+        "optional": "Facultatif",
+        "requiredError": "Ce champ est obligatoire.",
+        "confirmation": "Seuls les champs que vous validez continuent vers le générateur de questions.",
+        "creating": "Création du poste…",
+        "continue": "Utiliser cette fiche",
+        "publicSource": "Source publique",
+        "uploadedSource": "Source importée",
+        "sourceDetails": "Intitulé : {{title}} · Description : {{description}} · Localisation : {{location}}",
+        "fieldSources": {
+          "heading": "titre de la page",
+          "jobPostingData": "données structurées de l'offre",
+          "visiblePage": "contenu visible",
+          "pageTitle": "titre de la page",
+          "notFound": "non trouvé"
+        }
+      },
+      "warnings": {
+        "extraction_truncated": "Le document était particulièrement long. Vérifiez la fin de la description, car le texte extrait a été raccourci.",
+        "docx_parser_notice": "Une partie de la mise en forme du DOCX n'a pas pu être conservée. Vérifiez le texte extrait avant de continuer."
+      }
+    },
     "share": {
       "copyLink": "Copier le lien candidat",
       "copyLinkCopied": "Lien copié",

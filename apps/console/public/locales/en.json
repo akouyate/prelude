@@ -25,6 +25,124 @@
       "publishedRoleLimitReached": "Your workspace has reached its published role limit. Manage billing to publish another role.",
       "billingUnavailable": "Billing is unavailable for this workspace. Retry or ask the workspace owner to manage billing."
     },
+    "roleIntake": {
+      "back": "Back",
+      "source": {
+        "eyebrow": "New role",
+        "title": "How do you want to add this role?",
+        "description": "Start from a role brief you already have, or enter the details yourself. You will review everything before Prelude drafts questions.",
+        "manualTitle": "Start manually",
+        "manualDescription": "Enter the title, context, and responsibilities yourself.",
+        "manualMeta": "Full control",
+        "uploadTitle": "Upload a role brief",
+        "uploadDescription": "Extract a PDF or DOCX privately, then review every field.",
+        "uploadMeta": "Fastest with a brief",
+        "urlTitle": "Import a public URL",
+        "urlDescription": "Read one public job page without executing its scripts.",
+        "urlMeta": "Public pages",
+        "unavailableTitle": "Import a role source",
+        "unavailableDescription": "Public URL and PDF/DOCX import will be available when private role intake is configured."
+      },
+      "upload": {
+        "title": "Upload a role brief",
+        "description": "Add a text-based PDF or DOCX. Prelude checks it privately and asks you to confirm the extracted details before creating anything.",
+        "choose": "Choose a PDF or DOCX",
+        "dropNow": "Drop the document here",
+        "dragHint": "Drag and drop, or click to browse",
+        "requirements": "One text-based document, up to 10 MB",
+        "errors": {
+          "empty": "The selected document is empty.",
+          "too_large": "Choose a document smaller than 10 MB, or start manually.",
+          "unsupported": "Prelude accepts PDF and DOCX role briefs only.",
+          "uploadFailed": "The private upload did not finish. Choose the document again."
+        }
+      },
+      "url": {
+        "title": "Import a public job URL",
+        "description": "Prelude reads one public HTML job page, checks the source policy, and asks you to verify every extracted field.",
+        "label": "Public job URL",
+        "hint": "HTTPS only. LinkedIn and Indeed pages are not supported by this importer.",
+        "placeholder": "https://careers.example.com/jobs/product-designer",
+        "action": "Import job page",
+        "preparing": "Preparing import…",
+        "errors": {
+          "required": "Enter a public HTTPS job URL."
+        }
+      },
+      "progress": {
+        "uploading": "Uploading your role brief",
+        "waiting": "Waiting for private checks",
+        "processing": "Checking and reading the role details",
+        "autoUpdate": "You can keep this page open. It updates automatically when the review is ready.",
+        "steps": {
+          "source": "Source added",
+          "processing": "Private checks",
+          "review": "Review details"
+        }
+      },
+      "privacy": {
+        "pending_deletion": "The source stays private and is deleted after extraction or within 24 hours.",
+        "deleted": "The source file has been deleted. Its contents are no longer retained.",
+        "not_stored": "Prelude does not retain or render the public page. Only the reviewed role details continue."
+      },
+      "failure": {
+        "manual": {
+          "title": "This document has no readable text",
+          "description": "Scanned and image-only documents are not guessed. Enter the role manually or choose a text-based file."
+        },
+        "replace": {
+          "title": "This document cannot be imported safely",
+          "description": "No role was created. Choose another PDF or DOCX, or enter the role manually."
+        },
+        "resume": {
+          "title": "This brief is already in Prelude",
+          "description": "Resume the existing private import instead of creating a duplicate role.",
+          "action": "Resume existing import"
+        },
+        "retry": {
+          "title": "The import could not finish",
+          "description": "No role was created. Try the source again or continue manually."
+        },
+        "chooseAnother": "Choose another file",
+        "retryUrl": "Try this URL again",
+        "tryAnotherUrl": "Try another URL",
+        "startManual": "Start manually"
+      },
+      "review": {
+        "title": "Check the role brief",
+        "fileDescription": "Prelude extracted the document without inventing missing fields. Confirm the details before questions are drafted.",
+        "urlDescription": "Prelude extracted the public page without running its scripts. Confirm the details before questions are drafted.",
+        "warningTitle": "A detail needs your attention",
+        "validationSummary": "Add the required role title and job description before continuing.",
+        "roleTitle": "Role title",
+        "roleTitlePlaceholder": "e.g. Customer Success Manager",
+        "location": "Location",
+        "locationPlaceholder": "e.g. Paris, hybrid, or remote",
+        "jobDescription": "Job description",
+        "jobDescriptionPlaceholder": "Describe the responsibilities, expected outcomes, team context, and requirements.",
+        "descriptionHint": "Keep only job-related information that should shape interview questions.",
+        "required": "Required",
+        "optional": "Optional",
+        "requiredError": "This field is required.",
+        "confirmation": "Only the fields you approve continue to the question builder.",
+        "creating": "Creating role…",
+        "continue": "Use this brief",
+        "publicSource": "Public source",
+        "uploadedSource": "Uploaded source",
+        "sourceDetails": "Title: {{title}} · Description: {{description}} · Location: {{location}}",
+        "fieldSources": {
+          "heading": "page heading",
+          "jobPostingData": "structured job data",
+          "visiblePage": "visible page",
+          "pageTitle": "page title",
+          "notFound": "not found"
+        }
+      },
+      "warnings": {
+        "extraction_truncated": "The document was unusually long. Review the end of the description because the extracted text was shortened.",
+        "docx_parser_notice": "Part of the DOCX formatting could not be preserved. Review the extracted text before continuing."
+      }
+    },
     "share": {
       "copyLink": "Copy candidate link",
       "copyLinkCopied": "Link copied",

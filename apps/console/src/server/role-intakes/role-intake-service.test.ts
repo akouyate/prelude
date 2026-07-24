@@ -19,6 +19,9 @@ const prismaMock = vi.hoisted(() => ({
     update: vi.fn(),
     updateMany: vi.fn(),
   },
+  roleIntakeEvent: {
+    create: vi.fn(),
+  },
 }));
 
 vi.mock("@prelude/db", () => ({
@@ -28,7 +31,11 @@ vi.mock("@prelude/db", () => ({
   prisma: prismaMock,
 }));
 
-import { consumeRoleIntake, getRoleIntakeSummary } from "./role-intake-service";
+import {
+  consumeRoleIntake,
+  getRoleIntakeSummary,
+  recordRoleIntakeManualFallback,
+} from "./role-intake-service";
 
 const scope = {
   clerkOrganizationId: null,
@@ -47,6 +54,7 @@ beforeEach(() => {
       id: "intake_123",
       jobId: null,
       canonicalUrl: null,
+      createdAt: new Date("2026-07-17T12:00:00.000Z"),
       originalFileName: "platform-engineer.pdf",
       reviewedDraft: {
         description: "Own platform reliability and incident response.",
@@ -100,6 +108,7 @@ describe("consumeRoleIntake", () => {
         id: "intake_url_123",
         jobId: null,
         canonicalUrl: "https://careers.example.com/jobs/platform-engineer",
+        createdAt: new Date("2026-07-17T12:00:00.000Z"),
         originalFileName: null,
         reviewedDraft: {
           description: "Own platform reliability and incident response.",
@@ -130,6 +139,7 @@ describe("consumeRoleIntake", () => {
         id: "intake_123",
         jobId: "job_existing",
         canonicalUrl: null,
+        createdAt: new Date("2026-07-17T12:00:00.000Z"),
         originalFileName: "platform-engineer.pdf",
         reviewedDraft: {},
         sourceKind: "file",
@@ -152,5 +162,31 @@ describe("consumeRoleIntake", () => {
       ok: false,
     });
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordRoleIntakeManualFallback", () => {
+  it("records only structural failure context", async () => {
+    prismaMock.roleIntake.findFirst.mockResolvedValueOnce({
+      id: "intake_123",
+      lastErrorCode: "no_usable_text",
+      sourceKind: "file",
+    });
+
+    await expect(
+      recordRoleIntakeManualFallback(scope, "intake_123"),
+    ).resolves.toEqual({ ok: true, value: null });
+
+    expect(prismaMock.roleIntakeEvent.create).toHaveBeenCalledWith({
+      data: {
+        eventType: "role_intake_manual_fallback_selected",
+        metadata: {
+          intake_id: "intake_123",
+          reason: "no_usable_text",
+          source_kind: "file",
+        },
+        roleIntakeId: "intake_123",
+      },
+    });
   });
 });

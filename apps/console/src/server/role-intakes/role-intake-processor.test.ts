@@ -13,7 +13,9 @@ describe("role intake document processing", () => {
 
     expect(result.detectedMimeType).toBe("application/pdf");
     expect(result.draft.description).toContain("Job Title: Product Manager");
+    expect(result.pageCount).toBe(1);
     expect(result.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.textLength).toBeGreaterThan(0);
   }, 15_000);
 
   it("rejects a document whose bytes do not match PDF or DOCX", async () => {

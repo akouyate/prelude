@@ -1,5 +1,8 @@
+"use client";
+
 import Link from "next/link";
 import { Attachment, EditPencil, Link as LinkIcon } from "iconoir-react";
+import { useTranslation } from "react-i18next";
 
 import { cn } from "@prelude/ui";
 
@@ -8,50 +11,58 @@ export function RoleIntakeSourcePicker({
 }: {
   importEnabled: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-5xl items-center px-6 py-20 sm:px-10">
       <section className="w-full">
-        <p className="text-sm font-medium text-ink-500">New role</p>
-        <h1 className="mt-3 max-w-xl font-display text-4xl font-medium tracking-normal text-ink-950 sm:text-5xl">
-          Where should Prelude start?
+        <p className="text-sm font-medium text-ink-500">
+          {t("roleIntake.source.eyebrow")}
+        </p>
+        <h1 className="mt-3 max-w-2xl font-display text-4xl font-medium tracking-normal text-ink-950 sm:text-5xl">
+          {t("roleIntake.source.title")}
         </h1>
-        <p className="mt-4 max-w-xl text-base leading-7 text-ink-600">
-          Add a role brief yourself, or securely extract one from a PDF or DOCX.
+        <p className="mt-4 max-w-2xl text-base leading-7 text-ink-600">
+          {t("roleIntake.source.description")}
         </p>
 
-        <div className="mt-10 grid max-w-3xl gap-4 sm:grid-cols-2">
+        <div className="mt-10 grid gap-4 md:grid-cols-3">
           <SourceLink
-            description="Enter the role details yourself."
+            description={t("roleIntake.source.manualDescription")}
             href="/roles/new?source=manual"
-            icon={<EditPencil className="h-6 w-6" />}
-            title="Start manually"
+            icon={<EditPencil aria-hidden="true" className="h-6 w-6" />}
+            meta={t("roleIntake.source.manualMeta")}
+            title={t("roleIntake.source.manualTitle")}
           />
           {importEnabled ? (
             <>
               <SourceLink
-                description="Import one public job page, then review every field."
-                href="/roles/new?source=url"
-                icon={<LinkIcon className="h-6 w-6" />}
-                title="Import a public URL"
+                description={t("roleIntake.source.uploadDescription")}
+                href="/roles/new?source=upload"
+                icon={<Attachment aria-hidden="true" className="h-6 w-6" />}
+                meta={t("roleIntake.source.uploadMeta")}
+                title={t("roleIntake.source.uploadTitle")}
               />
               <SourceLink
-                description="Securely extract a PDF or DOCX, then review every field."
-                href="/roles/new?source=upload"
-                icon={<Attachment className="h-6 w-6" />}
-                title="Import a role brief"
+                description={t("roleIntake.source.urlDescription")}
+                href="/roles/new?source=url"
+                icon={<LinkIcon aria-hidden="true" className="h-6 w-6" />}
+                meta={t("roleIntake.source.urlMeta")}
+                title={t("roleIntake.source.urlTitle")}
               />
             </>
           ) : (
             <div
               aria-disabled="true"
-              className="relative flex min-h-56 cursor-not-allowed flex-col rounded-3xl border border-ink-200 bg-white/45 p-6 opacity-70"
+              className="relative flex min-h-56 cursor-not-allowed flex-col rounded-[24px] border border-ink-200 bg-white/45 p-6 opacity-70 md:col-span-2"
             >
               <span className="grid h-12 w-12 place-items-center rounded-2xl border border-ink-200 bg-[#f7f6f1] text-ink-700">
                 <Attachment aria-hidden="true" className="h-6 w-6" />
               </span>
-              <h2 className="mt-auto text-xl font-semibold text-ink-900">Import a role source</h2>
+              <h2 className="mt-auto text-xl font-semibold text-ink-900">
+                {t("roleIntake.source.unavailableTitle")}
+              </h2>
               <p className="mt-2 text-sm leading-6 text-ink-600">
-                Public URL and PDF/DOCX import will be available when role intake is configured.
+                {t("roleIntake.source.unavailableDescription")}
               </p>
             </div>
           )}
@@ -65,23 +76,28 @@ function SourceLink({
   description,
   href,
   icon,
+  meta,
   title,
 }: {
   description: string;
   href: string;
   icon: React.ReactNode;
+  meta: string;
   title: string;
 }) {
   return (
     <Link
       className={cn(
-        "group relative flex min-h-56 cursor-pointer flex-col rounded-3xl border border-ink-200 bg-white/82 p-6 transition",
+        "group relative flex min-h-56 cursor-pointer flex-col rounded-[24px] border border-ink-200 bg-white/72 p-6 transition-colors",
         "hover:border-ink-900 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
       )}
       href={href}
     >
       <span className="grid h-12 w-12 place-items-center rounded-2xl border border-ink-200 bg-[#f7f6f1] text-ink-900 transition group-hover:border-olive-200 group-hover:bg-[#f2f4e9]">
         {icon}
+      </span>
+      <span className="mt-5 text-xs font-medium uppercase text-olive-800">
+        {meta}
       </span>
       <h2 className="mt-auto text-xl font-semibold text-ink-900">{title}</h2>
       <p className="mt-2 text-sm leading-6 text-ink-600">{description}</p>
