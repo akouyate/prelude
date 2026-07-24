@@ -27,12 +27,19 @@ export default async function NewRoleScreenPage({
 }: NewRoleScreenPageProps) {
   const params = await searchParams;
   const source =
-    params.source === "manual" || params.source === "upload" || params.source === "url"
+    params.source === "manual" ||
+    params.source === "upload" ||
+    params.source === "url"
       ? params.source
       : undefined;
 
   if (!params.draftId && !params.jobId && !source) {
-    return <RoleIntakeSourcePicker importEnabled={isRoleIntakeFeatureEnabled()} />;
+    const scope = await getCompletedOrganizationScope();
+    return (
+      <RoleIntakeSourcePicker
+        importEnabled={isRoleIntakeFeatureEnabled(scope.organizationId)}
+      />
+    );
   }
 
   if (source === "upload") {
@@ -40,7 +47,11 @@ export default async function NewRoleScreenPage({
     const intake = params.intakeId
       ? await getRoleIntakeSummary(scope, params.intakeId)
       : null;
-    return <RoleIntakeUploadFlow initialIntake={intake?.ok ? intake.value : undefined} />;
+    return (
+      <RoleIntakeUploadFlow
+        initialIntake={intake?.ok ? intake.value : undefined}
+      />
+    );
   }
 
   if (source === "url") {
@@ -48,7 +59,11 @@ export default async function NewRoleScreenPage({
     const intake = params.intakeId
       ? await getRoleIntakeSummary(scope, params.intakeId)
       : null;
-    return <RoleIntakeUrlFlow initialIntake={intake?.ok ? intake.value : undefined} />;
+    return (
+      <RoleIntakeUrlFlow
+        initialIntake={intake?.ok ? intake.value : undefined}
+      />
+    );
   }
 
   const context = await getInterviewBuilderContext({

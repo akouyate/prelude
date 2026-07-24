@@ -12,6 +12,7 @@ const tx = vi.hoisted(() => ({
     create: vi.fn(),
     findFirst: vi.fn(),
     update: vi.fn(),
+    upsert: vi.fn(),
   },
 }));
 
@@ -102,6 +103,10 @@ beforeEach(() => {
     id: "draft_1",
     updatedAt: new Date("2026-01-01T00:00:00Z"),
   });
+  tx.interviewDraft.upsert.mockResolvedValue({
+    id: "draft_role_intake_1",
+    updatedAt: new Date("2026-01-01T00:00:00Z"),
+  });
 });
 
 describe("saveInterviewDraft N9 provenance", () => {
@@ -147,6 +152,67 @@ describe("saveInterviewDraft N9 provenance", () => {
     expect(createCall?.data.schemaVersion).toBe(INTERVIEW_PLAN_SCHEMA_VERSION);
     expect(createCall?.data.generatorProvider ?? null).toBeNull();
     expect(createCall?.data.generatorModel ?? null).toBeNull();
+  });
+});
+
+describe("saveInterviewDraft role intake origin", () => {
+  it("upserts the initial draft from an imported RoleIntake", async () => {
+    tx.job.findFirst.mockResolvedValue({
+      id: "job_role_intake_1",
+      sourceExternalId: "role-intake:intake_123",
+    });
+    tx.job.update.mockResolvedValue({ id: "job_role_intake_1" });
+
+    const result = await saveInterviewDraft({
+      ...baseInput(),
+      jobId: "job_role_intake_1",
+    });
+
+    expect(result).toMatchObject({
+      draftId: "draft_role_intake_1",
+      jobId: "job_role_intake_1",
+      ok: true,
+    });
+    expect(tx.interviewDraft.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ originRoleIntakeId: "intake_123" }),
+        update: expect.not.objectContaining({ originRoleIntakeId: expect.anything() }),
+        where: { originRoleIntakeId: "intake_123" },
+      }),
+    );
+    expect(tx.interviewDraft.create).not.toHaveBeenCalled();
+    expect(tx.interviewDraft.update).not.toHaveBeenCalled();
+  });
+
+  it("keeps manual jobs on the existing create path", async () => {
+    tx.job.findFirst.mockResolvedValue({
+      id: "job_manual_1",
+      sourceExternalId: "manual:backend-engineer",
+    });
+
+    await saveInterviewDraft({ ...baseInput(), jobId: "job_manual_1" });
+
+    expect(tx.interviewDraft.create).toHaveBeenCalledTimes(1);
+    expect(tx.interviewDraft.upsert).not.toHaveBeenCalled();
+  });
+
+  it("keeps explicit draft edits on the existing update path", async () => {
+    tx.job.findFirst.mockResolvedValue({
+      id: "job_role_intake_1",
+      sourceExternalId: "role-intake:intake_123",
+    });
+    tx.interviewDraft.findFirst.mockResolvedValue({ id: "draft_existing_1" });
+
+    await saveInterviewDraft({
+      ...baseInput(),
+      draftId: "draft_existing_1",
+      jobId: "job_role_intake_1",
+    });
+
+    expect(tx.interviewDraft.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "draft_existing_1" } }),
+    );
+    expect(tx.interviewDraft.upsert).not.toHaveBeenCalled();
   });
 });
 

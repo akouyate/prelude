@@ -73,7 +73,10 @@ export function validateRoleIntakeFile(
   }
 
   if (!supportedMimeTypes.has(contentType)) {
-    return { ok: false, error: "Prelude accepts PDF and DOCX job briefs only." };
+    return {
+      ok: false,
+      error: "Prelude accepts PDF and DOCX job briefs only.",
+    };
   }
 
   return {
@@ -102,7 +105,10 @@ export function normalizeRoleIntakeWarnings(
       return [];
     }
     const candidate = warning as { code?: unknown; message?: unknown };
-    if (typeof candidate.code !== "string" || typeof candidate.message !== "string") {
+    if (
+      typeof candidate.code !== "string" ||
+      typeof candidate.message !== "string"
+    ) {
       return [];
     }
     if (!candidate.code.trim() || !candidate.message.trim()) {
@@ -117,16 +123,69 @@ export function normalizeRoleIntakeWarnings(
   });
 }
 
-export function isRoleIntakeFeatureEnabled(): boolean {
-  return process.env.ROLE_INTAKE_ENABLED === "1";
+export function parseRoleIntakePilotOrganizationIds(
+  value = process.env.ROLE_INTAKE_PILOT_ORGANIZATION_IDS,
+): string[] {
+  if (!value) {
+    return [];
+  }
+
+  const ids = value.split(",").map((id) => id.trim());
+  if (
+    ids.length === 0 ||
+    ids.length > 5 ||
+    ids.some((id) => !id || id.length > 191) ||
+    new Set(ids).size !== ids.length
+  ) {
+    return [];
+  }
+
+  return ids;
+}
+
+export function parseRoleIntakePilotStartedAt(
+  value = process.env.ROLE_INTAKE_PILOT_STARTED_AT,
+): Date | null {
+  if (
+    !value ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
+  ) {
+    return null;
+  }
+  const startedAt = new Date(value);
+  return Number.isFinite(startedAt.getTime()) &&
+    startedAt.toISOString() === value
+    ? startedAt
+    : null;
+}
+
+export function isRoleIntakeFeatureEnabled(organizationId?: string): boolean {
+  if (process.env.ROLE_INTAKE_ENABLED !== "1") {
+    return false;
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    return true;
+  }
+
+  return Boolean(
+    organizationId &&
+    parseRoleIntakePilotOrganizationIds().includes(organizationId),
+  );
 }
 
 export function roleIntakeExpiresAt(now = new Date()): Date {
   return new Date(now.getTime() + ROLE_INTAKE_EXPIRY_MS);
 }
 
-export function retryRoleIntakeAt(attemptCount: number, now = new Date()): Date {
-  const delayMs = Math.min(60_000 * 2 ** Math.max(0, attemptCount - 1), 15 * 60_000);
+export function retryRoleIntakeAt(
+  attemptCount: number,
+  now = new Date(),
+): Date {
+  const delayMs = Math.min(
+    60_000 * 2 ** Math.max(0, attemptCount - 1),
+    15 * 60_000,
+  );
   return new Date(now.getTime() + delayMs);
 }
 

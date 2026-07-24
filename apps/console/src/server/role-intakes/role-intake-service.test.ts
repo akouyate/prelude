@@ -11,7 +11,9 @@ const tx = vi.hoisted(() => ({
 }));
 
 const prismaMock = vi.hoisted(() => ({
-  $transaction: vi.fn((callback: (client: typeof tx) => unknown) => callback(tx)),
+  $transaction: vi.fn((callback: (client: typeof tx) => unknown) =>
+    callback(tx),
+  ),
   roleIntake: {
     create: vi.fn(),
     findFirst: vi.fn(),
@@ -23,7 +25,10 @@ const prismaMock = vi.hoisted(() => ({
 
 vi.mock("@prelude/db", () => ({
   Prisma: {
-    sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({ strings, values }),
+    sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({
+      strings,
+      values,
+    }),
   },
   prisma: prismaMock,
 }));
@@ -44,6 +49,7 @@ beforeEach(() => {
   tx.roleIntake.update.mockResolvedValue({});
   tx.$queryRaw.mockResolvedValue([
     {
+      createdAt: new Date("2026-07-24T10:00:00.000Z"),
       id: "intake_123",
       jobId: null,
       canonicalUrl: null,
@@ -64,7 +70,8 @@ describe("consumeRoleIntake", () => {
     await expect(
       getRoleIntakeSummary({ ...scope, role: "viewer" }, "intake_123"),
     ).resolves.toEqual({
-      error: "Only recruiters, admins, and owners can view an imported role brief.",
+      error:
+        "Only recruiters, admins, and owners can view an imported role brief.",
       ok: false,
     });
     expect(prismaMock.roleIntake.findFirst).not.toHaveBeenCalled();
@@ -79,6 +86,7 @@ describe("consumeRoleIntake", () => {
         description: "Own platform reliability and incident response.",
         location: "Paris",
         organizationId: "org_123",
+        originRoleIntakeId: "intake_123",
         sourceAttachmentName: "platform-engineer.pdf",
         sourceExternalId: "role-intake:intake_123",
         sourceProvider: "file",
@@ -97,6 +105,7 @@ describe("consumeRoleIntake", () => {
   it("creates one job with canonical URL provenance without an attachment", async () => {
     tx.$queryRaw.mockResolvedValueOnce([
       {
+        createdAt: new Date("2026-07-24T10:00:00.000Z"),
         id: "intake_url_123",
         jobId: null,
         canonicalUrl: "https://careers.example.com/jobs/platform-engineer",
@@ -117,6 +126,7 @@ describe("consumeRoleIntake", () => {
     });
     expect(tx.job.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
+        originRoleIntakeId: "intake_url_123",
         sourceAttachmentName: null,
         sourceExternalId: "https://careers.example.com/jobs/platform-engineer",
         sourceProvider: "url",
@@ -127,6 +137,7 @@ describe("consumeRoleIntake", () => {
   it("returns the existing job instead of creating a duplicate", async () => {
     tx.$queryRaw.mockResolvedValueOnce([
       {
+        createdAt: new Date("2026-07-24T10:00:00.000Z"),
         id: "intake_123",
         jobId: "job_existing",
         canonicalUrl: null,
@@ -148,7 +159,8 @@ describe("consumeRoleIntake", () => {
     await expect(
       consumeRoleIntake({ ...scope, role: "viewer" }, "intake_123"),
     ).resolves.toEqual({
-      error: "Only recruiters, admins, and owners can create a role from this brief.",
+      error:
+        "Only recruiters, admins, and owners can create a role from this brief.",
       ok: false,
     });
     expect(prismaMock.$transaction).not.toHaveBeenCalled();
