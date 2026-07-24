@@ -32,9 +32,12 @@ vi.mock("next/cache", () => ({
 vi.mock("../organizations/organization-scope", () => ({
   getCompletedOrganizationScope: vi.fn(async () => ({
     organizationId: "org_123",
+    role: "recruiter",
+    userId: "user_123",
   })),
 }));
 
+import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import { saveInterviewDraft, type SaveInterviewDraftInput } from "./interview-drafts";
 
 const baseInput = (): SaveInterviewDraftInput => ({
@@ -105,6 +108,21 @@ beforeEach(() => {
 });
 
 describe("saveInterviewDraft N9 provenance", () => {
+  it("rejects viewers before creating or updating a role", async () => {
+    vi.mocked(getCompletedOrganizationScope).mockResolvedValueOnce({
+      organizationId: "org_123",
+      role: "viewer",
+      userId: "user_viewer",
+    } as never);
+
+    const result = await saveInterviewDraft(baseInput());
+
+    expect(result).toMatchObject({ ok: false });
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    expect(tx.job.create).not.toHaveBeenCalled();
+    expect(tx.interviewDraft.create).not.toHaveBeenCalled();
+  });
+
   it("persists schemaVersion + generator provenance when creating a draft", async () => {
     const result = await saveInterviewDraft({
       ...baseInput(),

@@ -2,49 +2,61 @@
 
 ## Goal
 
-Ship GitHub issue #117: safely import a public job URL into an editable role
-draft.
+Ship GitHub issue #103: use Clerk Billing as the source of truth for
+organization plans while Prelude owns usage counters and entitlement
+enforcement.
 
 ## Scope
 
-- Extend the private `RoleIntake` aggregate with a URL source variant while
-  retaining the existing file-import lifecycle.
-- Retrieve exactly one public job page in the durable worker through a pinned,
-  policy-controlled HTTPS client; never use the recruiter session or a browser.
-- Extract bounded, deterministic static HTML text and provenance, then require
-  recruiter review before the existing interview-question builder can open.
-- Keep LinkedIn/Indeed, authenticated content, crawling, previews, OCR and LLM
-  source extraction out of scope.
+- Normalize Clerk organization subscriptions into a small Prelude plan/status
+  contract.
+- Keep a minimal local projection for public candidate admission and
+  cross-service checks.
+- Replace placeholder Settings billing data with real state, usage and limits.
+- Gate new published roles, candidate-session starts and audio recording on the
+  server.
+- Keep local/mock development honest and unmetered when Clerk Billing is not
+  configured.
 
 ## Workflow
 
-- [x] Intake, repository investigation and issue refinement
-- [x] AI/data-quality and backend/security architecture reviews
-- [x] Architecture decision and test matrix
-- [x] Implement contracts, schema and URL source policy
-- [x] Implement safe outbound retrieval and deterministic extraction
-- [x] Implement worker, actions and reusable review UI
-- [x] Test, security review, simplify and validate
+- [x] Intake, repository investigation and Clerk documentation research
+- [x] Architecture, product and QA refinement
+- [x] Architecture decision and TDD matrix
+- [x] Implement billing domain, projection and Clerk adapter
+- [x] Implement Settings billing UI and portal handoff
+- [x] Implement role, candidate-session and recording enforcement
+- [x] Review, simplify and validate
 - [ ] Deliver PR and close the issue
 
 ## Decisions
 
-- `RoleIntake` remains private staging; only a recruiter-approved
-  `reviewedDraft` can create one `Job`.
-- URL acquisition runs as a durable, leased worker task and is a distinct port
-  from PDF/DOCX storage, scanning and parsing.
-- Requests are HTTPS-only with a public-DNS check on every hop and the selected
-  address pinned into the TLS connection to prevent DNS rebinding.
-- The extractor is deterministic and non-executing. Raw HTML, IPs, headers and
-  remote responses are not persisted or handed to the question-generation LLM.
-- A controlled provider policy blocks LinkedIn and Indeed. `robots.txt` is
-  honored through the same outbound boundary; failure falls back to manual.
+- Clerk owns subscription/payment state; Prelude stores only a derived,
+  privacy-minimal projection and product usage.
+- Clerk's default organization plan maps to Prelude Free. The paid plan slug is
+  configurable and defaults to `v1-workspace`.
+- `past_due`, missing, unknown and provider-error states fail closed in
+  production. A canceled paid item remains entitled only until its period end.
+- Usage is derived from product rows. Candidate admission uses a serializable
+  transaction so concurrent final-slot attempts cannot exceed the limit.
+- Existing drafts and completed work stay accessible. Limits apply to newly
+  published roles, new candidate starts and recording creation.
+- Recording requires both candidate consent and a persisted per-session
+  entitlement.
+- Role creation, AI generation, editing, publication and reactivation share the
+  same owner/admin/recruiter permission and publication admission policy.
+- A safe Free projection is created during onboarding and reconciled from
+  Clerk, so webhook delivery order cannot strand a new organization.
+- Paid projections fail closed at period end or after a bounded reconciliation
+  age. Future paid items cannot override an active Free plan early.
 
 ## Validation target
 
-- Unit tests inject resolver, transport, robots policy and clock. CI has no
-  external web or LLM call.
-- Tests cover special/private IPs, redirects, robots, limits, hostile markup,
-  deterministic extraction, idempotency, review revisions and one Job creation.
-- Local smoke imports a public job page through the worker, reviews the draft,
-  creates one role with URL provenance, then cleans up its test data.
+- Pure policy tests cover every supported Clerk state and unknown input.
+- Adapter/webhook tests make no live paid Clerk calls.
+- Server tests cover organization isolation, quota boundaries, retries,
+  realtime failure and recording denial.
+- Browser smoke verifies local placeholder and configured billing fixtures.
+- Monorepo tests, lint, typecheck, Go tests and relevant builds are green.
+- A real PostgreSQL final-slot smoke proves two concurrent Free starts at usage
+  four produce exactly one session and one quota rejection.

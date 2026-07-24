@@ -9,6 +9,11 @@ const TEAM_MANAGER_ROLES: ReadonlySet<OrganizationRole> = new Set<OrganizationRo
   "owner",
   "admin",
 ]);
+const ROLE_MANAGER_ROLES: ReadonlySet<OrganizationRole> = new Set<OrganizationRole>([
+  "owner",
+  "admin",
+  "recruiter",
+]);
 
 // Roles a manager can pick from a normal role dropdown. Granting `owner` is an
 // explicit ownership transfer (owner-only), not a dropdown choice.
@@ -24,6 +29,10 @@ export function canManageTeam(role: OrganizationRole): boolean {
 
 export function canInviteMember(role: OrganizationRole): boolean {
   return canManageTeam(role);
+}
+
+export function canManageRoles(role: OrganizationRole): boolean {
+  return ROLE_MANAGER_ROLES.has(role);
 }
 
 /**

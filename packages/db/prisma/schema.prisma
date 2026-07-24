@@ -33,6 +33,7 @@ model Organization {
   roleIntakes            RoleIntake[]
   memberships            OrganizationMembership[]
   invitations            OrganizationInvitation[]
+  billingState           OrganizationBillingState?
 }
 
 model User {
@@ -293,6 +294,7 @@ model CandidateSession {
   resumeToken             String?                       @unique
   consentedAt             DateTime?
   consentCopyVersion      String?
+  recordingEntitled      Boolean                       @default(false)
   status                  String                        @default("created")
   reviewStatus            String                        @default("to_review")
   reviewNote              String?
@@ -316,12 +318,36 @@ model CandidateSession {
   reviewNoteUpdatedBy     User?                         @relation("CandidateSessionReviewNoteAuthor", fields: [reviewNoteUpdatedById], references: [id], onDelete: SetNull)
 
   @@index([organizationId, status, updatedAt])
+  @@index([organizationId, startedAt])
   @@index([organizationId, reviewStatus, updatedAt])
   @@index([jobId, status])
   @@index([interviewId, status])
   @@index([candidateInvitationId, status])
   @@index([reviewStatusUpdatedById])
   @@index([reviewNoteUpdatedById])
+}
+
+// Clerk owns billing state. This row is a privacy-minimal projection used for
+// low-latency product authorization in public candidate and realtime flows.
+// Payment methods, invoices, prices and raw provider payloads never live here.
+model OrganizationBillingState {
+  organizationId       String       @id
+  clerkSubscriptionId  String?
+  clerkPlanId          String?
+  planSlug             String?
+  planName             String?
+  state                String
+  subscriptionStatus   String?
+  subscriptionItemId   String?
+  subscriptionItemStatus String?
+  isFreeTrial          Boolean      @default(false)
+  periodStart          DateTime?
+  periodEnd            DateTime?
+  sourceUpdatedAt      DateTime
+  syncedAt             DateTime     @default(now())
+  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([state, periodEnd])
 }
 
 model CandidateSessionReviewEvent {

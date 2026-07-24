@@ -20,6 +20,11 @@
       "overrideRequiresAdmin": "Only a workspace owner or admin can override a compliance flag. Ask an admin to review and publish.",
       "overrideRateLimited": "You've reached the override limit for now — further overrides need a workspace admin to review."
     },
+    "roleManagement": {
+      "forbidden": "Only workspace owners, admins, and recruiters can manage roles.",
+      "publishedRoleLimitReached": "Your workspace has reached its published role limit. Manage billing to publish another role.",
+      "billingUnavailable": "Billing is unavailable for this workspace. Retry or ask the workspace owner to manage billing."
+    },
     "share": {
       "copyLink": "Copy candidate link",
       "copyLinkCopied": "Link copied",
@@ -232,6 +237,7 @@
       "inviteCreating": "Creating…",
       "inviteCreated": "Candidate link created. Copy it from the list.",
       "invitePausedNotice": "Resume this role before inviting new candidates.",
+      "roleReadOnlyNotice": "Your workspace role has read-only access to this role.",
       "invitationsTitle": "Candidate invitations",
       "invitationsDescription": "Every invited candidate gets a separate auditable link and lifecycle state.",
       "invitationsCount_one": "{{count}} link",
@@ -464,12 +470,33 @@
       },
       "billing": {
         "currentPlan": "Current plan",
-        "planName": "V1 workspace",
-        "planDescription": "Clerk Billing is not connected yet. Usage is tracked from workspace data.",
-        "managePlan": "Clerk Billing coming soon",
-        "clerkManaged": "Paid plans will be managed by Clerk Billing when billing is enabled.",
-        "interviewsThisMonth": "Interviews this month",
-        "activeRoles": "Active roles"
+        "description": "Plan entitlements and usage for this workspace.",
+        "canceledDescription": "Paid access remains available until the billing period ends. Free limits apply afterward.",
+        "pastDueDescription": "Existing work remains accessible, but new roles and candidate interviews are paused until billing is resolved.",
+        "unavailableDescription": "Existing work remains accessible. New plan-gated activity is paused while billing status is refreshed.",
+        "manageBilling": "Manage billing",
+        "nonOwnerManageHint": "Only the workspace owner can manage billing.",
+        "unconfiguredManageHint": "Billing is not configured in this environment.",
+        "localMockManageHint": "Billing management is unavailable in local mock mode.",
+        "period": "Billing period",
+        "candidateInterviews": "Candidate interviews",
+        "publishedRoles": "Published roles",
+        "usage": "{{used}} / {{limit}}",
+        "usageUnlimited": "{{used}} used",
+        "unlimited": "No limit",
+        "recording": "Interview recording",
+        "recordingDescription": "Recording access follows this workspace's plan entitlement.",
+        "included": "Included",
+        "notIncluded": "Not included",
+        "states": {
+          "active": "Active",
+          "canceled": "Canceled",
+          "free": "Free",
+          "past_due": "Past due",
+          "trialing": "Trial",
+          "unavailable": "Unavailable",
+          "unconfigured": "Not configured"
+        }
       }
     }
   }

@@ -32,9 +32,9 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
-// SetRecordingConsent records the recording-consent decision for a session. It
-// exists so tests can model consent; the Postgres store derives it from the
-// console's CandidateSession (consentedAt + consentCopyVersion) instead.
+// SetRecordingConsent records the recording gate result for a session. It
+// exists so tests can model consent and entitlement; the Postgres store derives
+// it from the console's CandidateSession instead.
 func (s *MemoryStore) SetRecordingConsent(sessionID string, consent application.RecordingConsent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

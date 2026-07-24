@@ -89,21 +89,7 @@ export async function POST(request: Request) {
       },
     );
   } catch {
-    if (prepared.productSession) {
-      await prisma.candidateSession.update({
-        data: { status: "failed" },
-        where: { id: prepared.productSession.id },
-      });
-    }
-    if (prepared.candidateInvitationId) {
-      await prisma.candidateInvitation.updateMany({
-        data: { status: "failed" },
-        where: {
-          id: prepared.candidateInvitationId,
-          status: { notIn: ["completed", "expired", "superseded"] },
-        },
-      });
-    }
+    await markProvisioningFailed(prepared);
 
     return NextResponse.json(
       { error: { code: "realtime_api_unavailable" } },
@@ -112,21 +98,7 @@ export async function POST(request: Request) {
   }
 
   if (!realtimeResponse.ok) {
-    if (prepared.productSession) {
-      await prisma.candidateSession.update({
-        data: { status: "failed" },
-        where: { id: prepared.productSession.id },
-      });
-    }
-    if (prepared.candidateInvitationId) {
-      await prisma.candidateInvitation.updateMany({
-        data: { status: "failed" },
-        where: {
-          id: prepared.candidateInvitationId,
-          status: { notIn: ["completed", "expired", "superseded"] },
-        },
-      });
-    }
+    await markProvisioningFailed(prepared);
 
     return NextResponse.json(
       {
@@ -139,7 +111,15 @@ export async function POST(request: Request) {
     );
   }
 
-  const payload = (await realtimeResponse.json()) as RealtimeSessionResponse;
+  const rawPayload = await realtimeResponse.json().catch(() => null);
+  if (!isRealtimeSessionResponse(rawPayload)) {
+    await markProvisioningFailed(prepared);
+    return NextResponse.json(
+      { error: { code: "realtime_api_invalid_response" } },
+      { status: 502 },
+    );
+  }
+  const payload = rawPayload;
 
   if (prepared.productSession) {
     const productStatus = toProductCandidateLifecycleStatus(
@@ -170,21 +150,7 @@ export async function POST(request: Request) {
     console.error(
       "[live-interview] Refusing a mock LiveKit token (mock_lk_*) outside an explicitly mock-enabled, non-production environment.",
     );
-    if (prepared.productSession) {
-      await prisma.candidateSession.update({
-        data: { status: "failed" },
-        where: { id: prepared.productSession.id },
-      });
-    }
-    if (prepared.candidateInvitationId) {
-      await prisma.candidateInvitation.updateMany({
-        data: { status: "failed" },
-        where: {
-          id: prepared.candidateInvitationId,
-          status: { notIn: ["completed", "expired", "superseded"] },
-        },
-      });
-    }
+    await markProvisioningFailed(prepared);
 
     return NextResponse.json(
       {
@@ -220,4 +186,59 @@ export async function POST(request: Request) {
       isMock,
     },
   });
+}
+
+type PreparedCandidateSession = Extract<
+  Awaited<ReturnType<typeof prepareCandidateSession>>,
+  { ok: true }
+>;
+
+async function markProvisioningFailed(prepared: PreparedCandidateSession) {
+  if (prepared.productSession) {
+    await prisma.candidateSession.update({
+      data: { status: "failed" },
+      where: { id: prepared.productSession.id },
+    });
+  }
+  if (prepared.candidateInvitationId) {
+    await prisma.candidateInvitation.updateMany({
+      data: { status: "failed" },
+      where: {
+        id: prepared.candidateInvitationId,
+        status: { notIn: ["completed", "expired", "superseded"] },
+      },
+    });
+  }
+}
+
+function isRealtimeSessionResponse(
+  value: unknown,
+): value is RealtimeSessionResponse {
+  if (!isRecord(value) || !isRecord(value.session)) {
+    return false;
+  }
+  if (!isRecord(value.livekit_join)) {
+    return false;
+  }
+
+  return (
+    isNonEmptyString(value.session.id) &&
+    isNonEmptyString(value.session.status) &&
+    isNonEmptyString(value.session.livekit_room_name) &&
+    Array.isArray(value.session.allowed_modalities) &&
+    value.session.allowed_modalities.every(isNonEmptyString) &&
+    isNonEmptyString(value.livekit_join.room_name) &&
+    isNonEmptyString(value.livekit_join.url) &&
+    isNonEmptyString(value.livekit_join.token) &&
+    isNonEmptyString(value.livekit_join.participant) &&
+    isNonEmptyString(value.livekit_join.expires_at)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }

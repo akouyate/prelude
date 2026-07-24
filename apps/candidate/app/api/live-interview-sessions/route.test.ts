@@ -1,11 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+const getWorkspaceBillingMock = vi.hoisted(() => vi.fn());
+
 const prismaMock = vi.hoisted(() => ({
+  $transaction: vi.fn(
+    async (operation: (transaction: typeof prismaMock) => unknown) =>
+      operation(prismaMock),
+  ),
   candidateInvitation: {
     findUnique: vi.fn(),
     updateMany: vi.fn(),
   },
   candidateSession: {
+    count: vi.fn(),
     create: vi.fn(),
     findFirst: vi.fn(),
     update: vi.fn(),
@@ -19,15 +26,23 @@ vi.mock("@prelude/db", () => ({
   prisma: prismaMock,
 }));
 
+vi.mock("@prelude/billing/server", () => ({
+  getWorkspaceBilling: getWorkspaceBillingMock,
+}));
+
 import { POST } from "./route";
 
 describe("POST /api/live-interview-sessions", () => {
   beforeEach(() => {
     vi.stubEnv("DATABASE_URL", "postgresql://test:test@localhost:5432/test");
     vi.stubGlobal("fetch", vi.fn());
+    getWorkspaceBillingMock.mockReset();
+    getWorkspaceBillingMock.mockResolvedValue(unconfiguredBilling());
     prismaMock.candidateInvitation.findUnique.mockReset();
     prismaMock.candidateInvitation.updateMany.mockReset();
     prismaMock.interview.findFirst.mockReset();
+    prismaMock.candidateSession.count.mockReset();
+    prismaMock.candidateSession.count.mockResolvedValue(0);
     prismaMock.candidateSession.create.mockReset();
     prismaMock.candidateSession.findFirst.mockReset();
     prismaMock.candidateSession.update.mockReset();
@@ -97,6 +112,40 @@ describe("POST /api/live-interview-sessions", () => {
       candidate_id: "cs_123",
       interview_plan_id: "int_123",
     });
+  });
+
+  it("blocks realtime provisioning when the candidate-start quota is reached", async () => {
+    getWorkspaceBillingMock.mockResolvedValueOnce({
+      ...unconfiguredBilling(),
+      accessAllowed: true,
+      entitlements: {
+        activeRoleLimit: 25,
+        candidateInterviewLimit: 0,
+        recording: true,
+      },
+      planKey: "v1_workspace",
+      planName: "V1 Workspace",
+      state: "active",
+    });
+    prismaMock.candidateInvitation.findUnique.mockResolvedValueOnce(null);
+    prismaMock.interview.findFirst.mockResolvedValueOnce(publishedInterview());
+    prismaMock.candidateSession.findFirst.mockResolvedValueOnce(null);
+
+    const response = await POST(
+      request({
+        candidateEmail: "ada@example.com",
+        candidateName: "Ada",
+        candidateToken: "iv_public",
+        consentAccepted: true,
+      }),
+    );
+
+    expect(response.status).toBe(402);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "candidate_interview_limit_reached" },
+    });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(prismaMock.candidateSession.create).not.toHaveBeenCalled();
   });
 
   it("creates a consented candidate session from a candidate invitation token", async () => {
@@ -331,6 +380,41 @@ describe("POST /api/live-interview-sessions", () => {
     });
   });
 
+  it("frees quota when realtime returns a malformed success payload", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValueOnce(null);
+    prismaMock.interview.findFirst.mockResolvedValueOnce(publishedInterview());
+    prismaMock.candidateSession.findFirst.mockResolvedValueOnce(null);
+    prismaMock.candidateSession.create.mockResolvedValueOnce(
+      candidateSession({ status: "starting" }),
+    );
+    prismaMock.candidateSession.update.mockResolvedValueOnce({
+      ...candidateSession(),
+      status: "failed",
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response("not-json", {
+        headers: { "content-type": "application/json" },
+        status: 200,
+      }),
+    );
+
+    const response = await POST(
+      request({
+        candidateToken: "iv_public",
+        consentAccepted: true,
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    await expect(response.json()).resolves.toEqual({
+      error: { code: "realtime_api_invalid_response" },
+    });
+    expect(prismaMock.candidateSession.update).toHaveBeenCalledWith({
+      data: { status: "failed" },
+      where: { id: "cs_123" },
+    });
+  });
+
   it("does not overwrite a completed attempt when a stale resume token is reused", async () => {
     prismaMock.candidateInvitation.findUnique.mockResolvedValueOnce(null);
     prismaMock.interview.findFirst.mockResolvedValueOnce(publishedInterview());
@@ -534,6 +618,30 @@ function candidateSession(overrides: Record<string, unknown> = {}) {
     startedAt: new Date("2026-06-20T10:00:00.000Z"),
     status: "starting",
     ...overrides,
+  };
+}
+
+function unconfiguredBilling() {
+  return {
+    accessAllowed: true,
+    entitlements: {
+      activeRoleLimit: Number.MAX_SAFE_INTEGER,
+      candidateInterviewLimit: Number.MAX_SAFE_INTEGER,
+      recording: true,
+    },
+    isFreeTrial: false,
+    periodEnd: null,
+    periodStart: null,
+    planId: null,
+    planKey: "unknown",
+    planName: "Billing not configured",
+    planSlug: null,
+    sourceUpdatedAt: new Date("2026-07-24T10:00:00.000Z"),
+    state: "unconfigured",
+    subscriptionId: null,
+    subscriptionItemId: null,
+    subscriptionItemStatus: null,
+    subscriptionStatus: null,
   };
 }
 

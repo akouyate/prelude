@@ -50,7 +50,7 @@ func (f *fakeEgress) StopEgress(_ context.Context, egressID string) error {
 	return f.stopErr
 }
 
-func newRecordingService(t *testing.T, consent bool) (*application.Service, *store.MemoryStore, *fakeEgress, application.CreateSessionOutput) {
+func newRecordingService(t *testing.T, consent, entitled bool) (*application.Service, *store.MemoryStore, *fakeEgress, application.CreateSessionOutput) {
 	t.Helper()
 	clock := fixedClock{now: time.Date(2026, 6, 23, 10, 0, 0, 0, time.UTC)}
 	repo := store.NewMemoryStore()
@@ -70,8 +70,9 @@ func newRecordingService(t *testing.T, consent bool) (*application.Service, *sto
 	}
 	if consent {
 		repo.SetRecordingConsent(session.Session.ID, application.RecordingConsent{
-			Granted:     true,
-			CopyVersion: "candidate-consent-v2",
+			Granted:           true,
+			RecordingEntitled: entitled,
+			CopyVersion:       "candidate-consent-v2",
 		})
 	}
 
@@ -113,8 +114,8 @@ func ingestMediaReady(t *testing.T, service *application.Service, sessionID stri
 	}
 }
 
-func TestServiceStartsRecordingWhenCandidateAudioReady(t *testing.T) {
-	service, repo, egress, session := newRecordingService(t, true)
+func TestServiceStartsRecordingWhenEntitledAndCandidateAudioReady(t *testing.T) {
+	service, repo, egress, session := newRecordingService(t, true, true)
 	sessionID := session.Session.ID
 
 	ingestJoined(t, service, sessionID, 1, "evt_joined")
@@ -146,7 +147,7 @@ func TestServiceStartsRecordingWhenCandidateAudioReady(t *testing.T) {
 }
 
 func TestServiceDoesNotRecordWithoutConsent(t *testing.T) {
-	service, repo, egress, session := newRecordingService(t, false)
+	service, repo, egress, session := newRecordingService(t, false, false)
 	sessionID := session.Session.ID
 
 	ingestJoined(t, service, sessionID, 1, "evt_joined")
@@ -160,16 +161,32 @@ func TestServiceDoesNotRecordWithoutConsent(t *testing.T) {
 	}
 }
 
+func TestServiceDoesNotRecordWhenConsentedButNotEntitled(t *testing.T) {
+	service, repo, egress, session := newRecordingService(t, true, false)
+	sessionID := session.Session.ID
+
+	ingestJoined(t, service, sessionID, 1, "evt_joined")
+	ingestMediaReady(t, service, sessionID, 2, "evt_media", true)
+
+	if egress.attempts != 0 {
+		t.Fatalf("expected no egress attempt without recording entitlement, got %d", egress.attempts)
+	}
+	if _, found, _ := repo.ActiveRecordingForSession(context.Background(), sessionID); found {
+		t.Fatal("expected no recording without recording entitlement")
+	}
+}
+
 func TestServiceDoesNotRecordWithPreAudioConsentVersion(t *testing.T) {
 	// candidate-consent-v1 disclosed transcript evidence only — not that the
 	// candidate's voice would be audio-recorded. Recording such a session would
 	// exceed the consented scope, so consent alone is not enough: the copy version
 	// must be one that disclosed audio recording.
-	service, repo, egress, session := newRecordingService(t, false)
+	service, repo, egress, session := newRecordingService(t, false, false)
 	sessionID := session.Session.ID
 	repo.SetRecordingConsent(sessionID, application.RecordingConsent{
-		Granted:     true,
-		CopyVersion: "candidate-consent-v1",
+		Granted:           true,
+		RecordingEntitled: true,
+		CopyVersion:       "candidate-consent-v1",
 	})
 
 	ingestJoined(t, service, sessionID, 1, "evt_joined")
@@ -184,7 +201,7 @@ func TestServiceDoesNotRecordWithPreAudioConsentVersion(t *testing.T) {
 }
 
 func TestServiceDoesNotRecordWhenAudioNotReady(t *testing.T) {
-	service, repo, egress, session := newRecordingService(t, true)
+	service, repo, egress, session := newRecordingService(t, true, true)
 	sessionID := session.Session.ID
 
 	ingestJoined(t, service, sessionID, 1, "evt_joined")
@@ -199,7 +216,7 @@ func TestServiceDoesNotRecordWhenAudioNotReady(t *testing.T) {
 }
 
 func TestServiceDoesNotStartSecondRecordingWhileActive(t *testing.T) {
-	service, _, egress, session := newRecordingService(t, true)
+	service, _, egress, session := newRecordingService(t, true, true)
 	sessionID := session.Session.ID
 
 	ingestJoined(t, service, sessionID, 1, "evt_joined")
@@ -213,7 +230,7 @@ func TestServiceDoesNotStartSecondRecordingWhileActive(t *testing.T) {
 }
 
 func TestServiceRecordingFailureDoesNotBreakIngestion(t *testing.T) {
-	service, repo, egress, session := newRecordingService(t, true)
+	service, repo, egress, session := newRecordingService(t, true, true)
 	egress.err = errors.New("egress unavailable")
 	sessionID := session.Session.ID
 
@@ -237,7 +254,7 @@ func TestServiceRecordingFailureDoesNotBreakIngestion(t *testing.T) {
 }
 
 func TestServiceStopsRecordingOnSessionCompleted(t *testing.T) {
-	service, _, egress, session := newRecordingService(t, true)
+	service, _, egress, session := newRecordingService(t, true, true)
 	sessionID := session.Session.ID
 
 	ingestJoined(t, service, sessionID, 1, "evt_joined")

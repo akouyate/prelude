@@ -107,6 +107,16 @@ Production never allows the mock provider. For real auth E2E, follow Clerk's
 testing guidance with fixed OTP test identities, short-lived session tokens, or
 Clerk testing tokens instead of the local mock.
 
+Clerk Billing is enabled with `CLERK_BILLING_ENABLED=true`. The organization
+plan slug defaults to `v1-workspace` and can be changed with
+`CLERK_BILLING_V1_PLAN_SLUG`. Paid projections expire locally at their Clerk
+period end or after 35 days without reconciliation, whichever comes first.
+Tune the maximum fail-closed window with
+`CLERK_BILLING_PROJECTION_MAX_AGE_SECONDS`. Keep Billing disabled in local mock
+mode; Prelude then shows an explicit unmetered placeholder and does not expose
+payment actions. Production fails closed when Billing is disabled or a paid
+projection is unavailable or stale.
+
 Console Playwright tests default to `CONSOLE_AUTH_PROVIDER=mock` for fast product
 smoke coverage. To exercise real Clerk screens, run with
 `CONSOLE_AUTH_PROVIDER=clerk` and dev-instance Clerk keys. The console uses

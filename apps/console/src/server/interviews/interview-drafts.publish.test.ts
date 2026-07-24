@@ -12,6 +12,10 @@ const draftRecord = vi.hoisted(() => ({
   current: null as Record<string, unknown> | null,
 }));
 
+const billingRecord = vi.hoisted(() => ({
+  current: {} as Record<string, unknown>,
+}));
+
 const tx = vi.hoisted(() => ({
   candidateInvitation: {
     create: vi.fn(),
@@ -19,6 +23,7 @@ const tx = vi.hoisted(() => ({
     findUnique: vi.fn(),
   },
   interview: {
+    count: vi.fn(),
     create: vi.fn(),
     findUnique: vi.fn(),
     update: vi.fn(),
@@ -29,6 +34,9 @@ const tx = vi.hoisted(() => ({
   },
   complianceOverrideEvent: {
     create: vi.fn(),
+  },
+  job: {
+    count: vi.fn(),
   },
 }));
 
@@ -43,6 +51,10 @@ const prismaMock = vi.hoisted(() => ({
 
 vi.mock("@prelude/db", () => ({
   prisma: prismaMock,
+}));
+
+vi.mock("@prelude/billing/server", () => ({
+  getWorkspaceBilling: vi.fn(async () => billingRecord.current),
 }));
 
 vi.mock("server-only", () => ({}));
@@ -160,8 +172,47 @@ const passThroughClassifier = (): ProtectedTopicClassifier => ({
   provider: "test",
 });
 
+function paidBilling(): Record<string, unknown> {
+  return {
+    accessAllowed: true,
+    entitlements: {
+      activeRoleLimit: 25,
+      candidateInterviewLimit: 250,
+      recording: true,
+    },
+    isFreeTrial: false,
+    periodEnd: new Date("2026-08-01T00:00:00.000Z"),
+    periodStart: new Date("2026-07-01T00:00:00.000Z"),
+    planId: "plan_1",
+    planKey: "v1_workspace",
+    planName: "V1 Workspace",
+    planSlug: "v1-workspace",
+    sourceUpdatedAt: new Date("2026-07-24T10:00:00.000Z"),
+    state: "active",
+    subscriptionId: "sub_1",
+    subscriptionItemId: "item_1",
+    subscriptionItemStatus: "active",
+    subscriptionStatus: "active",
+  };
+}
+
+function unconfiguredBilling(): Record<string, unknown> {
+  return {
+    ...paidBilling(),
+    entitlements: {
+      activeRoleLimit: Number.MAX_SAFE_INTEGER,
+      candidateInterviewLimit: Number.MAX_SAFE_INTEGER,
+      recording: true,
+    },
+    planKey: "unknown",
+    planName: "Billing not configured",
+    state: "unconfigured",
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  billingRecord.current = unconfiguredBilling();
   draftRecord.current = publishableDraft();
   tx.interviewDraft.findFirst.mockImplementation(
     async () => draftRecord.current,
@@ -173,6 +224,7 @@ beforeEach(() => {
   });
   tx.candidateInvitation.findFirst.mockResolvedValue(null);
   tx.candidateInvitation.findUnique.mockResolvedValue(null);
+  tx.interview.count.mockResolvedValue(0);
   tx.interview.findUnique.mockResolvedValue(null);
   tx.interview.update.mockResolvedValue({});
   tx.interview.create.mockImplementation(
@@ -185,7 +237,88 @@ beforeEach(() => {
     }),
   );
   tx.complianceOverrideEvent.create.mockResolvedValue({});
+  tx.job.count.mockResolvedValue(0);
   prismaMock.complianceOverrideEvent.count.mockResolvedValue(0);
+});
+
+describe("publishInterviewDraft billing entitlement", () => {
+  it("rejects viewers before classification or persistence", async () => {
+    vi.mocked(getCompletedOrganizationScope).mockResolvedValueOnce({
+      organizationId: "org_123",
+      role: "viewer",
+      userId: "user_viewer",
+    } as never);
+    const classifier = passThroughClassifier();
+
+    const result = await publishInterviewDraft("draft_1", classifier);
+
+    expect(result).toMatchObject({ ok: false });
+    expect(classifier.classify).not.toHaveBeenCalled();
+    expect(prismaMock.$transaction).not.toHaveBeenCalled();
+    expect(tx.interview.create).not.toHaveBeenCalled();
+  });
+
+  it("blocks a new active role exactly at the workspace limit", async () => {
+    billingRecord.current = paidBilling();
+    tx.job.count.mockResolvedValueOnce(25);
+
+    const result = await publishInterviewDraft(
+      "draft_1",
+      passThroughClassifier(),
+    );
+
+    expect(result).toEqual({
+      code: "published_role_limit_reached",
+      error:
+        "Your workspace has reached its published role limit. Manage billing to publish another role.",
+      ok: false,
+    });
+    expect(tx.interview.create).not.toHaveBeenCalled();
+    expect(tx.interviewDraft.update).not.toHaveBeenCalled();
+  });
+
+  it("does not consume another slot when the role is already active", async () => {
+    billingRecord.current = paidBilling();
+    tx.interview.count.mockResolvedValueOnce(1);
+    tx.job.count.mockResolvedValueOnce(25);
+
+    const result = await publishInterviewDraft(
+      "draft_1",
+      passThroughClassifier(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(tx.job.count).not.toHaveBeenCalled();
+    expect(tx.interview.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the billing projection is unavailable", async () => {
+    billingRecord.current = {
+      ...paidBilling(),
+      accessAllowed: false,
+      entitlements: {
+        activeRoleLimit: 0,
+        candidateInterviewLimit: 0,
+        recording: false,
+      },
+      planKey: "unknown",
+      planName: "Billing unavailable",
+      state: "unavailable",
+    };
+
+    const result = await publishInterviewDraft(
+      "draft_1",
+      passThroughClassifier(),
+    );
+
+    expect(result).toEqual({
+      code: "billing_unavailable",
+      error:
+        "Billing is unavailable for this workspace. Retry or ask the workspace owner to manage billing.",
+      ok: false,
+    });
+    expect(tx.interview.create).not.toHaveBeenCalled();
+  });
 });
 
 describe("publishInterviewDraft N6 classifier wiring", () => {

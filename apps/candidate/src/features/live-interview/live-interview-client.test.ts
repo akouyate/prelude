@@ -186,6 +186,15 @@ describe("live interview client", () => {
     ).rejects.toThrow("candidate_session_expired");
   });
 
+  it("uses neutral candidate-facing copy for workspace billing blocks", () => {
+    expect(
+      toCandidateError(new Error("candidate_interview_limit_reached")),
+    ).toContain("contact the recruiter");
+    expect(toCandidateError(new Error("billing_unavailable"))).toContain(
+      "temporarily unavailable",
+    );
+  });
+
   it("announces candidate readiness when connecting to a mock room", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse({ ok: true }))

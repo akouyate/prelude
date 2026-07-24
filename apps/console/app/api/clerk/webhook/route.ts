@@ -1,4 +1,5 @@
 import { verifyWebhook } from "@clerk/nextjs/webhooks";
+import { syncClerkOrganizationBilling } from "@prelude/billing/server";
 import type { NextRequest } from "next/server";
 
 import {
@@ -29,6 +30,13 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    if (intent.kind === "billing") {
+      const result = await syncClerkOrganizationBilling({
+        clerkOrganizationId: intent.clerkOrganizationId,
+        sourceUpdatedAt: intent.sourceUpdatedAt,
+      });
+      return Response.json(result);
+    }
     const result = await applyClerkSyncIntent(prismaClerkSyncStore, intent);
     return Response.json(result);
   } catch (error) {

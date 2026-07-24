@@ -132,6 +132,35 @@ describe("planClerkWebhookSync", () => {
       planClerkWebhookSync({ type: "organization.created", data: { id: "org_x" } }),
     ).toBeNull();
   });
+
+  it("plans subscription and subscription-item events as canonical billing refreshes", () => {
+    expect(
+      planClerkWebhookSync({
+        type: "subscription.updated",
+        data: {
+          payer: { organization_id: "org_clerk_1" },
+          updated_at: Date.parse("2026-07-24T10:00:00.000Z"),
+        },
+      }),
+    ).toEqual({
+      kind: "billing",
+      clerkOrganizationId: "org_clerk_1",
+      sourceUpdatedAt: new Date("2026-07-24T10:00:00.000Z"),
+    });
+
+    expect(
+      planClerkWebhookSync({
+        type: "subscriptionItem.canceled",
+        data: {
+          organization_id: "org_clerk_1",
+          updated_at: Date.parse("2026-07-24T11:00:00.000Z"),
+        },
+      }),
+    ).toMatchObject({
+      kind: "billing",
+      clerkOrganizationId: "org_clerk_1",
+    });
+  });
 });
 
 function fakeStore(overrides: Partial<ClerkSyncStore> = {}): ClerkSyncStore {
