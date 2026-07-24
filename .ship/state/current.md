@@ -27,7 +27,7 @@ enforcement.
 - [x] Implement Settings billing UI and portal handoff
 - [x] Implement role, candidate-session and recording enforcement
 - [x] Review, simplify and validate
-- [ ] Deliver PR and close the issue
+- [x] Deliver draft PR; issue closes automatically on merge
 
 ## Decisions
 
