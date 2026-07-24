@@ -1,31 +1,30 @@
 "use client";
 
 import * as React from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  Attachment,
-  NavArrowLeft,
-  RefreshCircle,
-  WarningTriangle,
-} from "iconoir-react";
+import { Attachment, WarningTriangle } from "iconoir-react";
+import { useTranslation } from "react-i18next";
 
-import { Button, Notice, cn } from "@prelude/ui";
+import { Button, Notice } from "@prelude/ui";
 import type { RoleIntakeSummary } from "@prelude/contracts";
 
 import {
-  consumeRoleIntakeAction,
   createRoleIntakeUploadAction,
   finalizeRoleIntakeUploadAction,
-  getRoleIntakeSummaryAction,
-  saveRoleIntakeReviewAction,
 } from "../../server/role-intakes/role-intake-actions";
 import {
-  RoleIntakeReview,
-  toRoleIntakeReviewDraft,
-} from "./role-intake-review";
-
-const inFlightStatuses = new Set(["uploading", "quarantined", "queued", "processing"]);
+  classifyRoleIntakeFailure,
+  resolveRoleIntakeContentType,
+  validateRoleIntakeSelection,
+} from "./role-intake-experience";
+import { RoleIntakeDropzone } from "./role-intake-dropzone";
+import {
+  RoleIntakePrivacyNote,
+  RoleIntakeProgress,
+  RoleIntakeShell,
+} from "./role-intake-layout";
+import { RoleIntakeReview } from "./role-intake-review";
+import { useRoleIntakeFlow } from "./use-role-intake-flow";
 
 export function RoleIntakeUploadFlow({
   initialIntake,
@@ -33,51 +32,54 @@ export function RoleIntakeUploadFlow({
   initialIntake?: RoleIntakeSummary;
 }) {
   const router = useRouter();
-  const [intake, setIntake] = React.useState(initialIntake);
-  const [error, setError] = React.useState<string | null>(null);
+  const { t } = useTranslation();
   const [isUploading, setIsUploading] = React.useState(false);
-  const [isCreatingRole, setIsCreatingRole] = React.useState(false);
-  const [review, setReview] = React.useState(() => toRoleIntakeReviewDraft(initialIntake));
-  const resumeIntakeId = intake?.duplicateOfIntakeId;
-
-  React.useEffect(() => {
-    setReview(toRoleIntakeReviewDraft(intake));
-  }, [intake?.id]);
-
-  React.useEffect(() => {
-    if (!intake || !inFlightStatuses.has(intake.status)) {
-      return;
-    }
-    const timer = window.setInterval(async () => {
-      const result = await getRoleIntakeSummaryAction(intake.id);
-      if (result.ok) {
-        setIntake(result.value);
-      }
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [intake]);
+  const {
+    createRole,
+    error,
+    intake,
+    isCreatingRole,
+    review,
+    setError,
+    setIntake,
+    setReview,
+    startManually,
+  } = useRoleIntakeFlow(initialIntake);
 
   const upload = async (file: File) => {
     setError(null);
+    const contentType =
+      resolveRoleIntakeContentType(file.name, file.type) ?? file.type;
+    const issue = validateRoleIntakeSelection({
+      byteSize: file.size,
+      contentType,
+      fileName: file.name,
+    });
+    if (issue) {
+      setError(t(`roleIntake.upload.errors.${issue}`));
+      return;
+    }
     setIsUploading(true);
     try {
       const created = await createRoleIntakeUploadAction({
         byteSize: file.size,
-        contentType: file.type,
+        contentType,
         fileName: file.name,
       });
       if (!created.ok) {
         setError(created.error);
         return;
       }
+      setIntake(created.value.intake);
 
       const response = await fetch(created.value.uploadUrl, {
         body: file,
-        headers: { "content-type": file.type },
+        headers: { "content-type": contentType },
         method: "PUT",
       });
       if (!response.ok) {
-        setError("The private upload did not finish. Please choose the file again.");
+        setIntake(undefined);
+        setError(t("roleIntake.upload.errors.uploadFailed"));
         return;
       }
 
@@ -89,36 +91,10 @@ export function RoleIntakeUploadFlow({
       setIntake(finalized.value);
       router.replace(`/roles/new?source=upload&intakeId=${encodeURIComponent(finalized.value.id)}`);
     } catch {
-      setError("The private upload did not finish. Please choose the file again.");
+      setIntake(undefined);
+      setError(t("roleIntake.upload.errors.uploadFailed"));
     } finally {
       setIsUploading(false);
-    }
-  };
-
-  const createRole = async () => {
-    if (!intake) {
-      return;
-    }
-    setError(null);
-    setIsCreatingRole(true);
-    try {
-      const saved = await saveRoleIntakeReviewAction({
-        expectedReviewVersion: intake.reviewVersion,
-        intakeId: intake.id,
-        reviewedDraft: review,
-      });
-      if (!saved.ok) {
-        setError(saved.error);
-        return;
-      }
-      const consumed = await consumeRoleIntakeAction(intake.id);
-      if (!consumed.ok) {
-        setError(consumed.error);
-        return;
-      }
-      router.push(`/roles/new?jobId=${encodeURIComponent(consumed.value.jobId)}`);
-    } finally {
-      setIsCreatingRole(false);
     }
   };
 
@@ -135,114 +111,73 @@ export function RoleIntakeUploadFlow({
     );
   }
 
+  const failureAction = intake
+    ? classifyRoleIntakeFailure(
+        intake.failureCode,
+        intake.duplicateOfIntakeId,
+      )
+    : "retry";
+
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-3xl items-center px-6 py-20 sm:px-10">
-      <section className="w-full rounded-[32px] border border-ink-200 bg-white/82 p-6 sm:p-10">
-        <Link
-          className="inline-flex cursor-pointer items-center gap-1.5 text-sm font-medium text-ink-600 transition hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-          href="/roles/new"
-        >
-          <NavArrowLeft aria-hidden="true" className="h-4 w-4" />
-          Back
-        </Link>
-        <div className="mt-10">
-          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-[#eef0e3] text-olive-900">
-            <Attachment aria-hidden="true" className="h-6 w-6" />
-          </span>
-          <h1 className="mt-5 font-display text-4xl font-medium tracking-normal text-ink-950">
-            Import a role brief
-          </h1>
-          <p className="mt-3 max-w-xl text-base leading-7 text-ink-600">
-            Upload a PDF or DOCX. Prelude checks it privately, extracts text, and lets you verify the role before it becomes visible.
-          </p>
-        </div>
-
-        {intake ? (
-          <RoleIntakeProgress intake={intake} />
-        ) : (
-          <label
-            className={cn(
-              "mt-10 flex min-h-52 cursor-pointer flex-col items-center justify-center rounded-3xl border border-dashed border-ink-300 bg-[#fbfaf6] px-6 text-center transition",
-              "hover:border-ink-900 hover:bg-white focus-within:border-ink-900 focus-within:ring-2 focus-within:ring-olive-300",
-              isUploading && "pointer-events-none opacity-60",
-            )}
-          >
-            <Attachment aria-hidden="true" className="h-7 w-7 text-ink-700" />
-            <span className="mt-4 text-base font-semibold text-ink-900">
-              {isUploading ? "Preparing private upload..." : "Choose a PDF or DOCX"}
-            </span>
-            <span className="mt-2 text-sm text-ink-600">Up to 10 MB. Text documents only.</span>
-            <input
-              accept="application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-              className="sr-only"
-              disabled={isUploading}
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) {
-                  void upload(file);
-                }
-                event.currentTarget.value = "";
-              }}
-              type="file"
+    <RoleIntakeShell
+      description={t("roleIntake.upload.description")}
+      icon={<Attachment aria-hidden="true" className="h-6 w-6" />}
+      title={t("roleIntake.upload.title")}
+    >
+      {!intake ? (
+        <RoleIntakeDropzone
+          disabled={isUploading}
+          onSelect={(file) => void upload(file)}
+        />
+      ) : intake.status === "failed" ? (
+        <section className="mt-10 rounded-[24px] border border-coral-100 bg-coral-50 p-5 sm:p-6">
+          <div className="flex items-start gap-3">
+            <WarningTriangle
+              aria-hidden="true"
+              className="mt-0.5 h-5 w-5 shrink-0 text-coral-700"
             />
-          </label>
-        )}
-
-        {error ? <Notice className="mt-5" tone="danger">{error}</Notice> : null}
-        {intake?.status === "failed" ? (
-          <div className="mt-6 flex flex-wrap gap-3">
-            {resumeIntakeId ? (
+            <div>
+              <h2 className="font-semibold text-ink-900">
+                {t(`roleIntake.failure.${failureAction}.title`)}
+              </h2>
+              <p className="mt-1 text-sm leading-6 text-ink-600">
+                {t(`roleIntake.failure.${failureAction}.description`)}
+              </p>
+            </div>
+          </div>
+          <div className="mt-5 flex flex-wrap gap-3">
+            {failureAction === "resume" && intake.duplicateOfIntakeId ? (
               <Button
                 onClick={() =>
                   router.push(
-                    `/roles/new?source=upload&intakeId=${encodeURIComponent(resumeIntakeId)}`,
+                    `/roles/new?source=upload&intakeId=${encodeURIComponent(intake.duplicateOfIntakeId!)}`,
                   )
                 }
-                variant="secondary"
               >
-                Resume existing import
+                {t("roleIntake.failure.resume.action")}
               </Button>
             ) : null}
             <Button onClick={() => setIntake(undefined)} variant="secondary">
-              Choose another file
+              {t("roleIntake.failure.chooseAnother")}
             </Button>
-            <Button onClick={() => router.push("/roles/new?source=manual")}>Start manually</Button>
+            <Button onClick={() => void startManually()}>
+              {t("roleIntake.failure.startManual")}
+            </Button>
           </div>
-        ) : null}
-      </section>
-    </main>
-  );
-}
-
-function RoleIntakeProgress({ intake }: { intake: RoleIntakeSummary }) {
-  const isFailed = intake.status === "failed";
-  const resumeIntakeId = intake.duplicateOfIntakeId;
-  const icon = isFailed ? (
-    <WarningTriangle aria-hidden="true" className="h-5 w-5" />
-  ) : (
-    <RefreshCircle aria-hidden="true" className="h-5 w-5 animate-spin" />
-  );
-  const title = isFailed
-    ? resumeIntakeId
-      ? "An existing import is available"
-      : "This document needs another try"
-    : "Checking your role brief";
-  const copy = isFailed
-    ? resumeIntakeId
-      ? "This exact document already has a private intake. Resume it instead of creating a duplicate role."
-      : "No role was created. The original file has been removed from private staging."
-    : "Prelude is checking the file and extracting only the role details. This page updates automatically.";
-
-  return (
-    <div className="mt-10 rounded-3xl border border-ink-200 bg-[#fbfaf6] p-5">
-      <div className="flex items-start gap-3">
-        <span className={cn("mt-0.5 text-olive-800", isFailed && "text-coral-700")}>{icon}</span>
-        <div>
-          <p className="font-semibold text-ink-900">{title}</p>
-          <p className="mt-1 text-sm leading-6 text-ink-600">{intake.originalFileName}</p>
-          <p className="mt-2 text-sm leading-6 text-ink-600">{copy}</p>
-        </div>
-      </div>
-    </div>
+        </section>
+      ) : (
+        <RoleIntakeProgress intake={intake} />
+      )}
+      {intake ? (
+        <RoleIntakePrivacyNote retention={intake.sourceRetention} />
+      ) : (
+        <RoleIntakePrivacyNote retention="pending_deletion" />
+      )}
+      {error ? (
+        <Notice aria-live="assertive" className="mt-5" role="alert" tone="danger">
+          {error}
+        </Notice>
+      ) : null}
+    </RoleIntakeShell>
   );
 }

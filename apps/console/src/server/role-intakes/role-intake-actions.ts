@@ -10,6 +10,7 @@ import {
   createRoleIntakeUpload,
   finalizeRoleIntakeUpload,
   getRoleIntakeSummary,
+  recordRoleIntakeManualFallback,
   saveRoleIntakeReview,
 } from "./role-intake-service";
 
@@ -35,6 +36,11 @@ export async function finalizeRoleIntakeUploadAction(intakeId: string) {
 export async function getRoleIntakeSummaryAction(intakeId: string) {
   const scope = await getCompletedOrganizationScope();
   return getRoleIntakeSummary(scope, intakeId);
+}
+
+export async function recordRoleIntakeManualFallbackAction(intakeId: string) {
+  const scope = await getCompletedOrganizationScope();
+  return recordRoleIntakeManualFallback(scope, intakeId);
 }
 
 export async function saveRoleIntakeReviewAction(input: {
