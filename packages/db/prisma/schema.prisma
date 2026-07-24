@@ -89,6 +89,7 @@ model Job {
   description          String                @default("")
   sourceProvider       String?
   sourceExternalId     String?
+  originRoleIntakeId   String?          @unique
   sourceAttachmentName String?
   status               String                @default("draft")
   createdAt            DateTime              @default(now())
@@ -175,6 +176,7 @@ model InterviewDraft {
   id                   String       @id @default(cuid())
   organizationId       String
   jobId                String
+  originRoleIntakeId   String?      @unique
   status               String       @default("draft")
   roleTitle            String
   roleBrief            String       @default("")

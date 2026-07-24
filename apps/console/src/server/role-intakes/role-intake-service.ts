@@ -25,6 +25,7 @@ import {
 import type { CompletedOrganizationScope } from "../../domain/organization-access-policy";
 import {
   RoleIntakeProcessingError,
+  detectRoleIntakeDocumentSignature,
   extractRoleIntakeDocument,
   scanRoleIntakeDocument,
   type RoleIntakeScanner,
@@ -42,13 +43,19 @@ import {
   normalizeRoleIntakeUrl,
   type RoleIntakePublicPage,
 } from "./role-intake-url-importer";
+import {
+  roleIntakeTelemetry,
+  type RoleIntakeTelemetryEvent,
+} from "./role-intake-telemetry";
 
 const SCANNER_UNAVAILABLE_ERROR = "scanner_unavailable";
 const DUPLICATE_IMPORT_ERROR = "duplicate_import";
 const INCOMPLETE_REVIEW_ERROR =
   "Add a role title and job description before continuing.";
 
-type RoleIntakeRecord = Awaited<ReturnType<typeof prisma.roleIntake.findUniqueOrThrow>>;
+type RoleIntakeRecord = Awaited<
+  ReturnType<typeof prisma.roleIntake.findUniqueOrThrow>
+>;
 
 export type RoleIntakeUploadInstruction = {
   intake: RoleIntakeSummary;
@@ -64,6 +71,7 @@ export type RoleIntakeProcessResult =
   | { kind: "processed"; intakeId: string; status: string };
 
 type RoleIntakeServiceDependencies = {
+  extractor?: typeof extractRoleIntakeDocument;
   scanner?: RoleIntakeScanner;
   storage?: RoleIntakeStorage | null;
   urlImporter?: (source: string) => Promise<RoleIntakePublicPage>;
@@ -84,15 +92,24 @@ export async function createRoleIntakeUpload(
     return validation;
   }
   if (!canManageRoleIntake(scope.role)) {
-    return { ok: false, error: "Only recruiters, admins, and owners can import a role brief." };
+    return {
+      ok: false,
+      error: "Only recruiters, admins, and owners can import a role brief.",
+    };
   }
-  if (!isRoleIntakeFeatureEnabled()) {
-    return { ok: false, error: "Role brief import is not configured for this workspace yet." };
+  if (!isRoleIntakeFeatureEnabled(scope.organizationId)) {
+    return {
+      ok: false,
+      error: "Role brief import is not configured for this workspace yet.",
+    };
   }
 
   const storage = dependencies.storage ?? getRoleIntakeStorage();
   if (!storage) {
-    return { ok: false, error: "Role brief import storage is not configured yet." };
+    return {
+      ok: false,
+      error: "Role brief import storage is not configured yet.",
+    };
   }
 
   const id = randomUUID();
@@ -101,10 +118,12 @@ export async function createRoleIntakeUpload(
       createdByUserId: scope.userId,
       declaredMimeType: validation.value.contentType,
       events: {
-        create: {
-          eventType: "role_intake_source_selected",
-          metadata: { source_kind: "file" },
-        },
+        create: toEventData(
+          roleIntakeTelemetry.sourceSelected({
+            entryPoint: "role_builder",
+            sourceKind: "file",
+          }),
+        ),
       },
       expiresAt: roleIntakeExpiresAt(),
       id,
@@ -127,8 +146,15 @@ export async function createRoleIntakeUpload(
     });
     return { ok: true, value: { intake: toSummary(created), uploadUrl } };
   } catch {
-    await failRoleIntake(created.id, "storage_unavailable", "Prelude could not prepare a private upload.");
-    return { ok: false, error: "Prelude could not prepare a private upload. Please retry." };
+    await failRoleIntake(
+      created.id,
+      "storage_unavailable",
+      "Prelude could not prepare a private upload.",
+    );
+    return {
+      ok: false,
+      error: "Prelude could not prepare a private upload. Please retry.",
+    };
   }
 }
 
@@ -142,10 +168,16 @@ export async function createRoleIntakeUrl(
   source: string,
 ): Promise<RoleIntakeOperationResult<RoleIntakeSummary>> {
   if (!canManageRoleIntake(scope.role)) {
-    return { ok: false, error: "Only recruiters, admins, and owners can import a public job URL." };
+    return {
+      ok: false,
+      error: "Only recruiters, admins, and owners can import a public job URL.",
+    };
   }
-  if (!isRoleIntakeFeatureEnabled()) {
-    return { ok: false, error: "Role import is not configured for this workspace yet." };
+  if (!isRoleIntakeFeatureEnabled(scope.organizationId)) {
+    return {
+      ok: false,
+      error: "Role import is not configured for this workspace yet.",
+    };
   }
 
   let url: URL;
@@ -174,10 +206,12 @@ export async function createRoleIntakeUrl(
         createdByUserId: scope.userId,
         declaredMimeType: "text/html",
         events: {
-          create: {
-            eventType: "role_intake_source_selected",
-            metadata: { source_kind: "url" },
-          },
+          create: toEventData(
+            roleIntakeTelemetry.sourceSelected({
+              entryPoint: "role_builder",
+              sourceKind: "url",
+            }),
+          ),
         },
         expiresAt: roleIntakeExpiresAt(),
         originalFileName: url.hostname,
@@ -201,7 +235,10 @@ export async function createRoleIntakeUrl(
         return { ok: true, value: toSummary(duplicate) };
       }
     }
-    return { ok: false, error: "Prelude could not prepare this public job URL. Please retry." };
+    return {
+      ok: false,
+      error: "Prelude could not prepare this public job URL. Please retry.",
+    };
   }
 }
 
@@ -216,7 +253,10 @@ export async function finalizeRoleIntakeUpload(
   dependencies: RoleIntakeServiceDependencies = {},
 ): Promise<RoleIntakeOperationResult<RoleIntakeSummary>> {
   if (!canManageRoleIntake(scope.role)) {
-    return { ok: false, error: "Only recruiters, admins, and owners can import a role brief." };
+    return {
+      ok: false,
+      error: "Only recruiters, admins, and owners can import a role brief.",
+    };
   }
   const normalizedId = intakeId.trim();
   const intake = await prisma.roleIntake.findFirst({
@@ -229,12 +269,18 @@ export async function finalizeRoleIntakeUpload(
     return { ok: true, value: toSummary(intake) };
   }
   if (!intake.quarantineObjectKey) {
-    return { ok: false, error: "The private upload destination is unavailable." };
+    return {
+      ok: false,
+      error: "The private upload destination is unavailable.",
+    };
   }
 
   const storage = dependencies.storage ?? getRoleIntakeStorage();
   if (!storage) {
-    return { ok: false, error: "Role brief import storage is not configured yet." };
+    return {
+      ok: false,
+      error: "Role brief import storage is not configured yet.",
+    };
   }
 
   let sealedObjectKey: string | null = null;
@@ -249,12 +295,14 @@ export async function finalizeRoleIntakeUpload(
       await cleanupAndFailRoleIntake({
         code: "upload_metadata_invalid",
         intake,
-        message: "The uploaded file did not match the selected PDF or DOCX brief.",
+        message:
+          "The uploaded file did not match the selected PDF or DOCX brief.",
         storage,
       });
       return {
         ok: false,
-        error: "The uploaded file did not match the selected PDF or DOCX brief.",
+        error:
+          "The uploaded file did not match the selected PDF or DOCX brief.",
       };
     }
 
@@ -262,7 +310,10 @@ export async function finalizeRoleIntakeUpload(
       intakeId: intake.id,
       organizationId: scope.organizationId,
     });
-    await storage.copyObject({ fromKey: intake.quarantineObjectKey, toKey: sealedObjectKey });
+    await storage.copyObject({
+      fromKey: intake.quarantineObjectKey,
+      toKey: sealedObjectKey,
+    });
     await prisma.roleIntake.update({
       data: {
         byteSize: metadata.byteSize,
@@ -271,16 +322,10 @@ export async function finalizeRoleIntakeUpload(
       },
       where: { id: intake.id },
     });
-    await storage.deleteObject(intake.quarantineObjectKey);
+    await deleteRoleIntakeObject(storage, intake.quarantineObjectKey);
 
     const queued = await prisma.roleIntake.update({
       data: {
-        events: {
-          create: [
-            { eventType: "role_intake_upload_completed", metadata: {} },
-            { eventType: "role_intake_scan_completed", metadata: { outcome: "queued" } },
-          ],
-        },
         nextAttemptAt: new Date(),
         quarantineObjectKey: null,
         status: "queued",
@@ -292,12 +337,14 @@ export async function finalizeRoleIntakeUpload(
     await cleanupAndFailRoleIntake({
       code: "upload_finalize_failed",
       intake: { ...intake, sealedObjectKey },
-      message: "Prelude could not secure this upload. Please retry with a fresh file.",
+      message:
+        "Prelude could not secure this upload. Please retry with a fresh file.",
       storage,
     });
     return {
       ok: false,
-      error: "Prelude could not secure this upload. Please retry with a fresh file.",
+      error:
+        "Prelude could not secure this upload. Please retry with a fresh file.",
     };
   }
 }
@@ -309,7 +356,8 @@ export async function getRoleIntakeSummary(
   if (!canManageRoleIntake(scope.role)) {
     return {
       ok: false,
-      error: "Only recruiters, admins, and owners can view an imported role brief.",
+      error:
+        "Only recruiters, admins, and owners can view an imported role brief.",
     };
   }
   const intake = await prisma.roleIntake.findFirst({
@@ -329,7 +377,10 @@ export async function saveRoleIntakeReview(
   },
 ): Promise<RoleIntakeOperationResult<RoleIntakeSummary>> {
   if (!canManageRoleIntake(scope.role)) {
-    return { ok: false, error: "Only recruiters, admins, and owners can review a role brief." };
+    return {
+      ok: false,
+      error: "Only recruiters, admins, and owners can review a role brief.",
+    };
   }
   const draft = normalizeImportedRoleDraft(input.reviewedDraft);
   const intake = await prisma.roleIntake.findFirst({
@@ -338,8 +389,14 @@ export async function saveRoleIntakeReview(
   if (!intake || intake.status !== "ready_for_review") {
     return { ok: false, error: "This role brief is not ready to review." };
   }
-  if (!Number.isInteger(input.expectedReviewVersion) || input.expectedReviewVersion < 0) {
-    return { ok: false, error: "This role brief needs to be refreshed before saving." };
+  if (
+    !Number.isInteger(input.expectedReviewVersion) ||
+    input.expectedReviewVersion < 0
+  ) {
+    return {
+      ok: false,
+      error: "This role brief needs to be refreshed before saving.",
+    };
   }
 
   const saved = await prisma.roleIntake.updateMany({
@@ -354,16 +411,21 @@ export async function saveRoleIntakeReview(
   if (saved.count !== 1) {
     return {
       ok: false,
-      error: "This review changed in another browser. Refresh it before saving your edits.",
+      error:
+        "This review changed in another browser. Refresh it before saving your edits.",
     };
   }
+  const changedFieldNames = changedRoleDraftFields(intake.reviewedDraft, draft);
   const updated = await prisma.roleIntake.update({
     data: {
       events: {
-        create: {
-          eventType: "role_intake_review_updated",
-          metadata: { changed_fields: changedRoleDraftFields(intake.reviewedDraft, draft) },
-        },
+        create: toEventData(
+          roleIntakeTelemetry.reviewSubmitted({
+            changedFieldNames,
+            elapsedMs: elapsedMsSince(intake.createdAt),
+            manualFallbackUsed: false,
+          }),
+        ),
       },
     },
     where: { id: intake.id },
@@ -380,7 +442,11 @@ export async function consumeRoleIntake(
   intakeId: string,
 ): Promise<RoleIntakeOperationResult<{ jobId: string }>> {
   if (!canManageRoleIntake(scope.role)) {
-    return { ok: false, error: "Only recruiters, admins, and owners can create a role from this brief." };
+    return {
+      ok: false,
+      error:
+        "Only recruiters, admins, and owners can create a role from this brief.",
+    };
   }
 
   const normalizedId = intakeId.trim();
@@ -388,6 +454,7 @@ export async function consumeRoleIntake(
     const value = await prisma.$transaction(async (tx) => {
       const rows = await tx.$queryRaw<
         Array<{
+          createdAt: Date;
           id: string;
           jobId: string | null;
           canonicalUrl: string | null;
@@ -397,7 +464,7 @@ export async function consumeRoleIntake(
           status: string;
         }>
       >(Prisma.sql`
-        SELECT "id", "jobId", "canonicalUrl", "originalFileName", "reviewedDraft", "sourceKind", "status"
+        SELECT "id", "jobId", "canonicalUrl", "createdAt", "originalFileName", "reviewedDraft", "sourceKind", "status"
         FROM "RoleIntake"
         WHERE "id" = ${normalizedId} AND "organizationId" = ${scope.organizationId}
         FOR UPDATE
@@ -422,7 +489,9 @@ export async function consumeRoleIntake(
           description: draft.description,
           location: draft.location,
           organizationId: scope.organizationId,
-          sourceAttachmentName: intake.sourceKind === "file" ? intake.originalFileName : null,
+          originRoleIntakeId: intake.id,
+          sourceAttachmentName:
+            intake.sourceKind === "file" ? intake.originalFileName : null,
           sourceExternalId:
             intake.sourceKind === "url" && intake.canonicalUrl
               ? intake.canonicalUrl
@@ -435,7 +504,12 @@ export async function consumeRoleIntake(
       await tx.roleIntake.update({
         data: {
           events: {
-            create: { eventType: "role_intake_converted", metadata: {} },
+            create: toEventData(
+              roleIntakeTelemetry.converted({
+                elapsedMs: elapsedMsSince(intake.createdAt),
+                outcome: "converted",
+              }),
+            ),
           },
           jobId: job.id,
           status: "consumed",
@@ -448,6 +522,10 @@ export async function consumeRoleIntake(
       ? { ok: true, value }
       : { ok: false, error: "This role brief is not ready to create a role." };
   } catch (error) {
+    await recordRoleIntakeConversionFailure(
+      scope.organizationId,
+      normalizedId,
+    ).catch(() => undefined);
     return {
       ok: false,
       error:
@@ -483,7 +561,9 @@ export async function processNextRoleIntake(
     data: {
       attemptCount: { increment: 1 },
       nextAttemptAt: null,
-      processingLeaseExpiresAt: new Date(now.getTime() + ROLE_INTAKE_PROCESSING_LEASE_MS),
+      processingLeaseExpiresAt: new Date(
+        now.getTime() + ROLE_INTAKE_PROCESSING_LEASE_MS,
+      ),
       processingStartedAt: now,
       status: "processing",
     },
@@ -493,7 +573,9 @@ export async function processNextRoleIntake(
     return { kind: "idle" };
   }
 
-  const intake = await prisma.roleIntake.findUniqueOrThrow({ where: { id: candidate.id } });
+  const intake = await prisma.roleIntake.findUniqueOrThrow({
+    where: { id: candidate.id },
+  });
   if (intake.sourceKind === "url") {
     return processRoleIntakeUrl(intake, dependencies);
   }
@@ -501,22 +583,68 @@ export async function processNextRoleIntake(
     return { kind: "idle" };
   }
   if (!intake.sealedObjectKey) {
-    await failRoleIntake(intake.id, "sealed_object_missing", "The private upload is no longer available.");
+    await failRoleIntake(
+      intake.id,
+      "sealed_object_missing",
+      "The private upload is no longer available.",
+    );
     return { kind: "processed", intakeId: intake.id, status: "failed" };
   }
 
   let extractedHash: string | undefined;
+  const lifecycleEvents: RoleIntakeTelemetryEvent[] = [];
   try {
     const file = await storage.getObjectBytes(intake.sealedObjectKey);
+    const detectedMimeType = detectRoleIntakeDocumentSignature(file);
+    if (intake.attemptCount === 1) {
+      lifecycleEvents.push(
+        roleIntakeTelemetry.uploadCompleted({
+          byteSize: intake.byteSize ?? file.length,
+          detectedMime: detectedMimeType ?? "unknown",
+          signatureValid: detectedMimeType !== null,
+        }),
+      );
+    }
+    if (!detectedMimeType) {
+      throw new RoleIntakeProcessingError(
+        "unsupported_document",
+        "The document is not a valid PDF or DOCX file.",
+      );
+    }
+
     const scanner = dependencies.scanner ?? { scan: scanRoleIntakeDocument };
-    const scan = await scanner.scan(file);
+    const scanStartedAt = Date.now();
+    let scan: Awaited<ReturnType<RoleIntakeScanner["scan"]>>;
+    try {
+      scan = await scanner.scan(file);
+    } catch (error) {
+      lifecycleEvents.push(
+        roleIntakeTelemetry.scanCompleted({
+          durationMs: Date.now() - scanStartedAt,
+          outcome: "failed",
+        }),
+      );
+      throw error;
+    }
+    lifecycleEvents.push(
+      roleIntakeTelemetry.scanCompleted({
+        durationMs: Date.now() - scanStartedAt,
+        outcome: scan.kind,
+      }),
+    );
     if (scan.kind === "unavailable") {
-      await retryOrFailUnavailableScanner(intake, scan.reason);
+      await retryOrFailUnavailableScanner(
+        intake,
+        scan.reason,
+        lifecycleEvents,
+        storage,
+      );
       return { kind: "processed", intakeId: intake.id, status: "queued" };
     }
     if (scan.kind === "infected") {
       await cleanupAndFailRoleIntake({
         code: "malware_detected",
+        events: lifecycleEvents,
         intake,
         message: "The document could not be imported safely.",
         storage,
@@ -524,8 +652,50 @@ export async function processNextRoleIntake(
       return { kind: "processed", intakeId: intake.id, status: "failed" };
     }
 
-    const extraction = await extractRoleIntakeDocument(file);
+    const extractionStartedAt = Date.now();
+    let extraction: Awaited<ReturnType<typeof extractRoleIntakeDocument>>;
+    try {
+      extraction = await (
+        dependencies.extractor ?? extractRoleIntakeDocument
+      )(file);
+    } catch (error) {
+      if (error instanceof RoleIntakeProcessingError) {
+        lifecycleEvents.push(
+          roleIntakeTelemetry.extractionCompleted({
+            durationMs: Date.now() - extractionStartedAt,
+            outcome:
+              error.code === "no_usable_text" ? "manual_fallback" : "failed",
+            pageCount: error.details.pageCount,
+            parserVersion: error.details.parserVersion,
+            textLength: error.details.textLength,
+            warningCodes: [...error.details.warningCodes, error.code],
+          }),
+        );
+      } else {
+        lifecycleEvents.push(
+          roleIntakeTelemetry.extractionCompleted({
+            durationMs: Date.now() - extractionStartedAt,
+            outcome: "failed",
+            pageCount: null,
+            parserVersion: "unknown",
+            textLength: 0,
+            warningCodes: ["processing_failed"],
+          }),
+        );
+      }
+      throw error;
+    }
     extractedHash = extraction.sha256;
+    lifecycleEvents.push(
+      roleIntakeTelemetry.extractionCompleted({
+        durationMs: Date.now() - extractionStartedAt,
+        outcome: "ready_for_review",
+        pageCount: extraction.pageCount,
+        parserVersion: extraction.parserVersion,
+        textLength: extraction.textLength,
+        warningCodes: extraction.warnings.map((warning) => warning.code),
+      }),
+    );
     const existing = await prisma.roleIntake.findFirst({
       select: { id: true, status: true },
       where: {
@@ -540,6 +710,7 @@ export async function processNextRoleIntake(
         code: DUPLICATE_IMPORT_ERROR,
         duplicateOfIntakeId:
           existing.status === "consumed" ? undefined : existing.id,
+        events: lifecycleEvents,
         intake,
         message:
           existing.status === "consumed"
@@ -551,16 +722,17 @@ export async function processNextRoleIntake(
       return { kind: "processed", intakeId: intake.id, status: "failed" };
     }
 
-    await storage.deleteObject(intake.sealedObjectKey);
+    await deleteRoleIntakeObject(storage, intake.sealedObjectKey);
     await prisma.roleIntake.update({
       data: {
         cleanedUpAt: new Date(),
         detectedMimeType: extraction.detectedMimeType,
         events: {
           create: [
-            { eventType: "role_intake_scan_completed", metadata: { outcome: "clean" } },
-            { eventType: "role_intake_extraction_completed", metadata: {} },
-            { eventType: "role_intake_object_deleted", metadata: { reason: "extracted" } },
+            ...lifecycleEvents.map(toEventData),
+            toEventData(
+              roleIntakeTelemetry.objectDeleted({ reason: "extracted" }),
+            ),
           ],
         },
         extractedDraft: toJson(extraction.draft),
@@ -577,7 +749,11 @@ export async function processNextRoleIntake(
       },
       where: { id: intake.id },
     });
-    return { kind: "processed", intakeId: intake.id, status: "ready_for_review" };
+    return {
+      kind: "processed",
+      intakeId: intake.id,
+      status: "ready_for_review",
+    };
   } catch (error) {
     if (isDuplicateRoleIntakeError(error) && extractedHash) {
       const existing = await prisma.roleIntake.findFirst({
@@ -592,6 +768,7 @@ export async function processNextRoleIntake(
         code: DUPLICATE_IMPORT_ERROR,
         duplicateOfIntakeId:
           existing && existing.status !== "consumed" ? existing.id : undefined,
+        events: lifecycleEvents,
         intake,
         message:
           existing?.status === "consumed"
@@ -606,10 +783,63 @@ export async function processNextRoleIntake(
       error instanceof RoleIntakeProcessingError
         ? error.message
         : "Prelude could not read this document safely.";
-    const code = error instanceof RoleIntakeProcessingError ? error.code : "processing_failed";
-    await cleanupAndFailRoleIntake({ code, intake, message, storage });
+    const code =
+      error instanceof RoleIntakeProcessingError
+        ? error.code
+        : "processing_failed";
+    if (
+      error instanceof RoleIntakeProcessingError &&
+      !lifecycleEvents.some(
+        (event) => event.eventType === "role_intake_extraction_completed",
+      )
+    ) {
+      lifecycleEvents.push(
+        roleIntakeTelemetry.extractionCompleted({
+          durationMs: 0,
+          outcome:
+            error.code === "no_usable_text" ? "manual_fallback" : "failed",
+          pageCount: error.details.pageCount,
+          parserVersion: error.details.parserVersion,
+          textLength: error.details.textLength,
+          warningCodes: [...error.details.warningCodes, error.code],
+        }),
+      );
+    }
+    await cleanupAndFailRoleIntake({
+      code,
+      events: lifecycleEvents,
+      intake,
+      message,
+      storage,
+    });
     return { kind: "processed", intakeId: intake.id, status: "failed" };
   }
+}
+
+async function recordRoleIntakeConversionFailure(
+  organizationId: string,
+  intakeId: string,
+): Promise<void> {
+  const intake = await prisma.roleIntake.findFirst({
+    select: { createdAt: true, id: true },
+    where: { id: intakeId, organizationId },
+  });
+  if (!intake) {
+    return;
+  }
+  await prisma.roleIntake.update({
+    data: {
+      events: {
+        create: toEventData(
+          roleIntakeTelemetry.converted({
+            elapsedMs: elapsedMsSince(intake.createdAt),
+            outcome: "failed",
+          }),
+        ),
+      },
+    },
+    where: { id: intake.id },
+  });
 }
 
 async function processRoleIntakeUrl(
@@ -625,18 +855,23 @@ async function processRoleIntakeUrl(
     return { kind: "processed", intakeId: intake.id, status: "failed" };
   }
 
+  const extractionStartedAt = Date.now();
   try {
-    const imported = await (dependencies.urlImporter ?? fetchRoleIntakePublicPage)(
-      intake.submittedUrl,
+    const imported = await (
+      dependencies.urlImporter ?? fetchRoleIntakePublicPage
+    )(intake.submittedUrl);
+    const sourceIdentity = createRoleIntakeUrlIdentity(
+      new URL(imported.canonicalUrl),
     );
-    const sourceIdentity = createRoleIntakeUrlIdentity(new URL(imported.canonicalUrl));
     const existing = await prisma.roleIntake.findFirst({
       select: { id: true, status: true },
       where: {
         id: { not: intake.id },
         organizationId: intake.organizationId,
         sourceIdentity,
-        status: { in: ["queued", "processing", "ready_for_review", "consumed"] },
+        status: {
+          in: ["queued", "processing", "ready_for_review", "consumed"],
+        },
       },
     });
     if (existing) {
@@ -657,8 +892,20 @@ async function processRoleIntakeUrl(
         detectedMimeType: "text/html",
         events: {
           create: [
-            { eventType: "role_intake_source_policy_checked", metadata: { outcome: "allowed" } },
-            { eventType: "role_intake_extraction_completed", metadata: { source_kind: "url" } },
+            {
+              eventType: "role_intake_source_policy_checked",
+              metadata: { outcome: "allowed" },
+            },
+            toEventData(
+              roleIntakeTelemetry.extractionCompleted({
+                durationMs: Date.now() - extractionStartedAt,
+                outcome: "ready_for_review",
+                pageCount: null,
+                parserVersion: imported.extractorVersion,
+                textLength: imported.draft.description?.length ?? 0,
+                warningCodes: imported.warnings.map((warning) => warning.code),
+              }),
+            ),
           ],
         },
         extractedDraft: toJson(imported.draft),
@@ -679,7 +926,11 @@ async function processRoleIntakeUrl(
       },
       where: { id: intake.id },
     });
-    return { kind: "processed", intakeId: intake.id, status: "ready_for_review" };
+    return {
+      kind: "processed",
+      intakeId: intake.id,
+      status: "ready_for_review",
+    };
   } catch (error) {
     if (isDuplicateRoleIntakeError(error)) {
       await failUrlRoleIntake(
@@ -713,7 +964,9 @@ async function processRoleIntakeUrl(
 
     await failUrlRoleIntake(
       intake.id,
-      error instanceof RoleIntakeUrlImportError ? error.code : "processing_failed",
+      error instanceof RoleIntakeUrlImportError
+        ? error.code
+        : "processing_failed",
       error instanceof RoleIntakeUrlImportError
         ? error.message
         : "Prelude could not import this public job page. Start from a manual brief instead.",
@@ -741,6 +994,43 @@ export async function reconcileRoleIntakes(
     where: { sealedObjectKey: { not: null }, status: "quarantined" },
   });
 
+  if (storage) {
+    const pendingCleanup = await prisma.roleIntake.findMany({
+      take: 100,
+      where: {
+        cleanedUpAt: null,
+        cleanupRequestedAt: { not: null },
+        expiresAt: { gt: now },
+        OR: [
+          { quarantineObjectKey: { not: null } },
+          { sealedObjectKey: { not: null } },
+        ],
+        status: "failed",
+      },
+    });
+    for (const intake of pendingCleanup) {
+      const deleted = await deleteStoredRoleIntakeObjects(storage, intake)
+        .then(() => true)
+        .catch(() => false);
+      if (!deleted) {
+        continue;
+      }
+      await prisma.roleIntake.update({
+        data: {
+          cleanedUpAt: now,
+          events: {
+            create: toEventData(
+              roleIntakeTelemetry.objectDeleted({ reason: "failed" }),
+            ),
+          },
+          quarantineObjectKey: null,
+          sealedObjectKey: null,
+        },
+        where: { id: intake.id },
+      });
+    }
+  }
+
   const expired = await prisma.roleIntake.findMany({
     take: 100,
     where: {
@@ -759,10 +1049,14 @@ export async function reconcileRoleIntakes(
           : false;
     await prisma.roleIntake.update({
       data: {
-        cleanupRequestedAt: now,
+        cleanupRequestedAt: intake.cleanupRequestedAt ?? now,
         cleanedUpAt: deleted ? now : null,
         events: deleted
-          ? { create: { eventType: "role_intake_object_deleted", metadata: { reason: "expired" } } }
+          ? {
+              create: toEventData(
+                roleIntakeTelemetry.objectDeleted({ reason: "expired" }),
+              ),
+            }
           : undefined,
         quarantineObjectKey: deleted ? null : intake.quarantineObjectKey,
         sealedObjectKey: deleted ? null : intake.sealedObjectKey,
@@ -777,17 +1071,23 @@ export async function reconcileRoleIntakes(
 async function retryOrFailUnavailableScanner(
   intake: RoleIntakeRecord,
   reason: string,
+  events: readonly RoleIntakeTelemetryEvent[],
+  storage: RoleIntakeStorage,
 ): Promise<void> {
   if (intake.attemptCount >= ROLE_INTAKE_MAX_ATTEMPTS) {
-    await failRoleIntake(
-      intake.id,
-      SCANNER_UNAVAILABLE_ERROR,
-      "Prelude could not verify this document safely. Please retry later or start from a manual brief.",
-    );
+    await cleanupAndFailRoleIntake({
+      code: SCANNER_UNAVAILABLE_ERROR,
+      events,
+      intake,
+      message:
+        "Prelude could not verify this document safely. Please retry later or start from a manual brief.",
+      storage,
+    });
     return;
   }
   await prisma.roleIntake.update({
     data: {
+      events: { create: events.map(toEventData) },
       lastErrorCode: SCANNER_UNAVAILABLE_ERROR,
       lastErrorSummary: reason,
       nextAttemptAt: retryRoleIntakeAt(intake.attemptCount),
@@ -801,6 +1101,7 @@ async function retryOrFailUnavailableScanner(
 async function cleanupAndFailRoleIntake({
   code,
   duplicateOfIntakeId,
+  events = [],
   intake,
   message,
   storage,
@@ -808,27 +1109,33 @@ async function cleanupAndFailRoleIntake({
 }: {
   code: string;
   duplicateOfIntakeId?: string;
+  events?: readonly RoleIntakeTelemetryEvent[];
   intake: RoleIntakeRecord;
   message: string;
   storage: RoleIntakeStorage;
   telemetryEvent?: string;
 }): Promise<void> {
+  const cleanupRequestedAt = intake.cleanupRequestedAt ?? new Date();
   const deleted = await deleteStoredRoleIntakeObjects(storage, intake)
     .then(() => true)
     .catch(() => false);
+  const cleanedUpAt = deleted ? new Date() : null;
   await prisma.roleIntake.update({
     data: {
-      cleanedUpAt: deleted ? new Date() : null,
-      cleanupRequestedAt: new Date(),
+      cleanedUpAt,
+      cleanupRequestedAt,
       events: {
         create: [
-          ...(telemetryEvent ? [{ eventType: telemetryEvent, metadata: {} }] : []),
+          ...events.map(toEventData),
           ...(telemetryEvent
-            ? deleted
-              ? [{ eventType: "role_intake_object_deleted", metadata: { reason: "failed" } }]
-              : []
-            : deleted
-              ? [{ eventType: "role_intake_object_deleted", metadata: { reason: "failed" } }]
+            ? [{ eventType: telemetryEvent, metadata: toJson({}) }]
+            : []),
+          ...(deleted
+            ? [
+                toEventData(
+                  roleIntakeTelemetry.objectDeleted({ reason: "failed" }),
+                ),
+              ]
             : []),
         ],
       },
@@ -844,7 +1151,11 @@ async function cleanupAndFailRoleIntake({
   });
 }
 
-async function failRoleIntake(id: string, code: string, summary: string): Promise<void> {
+async function failRoleIntake(
+  id: string,
+  code: string,
+  summary: string,
+): Promise<void> {
   await prisma.roleIntake.update({
     data: {
       lastErrorCode: code,
@@ -887,8 +1198,18 @@ async function deleteStoredRoleIntakeObjects(
   await Promise.all(
     [intake.quarantineObjectKey, intake.sealedObjectKey]
       .filter((key): key is string => Boolean(key))
-      .map((key) => storage.deleteObject(key)),
+      .map((key) => deleteRoleIntakeObject(storage, key)),
   );
+}
+
+async function deleteRoleIntakeObject(
+  storage: RoleIntakeStorage,
+  key: string,
+): Promise<void> {
+  await storage.deleteObject(key);
+  if (await storage.headObject(key)) {
+    throw new Error("Role intake object deletion could not be verified.");
+  }
 }
 
 function toSummary(intake: RoleIntakeRecord): RoleIntakeSummary {
@@ -911,6 +1232,20 @@ function toJson(value: unknown): Prisma.InputJsonValue {
   return value as Prisma.InputJsonValue;
 }
 
+function toEventData(event: RoleIntakeTelemetryEvent): {
+  eventType: RoleIntakeTelemetryEvent["eventType"];
+  metadata: Prisma.InputJsonValue;
+} {
+  return {
+    eventType: event.eventType,
+    metadata: toJson(event.metadata),
+  };
+}
+
+function elapsedMsSince(startedAt: Date, now = Date.now()): number {
+  return Math.max(0, now - startedAt.getTime());
+}
+
 function normaliseContentType(value: string | null): string {
   return value?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
 }
@@ -922,14 +1257,19 @@ function isDuplicateRoleIntakeError(error: unknown): boolean {
   );
 }
 
-function changedRoleDraftFields(previous: unknown, next: ImportedRoleDraft): string[] {
+function changedRoleDraftFields(
+  previous: unknown,
+  next: ImportedRoleDraft,
+): Array<keyof ImportedRoleDraft> {
   const before = normalizeImportedRoleDraft(previous);
   return (["title", "location", "description"] as const).filter(
     (field) => before[field] !== next[field],
   );
 }
 
-function toSourceProvenance(intake: RoleIntakeRecord): RoleIntakeSourceProvenance {
+function toSourceProvenance(
+  intake: RoleIntakeRecord,
+): RoleIntakeSourceProvenance {
   if (intake.sourceKind !== "url") {
     return {
       canonicalUrl: null,
@@ -941,11 +1281,13 @@ function toSourceProvenance(intake: RoleIntakeRecord): RoleIntakeSourceProvenanc
     };
   }
   const metadata = asRecord(intake.sourceMetadata);
-  const sourceHost = asNonEmptyString(metadata.source_host) ?? intake.originalFileName;
+  const sourceHost =
+    asNonEmptyString(metadata.source_host) ?? intake.originalFileName;
   return {
     canonicalUrl: intake.canonicalUrl,
     displayName: sourceHost,
-    extractorVersion: asNonEmptyString(metadata.extractor_version) ?? intake.parserVersion,
+    extractorVersion:
+      asNonEmptyString(metadata.extractor_version) ?? intake.parserVersion,
     fetchedAt: asIsoDate(metadata.fetched_at),
     fieldSources: asFieldSources(metadata.field_sources),
     submittedUrl: intake.submittedUrl,
@@ -969,7 +1311,9 @@ function asIsoDate(value: unknown): string | null {
   return new Date(value).toISOString();
 }
 
-function asFieldSources(value: unknown): RoleIntakeSourceProvenance["fieldSources"] {
+function asFieldSources(
+  value: unknown,
+): RoleIntakeSourceProvenance["fieldSources"] {
   type FieldSources = NonNullable<RoleIntakeSourceProvenance["fieldSources"]>;
   const source = asRecord(value);
   const allowed = new Set([
@@ -980,7 +1324,12 @@ function asFieldSources(value: unknown): RoleIntakeSourceProvenance["fieldSource
     "unavailable",
   ]);
   const fields = ["title", "location", "description"] as const;
-  if (!fields.every((field) => typeof source[field] === "string" && allowed.has(source[field]))) {
+  if (
+    !fields.every(
+      (field) =>
+        typeof source[field] === "string" && allowed.has(source[field]),
+    )
+  ) {
     return null;
   }
   return {

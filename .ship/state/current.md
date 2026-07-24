@@ -2,49 +2,49 @@
 
 ## Goal
 
-Ship GitHub issue #117: safely import a public job URL into an editable role
-draft.
+Ship the engineering foundation for GitHub issue #121: measure PDF/DOCX
+role-intake quality and make a controlled pilot auditable.
 
 ## Scope
 
-- Extend the private `RoleIntake` aggregate with a URL source variant while
-  retaining the existing file-import lifecycle.
-- Retrieve exactly one public job page in the durable worker through a pinned,
-  policy-controlled HTTPS client; never use the recruiter session or a browser.
-- Extract bounded, deterministic static HTML text and provenance, then require
-  recruiter review before the existing interview-question builder can open.
-- Keep LinkedIn/Indeed, authenticated content, crawling, previews, OCR and LLM
-  source extraction out of scope.
+- Keep `RoleIntakeEvent` as the first-party telemetry boundary.
+- Enforce typed, privacy-safe structural metadata for the required lifecycle
+  events.
+- Restrict production pilot access to at most five explicitly opted-in
+  organizations.
+- Add a deterministic, non-customer English/French fixture corpus and quality
+  scorecard with no LLM or external network dependency.
+- Report sample-dependent release gates as insufficient until real pilot data
+  exists; never manufacture a successful 50-document pilot.
 
 ## Workflow
 
-- [x] Intake, repository investigation and issue refinement
-- [x] AI/data-quality and backend/security architecture reviews
-- [x] Architecture decision and test matrix
-- [x] Implement contracts, schema and URL source policy
-- [x] Implement safe outbound retrieval and deterministic extraction
-- [x] Implement worker, actions and reusable review UI
-- [x] Test, security review, simplify and validate
-- [ ] Deliver PR and close the issue
+- [x] Intake, repository investigation and issue review
+- [x] Primary-source research and architecture/data challenges
+- [x] Architecture decision and TDD matrix
+- [x] Implement typed telemetry and pilot cohort policy
+- [x] Implement corpus, deterministic scorer and pilot scorecard
+- [x] Instrument the durable worker, review and conversion lifecycle
+- [x] Test, privacy review, simplify and validate
+- [ ] Deliver PR; keep the real-pilot gate explicit
 
 ## Decisions
 
-- `RoleIntake` remains private staging; only a recruiter-approved
-  `reviewedDraft` can create one `Job`.
-- URL acquisition runs as a durable, leased worker task and is a distinct port
-  from PDF/DOCX storage, scanning and parsing.
-- Requests are HTTPS-only with a public-DNS check on every hop and the selected
-  address pinned into the TLS connection to prevent DNS rebinding.
-- The extractor is deterministic and non-executing. Raw HTML, IPs, headers and
-  remote responses are not persisted or handed to the question-generation LLM.
-- A controlled provider policy blocks LinkedIn and Indeed. `robots.txt` is
-  honored through the same outbound boundary; failure falls back to manual.
+- No PostHog, Segment, OpenTelemetry SDK or LLM benchmark is added.
+- Event metadata is built from per-event allowlists; document text, filenames,
+  URLs, hashes, parser messages and candidate data are forbidden.
+- A production environment allowlist fails closed and accepts at most five
+  organization IDs. Local development can remain usable without a cohort.
+- Fixture quality is compared with normalized fields and required fact groups,
+  not raw full-text equality.
+- Product gates that require 50 human-reviewed documents or a matched manual
+  baseline remain `insufficient_data` until those observations exist.
 
 ## Validation target
 
-- Unit tests inject resolver, transport, robots policy and clock. CI has no
-  external web or LLM call.
-- Tests cover special/private IPs, redirects, robots, limits, hostile markup,
-  deterministic extraction, idempotency, review revisions and one Job creation.
-- Local smoke imports a public job page through the worker, reviews the draft,
-  creates one role with URL provenance, then cleans up its test data.
+- Unit tests cover event schemas, privacy, bucket boundaries, durations, cohort
+  policy, corpus outcomes, p95/median calculations and insufficient-data gates.
+- Service tests assert the exact structural event sequence for clean, infected,
+  no-text, corrupt, retry, review, conversion and cleanup paths.
+- QA runs the focused suite, full console suite, lint/typecheck and one real
+  PDF/DOCX intake smoke without external analytics or LLM calls.

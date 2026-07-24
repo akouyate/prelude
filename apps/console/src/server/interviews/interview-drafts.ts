@@ -187,6 +187,9 @@ export async function saveInterviewDraft(
       jobId: persistedJob.id,
       organizationId: scope.organizationId,
     });
+    const originRoleIntakeId = input.draftId
+      ? null
+      : getRoleIntakeOriginId(job?.sourceExternalId);
 
     const existingDraft = input.draftId
       ? await tx.interviewDraft.findFirst({
@@ -203,9 +206,18 @@ export async function saveInterviewDraft(
           data: draftData,
           where: { id: existingDraft.id },
         })
-      : await tx.interviewDraft.create({
-          data: draftData,
-        });
+      : originRoleIntakeId
+        ? await tx.interviewDraft.upsert({
+            create: {
+              ...draftData,
+              originRoleIntakeId,
+            },
+            update: draftData,
+            where: { originRoleIntakeId },
+          })
+        : await tx.interviewDraft.create({
+            data: draftData,
+          });
 
     return {
       draftId: draft.id,
@@ -835,6 +847,17 @@ function toDraftPersistenceData(
     sourceAttachmentName: input.sourceAttachmentName,
     status: "draft",
   };
+}
+
+function getRoleIntakeOriginId(sourceExternalId?: string | null) {
+  const prefix = "role-intake:";
+
+  if (!sourceExternalId?.startsWith(prefix)) {
+    return null;
+  }
+
+  const roleIntakeId = sourceExternalId.slice(prefix.length).trim();
+  return roleIntakeId || null;
 }
 
 function parseStoredInterviewPlanSafe(raw: unknown) {

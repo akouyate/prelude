@@ -13,6 +13,8 @@ const MAX_EXTRACTED_CHARACTERS = 500_000;
 const CLAMAV_CHUNK_BYTES = 64 * 1024;
 const CLAMAV_TIMEOUT_MS = 20_000;
 const requireFromModule = createRequire(import.meta.url);
+const PDFJS_PARSER_VERSION = dependencyVersion("pdfjs-dist");
+const MAMMOTH_PARSER_VERSION = dependencyVersion("mammoth");
 
 export type RoleIntakeScanResult =
   | { kind: "clean"; version: string }
@@ -28,9 +30,23 @@ export type RoleIntakeExtractionResult = {
     | "application/pdf"
     | "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   draft: ImportedRoleDraft;
+  pageCount: number | null;
   parserVersion: string;
   sha256: string;
+  textLength: number;
   warnings: RoleIntakeWarning[];
+};
+
+export type RoleIntakeProcessingDetails = {
+  detectedMimeType:
+    | "application/pdf"
+    | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    | "unknown";
+  pageCount: number | null;
+  parserVersion: string;
+  signatureValid: boolean;
+  textLength: number;
+  warningCodes: string[];
 };
 
 export class RoleIntakeProcessingError extends Error {
@@ -42,6 +58,14 @@ export class RoleIntakeProcessingError extends Error {
       | "parser_timeout"
       | "unsupported_document",
     message: string,
+    readonly details: RoleIntakeProcessingDetails = {
+      detectedMimeType: "unknown",
+      pageCount: null,
+      parserVersion: "unknown",
+      signatureValid: false,
+      textLength: 0,
+      warningCodes: [],
+    },
   ) {
     super(message);
     this.name = "RoleIntakeProcessingError";
@@ -70,7 +94,10 @@ export async function scanRoleIntakeDocument(
     if (response.includes("OK")) {
       return { kind: "clean", version: "clamav" };
     }
-    return { kind: "unavailable", reason: "ClamAV returned an unknown result." };
+    return {
+      kind: "unavailable",
+      reason: "ClamAV returned an unknown result.",
+    };
   } catch {
     return { kind: "unavailable", reason: "ClamAV is unavailable." };
   }
@@ -80,16 +107,49 @@ export async function extractRoleIntakeDocument(
   input: Buffer,
 ): Promise<RoleIntakeExtractionResult> {
   const detectedMimeType = await detectMimeType(input);
-  const extraction =
+  const parserVersion =
     detectedMimeType === "application/pdf"
-      ? await extractPdfText(input)
-      : await extractDocxText(input);
+      ? PDFJS_PARSER_VERSION
+      : MAMMOTH_PARSER_VERSION;
+  let extraction: Awaited<
+    ReturnType<typeof extractPdfText> | ReturnType<typeof extractDocxText>
+  >;
+  try {
+    extraction =
+      detectedMimeType === "application/pdf"
+        ? await extractPdfText(input)
+        : await extractDocxText(input);
+  } catch (error) {
+    if (error instanceof RoleIntakeProcessingError) {
+      const enriched = new RoleIntakeProcessingError(
+        error.code,
+        error.message,
+        {
+          ...error.details,
+          detectedMimeType,
+          parserVersion,
+          signatureValid: true,
+        },
+      );
+      enriched.cause = error.cause;
+      throw enriched;
+    }
+    throw error;
+  }
   const normalizedText = normalizeText(extraction.text);
 
   if (!normalizedText) {
     throw new RoleIntakeProcessingError(
       "no_usable_text",
       "Prelude could not find usable text in this document. Start from a manual brief instead.",
+      {
+        detectedMimeType,
+        pageCount: extraction.pageCount,
+        parserVersion,
+        signatureValid: true,
+        textLength: 0,
+        warningCodes: extraction.warnings.map((warning) => warning.code),
+      },
     );
   }
 
@@ -110,10 +170,27 @@ export async function extractRoleIntakeDocument(
       location: fields.location,
       title: fields.title,
     },
-    parserVersion: detectedMimeType === "application/pdf" ? "pdfjs-dist" : "mammoth",
+    pageCount: extraction.pageCount,
+    parserVersion,
     sha256: createHash("sha256").update(input).digest("hex"),
+    textLength: text.length,
     warnings,
   };
+}
+
+export function detectRoleIntakeDocumentSignature(
+  input: Buffer,
+):
+  | "application/pdf"
+  | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  | null {
+  if (input.subarray(0, 5).toString("ascii") === "%PDF-") {
+    return "application/pdf";
+  }
+  if (input.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
+    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+  }
+  return null;
 }
 
 async function detectMimeType(
@@ -122,13 +199,16 @@ async function detectMimeType(
   | "application/pdf"
   | "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 > {
-  if (input.subarray(0, 5).toString("ascii") === "%PDF-") {
-    return "application/pdf";
+  const detectedMimeType = detectRoleIntakeDocumentSignature(input);
+  if (detectedMimeType === "application/pdf") {
+    return detectedMimeType;
   }
-
-  if (input.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
+  if (
+    detectedMimeType ===
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+  ) {
     await inspectDocxPackage(input);
-    return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    return detectedMimeType;
   }
 
   throw new RoleIntakeProcessingError(
@@ -138,6 +218,7 @@ async function detectMimeType(
 }
 
 async function extractPdfText(input: Buffer): Promise<{
+  pageCount: number;
   text: string;
   warnings: RoleIntakeWarning[];
 }> {
@@ -147,7 +228,9 @@ async function extractPdfText(input: Buffer): Promise<{
         destroy: () => Promise<void>;
         promise: Promise<{
           getPage: (pageNumber: number) => Promise<{
-            getTextContent: () => Promise<{ items: Array<{ str?: unknown }> }>;
+            getTextContent: () => Promise<{
+              items: Array<{ hasEOL?: unknown; str?: unknown }>;
+            }>;
           }>;
           numPages: number;
         }>;
@@ -176,13 +259,22 @@ async function extractPdfText(input: Buffer): Promise<{
       const content = await page.getTextContent();
       pages.push(
         content.items
-          .map((item) => (typeof item.str === "string" ? item.str : ""))
-          .join(" "),
+          .map((item) =>
+            typeof item.str === "string"
+              ? `${item.str}${item.hasEOL === true ? "\n" : " "}`
+              : "",
+          )
+          .join("")
+          .trim(),
       );
     }
     await loadingTask.destroy();
 
-    return { text: pages.join("\n\n"), warnings: [] };
+    return {
+      pageCount: document.numPages,
+      text: pages.join("\n\n"),
+      warnings: [],
+    };
   } catch (error) {
     if (error instanceof RoleIntakeProcessingError) {
       throw error;
@@ -197,19 +289,23 @@ async function extractPdfText(input: Buffer): Promise<{
 }
 
 function standardFontDataUrl(): string {
-  const pdfEntrypoint = requireFromModule.resolve("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfEntrypoint = requireFromModule.resolve(
+    "pdfjs-dist/legacy/build/pdf.mjs",
+  );
   // NodeBinaryDataFactory reads this value with fs.readFile, therefore this is
   // intentionally a filesystem path (not a file:// URL).
   return `${join(dirname(pdfEntrypoint), "../../standard_fonts")}/`;
 }
 
 async function extractDocxText(input: Buffer): Promise<{
+  pageCount: null;
   text: string;
   warnings: RoleIntakeWarning[];
 }> {
   try {
     const result = await mammoth.extractRawText({ buffer: input });
     return {
+      pageCount: null,
       text: result.value,
       warnings: result.messages.map((message) => ({
         code: "docx_parser_notice",
@@ -226,129 +322,149 @@ async function extractDocxText(input: Buffer): Promise<{
 
 async function inspectDocxPackage(input: Buffer): Promise<void> {
   await new Promise<void>((resolve, reject) => {
-    yauzl.fromBuffer(input, { lazyEntries: true, validateEntrySizes: true }, (error, zip) => {
-      if (error || !zip) {
-        reject(
-          new RoleIntakeProcessingError(
-            "document_corrupt",
-            "Prelude could not read this DOCX file safely.",
-          ),
-        );
-        return;
-      }
-
-      let completed = false;
-      let totalUncompressed = 0;
-      let hasContentTypes = false;
-      let hasDocument = false;
-
-      const fail = (error: RoleIntakeProcessingError) => {
-        if (completed) {
-          return;
-        }
-        completed = true;
-        zip.close();
-        reject(error);
-      };
-
-      const next = () => {
-        if (!completed) {
-          zip.readEntry();
-        }
-      };
-
-      zip.on("error", () =>
-        fail(
-          new RoleIntakeProcessingError(
-            "document_corrupt",
-            "Prelude could not read this DOCX file safely.",
-          ),
-        ),
-      );
-      zip.on("entry", (entry) => {
-        const name = entry.fileName.replaceAll("\\", "/");
-        totalUncompressed += entry.uncompressedSize;
-
-        if (
-          name.startsWith("/") ||
-          name.split("/").includes("..") ||
-          totalUncompressed > MAX_DOCX_UNCOMPRESSED_BYTES ||
-          /(^|\/)vbaProject\.bin$/i.test(name) ||
-          /(^|\/)embeddings\//i.test(name) ||
-          /oleObject/i.test(name)
-        ) {
-          fail(
+    yauzl.fromBuffer(
+      input,
+      { lazyEntries: true, validateEntrySizes: true },
+      (error, zip) => {
+        if (error || !zip) {
+          reject(
             new RoleIntakeProcessingError(
-              "docx_unsupported_structure",
-              "The DOCX contains an unsupported or unsafe structure.",
+              "document_corrupt",
+              "Prelude could not read this DOCX file safely.",
             ),
           );
           return;
         }
 
-        hasContentTypes ||= name === "[Content_Types].xml";
-        hasDocument ||= name === "word/document.xml";
+        let completed = false;
+        let totalUncompressed = 0;
+        let hasContentTypes = false;
+        let hasDocument = false;
 
-        if (!name.endsWith(".rels")) {
-          next();
-          return;
-        }
+        const fail = (error: RoleIntakeProcessingError) => {
+          if (completed) {
+            return;
+          }
+          completed = true;
+          zip.close();
+          reject(error);
+        };
 
-        zip.openReadStream(entry, (streamError, stream) => {
-          if (streamError || !stream) {
+        const next = () => {
+          if (!completed) {
+            zip.readEntry();
+          }
+        };
+
+        zip.on("error", () =>
+          fail(
+            new RoleIntakeProcessingError(
+              "document_corrupt",
+              "Prelude could not read this DOCX file safely.",
+            ),
+          ),
+        );
+        zip.on("entry", (entry) => {
+          const name = entry.fileName.replaceAll("\\", "/");
+          totalUncompressed += entry.uncompressedSize;
+
+          if (
+            name.startsWith("/") ||
+            name.split("/").includes("..") ||
+            totalUncompressed > MAX_DOCX_UNCOMPRESSED_BYTES ||
+            /(^|\/)vbaProject\.bin$/i.test(name) ||
+            /(^|\/)embeddings\//i.test(name) ||
+            /oleObject/i.test(name)
+          ) {
             fail(
               new RoleIntakeProcessingError(
-                "document_corrupt",
-                "Prelude could not inspect this DOCX file safely.",
+                "docx_unsupported_structure",
+                "The DOCX contains an unsupported or unsafe structure.",
               ),
             );
             return;
           }
 
-          const chunks: Buffer[] = [];
-          stream.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-          stream.on("error", () =>
-            fail(
-              new RoleIntakeProcessingError(
-                "document_corrupt",
-                "Prelude could not inspect this DOCX file safely.",
-              ),
-            ),
-          );
-          stream.on("end", () => {
-            const relationships = Buffer.concat(chunks).toString("utf8");
-            if (/TargetMode\s*=\s*["']External["']/i.test(relationships)) {
+          hasContentTypes ||= name === "[Content_Types].xml";
+          hasDocument ||= name === "word/document.xml";
+
+          if (!name.endsWith(".rels")) {
+            next();
+            return;
+          }
+
+          zip.openReadStream(entry, (streamError, stream) => {
+            if (streamError || !stream) {
               fail(
                 new RoleIntakeProcessingError(
-                  "docx_unsupported_structure",
-                  "The DOCX references external content and cannot be imported.",
+                  "document_corrupt",
+                  "Prelude could not inspect this DOCX file safely.",
                 ),
               );
               return;
             }
-            next();
+
+            const chunks: Buffer[] = [];
+            stream.on("data", (chunk: Buffer) =>
+              chunks.push(Buffer.from(chunk)),
+            );
+            stream.on("error", () =>
+              fail(
+                new RoleIntakeProcessingError(
+                  "document_corrupt",
+                  "Prelude could not inspect this DOCX file safely.",
+                ),
+              ),
+            );
+            stream.on("end", () => {
+              const relationships = Buffer.concat(chunks).toString("utf8");
+              if (/TargetMode\s*=\s*["']External["']/i.test(relationships)) {
+                fail(
+                  new RoleIntakeProcessingError(
+                    "docx_unsupported_structure",
+                    "The DOCX references external content and cannot be imported.",
+                  ),
+                );
+                return;
+              }
+              next();
+            });
           });
         });
-      });
-      zip.on("end", () => {
-        if (completed) {
-          return;
-        }
-        if (!hasContentTypes || !hasDocument) {
-          fail(
-            new RoleIntakeProcessingError(
-              "unsupported_document",
-              "The selected ZIP file is not a DOCX document.",
-            ),
-          );
-          return;
-        }
-        completed = true;
-        resolve();
-      });
-      next();
-    });
+        zip.on("end", () => {
+          if (completed) {
+            return;
+          }
+          if (!hasContentTypes || !hasDocument) {
+            fail(
+              new RoleIntakeProcessingError(
+                "unsupported_document",
+                "The selected ZIP file is not a DOCX document.",
+              ),
+            );
+            return;
+          }
+          completed = true;
+          resolve();
+        });
+        next();
+      },
+    );
   });
+}
+
+function dependencyVersion(packageName: "mammoth" | "pdfjs-dist"): string {
+  try {
+    const packageJson = requireFromModule(`${packageName}/package.json`) as {
+      version?: unknown;
+    };
+    return typeof packageJson.version === "string" &&
+      /^\d+\.\d+\.\d+(?:-[a-z0-9.-]+)?$/i.test(packageJson.version)
+      ? `${packageName}-${packageJson.version}`
+      : packageName;
+  } catch {
+    return packageName;
+  }
 }
 
 function normalizeText(value: string): string {
@@ -365,13 +481,20 @@ function inferExplicitFields(text: string): {
 } {
   return {
     location: findLabelledValue(text, ["location", "localisation"]),
-    title: findLabelledValue(text, ["job title", "role", "poste", "intitulé du poste"]),
+    title: findLabelledValue(text, [
+      "job title",
+      "role",
+      "poste",
+      "intitulé du poste",
+    ]),
   };
 }
 
 function findLabelledValue(text: string, labels: string[]): string | null {
   const source = labels.map(escapeRegex).join("|");
-  const match = text.match(new RegExp(`(?:^|\\n)\\s*(?:${source})\\s*[:\-]\\s*([^\\n]{2,160})`, "im"));
+  const match = text.match(
+    new RegExp(`(?:^|\\n)\\s*(?:${source})\\s*[:\-]\\s*([^\\n]{2,160})`, "im"),
+  );
   return match?.[1]?.trim() || null;
 }
 
@@ -413,7 +536,11 @@ async function scanWithClamAv(input: {
 
     socket.once("connect", () => {
       socket.write(Buffer.from("zINSTREAM\0"));
-      for (let offset = 0; offset < input.input.length; offset += CLAMAV_CHUNK_BYTES) {
+      for (
+        let offset = 0;
+        offset < input.input.length;
+        offset += CLAMAV_CHUNK_BYTES
+      ) {
         const chunk = input.input.subarray(offset, offset + CLAMAV_CHUNK_BYTES);
         const size = Buffer.allocUnsafe(4);
         size.writeUInt32BE(chunk.length, 0);

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "dotenvx run -f ../../.env -- next dev --port 3000",
+    "role-intake:pilot-report": "dotenvx run -f ../../.env -- tsx src/server/role-intakes/role-intake-pilot-report.ts",
     "role-intake:worker": "dotenvx run -f ../../.env -- tsx src/server/role-intakes/role-intake-worker.ts",
     "build": "next build",
     "lint": "eslint .",
