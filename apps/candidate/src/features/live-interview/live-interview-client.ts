@@ -597,6 +597,17 @@ export function toCandidateError(cause: unknown) {
 
   if (
     cause instanceof Error &&
+    cause.message === "candidate_interview_limit_reached"
+  ) {
+    return "This interview cannot start right now. Please contact the recruiter for help.";
+  }
+
+  if (cause instanceof Error && cause.message === "billing_unavailable") {
+    return "This interview is temporarily unavailable. Please contact the recruiter or retry later.";
+  }
+
+  if (
+    cause instanceof Error &&
     (cause.message === "realtime_api_unavailable" ||
       cause.message === "realtime_api_failed" ||
       cause.message === "mock_interview_refused")

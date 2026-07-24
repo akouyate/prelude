@@ -4,7 +4,9 @@ import type { TFunction } from "i18next";
 import { StatusBadge } from "@prelude/ui";
 import type { CandidateScreenListItem } from "../candidate-screens";
 
+import { canManageRoles } from "../../domain/organization-permissions";
 import { getServerT } from "../../libs/i18n-server";
+import { getCompletedOrganizationScope } from "../../server/organizations/organization-scope";
 import { getAuthenticatedUserLocale } from "../../server/users/user-locale";
 import type { getInterviewDetail } from "../../server/interviews/interview-loaders";
 import { CopyCandidateLinkButton } from "./copy-candidate-link-button";
@@ -28,8 +30,10 @@ export async function InterviewOverview({
 }: {
   detail: InterviewOverviewDetail;
 }) {
-  const locale = await getAuthenticatedUserLocale();
+  const scope = await getCompletedOrganizationScope();
+  const locale = await getAuthenticatedUserLocale(scope.userId);
   const t = getServerT(locale);
+  const canManageRole = canManageRoles(scope.role);
   const { interview } = detail;
   const sessionStats = getSessionStats(interview.candidateSessions);
   const estimatedMinutes = getEstimatedMinutes(interview);
@@ -176,19 +180,22 @@ export async function InterviewOverview({
           <CopyCandidateLinkButton candidatePath={interview.candidatePath}>
             {candidateLinkLabel}
           </CopyCandidateLinkButton>
-          <Link
-            className="inline-flex h-[42px] cursor-pointer items-center justify-center gap-2 rounded-full bg-[#171715] px-[18px] text-[13px] font-semibold text-white transition hover:bg-[#2a2925] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-            href={editHref}
-          >
-            <EditPencil aria-hidden={true} className="h-4 w-4" />
-            {t("interviewDetail.editButton")}
-          </Link>
+          {canManageRole ? (
+            <Link
+              className="inline-flex h-[42px] cursor-pointer items-center justify-center gap-2 rounded-full bg-[#171715] px-[18px] text-[13px] font-semibold text-white transition hover:bg-[#2a2925] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+              href={editHref}
+            >
+              <EditPencil aria-hidden={true} className="h-4 w-4" />
+              {t("interviewDetail.editButton")}
+            </Link>
+          ) : null}
         </div>
       </header>
 
       <InterviewOverviewTabs
         candidatePath={interview.candidatePath}
         candidates={candidates}
+        canManageRole={canManageRole}
         config={config}
         criteria={criteria}
         guardrails={interview.guardrails}

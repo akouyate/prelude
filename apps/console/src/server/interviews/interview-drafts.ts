@@ -2,6 +2,10 @@
 
 import { randomBytes } from "node:crypto";
 
+import {
+  type WorkspaceBilling,
+} from "@prelude/billing";
+import { getWorkspaceBilling } from "@prelude/billing/server";
 import { prisma, type Prisma } from "@prelude/db";
 import {
   type InterviewAgentDraft,
@@ -28,6 +32,7 @@ import {
   planReferencesDisallowedTopic,
   resolveInterviewDraftPublicationMode,
 } from "../../domain/interview-plan-policy";
+import { canManageRoles } from "../../domain/organization-permissions";
 import { getServerT } from "../../libs/i18n-server";
 import { getAuthenticatedUserLocale } from "../users/user-locale";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
@@ -44,6 +49,10 @@ import {
   type ProtectedTopicClassification,
   type ProtectedTopicClassifier,
 } from "./protected-topic-classifier";
+import {
+  evaluateRolePublicationAdmission,
+  runSerializableTransaction,
+} from "./role-publication-admission";
 
 export type InterviewResponseMode = "audio" | "text";
 
@@ -107,6 +116,7 @@ export type PublishInterviewDraftResult =
     }
   | {
       ok: false;
+      code?: "billing_unavailable" | "published_role_limit_reached";
       error: string;
       review?: ComplianceReviewPrompt;
     };
@@ -139,8 +149,12 @@ const OVERRIDE_RATE_LIMIT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export async function saveInterviewDraft(
   input: SaveInterviewDraftInput,
 ): Promise<SaveInterviewDraftResult> {
+  const scope = await getCompletedOrganizationScope();
   // Localized recruiter-facing reject copy follows the user's UI language.
-  const t = getServerT(await getAuthenticatedUserLocale());
+  const t = getServerT(await getAuthenticatedUserLocale(scope.userId));
+  if (!canManageRoles(scope.role)) {
+    return { ok: false, error: t("roleManagement.forbidden") };
+  }
   const normalized = normalizeDraftInput(input, {
     disallowedTopicMessage: t("compliance.planDisallowedTopicBlock"),
   });
@@ -148,8 +162,6 @@ export async function saveInterviewDraft(
   if (!normalized.ok) {
     return normalized;
   }
-
-  const scope = await getCompletedOrganizationScope();
 
   const result = await prisma.$transaction(async (tx) => {
     const job = input.jobId
@@ -243,8 +255,11 @@ export async function publishInterviewDraft(
   // Recruiter-facing compliance copy follows the authenticated user's UI
   // language (User.preferredLanguage). Defaults to English. N6d: the same locale
   // is handed to the classifier so the LLM `reason` is written in that language.
-  const locale = await getAuthenticatedUserLocale();
+  const locale = await getAuthenticatedUserLocale(scope.userId);
   const t = getServerT(locale);
+  if (!canManageRoles(scope.role)) {
+    return { ok: false, error: t("roleManagement.forbidden") };
+  }
 
   // Phase 1: read the draft and run the authoritative keyword gate.
   const validation = await prisma.$transaction(async (tx) => {
@@ -529,101 +544,141 @@ export async function publishInterviewDraft(
     };
   }
 
-  // Phase 3: write the published snapshot in its own transaction.
-  const result = await prisma.$transaction(async (tx) => {
-    const publicationMode = resolveInterviewDraftPublicationMode({
-      draftStatus: draft.status,
-      hasPublishedSnapshot: Boolean(draft.interview),
-    });
-    const publicToken =
-      publicationMode === "return_existing_snapshot" && draft.interview
-        ? draft.interview.publicToken
-        : await createPublicToken(tx);
-
-    const interviewData = {
-      criteria: criteria as unknown as Prisma.InputJsonValue,
-      estimatedMinutes: draft.estimatedMinutes,
-      focus: draft.focus as Prisma.InputJsonValue,
-      // N9: the published snapshot inherits the draft's generator provenance and
-      // schema version so every Interview row records how its plan was produced.
-      generatorModel: draft.generatorModel,
-      generatorProvider: draft.generatorProvider,
-      guardrails: guardrails as unknown as Prisma.InputJsonValue,
-      jobId: draft.jobId,
+  let billing: WorkspaceBilling;
+  try {
+    billing = await getWorkspaceBilling({
       organizationId: scope.organizationId,
-      publicToken,
-      questions: questions as unknown as Prisma.InputJsonValue,
-      rationale: draft.rationale,
-      responseModes: responseModes as unknown as Prisma.InputJsonValue,
-      roleBrief: draft.roleBrief,
-      roleTitle: draft.roleTitle,
-      schemaVersion: draft.schemaVersion ?? INTERVIEW_PLAN_SCHEMA_VERSION,
-      seniority: draft.seniority,
-      status: "published",
-      // N6b: persist the immutable override audit record only when a flag was
-      // actually overridden. Omitted (column stays NULL) on a clean publish.
-      ...(overrideRecord
-        ? {
-            complianceOverride:
-              overrideRecord as unknown as Prisma.InputJsonValue,
-          }
-        : {}),
-    };
-
-    if (publicationMode === "return_existing_snapshot" && draft.interview) {
-      const interview =
-        draft.interview.status === "published"
-          ? draft.interview
-          : await tx.interview.update({
-              data: { status: "published" },
-              where: { id: draft.interview.id },
-            });
-      const invitation = await ensureDefaultCandidateInvitation(tx, interview);
-
-      return { interview, invitation, kind: "published" as const };
-    }
-
-    if (publicationMode === "create_republished_snapshot" && draft.interview) {
-      await tx.interview.update({
-        data: { draftId: null },
-        where: { id: draft.interview.id },
-      });
-    }
-
-    const interview = await tx.interview.create({
-      data: {
-        ...interviewData,
-        draftId: draft.id,
-      },
     });
+  } catch {
+    return billingPublishError("billing_unavailable", t);
+  }
 
-    if (overrideRecord) {
-      // N6b: append the queryable override event (the rate-limit + aggregation
-      // index) transactionally with the published snapshot it belongs to.
-      await tx.complianceOverrideEvent.create({
-        data: {
+  // Phase 3: write the published snapshot in its own transaction.
+  const result = await runSerializableTransaction(() =>
+    prisma.$transaction(
+      async (tx) => {
+        const publicationMode = resolveInterviewDraftPublicationMode({
+          draftStatus: draft.status,
+          hasPublishedSnapshot: Boolean(draft.interview),
+        });
+        const admission = await evaluateRolePublicationAdmission(tx, {
+          billing,
+          jobId: draft.jobId,
           organizationId: scope.organizationId,
-          interviewId: interview.id,
-          overriddenByUserId: overrideRecord.overriddenByUserId,
-          overriddenByRole: overrideRecord.overriddenByRole,
-          // Denormalized so the event log is a self-sufficient audit/aggregation
-          // record (the justification is the load-bearing oversight artifact).
-          justification: overrideRecord.justification,
-          category: overrideRecord.flags[0]?.category ?? "protected_topic",
-          classifierProvider: overrideRecord.classifierProvider,
-          classifierModel: overrideRecord.classifierModel,
-        },
-      });
-    }
+        });
 
-    await tx.interviewDraft.update({
-      data: { status: "published" },
-      where: { id: draft.id },
-    });
-    const invitation = await ensureDefaultCandidateInvitation(tx, interview);
+        if (!admission.allowed) {
+          return {
+            kind: "billing_error" as const,
+            code: admission.code,
+          };
+        }
 
-    return { interview, invitation, kind: "published" as const };
-  });
+        const publicToken =
+          publicationMode === "return_existing_snapshot" && draft.interview
+            ? draft.interview.publicToken
+            : await createPublicToken(tx);
+
+        const interviewData = {
+          criteria: criteria as unknown as Prisma.InputJsonValue,
+          estimatedMinutes: draft.estimatedMinutes,
+          focus: draft.focus as Prisma.InputJsonValue,
+          // N9: the published snapshot inherits the draft's generator provenance and
+          // schema version so every Interview row records how its plan was produced.
+          generatorModel: draft.generatorModel,
+          generatorProvider: draft.generatorProvider,
+          guardrails: guardrails as unknown as Prisma.InputJsonValue,
+          jobId: draft.jobId,
+          organizationId: scope.organizationId,
+          publicToken,
+          questions: questions as unknown as Prisma.InputJsonValue,
+          rationale: draft.rationale,
+          responseModes: responseModes as unknown as Prisma.InputJsonValue,
+          roleBrief: draft.roleBrief,
+          roleTitle: draft.roleTitle,
+          schemaVersion: draft.schemaVersion ?? INTERVIEW_PLAN_SCHEMA_VERSION,
+          seniority: draft.seniority,
+          status: "published",
+          // N6b: persist the immutable override audit record only when a flag was
+          // actually overridden. Omitted (column stays NULL) on a clean publish.
+          ...(overrideRecord
+            ? {
+                complianceOverride:
+                  overrideRecord as unknown as Prisma.InputJsonValue,
+              }
+            : {}),
+        };
+
+        if (publicationMode === "return_existing_snapshot" && draft.interview) {
+          const interview =
+            draft.interview.status === "published"
+              ? draft.interview
+              : await tx.interview.update({
+                  data: { status: "published" },
+                  where: { id: draft.interview.id },
+                });
+          const invitation = await ensureDefaultCandidateInvitation(
+            tx,
+            interview,
+          );
+
+          return { interview, invitation, kind: "published" as const };
+        }
+
+        if (
+          publicationMode === "create_republished_snapshot" &&
+          draft.interview
+        ) {
+          await tx.interview.update({
+            data: { draftId: null },
+            where: { id: draft.interview.id },
+          });
+        }
+
+        const interview = await tx.interview.create({
+          data: {
+            ...interviewData,
+            draftId: draft.id,
+          },
+        });
+
+        if (overrideRecord) {
+          // N6b: append the queryable override event (the rate-limit + aggregation
+          // index) transactionally with the published snapshot it belongs to.
+          await tx.complianceOverrideEvent.create({
+            data: {
+              organizationId: scope.organizationId,
+              interviewId: interview.id,
+              overriddenByUserId: overrideRecord.overriddenByUserId,
+              overriddenByRole: overrideRecord.overriddenByRole,
+              // Denormalized so the event log is a self-sufficient audit/aggregation
+              // record (the justification is the load-bearing oversight artifact).
+              justification: overrideRecord.justification,
+              category: overrideRecord.flags[0]?.category ?? "protected_topic",
+              classifierProvider: overrideRecord.classifierProvider,
+              classifierModel: overrideRecord.classifierModel,
+            },
+          });
+        }
+
+        await tx.interviewDraft.update({
+          data: { status: "published" },
+          where: { id: draft.id },
+        });
+        const invitation = await ensureDefaultCandidateInvitation(
+          tx,
+          interview,
+        );
+
+        return { interview, invitation, kind: "published" as const };
+      },
+      { isolationLevel: "Serializable" },
+    ),
+  );
+
+  if (result.kind === "billing_error") {
+    return billingPublishError(result.code, t);
+  }
 
   revalidatePath("/");
   revalidatePath("/roles");
@@ -638,6 +693,23 @@ export async function publishInterviewDraft(
     interviewId: result.interview.id,
     publicToken: result.interview.publicToken,
   };
+}
+
+function billingPublishError(
+  code: "billing_unavailable" | "published_role_limit_reached",
+  t: ReturnType<typeof getServerT>,
+): Extract<PublishInterviewDraftResult, { ok: false }> {
+  return code === "published_role_limit_reached"
+    ? {
+        code,
+        error: t("roleManagement.publishedRoleLimitReached"),
+        ok: false,
+      }
+    : {
+        code,
+        error: t("roleManagement.billingUnavailable"),
+        ok: false,
+      };
 }
 
 function normalizeDraftInput(

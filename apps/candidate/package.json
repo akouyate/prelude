@@ -12,6 +12,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@prelude/billing": "workspace:*",
     "@prelude/contracts": "workspace:*",
     "@prelude/core": "workspace:*",
     "@prelude/db": "workspace:*",

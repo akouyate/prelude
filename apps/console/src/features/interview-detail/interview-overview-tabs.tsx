@@ -67,6 +67,7 @@ export type InterviewOverviewConfigItem = {
 export type InterviewOverviewTabsProps = {
   candidatePath: string;
   candidates: CandidateScreenListItem[];
+  canManageRole: boolean;
   config: InterviewOverviewConfigItem[];
   criteria: InterviewOverviewCriterion[];
   guardrails: string[];
@@ -112,6 +113,7 @@ function filterLabel(value: ReviewFilter, t: TFunction) {
 export function InterviewOverviewTabs({
   candidatePath,
   candidates,
+  canManageRole,
   config,
   criteria,
   guardrails,
@@ -177,6 +179,7 @@ export function InterviewOverviewTabs({
       ) : null}
       {tab === "invitations" ? (
         <CandidateInvitationsPanel
+          canManageRole={canManageRole}
           interviewId={interviewId}
           invitations={invitations}
           publicationStatus={publicationStatus}
@@ -186,6 +189,7 @@ export function InterviewOverviewTabs({
       {tab === "questions" ? <QuestionsPanel questions={questions} /> : null}
       {tab === "settings" ? (
         <SettingsPanel
+          canManageRole={canManageRole}
           candidatePath={candidatePath}
           config={config}
           guardrails={guardrails}
@@ -409,6 +413,7 @@ function QuestionsPanel({
 
 function SettingsPanel({
   candidatePath,
+  canManageRole,
   config,
   guardrails,
   interviewId,
@@ -416,6 +421,7 @@ function SettingsPanel({
   roleTitle,
 }: {
   candidatePath: string;
+  canManageRole: boolean;
   config: InterviewOverviewConfigItem[];
   guardrails: string[];
   interviewId: string;
@@ -488,14 +494,15 @@ function SettingsPanel({
         </div>
       </section>
 
-      <section
-        className={cn(
-          "flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-[18px] py-4",
-          isPaused
-            ? "border-[#dfe7ca] bg-[#f7f9ef]"
-            : "border-[#efdcd5] bg-[#fdf6f3]",
-        )}
-      >
+      {canManageRole ? (
+        <section
+          className={cn(
+            "flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-[18px] py-4",
+            isPaused
+              ? "border-[#dfe7ca] bg-[#f7f9ef]"
+              : "border-[#efdcd5] bg-[#fdf6f3]",
+          )}
+        >
         <div className="min-w-0">
           <p
             className={cn(
@@ -536,7 +543,8 @@ function SettingsPanel({
               : t("interviewDetail.pauseRoleButton")}
           </button>
         </form>
-      </section>
+        </section>
+      ) : null}
 
       <section className="flex gap-2.5 rounded-2xl border border-[#e7e2d8] bg-[#f7f7ef] px-4 py-3 text-sm leading-6 text-[#5b574f]">
         <WarningTriangle

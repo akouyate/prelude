@@ -35,6 +35,9 @@ importers:
 
   apps/candidate:
     dependencies:
+      '@prelude/billing':
+        specifier: workspace:*
+        version: link:../../packages/billing
       '@prelude/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -120,6 +123,9 @@ importers:
       '@clerk/nextjs':
         specifier: ^7.5.6
         version: 7.5.6(next@16.2.9(@babel/core@7.29.7)(@playwright/test@1.61.0)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@prelude/billing':
+        specifier: workspace:*
+        version: link:../../packages/billing
       '@prelude/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
@@ -223,6 +229,28 @@ importers:
       tailwindcss:
         specifier: ^4.3.1
         version: 4.3.1
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: ^4.1.9
+        version: 4.1.9(@types/node@20.19.43)(jsdom@29.1.1)(vite@8.0.16(@types/node@20.19.43)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.1))
+
+  packages/billing:
+    dependencies:
+      '@clerk/backend':
+        specifier: 3.8.2
+        version: 3.8.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@prelude/db':
+        specifier: workspace:*
+        version: link:../db
+    devDependencies:
+      '@prelude/config':
+        specifier: workspace:*
+        version: link:../config
+      '@types/node':
+        specifier: ^20.19.5
+        version: 20.19.43
       typescript:
         specifier: ^6.0.3
         version: 6.0.3

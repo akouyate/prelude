@@ -16,6 +16,7 @@
     "@aws-sdk/client-s3": "^3.1075.0",
     "@aws-sdk/s3-request-presigner": "^3.1075.0",
     "@clerk/nextjs": "^7.5.6",
+    "@prelude/billing": "workspace:*",
     "@prelude/contracts": "workspace:*",
     "@prelude/core": "workspace:*",
     "@prelude/db": "workspace:*",

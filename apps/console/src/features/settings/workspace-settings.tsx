@@ -46,6 +46,7 @@ import {
   updateWorkspaceSettingsAction,
 } from "../../server/settings/workspace-settings-actions";
 import { SettingsLanguageSelect } from "./settings-language-select";
+import { BillingSection } from "./settings-billing-section";
 import { SettingsSectionNav } from "./settings-section-nav";
 import type { SettingsSection, WorkspaceSettingsData } from "./settings-types";
 import {
@@ -146,7 +147,7 @@ function SettingsSectionContent({
   }
 
   if (section === "billing") {
-    return <BillingSection metrics={data.metrics} />;
+    return <BillingSection billing={data.billing} />;
   }
 
   return <ProfileSection data={data} />;
@@ -1065,51 +1066,6 @@ function NotificationsSection({
   );
 }
 
-function BillingSection({
-  metrics,
-}: {
-  metrics: WorkspaceSettingsData["metrics"];
-}) {
-  const { t } = useTranslation();
-  const interviewsUsed = metrics.published + metrics.needsReview;
-
-  return (
-    <section className="overflow-hidden rounded-[22px] bg-ink-900 p-6 text-white">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-mint-200">
-            {t("settings.billing.currentPlan")}
-          </p>
-          <h2 className="mt-2.5 text-2xl font-semibold tracking-[-0.015em]">
-            {t("settings.billing.planName")}
-          </h2>
-          <p className="mt-2 text-[13.5px] text-white/65">
-            {t("settings.billing.planDescription")}
-          </p>
-        </div>
-        <UnavailableSettingsButton
-          className="bg-white text-ink-900"
-          title={t("settings.billing.clerkManaged")}
-        >
-          {t("settings.billing.managePlan")}
-        </UnavailableSettingsButton>
-      </div>
-      <div className="mt-6 grid gap-5 sm:grid-cols-2">
-        <UsageMeter
-          label={t("settings.billing.interviewsThisMonth")}
-          max={250}
-          value={interviewsUsed}
-        />
-        <UsageMeter
-          label={t("settings.billing.activeRoles")}
-          max={25}
-          value={metrics.activeRoles}
-        />
-      </div>
-    </section>
-  );
-}
-
 function UnavailableSettingsButton({
   children,
   className,
@@ -1149,35 +1105,6 @@ function ResidencyChoice({
       selected={active}
       title={label}
     />
-  );
-}
-
-function UsageMeter({
-  label,
-  max,
-  value,
-}: {
-  label: string;
-  max: number;
-  value: number;
-}) {
-  const percentage = Math.min((value / max) * 100, 100);
-
-  return (
-    <div>
-      <div className="flex justify-between text-[12.5px] text-white/70">
-        <span>{label}</span>
-        <span>
-          {value} / {max}
-        </span>
-      </div>
-      <div className="mt-2 h-[7px] overflow-hidden rounded-full bg-white/15">
-        <span
-          className="block h-full rounded-full bg-mint-200"
-          style={{ width: `${percentage}%` }}
-        />
-      </div>
-    </div>
   );
 }
 

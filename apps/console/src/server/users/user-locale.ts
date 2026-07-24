@@ -11,12 +11,15 @@ import { getCompletedOrganizationScope } from "../organizations/organization-sco
  * localized recruiter-facing copy (compliance messages). Falls back to "en" if
  * the user row or column is missing so existing English behavior is preserved.
  */
-export async function getAuthenticatedUserLocale(): Promise<ConsoleLocale> {
+export async function getAuthenticatedUserLocale(
+  authenticatedUserId?: string,
+): Promise<ConsoleLocale> {
   try {
-    const scope = await getCompletedOrganizationScope();
+    const userId =
+      authenticatedUserId ?? (await getCompletedOrganizationScope()).userId;
     const user = await prisma.user.findUnique({
       select: { preferredLanguage: true },
-      where: { id: scope.userId },
+      where: { id: userId },
     });
 
     return coerceConsoleLocale(user?.preferredLanguage);

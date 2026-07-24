@@ -5,6 +5,7 @@ import {
   canAssignRole,
   canChangeMemberRole,
   canInviteMember,
+  canManageRoles,
   canManageMember,
   canManageTeam,
   canRemoveMember,
@@ -18,6 +19,13 @@ describe("organization permissions (Standard matrix)", () => {
     expect(canManageTeam("viewer")).toBe(false);
     expect(canInviteMember("admin")).toBe(true);
     expect(canInviteMember("recruiter")).toBe(false);
+  });
+
+  it("lets recruiters manage roles while keeping viewers read-only", () => {
+    expect(canManageRoles("owner")).toBe(true);
+    expect(canManageRoles("admin")).toBe(true);
+    expect(canManageRoles("recruiter")).toBe(true);
+    expect(canManageRoles("viewer")).toBe(false);
   });
 
   it("forbids an admin from acting on an owner; an owner can act on anyone", () => {

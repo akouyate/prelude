@@ -5,6 +5,7 @@ import {
   type RoleIntakeStatus,
   type RoleIntakeWarning,
 } from "@prelude/contracts";
+import { canManageRoles } from "./organization-permissions";
 
 export const ROLE_INTAKE_MAX_BYTES = 10 * 1024 * 1024;
 export const ROLE_INTAKE_EXPIRY_MS = 24 * 60 * 60 * 1000;
@@ -16,7 +17,6 @@ export const ROLE_INTAKE_URL_MAX_ATTEMPTS = 2;
 // bound so another worker never races a healthy processor.
 export const ROLE_INTAKE_PROCESSING_LEASE_MS = 5 * 60 * 1000;
 
-const manageableRoles = new Set(["owner", "admin", "recruiter"]);
 const supportedMimeTypes = new Set([
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -41,7 +41,16 @@ export type RoleIntakeFileInput = {
 };
 
 export function canManageRoleIntake(role: string): boolean {
-  return manageableRoles.has(role);
+  if (
+    role !== "owner" &&
+    role !== "admin" &&
+    role !== "recruiter" &&
+    role !== "viewer"
+  ) {
+    return false;
+  }
+
+  return canManageRoles(role);
 }
 
 export function canTransitionRoleIntake(

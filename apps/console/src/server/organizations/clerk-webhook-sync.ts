@@ -34,6 +34,12 @@ export type ClerkSyncIntent =
       status: "pending" | "accepted" | "revoked";
     };
 
+export type ClerkBillingSyncIntent = {
+  kind: "billing";
+  clerkOrganizationId: string;
+  sourceUpdatedAt: Date | undefined;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object"
     ? (value as Record<string, unknown>)
@@ -42,6 +48,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
+}
+
+function asDate(value: unknown): Date | undefined {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return undefined;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
 function normalizeEmail(value: unknown): string | null {
@@ -58,7 +72,7 @@ function composeName(first: unknown, last: unknown): string | null {
 
 export function planClerkWebhookSync(
   event: ClerkWebhookEvent,
-): ClerkSyncIntent | null {
+): ClerkSyncIntent | ClerkBillingSyncIntent | null {
   const data = asRecord(event.data) ?? {};
 
   switch (event.type) {
@@ -118,9 +132,28 @@ export function planClerkWebhookSync(
       };
     }
 
-    default:
+    default: {
+      if (isClerkBillingEvent(event.type)) {
+        const payer = asRecord(data.payer);
+        const clerkOrganizationId =
+          asString(data.organization_id) ??
+          (payer ? asString(payer.organization_id) : null);
+        if (!clerkOrganizationId) {
+          return null;
+        }
+        return {
+          kind: "billing",
+          clerkOrganizationId,
+          sourceUpdatedAt: asDate(data.updated_at),
+        };
+      }
       return null;
+    }
   }
+}
+
+function isClerkBillingEvent(type: string) {
+  return type.startsWith("subscription.") || type.startsWith("subscriptionItem.");
 }
 
 /**

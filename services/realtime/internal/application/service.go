@@ -170,18 +170,19 @@ type EgressState struct {
 	DurationMs *int
 }
 
-// RecordingConsent is the candidate's recorded consent decision for a live
-// session: whether consent was captured at all, and the version of the consent
-// copy they accepted. The copy version matters because only the audio-disclosing
-// versions authorize voice recording (see audioConsentCopyVersions).
+// RecordingConsent is the candidate's recorded consent decision and billing
+// entitlement for a live session. The copy version matters because only the
+// audio-disclosing versions authorize voice recording (see
+// audioConsentCopyVersions).
 type RecordingConsent struct {
-	Granted     bool
-	CopyVersion string
+	Granted           bool
+	RecordingEntitled bool
+	CopyVersion       string
 }
 
 // RecordingConsentGate reports the candidate's recorded consent for a live
-// session. Recording is fail-closed: without a positive consent signal under an
-// audio-disclosing copy version, no egress is started.
+// session. Recording is fail-closed: without billing entitlement, a positive
+// consent signal, and an audio-disclosing copy version, no egress is started.
 type RecordingConsentGate interface {
 	RecordingConsentFor(ctx context.Context, sessionID string) (RecordingConsent, error)
 }
@@ -546,9 +547,10 @@ func (s *Service) dispatchAgentIfNeeded(ctx context.Context, event domain.Event)
 // startRecordingIfNeeded best-effort starts a LiveKit room-composite egress when
 // the candidate's audio becomes ready, mirroring dispatchAgentIfNeeded: it runs
 // off the ingestion path and never fails it. Recording is gated on the optional
-// subsystem being wired, recorded consent, audio actually being live, and no
-// egress already running for the session — a reconnect re-enters the same room,
-// so the guard is "is an egress active?", not "did this session ever record?".
+// subsystem being wired, billing entitlement, recorded consent, audio actually
+// being live, and no egress already running for the session — a reconnect
+// re-enters the same room, so the guard is "is an egress active?", not "did
+// this session ever record?".
 func (s *Service) startRecordingIfNeeded(ctx context.Context, event domain.Event) {
 	if s.recorder == nil || s.recordings == nil || s.consent == nil {
 		return
@@ -565,7 +567,7 @@ func (s *Service) startRecordingIfNeeded(ctx context.Context, event domain.Event
 		slog.Warn("failed to check recording consent", "session_id", event.SessionID, "error", err)
 		return
 	}
-	if !consent.Granted {
+	if !consent.RecordingEntitled || !consent.Granted {
 		return
 	}
 	if !audioConsentCopyVersions[consent.CopyVersion] {

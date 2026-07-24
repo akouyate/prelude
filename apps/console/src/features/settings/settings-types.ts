@@ -15,6 +15,36 @@ export type WorkspaceSettingsData = {
     preferredLanguage: "en" | "fr";
   };
   authProvider: "clerk" | "mock";
+  billing: {
+    canManageBilling: boolean;
+    manageBillingUnavailableReason:
+      | "local_mock"
+      | "not_configured"
+      | "not_owner"
+      | null;
+    entitlements: {
+      recording: boolean;
+    };
+    limits: {
+      candidateInterviews: number | null;
+      publishedRoles: number | null;
+    };
+    periodEnd: string | null;
+    periodStart: string | null;
+    planName: string;
+    state:
+      | "active"
+      | "canceled"
+      | "free"
+      | "past_due"
+      | "trialing"
+      | "unavailable"
+      | "unconfigured";
+    usage: {
+      candidateInterviews: number;
+      publishedRoles: number;
+    };
+  };
   connectedAccounts: SettingsConnectedAccount[];
   connectors: Array<{
     provider: string;

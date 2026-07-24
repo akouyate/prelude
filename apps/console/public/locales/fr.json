@@ -20,6 +20,11 @@
       "overrideRequiresAdmin": "Seul un propriétaire ou un administrateur de l'espace peut passer outre un signalement de conformité. Demandez à un administrateur de revoir et publier.",
       "overrideRateLimited": "Vous avez atteint la limite de dérogations pour le moment — les suivantes doivent être revues par un administrateur de l'espace."
     },
+    "roleManagement": {
+      "forbidden": "Seuls les propriétaires, administrateurs et recruteurs peuvent gérer les postes.",
+      "publishedRoleLimitReached": "Votre espace de travail a atteint sa limite de postes publiés. Gérez la facturation pour publier un autre poste.",
+      "billingUnavailable": "La facturation est indisponible pour cet espace de travail. Réessayez ou demandez au propriétaire de gérer la facturation."
+    },
     "share": {
       "copyLink": "Copier le lien candidat",
       "copyLinkCopied": "Lien copié",
@@ -232,6 +237,7 @@
       "inviteCreating": "Création…",
       "inviteCreated": "Lien candidat créé. Copiez-le depuis la liste.",
       "invitePausedNotice": "Reprenez ce poste avant d'inviter de nouveaux candidats.",
+      "roleReadOnlyNotice": "Votre rôle dans l'espace de travail vous donne un accès en lecture seule à ce poste.",
       "invitationsTitle": "Invitations candidats",
       "invitationsDescription": "Chaque candidat invité reçoit un lien séparé, auditable, avec son propre état.",
       "invitationsCount_one": "{{count}} lien",
@@ -464,12 +470,33 @@
       },
       "billing": {
         "currentPlan": "Forfait actuel",
-        "planName": "Espace V1",
-        "planDescription": "Clerk Billing n'est pas encore connecté. L'usage vient des données de l'espace.",
-        "managePlan": "Clerk Billing bientôt",
-        "clerkManaged": "Les forfaits payants seront gérés par Clerk Billing quand la facturation sera activée.",
-        "interviewsThisMonth": "Entretiens ce mois-ci",
-        "activeRoles": "Rôles actifs"
+        "description": "Droits du forfait et usage de cet espace de travail.",
+        "canceledDescription": "L'accès payant reste disponible jusqu'à la fin de la période de facturation. Les limites du forfait Gratuit s'appliqueront ensuite.",
+        "pastDueDescription": "Le travail existant reste accessible, mais les nouveaux postes et entretiens candidats sont suspendus jusqu'à la régularisation de la facturation.",
+        "unavailableDescription": "Le travail existant reste accessible. Les nouvelles activités soumises au forfait sont suspendues pendant l'actualisation de la facturation.",
+        "manageBilling": "Gérer la facturation",
+        "nonOwnerManageHint": "Seul le propriétaire de l'espace peut gérer la facturation.",
+        "unconfiguredManageHint": "La facturation n'est pas configurée dans cet environnement.",
+        "localMockManageHint": "La gestion de la facturation est indisponible en mode mock local.",
+        "period": "Période de facturation",
+        "candidateInterviews": "Entretiens candidats",
+        "publishedRoles": "Postes publiés",
+        "usage": "{{used}} / {{limit}}",
+        "usageUnlimited": "{{used}} utilisés",
+        "unlimited": "Aucune limite",
+        "recording": "Enregistrement des entretiens",
+        "recordingDescription": "L'accès à l'enregistrement suit le forfait de cet espace.",
+        "included": "Inclus",
+        "notIncluded": "Non inclus",
+        "states": {
+          "active": "Actif",
+          "canceled": "Annulé",
+          "free": "Gratuit",
+          "past_due": "Paiement en retard",
+          "trialing": "Essai",
+          "unavailable": "Indisponible",
+          "unconfigured": "Non configuré"
+        }
       }
     }
   }

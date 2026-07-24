@@ -22,11 +22,13 @@ import { CopyCandidateLinkButton } from "./copy-candidate-link-button";
 import { InterviewSectionTitle } from "./interview-section-title";
 
 export function CandidateInvitationsPanel({
+  canManageRole,
   interviewId,
   invitations,
   publicationStatus,
   roleTitle,
 }: {
+  canManageRole: boolean;
   interviewId: string;
   invitations: CandidateInvitationSummary[];
   publicationStatus: string;
@@ -37,7 +39,7 @@ export function CandidateInvitationsPanel({
     createCandidateInvitationAction,
     { error: null, ok: false },
   );
-  const canInvite = publicationStatus === "published";
+  const canInvite = canManageRole && publicationStatus === "published";
 
   return (
     <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]">
@@ -119,7 +121,11 @@ export function CandidateInvitationsPanel({
 
         {!canInvite ? (
           <Notice className="mt-4" tone="danger">
-            {t("interviewDetail.invitePausedNotice")}
+            {t(
+              canManageRole
+                ? "interviewDetail.invitePausedNotice"
+                : "interviewDetail.roleReadOnlyNotice",
+            )}
           </Notice>
         ) : null}
       </Surface>
@@ -141,6 +147,7 @@ export function CandidateInvitationsPanel({
           <div className="divide-y divide-ink-100">
             {invitations.map((invitation) => (
               <InvitationRow
+                canManageRole={canManageRole}
                 invitation={invitation}
                 interviewId={interviewId}
                 key={invitation.id}
@@ -167,17 +174,20 @@ export function CandidateInvitationsPanel({
 }
 
 function InvitationRow({
+  canManageRole,
   interviewId,
   invitation,
   locale,
 }: {
+  canManageRole: boolean;
   interviewId: string;
   invitation: CandidateInvitationSummary;
   locale: string;
 }) {
   const { t } = useTranslation();
   const canReissue =
-    invitation.status === "expired" || invitation.status === "failed";
+    canManageRole &&
+    (invitation.status === "expired" || invitation.status === "failed");
   const openedLabel = invitation.openedAt
     ? t("interviewDetail.invitationOpenedAt", {
         date: formatDate(invitation.openedAt, locale),

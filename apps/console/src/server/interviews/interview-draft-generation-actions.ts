@@ -8,7 +8,10 @@ import type {
 } from "@prelude/core";
 
 import { interviewPlanPolicy } from "../../domain/interview-plan-policy";
+import { canManageRoles } from "../../domain/organization-permissions";
+import { getServerT } from "../../libs/i18n-server";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
+import { getAuthenticatedUserLocale } from "../users/user-locale";
 import type { InterviewResponseMode } from "./interview-drafts";
 import {
   createInterviewDraftGeneratorFromEnv,
@@ -62,7 +65,10 @@ export async function generateInterviewDraftAction(
     return normalized;
   }
 
-  await getCompletedOrganizationScope();
+  const authorizationError = await roleManagementAuthorizationError();
+  if (authorizationError) {
+    return { error: authorizationError, ok: false };
+  }
 
   const generator = createInterviewDraftGeneratorFromEnv();
 
@@ -100,7 +106,10 @@ export async function refineInterviewQuestionAction(
     return { error: "Select a question before asking Prelude to refine it.", ok: false };
   }
 
-  await getCompletedOrganizationScope();
+  const authorizationError = await roleManagementAuthorizationError();
+  if (authorizationError) {
+    return { error: authorizationError, ok: false };
+  }
 
   const generator = createInterviewDraftGeneratorFromEnv();
 
@@ -148,7 +157,10 @@ export async function addInterviewQuestionAction(
 
   const topic = normalizeQuestionTopic(input.topic);
 
-  await getCompletedOrganizationScope();
+  const authorizationError = await roleManagementAuthorizationError();
+  if (authorizationError) {
+    return { error: authorizationError, ok: false };
+  }
 
   const generator = createInterviewDraftGeneratorFromEnv();
 
@@ -175,6 +187,16 @@ export async function addInterviewQuestionAction(
   } catch (error) {
     return { error: toPublicGenerationError(error), ok: false };
   }
+}
+
+async function roleManagementAuthorizationError() {
+  const scope = await getCompletedOrganizationScope();
+  if (canManageRoles(scope.role)) {
+    return null;
+  }
+
+  const t = getServerT(await getAuthenticatedUserLocale(scope.userId));
+  return t("roleManagement.forbidden");
 }
 
 function normalizeQuestionTopic(value: string) {

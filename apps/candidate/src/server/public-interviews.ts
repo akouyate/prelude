@@ -10,6 +10,8 @@ import { prisma } from "@prelude/db";
 import { createNotificationDispatcher } from "@prelude/notifications";
 import type { Prisma } from "@prelude/db";
 
+import { createEntitledCandidateSession } from "./billing-admission";
+
 const notificationDispatcher = createNotificationDispatcher();
 
 type PublicCandidateInvitation = {
@@ -59,8 +61,10 @@ export type StartCandidateInterviewInput = {
 };
 
 type PrepareCandidateSessionError =
+  | "billing_unavailable"
   | "candidate_session_already_completed"
   | "candidate_session_expired"
+  | "candidate_interview_limit_reached"
   | "candidate_session_not_resumable"
   | "candidate_session_superseded"
   | "consent_required"
@@ -314,24 +318,24 @@ export async function prepareCandidateSession(
 
   const shouldResumeExisting =
     existingSession && startPolicy.action === "resume_same_attempt";
-  const productSession = shouldResumeExisting
-    ? await prisma.candidateSession.update({
-        data: {
-          candidateEmail,
-          candidateName,
-          candidateInvitationId: context.invitation?.id,
-          consentCopyVersion: candidateConsentCopyVersion,
-          // Re-consent re-timestamps: resuming requires accepting the current
-          // copy again (consent gate above), so stamp the consent moment as now.
-          // Carrying an old consentedAt under the current version label would make
-          // the audit assert "consented to vN at T" where T predates vN.
-          consentedAt: now,
-          startedAt: existingSession.startedAt ?? now,
-          status: "starting",
-        },
-        where: { id: existingSession.id },
-      })
-    : await prisma.candidateSession.create({
+  const sessionResult = shouldResumeExisting
+    ? {
+        ok: true as const,
+        session: await prisma.candidateSession.update({
+          data: {
+            candidateEmail,
+            candidateName,
+            candidateInvitationId: context.invitation?.id,
+            consentCopyVersion: candidateConsentCopyVersion,
+            // Resuming requires accepting the current consent copy again.
+            consentedAt: now,
+            startedAt: existingSession.startedAt ?? now,
+            status: "starting",
+          },
+          where: { id: existingSession.id },
+        }),
+      }
+    : await createEntitledCandidateSession({
         data: {
           candidateEmail,
           candidateName,
@@ -345,7 +349,17 @@ export async function prepareCandidateSession(
           startedAt: now,
           status: "starting",
         },
+        now,
+        organizationId: context.interview.organizationId,
       });
+  if (!sessionResult.ok) {
+    return {
+      ok: false as const,
+      error: sessionResult.error,
+      status: 402,
+    };
+  }
+  const productSession = sessionResult.session;
 
   if (context.invitation) {
     await prisma.candidateInvitation.updateMany({

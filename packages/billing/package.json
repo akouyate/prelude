@@ -1,0 +1,26 @@
+{
+  "name": "@prelude/billing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@clerk/backend": "3.8.2",
+    "@prelude/db": "workspace:*"
+  },
+  "devDependencies": {
+    "@prelude/config": "workspace:*",
+    "@types/node": "^20.19.5",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}

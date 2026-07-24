@@ -1,5 +1,10 @@
 import "server-only";
 
+import {
+  getWorkspaceBillingOverview,
+  syncClerkOrganizationBilling,
+} from "@prelude/billing/server";
+import type { WorkspaceBilling } from "@prelude/billing";
 import { prisma, type Prisma } from "@prelude/db";
 import { readWorkspaceNotificationPreferences } from "@prelude/notifications/preferences";
 
@@ -49,6 +54,7 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
     user,
     pendingInvitations,
     connectedAccounts,
+    billingOverview,
   ] = await Promise.all([
     prisma.organization.findUniqueOrThrow({
       include: {
@@ -96,6 +102,10 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
       organizationId: scope.organizationId,
       userId: scope.userId,
     }),
+    loadWorkspaceBillingOverview({
+      clerkOrganizationId: scope.clerkOrganizationId,
+      organizationId: scope.organizationId,
+    }),
   ]);
 
   const preferences = parseOrganizationSettings(organization.settings);
@@ -114,6 +124,15 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
       role: scope.role,
     },
     authProvider: identity.value.source,
+    billing: toWorkspaceSettingsBilling({
+      authProvider: identity.value.source,
+      billing: billingOverview.billing,
+      canManageBilling: canManageWorkspaceBilling({
+        authProvider: identity.value.source,
+        role: scope.role,
+      }),
+      usage: billingOverview.usage,
+    }),
     connectedAccounts: connectedAccounts.map((account) => ({
       capabilities: account.capabilities,
       connectedAt: account.connectedAt?.toISOString() ?? null,
@@ -156,6 +175,81 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
     canManageTeam: canManage,
     viewerClerkUserId,
     pendingInvitations,
+  };
+}
+
+export function canManageWorkspaceBilling({
+  authProvider,
+  role,
+}: {
+  authProvider: "clerk" | "mock";
+  role: string;
+}) {
+  return authProvider === "clerk" && role === "owner";
+}
+
+async function loadWorkspaceBillingOverview({
+  clerkOrganizationId,
+  organizationId,
+}: {
+  clerkOrganizationId: string | null;
+  organizationId: string;
+}) {
+  let overview = await getWorkspaceBillingOverview({ organizationId });
+
+  if (overview.billing.state !== "unavailable" || !clerkOrganizationId) {
+    return overview;
+  }
+
+  try {
+    await syncClerkOrganizationBilling({ clerkOrganizationId });
+    overview = await getWorkspaceBillingOverview({ organizationId });
+  } catch (error) {
+    console.error("[settings] failed to bootstrap Clerk Billing", error);
+  }
+
+  return overview;
+}
+
+export function toWorkspaceSettingsBilling({
+  authProvider,
+  billing,
+  canManageBilling,
+  usage,
+}: {
+  authProvider: "clerk" | "mock";
+  billing: WorkspaceBilling;
+  canManageBilling: boolean;
+  usage: {
+    candidateInterviews: number;
+    publishedRoles: number;
+  };
+}): WorkspaceSettingsData["billing"] {
+  const unmetered = billing.state === "unconfigured";
+
+  return {
+    canManageBilling: canManageBilling && !unmetered,
+    manageBillingUnavailableReason: unmetered
+      ? "not_configured"
+      : authProvider === "mock"
+        ? "local_mock"
+        : canManageBilling
+          ? null
+          : "not_owner",
+    entitlements: {
+      recording: billing.entitlements.recording,
+    },
+    limits: {
+      candidateInterviews: unmetered
+        ? null
+        : billing.entitlements.candidateInterviewLimit,
+      publishedRoles: unmetered ? null : billing.entitlements.activeRoleLimit,
+    },
+    periodEnd: billing.periodEnd?.toISOString() ?? null,
+    periodStart: billing.periodStart?.toISOString() ?? null,
+    planName: billing.planName,
+    state: billing.state,
+    usage,
   };
 }
 

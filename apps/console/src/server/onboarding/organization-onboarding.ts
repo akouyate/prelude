@@ -1,5 +1,9 @@
 "use server";
 
+import {
+  initializeFreeWorkspaceBilling,
+  syncClerkOrganizationBilling,
+} from "@prelude/billing/server";
 import { prisma, type PrismaClient } from "@prelude/db";
 import {
   organizationOnboardingStateSchema,
@@ -165,6 +169,10 @@ export async function saveOrganizationOnboardingProgress(
     return organization;
   });
 
+  await initializeFreeWorkspaceBilling({
+    organizationId: result.id,
+  });
+
   return {
     ok: true,
     currentStep: readPersistedOnboardingStep(result.onboardingStep),
@@ -249,6 +257,20 @@ export async function completeOrganizationOnboarding(
       organizationId: organization.id,
     };
   });
+
+  await initializeFreeWorkspaceBilling({
+    organizationId: result.organizationId,
+  });
+  if (authContext.clerkOrganizationId) {
+    try {
+      await syncClerkOrganizationBilling({
+        clerkOrganizationId: authContext.clerkOrganizationId,
+      });
+    } catch {
+      // The safe Free projection keeps onboarding usable. A later Clerk
+      // webhook or authenticated Settings refresh reconciles canonical state.
+    }
+  }
 
   return {
     ok: true,
