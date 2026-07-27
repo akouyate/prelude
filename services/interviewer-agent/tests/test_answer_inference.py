@@ -5,12 +5,12 @@ import json
 from types import SimpleNamespace
 
 import pytest
-
 from app.adapters.answer_inference import (
     DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS,
     FallbackAnswerInferenceProvider,
     OpenAIAnswerInferenceConfig,
     OpenAIAnswerInferenceProvider,
+    build_live_answer_inference_provider,
 )
 from app.domain.models import (
     CandidateTurn,
@@ -32,6 +32,11 @@ class FakeResponsesClient:
         return SimpleNamespace(output_text=self.output_text)
 
 
+class FailingResponsesClient:
+    async def create(self, **_kwargs: object) -> object:
+        raise RuntimeError("responses unavailable")
+
+
 class FailingProvider:
     async def assess_answer(self, **_kwargs: object):
         raise RuntimeError("provider failed")
@@ -47,12 +52,10 @@ class SlowProvider:
 
 
 def test_default_answer_inference_latency_budget_is_tight() -> None:
-    # S4: keep the LLM evaluator on the path but bound it tightly so the next
-    # utterance is never stalled by a slow evaluation (the 2-4.5s dead air seen
-    # in the live log). The default budget is ~1.5s; beyond it we fall back to
-    # the fast local heuristic, which still probes weak answers.
-    assert DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS <= 1.5
-    assert OpenAIAnswerInferenceConfig.from_env({}).timeout_seconds <= 1.5
+    # The live nano benchmark completes in 1.8-2.7s. Keep enough room for real
+    # inference while bounding provider stalls to a conversational pause.
+    assert 3.0 <= DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS <= 4.0
+    assert 3.0 <= OpenAIAnswerInferenceConfig.from_env({}).timeout_seconds <= 4.0
 
 
 @pytest.mark.asyncio
@@ -171,6 +174,50 @@ async def test_openai_answer_inference_derives_label_from_matrix_not_freeform() 
     )
 
     assert assessment.classification == AnswerClassification.COMPLETE
+
+
+@pytest.mark.asyncio
+async def test_openai_answer_inference_ignores_unnecessary_high_score_challenge() -> None:
+    client = FakeResponsesClient(
+        """
+        {
+          "classification": "vague",
+          "reason_codes": [],
+          "confidence": 0.91,
+          "scores": {
+            "clarity": 3,
+            "relevance": 3,
+            "concreteness": 2,
+            "coherence": 3,
+            "role_signal": 2
+          },
+          "challenge_needed": true,
+          "challenge_reason": "could_be_even_more_detailed",
+          "challenge_prompt": "Pouvez-vous encore préciser ?"
+        }
+        """
+    )
+    plan = create_demo_plan()
+    provider = OpenAIAnswerInferenceProvider(
+        config=OpenAIAnswerInferenceConfig(model="gpt-test", timeout_seconds=1),
+        client=client,
+    )
+
+    assessment = await provider.assess_answer(
+        plan=plan,
+        question=plan.questions[0],
+        turn=CandidateTurn(
+            question_id="q1",
+            transcript=(
+                "Je souhaite accompagner des clients B2B et transformer leurs "
+                "problèmes concrets en améliorations produit mesurables."
+            ),
+        ),
+    )
+
+    assert assessment.classification == AnswerClassification.COMPLETE
+    assert assessment.evaluation_matrix.challenge_needed is False
+    assert assessment.evaluation_matrix.challenge_prompt is None
     assert assessment.evaluation_matrix is not None
     assert assessment.evaluation_matrix.overall_score == 13
     assert assessment.evaluation_matrix.challenge_needed is False
@@ -246,6 +293,40 @@ async def test_fallback_answer_inference_uses_heuristic_when_primary_fails() -> 
     assert assessment.classification == AnswerClassification.VAGUE
     assert "answer_too_short_or_generic" in assessment.reason_codes
     assert "llm_fallback:RuntimeError" in assessment.reason_codes
+
+
+@pytest.mark.asyncio
+async def test_live_answer_inference_logs_fallback_reason(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.adapters.answer_inference._openai_responses_client",
+        lambda: FailingResponsesClient(),
+    )
+    provider = build_live_answer_inference_provider(
+        {
+            "OPENAI_API_KEY": "test-key",
+            "OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS": "0.1",
+        }
+    )
+    plan = create_demo_plan()
+
+    with caplog.at_level("WARNING", logger="app.adapters.answer_inference"):
+        assessment = await provider.assess_answer(
+            plan=plan,
+            question=plan.questions[0],
+            turn=CandidateTurn(
+                question_id="q1",
+                transcript=(
+                    "Je veux rejoindre ce poste pour travailler sur un produit utile "
+                    "et apporter mon expérience concrète de coordination."
+                ),
+            ),
+        )
+
+    assert any(code == "llm_fallback:RuntimeError" for code in assessment.reason_codes)
+    assert "answer inference fell back to the local heuristic" in caplog.text
 
 
 @pytest.mark.asyncio

@@ -49,6 +49,7 @@ const (
 	EventBargeInRejected        EventType = "barge_in_rejected"
 	EventBackchannelDetected    EventType = "backchannel_detected"
 	EventSilenceTimeoutStarted  EventType = "silence_timeout_started"
+	EventSilenceRecovered       EventType = "silence_recovered"
 	EventWaitRequested          EventType = "wait_requested"
 	EventSoftReprompted         EventType = "soft_reprompted"
 	EventFollowupAsked          EventType = "followup_asked"
@@ -161,6 +162,7 @@ func CanApplyEvent(status SessionStatus, eventType EventType) bool {
 		EventBargeInRejected,
 		EventBackchannelDetected,
 		EventSilenceTimeoutStarted,
+		EventSilenceRecovered,
 		EventWaitRequested,
 		EventSoftReprompted,
 		EventFollowupAsked,

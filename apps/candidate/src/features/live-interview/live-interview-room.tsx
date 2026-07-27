@@ -28,6 +28,7 @@ import {
   toCandidateError,
 } from "./live-interview-client";
 import type {
+  CandidateInactivityNotice,
   ConnectedRoom,
   LiveInterviewSession,
   LiveTranscriptTurn,
@@ -35,12 +36,17 @@ import type {
 } from "./live-interview-types";
 import {
   hasClosingTranscript,
+  inactivityNoticeFromSessionState,
   selectInterviewerView,
   shouldKeepCurrentRuntimeStatus,
   statusFromSessionState,
   statusFromTranscriptTurn,
   transcriptTurnsFromSessionState,
 } from "./live-interview-runtime";
+import {
+  LIVE_INTERVIEW_RECOVERY_POLICY,
+  recoverLiveInterviewConnection,
+} from "./live-interview-recovery";
 import { prepareVoiceLevelMeter, VoiceLevelMeter } from "./voice-level-meter";
 
 type CandidateStep = "welcome" | "setup" | "form";
@@ -60,6 +66,7 @@ const statusCopy: Record<RoomStatus, string> = {
   connected: "Live now",
   interviewer_speaking: "Interviewer speaking",
   candidate_speaking: "Listening to you",
+  processing: "Preparing the next question",
   listening: "Your turn",
   reconnecting: "Reconnecting",
   closing: "Wrapping up",
@@ -94,7 +101,8 @@ export function LiveInterviewRoom({
   >([]);
   // The interviewer's currently-spoken segment, streamed in from the LiveKit
   // transcription paced to the audio. It drives the live word-by-word reveal;
-  // finalized turns live in transcriptTurns for history.
+  // finalized turns remain in transcriptTurns for recruiter review, not for
+  // the candidate's foreground display.
   const [interviewerCaption, setInterviewerCaption] =
     React.useState<LiveTranscriptTurn | null>(null);
   const [formAnswers, setFormAnswers] = React.useState<Record<string, string>>(
@@ -102,12 +110,20 @@ export function LiveInterviewRoom({
   );
   const [isSubmittingForm, setIsSubmittingForm] = React.useState(false);
   const [elapsedSeconds, setElapsedSeconds] = React.useState(0);
+  const [inactivityNotice, setInactivityNotice] =
+    React.useState<CandidateInactivityNotice | null>(null);
   const roomRef = React.useRef<ConnectedRoom | null>(null);
   const localStreamRef = React.useRef<MediaStream | null>(null);
+  const sessionRef = React.useRef<LiveInterviewSession | null>(null);
+  const startAbortRef = React.useRef<AbortController | null>(null);
+  const recoveryAbortRef = React.useRef<AbortController | null>(null);
+  const connectionGenerationRef = React.useRef(0);
+  const activeConnectionGenerationRef = React.useRef<number | null>(null);
   const startInFlightRef = React.useRef(false);
   const completionTimerRef = React.useRef<number | null>(null);
   const serverCompletionScheduledRef = React.useRef(false);
   const userAbandoningRef = React.useRef(false);
+  const serverFailureHandledRef = React.useRef(false);
   const completedProductSessionIdsRef = React.useRef(new Set<string>());
   const mergeTranscriptTurns = React.useCallback(
     (incomingTurns: LiveTranscriptTurn[]) => {
@@ -132,8 +148,8 @@ export function LiveInterviewRoom({
     [],
   );
 
-  // The candidate sees one foreground line — the interviewer's live caption while
-  // it streams, then the finalized question — above a few dimmed previous ones.
+  // The candidate sees one foreground line: the interviewer's live caption while
+  // it streams, then the latest finalized question.
   const interviewerView = React.useMemo(
     () =>
       selectInterviewerView({
@@ -152,6 +168,9 @@ export function LiveInterviewRoom({
       if (completionTimerRef.current) {
         window.clearTimeout(completionTimerRef.current);
       }
+      startAbortRef.current?.abort();
+      recoveryAbortRef.current?.abort();
+      activeConnectionGenerationRef.current = null;
       stopLocalStream(localStreamRef.current);
       roomRef.current?.disconnect();
     };
@@ -203,6 +222,7 @@ export function LiveInterviewRoom({
 
       const delayMs = hasClosingTurn ? 2200 : 3600;
       completionTimerRef.current = window.setTimeout(() => {
+        recoveryAbortRef.current?.abort();
         roomRef.current?.disconnect();
         roomRef.current = null;
         stopLocalStream(localStreamRef.current);
@@ -226,6 +246,8 @@ export function LiveInterviewRoom({
 
     prepareVoiceLevelMeter();
     startInFlightRef.current = true;
+    const startController = new AbortController();
+    startAbortRef.current = startController;
     let grantedStream: MediaStream | null = null;
     let nextSession: LiveInterviewSession | null = null;
 
@@ -234,7 +256,9 @@ export function LiveInterviewRoom({
     setTranscriptTurns([]);
     setInterviewerCaption(null);
     setElapsedSeconds(0);
+    setInactivityNotice(null);
     serverCompletionScheduledRef.current = false;
+    serverFailureHandledRef.current = false;
     userAbandoningRef.current = false;
     if (completionTimerRef.current) {
       window.clearTimeout(completionTimerRef.current);
@@ -249,6 +273,7 @@ export function LiveInterviewRoom({
         consentAccepted: hasAcceptedConsent,
         resumeToken:
           window.localStorage.getItem(resumeStorageKey(token)) ?? undefined,
+        signal: startController.signal,
         token,
         videoEnabled: false,
       });
@@ -258,6 +283,7 @@ export function LiveInterviewRoom({
           nextSession.resumeToken,
         );
       }
+      sessionRef.current = nextSession;
       setSession(nextSession);
 
       setStatus("permission_required");
@@ -266,60 +292,218 @@ export function LiveInterviewRoom({
         video: false,
       });
       grantedStream = stream;
+      startController.signal.throwIfAborted();
       setLocalStream(stream);
 
-      setStatus("connecting");
-      roomRef.current = await connectRoom({
-        session: nextSession,
-        stream,
-        onReconnecting: () => setStatus("reconnecting"),
-        onRoomConnected: () => setStatus("interviewer_joining"),
-        onInterviewerJoined: () => setStatus("interviewer_joining"),
-        onInterviewerReady: () => setStatus("connected"),
-        onDisconnected: ({ intentional }) => {
-          if (intentional) {
-            if (userAbandoningRef.current) {
-              setStatus("abandoned");
-              return;
+      async function connectPreparedSession(
+        preparedSession: LiveInterviewSession,
+        preparedStream: MediaStream,
+        signal?: AbortSignal,
+      ) {
+        const connectionGeneration = connectionGenerationRef.current + 1;
+        connectionGenerationRef.current = connectionGeneration;
+        activeConnectionGenerationRef.current = connectionGeneration;
+
+        let connectedRoom: ConnectedRoom;
+        try {
+          connectedRoom = await connectRoom({
+            session: preparedSession,
+            signal,
+            stream: preparedStream,
+            onReconnecting: () => setStatus("reconnecting"),
+            onRoomConnected: () => setStatus("interviewer_joining"),
+            onInterviewerJoined: () => setStatus("interviewer_joining"),
+            onInterviewerReady: () => setStatus("connected"),
+            onDisconnected: ({ intentional }) => {
+              if (
+                activeConnectionGenerationRef.current !== connectionGeneration
+              ) {
+                return;
+              }
+
+              activeConnectionGenerationRef.current = null;
+              roomRef.current = null;
+
+              if (serverFailureHandledRef.current) {
+                setStatus("failed");
+                return;
+              }
+
+              if (intentional) {
+                if (userAbandoningRef.current) {
+                  setStatus("abandoned");
+                  return;
+                }
+                if (!serverCompletionScheduledRef.current) {
+                  completeCurrentSession(preparedSession);
+                  setStatus("completed");
+                }
+                return;
+              }
+
+              // If recovery still owns this generation, its acceptance check
+              // will retry inside the same five-minute window.
+              if (recoveryAbortRef.current) {
+                return;
+              }
+
+              void recoverDisconnectedSession(preparedSession, preparedStream);
+            },
+            onAudioPlaybackBlocked: () => setIsAudioPlaybackBlocked(true),
+            onAudioPlaybackReady: () => {
+              setIsAudioPlaybackBlocked(false);
+            },
+            onTranscriptTurn: (turn) => {
+              mergeTranscriptTurns([turn]);
+              setStatus((currentStatus) =>
+                statusFromTranscriptTurn(turn, currentStatus),
+              );
+            },
+            onInterviewerCaption: (caption) => {
+              setInterviewerCaption(caption);
+              setStatus((currentStatus) =>
+                statusFromTranscriptTurn(caption, currentStatus),
+              );
+            },
+          });
+          signal?.throwIfAborted();
+        } catch (cause) {
+          if (activeConnectionGenerationRef.current === connectionGeneration) {
+            activeConnectionGenerationRef.current = null;
+          }
+          throw cause;
+        }
+
+        if (activeConnectionGenerationRef.current === connectionGeneration) {
+          roomRef.current = connectedRoom;
+        } else {
+          connectedRoom.disconnect();
+        }
+
+        return connectionGeneration;
+      }
+
+      async function recoverDisconnectedSession(
+        disconnectedSession: LiveInterviewSession,
+        disconnectedStream: MediaStream,
+      ) {
+        if (
+          recoveryAbortRef.current ||
+          userAbandoningRef.current ||
+          serverCompletionScheduledRef.current
+        ) {
+          return;
+        }
+
+        const recoveryController = new AbortController();
+        recoveryAbortRef.current = recoveryController;
+        const recoveryDeadline =
+          Date.now() + LIVE_INTERVIEW_RECOVERY_POLICY.recoveryWindowMs;
+        let latestSession = disconnectedSession;
+        setError(null);
+        setIsAudioPlaybackBlocked(false);
+        setInterviewerCaption(null);
+        setStatus("reconnecting");
+
+        try {
+          while (!recoveryController.signal.aborted) {
+            const remainingRecoveryMs = recoveryDeadline - Date.now();
+            if (remainingRecoveryMs <= 0) {
+              throw new Error("recovery_exhausted");
             }
-            if (!serverCompletionScheduledRef.current) {
-              completeCurrentSession(nextSession);
-              setStatus("completed");
+
+            const recoveredConnection = await recoverLiveInterviewConnection<{
+              connectionGeneration: number;
+              session: LiveInterviewSession;
+            }>({
+              acceptResult: ({ connectionGeneration }) =>
+                activeConnectionGenerationRef.current === connectionGeneration,
+              signal: recoveryController.signal,
+              onAttempt: () => setStatus("reconnecting"),
+              policy: {
+                ...LIVE_INTERVIEW_RECOVERY_POLICY,
+                recoveryWindowMs: remainingRecoveryMs,
+              },
+              attempt: async ({ signal }) => {
+                const refreshedSession = await createSession({
+                  candidateEmail,
+                  candidateName,
+                  consentAccepted: hasAcceptedConsent,
+                  resumeToken:
+                    latestSession.resumeToken ??
+                    window.localStorage.getItem(resumeStorageKey(token)) ??
+                    undefined,
+                  signal,
+                  token,
+                  videoEnabled: false,
+                });
+                latestSession = refreshedSession;
+                sessionRef.current = refreshedSession;
+                if (refreshedSession.resumeToken) {
+                  window.localStorage.setItem(
+                    resumeStorageKey(token),
+                    refreshedSession.resumeToken,
+                  );
+                }
+                const connectionGeneration = await connectPreparedSession(
+                  refreshedSession,
+                  disconnectedStream,
+                  signal,
+                );
+                return {
+                  connectionGeneration,
+                  session: refreshedSession,
+                };
+              },
+            });
+
+            if (
+              activeConnectionGenerationRef.current !==
+              recoveredConnection.connectionGeneration
+            ) {
+              continue;
+            }
+
+            // Release recovery ownership before publishing the recovered room.
+            // A later disconnect will therefore start a fresh recovery cycle.
+            if (recoveryAbortRef.current === recoveryController) {
+              recoveryAbortRef.current = null;
+            }
+            if (!recoveryController.signal.aborted) {
+              sessionRef.current = recoveredConnection.session;
+              setSession(recoveredConnection.session);
             }
             return;
           }
-
-          roomRef.current = null;
-          stopLocalStream(stream);
-          setLocalStream(null);
-          if (nextSession) {
-            void markProductSessionLifecycle(nextSession, "fail");
+        } catch {
+          if (recoveryController.signal.aborted) {
+            return;
           }
+
+          stopLocalStream(disconnectedStream);
+          setLocalStream(null);
+          await markProductSessionLifecycle(latestSession, "fail");
           setError(
-            "The live interview connection closed unexpectedly. Please refresh the page and retry.",
+            "We could not restore the live connection. Your existing answers are saved; try joining again.",
           );
           setStatus("failed");
-        },
-        onAudioPlaybackBlocked: () => setIsAudioPlaybackBlocked(true),
-        onAudioPlaybackReady: () => {
-          setIsAudioPlaybackBlocked(false);
-        },
-        onTranscriptTurn: (turn) => {
-          mergeTranscriptTurns([turn]);
-          setStatus((currentStatus) =>
-            statusFromTranscriptTurn(turn, currentStatus),
-          );
-        },
-        onInterviewerCaption: (caption) => {
-          setInterviewerCaption(caption);
-          setStatus((currentStatus) =>
-            statusFromTranscriptTurn(caption, currentStatus),
-          );
-        },
-      });
+        } finally {
+          if (recoveryAbortRef.current === recoveryController) {
+            recoveryAbortRef.current = null;
+          }
+        }
+      }
+
+      setStatus("connecting");
+      await connectPreparedSession(nextSession, stream, startController.signal);
     } catch (cause) {
       roomRef.current?.disconnect();
       roomRef.current = null;
+      if (startController.signal.aborted) {
+        stopLocalStream(grantedStream);
+        setLocalStream(null);
+        return;
+      }
       if (nextSession) {
         await markProductSessionLifecycle(nextSession, "fail");
       }
@@ -328,6 +512,9 @@ export function LiveInterviewRoom({
       setStatus("failed");
       setError(toCandidateError(cause));
     } finally {
+      if (startAbortRef.current === startController) {
+        startAbortRef.current = null;
+      }
       startInFlightRef.current = false;
     }
   }, [
@@ -342,8 +529,13 @@ export function LiveInterviewRoom({
 
   const endInterview = React.useCallback(() => {
     userAbandoningRef.current = true;
-    if (session) {
-      void markProductSessionLifecycle(session, "abandon");
+    startAbortRef.current?.abort();
+    startAbortRef.current = null;
+    recoveryAbortRef.current?.abort();
+    recoveryAbortRef.current = null;
+    activeConnectionGenerationRef.current = null;
+    if (sessionRef.current) {
+      void markProductSessionLifecycle(sessionRef.current, "abandon");
     }
     roomRef.current?.disconnect();
     roomRef.current = null;
@@ -351,10 +543,11 @@ export function LiveInterviewRoom({
     setLocalStream(null);
     setIsAudioPlaybackBlocked(false);
     setStatus("abandoned");
-  }, [localStream, session]);
+  }, [localStream]);
 
   const retryAfterAbandon = React.useCallback(() => {
     userAbandoningRef.current = false;
+    sessionRef.current = null;
     setSession(null);
     setTranscriptTurns([]);
     setInterviewerCaption(null);
@@ -364,6 +557,32 @@ export function LiveInterviewRoom({
   }, []);
 
   const openFormFallback = React.useCallback(() => {
+    setError(null);
+    setStatus("ready");
+    setStep("form");
+  }, []);
+
+  const confirmCandidatePresence = React.useCallback(() => {
+    setInactivityNotice(null);
+    void roomRef.current?.sendControl("candidate_presence_confirmed");
+  }, []);
+
+  const repeatCurrentQuestion = React.useCallback(() => {
+    setInactivityNotice(null);
+    void roomRef.current?.sendControl("repeat_question");
+  }, []);
+
+  const continueInWriting = React.useCallback(() => {
+    const currentSession = sessionRef.current;
+    if (currentSession) {
+      void markProductSessionLifecycle(currentSession, "abandon");
+    }
+    activeConnectionGenerationRef.current = null;
+    roomRef.current?.disconnect();
+    roomRef.current = null;
+    stopLocalStream(localStreamRef.current);
+    setLocalStream(null);
+    setInactivityNotice(null);
     setError(null);
     setStatus("ready");
     setStep("form");
@@ -398,6 +617,7 @@ export function LiveInterviewRoom({
     status === "connected" ||
     status === "interviewer_speaking" ||
     status === "candidate_speaking" ||
+    status === "processing" ||
     status === "listening" ||
     status === "closing" ||
     status === "reconnecting";
@@ -441,6 +661,7 @@ export function LiveInterviewRoom({
           result.resumeToken,
         );
       }
+      sessionRef.current = null;
       setSession(null);
       setElapsedSeconds(0);
       setStatus("completed");
@@ -522,6 +743,7 @@ export function LiveInterviewRoom({
         if (stateTurns.length > 0) {
           mergeTranscriptTurns(stateTurns);
         }
+        setInactivityNotice(inactivityNoticeFromSessionState(state));
 
         const nextStatus = statusFromSessionState(state);
         if (nextStatus === "completed") {
@@ -529,9 +751,22 @@ export function LiveInterviewRoom({
           return;
         }
         if (nextStatus === "failed") {
+          if (recoveryAbortRef.current) {
+            return;
+          }
+          if (!serverFailureHandledRef.current) {
+            serverFailureHandledRef.current = true;
+            await markProductSessionLifecycle(session, "fail");
+          }
+          activeConnectionGenerationRef.current = null;
+          roomRef.current?.disconnect();
+          roomRef.current = null;
+          stopLocalStream(localStreamRef.current);
+          setLocalStream(null);
+          setInactivityNotice(null);
           setStatus("failed");
           setError(
-            "The interviewer could not complete this session. Please ask the recruiter for a fresh link.",
+            "This attempt ended before completion. Your existing answers are saved, and you can retry using the same link.",
           );
           return;
         }
@@ -632,12 +867,16 @@ export function LiveInterviewRoom({
         activeTurnId={interviewerView.activeTurnId}
         elapsedSeconds={elapsedSeconds}
         isAudioPlaybackBlocked={isAudioPlaybackBlocked}
+        inactivityNotice={inactivityNotice}
+        isFormFallbackAvailable={isFormFallbackAvailable}
         isRoomActive={isRoomActive}
         isStreaming={interviewerView.isStreaming}
         localStream={localStream}
         onEnableAudio={enableAudio}
         onEndInterview={endInterview}
-        previousTurns={interviewerView.previous}
+        onConfirmPresence={confirmCandidatePresence}
+        onContinueInWriting={continueInWriting}
+        onRepeatQuestion={repeatCurrentQuestion}
         status={status}
       />
     );
@@ -1092,12 +1331,15 @@ function UnavailableInterview({
 
 function StatusPill({ status }: { status: RoomStatus }) {
   const isLive = status === "connected";
-  const isReconnecting = status === "reconnecting";
-  const Icon = isLive ? CheckCircle : isReconnecting ? RefreshCcw : Mic;
+  const isWorking = status === "processing" || status === "reconnecting";
+  const Icon = isLive ? CheckCircle : isWorking ? RefreshCcw : Mic;
 
   return (
     <span className="inline-flex items-center gap-1.5 rounded-full bg-[#eef0e3] px-2.5 py-1 text-xs font-semibold text-olive-900">
-      <Icon aria-hidden="true" className="h-3.5 w-3.5" />
+      <Icon
+        aria-hidden="true"
+        className={`h-3.5 w-3.5${isWorking ? " motion-safe:animate-spin" : ""}`}
+      />
       {statusCopy[status]}
     </span>
   );
@@ -1108,24 +1350,32 @@ function LiveInterviewStage({
   activeTurnId,
   elapsedSeconds,
   isAudioPlaybackBlocked,
+  inactivityNotice,
+  isFormFallbackAvailable,
   isRoomActive,
   isStreaming,
   localStream,
+  onConfirmPresence,
+  onContinueInWriting,
   onEnableAudio,
   onEndInterview,
-  previousTurns,
+  onRepeatQuestion,
   status,
 }: {
   activeText: string | null;
   activeTurnId: string | null;
   elapsedSeconds: number;
   isAudioPlaybackBlocked: boolean;
+  inactivityNotice: CandidateInactivityNotice | null;
+  isFormFallbackAvailable: boolean;
   isRoomActive: boolean;
   isStreaming: boolean;
   localStream: MediaStream | null;
+  onConfirmPresence: () => void;
+  onContinueInWriting: () => void;
   onEnableAudio: () => void;
   onEndInterview: () => void;
-  previousTurns: LiveTranscriptTurn[];
+  onRepeatQuestion: () => void;
   status: RoomStatus;
 }) {
   const activeDisplayText = activeText ?? statusDescription(status);
@@ -1134,18 +1384,6 @@ function LiveInterviewStage({
     [activeDisplayText],
   );
   const activeSizeClass = activeTextSizeClass(activeDisplayText);
-  const stageScrollRef = React.useRef<HTMLDivElement | null>(null);
-  // Keep the live edge (the word being spoken) in view when a long turn — the
-  // closing especially — grows past the viewport, instead of letting it clip.
-  React.useEffect(() => {
-    const container = stageScrollRef.current;
-    if (!container || !isStreaming) {
-      return;
-    }
-    if (container.scrollHeight > container.clientHeight) {
-      container.scrollTop = container.scrollHeight;
-    }
-  }, [activeWords.length, isStreaming]);
   const isConnectingOnly =
     status === "preparing" ||
     status === "permission_required" ||
@@ -1173,17 +1411,16 @@ function LiveInterviewStage({
         <StatusPill status={status} />
       </div>
 
-      <div
-        className="relative flex min-h-0 flex-1 flex-col overflow-y-auto py-4 sm:py-10"
-        ref={stageScrollRef}
-      >
+      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden py-4 sm:py-10">
         <div className="m-auto w-full max-w-4xl">
           {isConnectingOnly ? (
             <ConnectingInterviewState status={status} />
           ) : (
             <div
+              aria-atomic="true"
+              aria-busy={isStreaming}
               aria-live="polite"
-              className="mx-auto max-w-3xl text-left"
+              className="mx-auto flex min-h-[min(46svh,24rem)] max-h-[58svh] max-w-3xl flex-col items-start justify-center overflow-y-auto text-left sm:min-h-[min(48svh,30rem)]"
               key={activeTurnId ?? status}
             >
               <div className="mb-5 inline-flex items-center gap-2 sm:mb-7">
@@ -1193,15 +1430,7 @@ function LiveInterviewStage({
                 </span>
               </div>
 
-              <div className="flex flex-col gap-3">
-                {previousTurns.map((turn) => (
-                  <p
-                    className="max-w-2xl animate-[cc-histIn_.5s_ease_both] text-base font-medium leading-7 text-white/32 sm:text-xl"
-                    key={turn.turnId}
-                  >
-                    {turn.text}
-                  </p>
-                ))}
+              <div className="w-full">
                 <p
                   className={`font-semibold leading-[1.2] tracking-normal text-[#fef9f2] ${activeSizeClass}`}
                 >
@@ -1218,7 +1447,7 @@ function LiveInterviewStage({
                       <span
                         className={`mr-[0.24em] inline-block${
                           isStreaming
-                            ? " animate-[cc-wordIn_.42s_cubic-bezier(.2,.7,.2,1)_both]"
+                            ? " motion-safe:animate-[cc-wordIn_.18s_cubic-bezier(.2,.7,.2,1)_both]"
                             : ""
                         }${isLiveWord ? " text-[oklch(0.9_0.14_121.3)]" : ""}`}
                         key={`${activeTurnId ?? "status"}:${index}`}
@@ -1237,6 +1466,16 @@ function LiveInterviewStage({
                 You can ask to repeat the question, take a moment to think, or
                 answer naturally. The interviewer will wait while you finish.
               </p>
+
+              {inactivityNotice ? (
+                <CandidateInactivityAlert
+                  isFormFallbackAvailable={isFormFallbackAvailable}
+                  notice={inactivityNotice}
+                  onConfirmPresence={onConfirmPresence}
+                  onContinueInWriting={onContinueInWriting}
+                  onRepeatQuestion={onRepeatQuestion}
+                />
+              ) : null}
             </div>
           )}
 
@@ -1275,6 +1514,91 @@ function LiveInterviewStage({
         <VoiceLevelMeter isActive={isRoomActive} stream={localStream} />
       </div>
     </section>
+  );
+}
+
+function CandidateInactivityAlert({
+  isFormFallbackAvailable,
+  notice,
+  onConfirmPresence,
+  onContinueInWriting,
+  onRepeatQuestion,
+}: {
+  isFormFallbackAvailable: boolean;
+  notice: CandidateInactivityNotice;
+  onConfirmPresence: () => void;
+  onContinueInWriting: () => void;
+  onRepeatQuestion: () => void;
+}) {
+  const [remainingSeconds, setRemainingSeconds] = React.useState(() =>
+    inactivitySecondsRemaining(notice.expiresAt),
+  );
+
+  React.useEffect(() => {
+    setRemainingSeconds(inactivitySecondsRemaining(notice.expiresAt));
+    if (!notice.expiresAt) {
+      return undefined;
+    }
+    const interval = window.setInterval(() => {
+      setRemainingSeconds(inactivitySecondsRemaining(notice.expiresAt));
+    }, 250);
+    return () => window.clearInterval(interval);
+  }, [notice.expiresAt]);
+
+  const isWarning = notice.stage === "warning";
+
+  return (
+    <div
+      aria-live="assertive"
+      className="mt-6 w-full rounded-3xl border border-white/14 bg-white/10 p-4 backdrop-blur sm:p-5"
+      role="alert"
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="font-semibold text-white">
+            {isWarning ? "Are you still with us?" : "We are waiting for you"}
+          </p>
+          <p className="mt-1 text-sm leading-5 text-white/60">
+            {isWarning
+              ? "Confirm that you are here to keep this attempt open."
+              : "You can continue speaking whenever you are ready."}
+          </p>
+        </div>
+        {isWarning && remainingSeconds !== null ? (
+          <span className="rounded-full bg-white px-3 py-1 text-sm font-semibold tabular-nums text-ink-950">
+            {remainingSeconds}s
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button
+          className="h-10 bg-white px-4 text-ink-950 hover:bg-ink-100"
+          onClick={onConfirmPresence}
+          variant="secondary"
+        >
+          <CheckCircle aria-hidden="true" className="h-4 w-4" />
+          I&apos;m here
+        </Button>
+        <Button
+          className="h-10 border border-white/20 bg-transparent px-4 text-white hover:bg-white/10"
+          onClick={onRepeatQuestion}
+          variant="secondary"
+        >
+          <RefreshCcw aria-hidden="true" className="h-4 w-4" />
+          Repeat question
+        </Button>
+        {isFormFallbackAvailable ? (
+          <Button
+            className="h-10 border border-white/20 bg-transparent px-4 text-white hover:bg-white/10"
+            onClick={onContinueInWriting}
+            variant="secondary"
+          >
+            <EditPencil aria-hidden="true" className="h-4 w-4" />
+            Continue in writing
+          </Button>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -1402,6 +1726,17 @@ function formatDuration(totalSeconds: number) {
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
 
+function inactivitySecondsRemaining(expiresAt: string | null) {
+  if (!expiresAt) {
+    return null;
+  }
+  const timestamp = Date.parse(expiresAt);
+  if (!Number.isFinite(timestamp)) {
+    return null;
+  }
+  return Math.max(0, Math.ceil((timestamp - Date.now()) / 1000));
+}
+
 function InlineAlert({ message }: { message: string }) {
   return (
     <div className="mt-4 flex gap-2 rounded-3xl bg-coral-50 p-4 text-sm text-ink-900">
@@ -1458,11 +1793,14 @@ function statusDescription(status: RoomStatus) {
   if (status === "candidate_speaking") {
     return "Keep going. The interviewer is listening.";
   }
+  if (status === "processing") {
+    return "Take a moment. The interviewer is preparing the next question.";
+  }
   if (status === "listening") {
     return "Your turn. Answer naturally when you are ready.";
   }
   if (status === "reconnecting") {
-    return "Connection changed. We are reconnecting you automatically.";
+    return "Your connection changed. We are restoring the interview automatically.";
   }
   if (status === "closing") {
     return "Thank you. The interviewer is wrapping up the conversation.";

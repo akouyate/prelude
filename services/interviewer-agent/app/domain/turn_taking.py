@@ -1,3 +1,10 @@
+"""Legacy turn-taking simulator.
+
+Deprecated for live interviews: LiveKit Agents owns VAD, endpointing,
+backchannels, and interruption recovery in the production worker. This policy
+remains only for deterministic CLI/benchmark compatibility.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -46,6 +53,8 @@ class TurnTakingDecision:
 
 @dataclass
 class TurnTakingPolicy:
+    """Deprecated live-runtime policy retained for deterministic simulations."""
+
     config: TurnTakingConfig = field(default_factory=TurnTakingConfig)
     agent_speaking: bool = False
     candidate_speaking: bool = False

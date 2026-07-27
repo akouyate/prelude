@@ -1,9 +1,37 @@
 import type {
+  CandidateInactivityNotice,
   LiveSessionEvent,
   LiveSessionState,
   LiveTranscriptTurn,
   RoomStatus,
 } from "./live-interview-types";
+
+export function inactivityNoticeFromSessionState(
+  state: LiveSessionState,
+): CandidateInactivityNotice | null {
+  const latest = [...state.events]
+    .sort((left, right) => left.sequence - right.sequence)
+    .filter((event) => inactivityEventTypes.has(event.type))
+    .at(-1);
+
+  if (!latest || latest.type !== "silence_timeout_started") {
+    return null;
+  }
+  const stage = latest.payload.tier;
+  if (stage !== "check_in" && stage !== "warning") {
+    return null;
+  }
+
+  return {
+    stage,
+    expiresAt:
+      typeof latest.payload.expires_at === "string"
+        ? latest.payload.expires_at
+        : typeof latest.payload.expiresAt === "string"
+          ? latest.payload.expiresAt
+          : null,
+  };
+}
 
 export function statusFromSessionState(state: LiveSessionState): RoomStatus {
   if (
@@ -44,14 +72,16 @@ export function statusFromSessionState(state: LiveSessionState): RoomStatus {
     case "candidate_turn_started":
     case "candidate_turn_detected":
       return "candidate_speaking";
+    case "candidate_speech_stopped":
+      return "listening";
+    case "candidate_turn_finalized":
+    case "answer_evaluated":
+      return "processing";
     case "agent_joined":
     case "session_started":
       return "agent_joined";
     case "candidate_media_ready":
       return "interviewer_joining";
-    case "candidate_turn_finalized":
-    case "candidate_speech_stopped":
-    case "answer_evaluated":
     case "question_completed":
     case "agent_speech_completed":
     case "silence_timeout_started":
@@ -79,7 +109,7 @@ export function statusFromTranscriptTurn(
     return "interviewer_speaking";
   }
   if (turn.speaker === "candidate") {
-    return "candidate_speaking";
+    return turn.isFinal ? "processing" : "candidate_speaking";
   }
 
   return currentStatus;
@@ -203,17 +233,13 @@ export type InterviewerView = {
   // which drives the per-word reveal + cursor. False once finalized or when the
   // active line is a finalized fallback (e.g. after a reconnect).
   isStreaming: boolean;
-  // Up to the three previous finalized questions, shown dimmed above the active
-  // line. Never includes the active line's own (possibly finalized) twin.
-  previous: LiveTranscriptTurn[];
 };
 
 // selectInterviewerView decides what the candidate's live stage shows. The live
 // caption (audio-synced LiveKit transcription) is authoritative for the active
-// line so the text tracks the voice word by word; finalized turns are history.
-// The same segment also arrives as a finalized turn from other paths (LiveKit
-// stream close, the prelude data packet, HTTP polling), so the caption's twin is
-// excluded from the dimmed history to avoid showing it twice.
+// line so the text tracks the voice word by word. Finalized turns remain in the
+// session state for recruiter review, but the candidate surface renders only
+// the current interviewer line.
 export function selectInterviewerView({
   finalTurns,
   caption,
@@ -225,34 +251,10 @@ export function selectInterviewerView({
   const captionText = caption?.text.trim() ?? "";
 
   if (caption && captionText.length > 0) {
-    const captionKey = normalizeTranscriptText(captionText);
-    const lastIndex = finals.length - 1;
-    const previous = finals.filter((turn, index) => {
-      if (turn.turnId === caption.turnId) {
-        return false;
-      }
-      const turnKey = normalizeTranscriptText(turn.text);
-      if (turnKey === captionKey) {
-        return false;
-      }
-      // The caption is the live version of the most recent utterance: drop that
-      // one turn when they are the same growing phrase (either prefixes the
-      // other), but never an older question that merely shares a prefix.
-      if (
-        index === lastIndex &&
-        (turnKey.startsWith(captionKey) || captionKey.startsWith(turnKey))
-      ) {
-        return false;
-      }
-
-      return true;
-    });
-
     return {
       activeText: captionText,
       activeTurnId: caption.turnId,
       isStreaming: !caption.isFinal,
-      previous: lastTurns(previous, 3),
     };
   }
 
@@ -261,12 +263,7 @@ export function selectInterviewerView({
     activeText: active?.text ?? null,
     activeTurnId: active?.turnId ?? null,
     isStreaming: false,
-    previous: lastTurns(finals.slice(0, -1), 3),
   };
-}
-
-function lastTurns(turns: LiveTranscriptTurn[], count: number) {
-  return turns.slice(Math.max(0, turns.length - count));
 }
 
 export function hasClosingTranscript(state: LiveSessionState) {
@@ -374,6 +371,15 @@ const runtimeEventTypes = new Set([
   "wait_requested",
   "question_completed",
   "session_closing",
+]);
+
+const inactivityEventTypes = new Set([
+  "silence_timeout_started",
+  "silence_recovered",
+  "candidate_speech_started",
+  "candidate_turn_finalized",
+  "session_failed",
+  "session_completed",
 ]);
 
 const terminalStatuses = new Set<RoomStatus>([

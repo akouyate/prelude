@@ -71,8 +71,12 @@ function parseArgs(values) {
 }
 
 async function getJSON(url) {
+  const headers = { accept: "application/json" };
+  if (process.env.REALTIME_API_KEY) {
+    headers.authorization = `Bearer ${process.env.REALTIME_API_KEY}`;
+  }
   const response = await fetch(url, {
-    headers: { accept: "application/json" },
+    headers,
   });
   const body = await response.text();
   let json;
@@ -159,8 +163,15 @@ function buildReport({ session, events, transcript }) {
         ? eventSequence(candidateReady) < eventSequence(firstQuestion)
         : null,
   };
+  const closingText = closing?.payload?.closing;
   const closingTranscriptTurn =
-    closing?.payload?.transcript_turn ?? closing?.payload?.transcriptTurn;
+    closing?.payload?.transcript_turn ??
+    closing?.payload?.transcriptTurn ??
+    interviewerTurns.find(
+      (turn) =>
+        typeof closingText === "string" &&
+        turn.text?.trim() === closingText.trim(),
+    );
   const closingBeforeCompleted =
     closing && completed ? eventSequence(closing) < eventSequence(completed) : null;
 

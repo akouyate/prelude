@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -17,14 +18,12 @@ from app.domain.orchestrator import (
     InterviewOrchestrator,
 )
 
-
-DEFAULT_OPENAI_ANSWER_INFERENCE_MODEL = "gpt-4.1-mini"
-# S4: the evaluator stays on the critical path (so the interviewer keeps probing
-# weak answers in real time) but is tightly bounded. Beyond this budget we fall
-# back to the fast local heuristic rather than holding dead air — capping the
-# evaluation wait at ~1.0s (on top of the turn-flush debounce) instead of the
-# 2-4.5s seen in the live log.
-DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS = 1.0
+DEFAULT_OPENAI_ANSWER_INFERENCE_MODEL = "gpt-5.4-nano"
+# Live measurements put the classification-focused model at 1.8-2.7s for
+# strong, vague, and incoherent answers. This budget keeps inference on the
+# normal path without allowing a slow provider to create an unnatural pause.
+DEFAULT_OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS = 3.5
+logger = logging.getLogger(__name__)
 
 
 class HeuristicAnswerInferenceProvider:
@@ -149,7 +148,9 @@ class FallbackAnswerInferenceProvider:
                 self._primary.assess_answer(plan=plan, question=question, turn=turn),
                 timeout=self._timeout_seconds,
             )
-        except Exception as exc:
+        # Providers are external adapters and can surface transport, SDK, timeout,
+        # or response-shape errors. Keep that failure inside the fallback boundary.
+        except Exception as exc:  # noqa: BLE001
             if self._on_fallback:
                 self._on_fallback(exc)
             assessment = await self._fallback.assess_answer(
@@ -183,6 +184,17 @@ def build_live_answer_inference_provider(
         primary=OpenAIAnswerInferenceProvider(config=config),
         fallback=HeuristicAnswerInferenceProvider(),
         timeout_seconds=config.timeout_seconds + 0.5,
+        on_fallback=_log_answer_inference_fallback,
+    )
+
+
+def _log_answer_inference_fallback(exc: Exception) -> None:
+    logger.warning(
+        "answer inference fell back to the local heuristic",
+        extra={
+            "fallback_reason": exc.__class__.__name__,
+            "provider": "openai_responses",
+        },
     )
 
 
@@ -205,7 +217,12 @@ def _answer_inference_instructions() -> str:
         "voice, tone, emotion, identity, or protected characteristics. If the answer "
         "mentions protected traits or sensitive personal attributes, ignore those "
         "attributes, add the reason code protected_trait_excluded, and only evaluate "
-        "job-related evidence from the answer."
+        "job-related evidence from the answer. Use concise, specific snake_case reason "
+        "codes; never copy field descriptions or schema placeholders. Set "
+        "challenge_needed only when one concise follow-up would materially improve the "
+        "signal, and write challenge_prompt in the interview language. A challenge "
+        "must ask one simple thing in at most 18 words; never request a numbered list "
+        "or combine multiple asks."
     )
 
 
@@ -235,10 +252,7 @@ def _answer_inference_input(
             "allowed_classifications": [item.value for item in AnswerClassification],
             "required_json_shape": {
                 "classification": "complete|vague|incomplete|silent|skipped|repeat_requested|wait_requested",
-                "reason_codes": [
-                    "short_snake_case_reason",
-                    "protected_trait_excluded_when_sensitive_attributes_are_mentioned",
-                ],
+                "reason_codes": [],
                 "confidence": 0.0,
                 "scores": {
                     "clarity": 0,
@@ -266,7 +280,7 @@ def _json_from_response(response: object) -> dict[str, object]:
     except json.JSONDecodeError as exc:
         raise ValueError("OpenAI answer inference returned invalid JSON") from exc
     if not isinstance(payload, dict):
-        raise ValueError("OpenAI answer inference must return a JSON object")
+        raise TypeError("OpenAI answer inference must return a JSON object")
     return payload
 
 
@@ -316,11 +330,25 @@ def _matrix_from_payload(payload: dict[str, object]) -> EvaluationMatrix:
         _dimension_from_score(EvaluationDimension.COHERENCE, scores.get("coherence")),
         _dimension_from_score(EvaluationDimension.ROLE_SIGNAL, scores.get("role_signal")),
     ]
+    # A first screen should not keep probing an answer whose every dimension is
+    # already usable. The model may suggest an aspirational follow-up even after
+    # assigning strong scores; Prelude owns this bounded business rule.
+    challenge_needed = bool(payload.get("challenge_needed")) and any(
+        dimension.score <= 1 for dimension in dimensions
+    )
     return EvaluationMatrix(
         dimensions=dimensions,
-        challenge_needed=bool(payload.get("challenge_needed")),
-        challenge_reason=_optional_string(payload.get("challenge_reason")),
-        challenge_prompt=_optional_string(payload.get("challenge_prompt")),
+        challenge_needed=challenge_needed,
+        challenge_reason=(
+            _optional_string(payload.get("challenge_reason"))
+            if challenge_needed
+            else None
+        ),
+        challenge_prompt=(
+            _optional_string(payload.get("challenge_prompt"))
+            if challenge_needed
+            else None
+        ),
         evaluator_mode="llm_assisted",
     )
 

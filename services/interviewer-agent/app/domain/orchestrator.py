@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from enum import StrEnum
 import re
 import unicodedata
+from dataclasses import dataclass, field
+from enum import StrEnum
 
 from app.domain.models import (
     CandidateTurn,
@@ -11,7 +11,6 @@ from app.domain.models import (
     InterviewPlan,
     InterviewQuestion,
 )
-
 
 EVALUATOR_VERSION = "answer-eval-matrix-v1"
 
@@ -403,7 +402,9 @@ class InterviewOrchestrator:
                 attempt_index=attempt_index,
             )
 
-        if classification == AnswerClassification.VAGUE and self._can_follow_up(question_id):
+        if classification == AnswerClassification.VAGUE and self._can_follow_up(
+            question_id
+        ):
             followups_used = self._followups_by_question.get(question_id, 0) + 1
             self._followups_by_question[question_id] = followups_used
             return PolicyAction.ASK_FOLLOWUP, OrchestratorCommand(
@@ -434,7 +435,10 @@ class InterviewOrchestrator:
                 attempt_index=attempt_index,
             )
 
-        if classification in {AnswerClassification.INCOMPLETE, AnswerClassification.SILENT}:
+        if classification in {
+            AnswerClassification.INCOMPLETE,
+            AnswerClassification.SILENT,
+        }:
             return PolicyAction.TIMEBOX, OrchestratorCommand(
                 type=OrchestratorCommandType.COMPLETE_QUESTION,
                 question_id=question_id,
@@ -456,7 +460,9 @@ class InterviewOrchestrator:
         return self._followups_by_question.get(question_id, 0) < max_followups
 
     def _can_reprompt(self, question_id: str) -> bool:
-        return self._reprompts_by_question.get(question_id, 0) < 1
+        # First silence gets a gentle prompt; the second gets an explicit
+        # technical-readiness check. Only a third silence timeboxes the question.
+        return self._reprompts_by_question.get(question_id, 0) < 2
 
     def _ask_question_command(
         self,
@@ -688,7 +694,11 @@ def build_evaluation_matrix(
         challenge_needed=challenge_reason is not None,
         challenge_reason=challenge_reason,
         challenge_prompt=(
-            _challenge_prompt(question, challenge_reason)
+            _challenge_prompt(
+                question,
+                challenge_reason,
+                language=plan.language,
+            )
             if challenge_reason is not None
             else None
         ),
@@ -749,7 +759,9 @@ def _score_coherence(normalized_answer: str, answer_tokens: set[str]) -> int:
         return 1
     if len(answer_tokens) <= 2:
         return 1
-    repeated_tokens = [token for token in answer_tokens if normalized_answer.count(token) >= 4]
+    repeated_tokens = [
+        token for token in answer_tokens if normalized_answer.count(token) >= 4
+    ]
     if repeated_tokens:
         return 1
     if _contains_marker(normalized_answer, LOW_INFORMATION_MARKERS):
@@ -769,14 +781,18 @@ def _score_role_signal(
         return 3
     if len(signal_tokens) == 1:
         return 2
-    if category in {"logistics", "availability"} and {
-        "disponibilite",
-        "disponibilites",
-        "disponible",
-        "availability",
-        "remote",
-        "hybride",
-    } & answer_tokens:
+    if (
+        category in {"logistics", "availability"}
+        and {
+            "disponibilite",
+            "disponibilites",
+            "disponible",
+            "availability",
+            "remote",
+            "hybride",
+        }
+        & answer_tokens
+    ):
         return 3
     return 1 if len(answer_tokens) >= 8 else 0
 
@@ -801,11 +817,37 @@ def _challenge_reason(matrix: EvaluationMatrix, category: str) -> str | None:
     return None
 
 
-def _challenge_prompt(question: InterviewQuestion, reason: str) -> str:
+def _challenge_prompt(
+    question: InterviewQuestion,
+    reason: str,
+    *,
+    language: str,
+) -> str:
+    if not language.lower().startswith("fr"):
+        if reason == "incoherent_or_absurd_answer":
+            return (
+                "I may not have understood how that connects to the question. "
+                "Could you walk me through one concrete example?"
+            )
+        if reason == "off_topic_or_low_relevance":
+            return (
+                "I want to make sure I assess this point fairly. Could you answer "
+                f"the question directly: {question.prompt}"
+            )
+        if reason == "missing_concrete_example":
+            return (
+                "Could you give me a concrete example, including the context, "
+                "what you did, and the outcome?"
+            )
+        return (
+            "Could you connect that to the role and share one concrete detail "
+            "about what you did or observed?"
+        )
+
     if reason == "incoherent_or_absurd_answer":
         return (
-            "Je vais vous recentrer sur la question : votre reponse ne me permet pas "
-            "d'evaluer le signal attendu. Pouvez-vous repondre avec un exemple concret ?"
+            "Je n'ai peut-etre pas bien compris le lien avec la question. "
+            "Pouvez-vous me raconter un exemple concret ?"
         )
     if reason == "off_topic_or_low_relevance":
         return (
@@ -818,8 +860,8 @@ def _challenge_prompt(question: InterviewQuestion, reason: str) -> str:
             "et le resultat obtenu ?"
         )
     return (
-        "Pouvez-vous relier votre reponse au poste et donner un element concret "
-        "que le recruteur pourra verifier ?"
+        "Pouvez-vous relier votre reponse au poste et preciser concretement "
+        "ce que vous avez fait ou observe ?"
     )
 
 

@@ -24,8 +24,9 @@ var (
 )
 
 const (
-	liveKitRoomEmptyTimeout    = 5 * time.Minute
-	liveKitRoomMaxParticipants = 2
+	liveKitRoomEmptyTimeout     = 5 * time.Minute
+	liveKitRoomDepartureTimeout = 6 * time.Minute
+	liveKitRoomMaxParticipants  = 2
 )
 
 type Clock interface {
@@ -76,9 +77,10 @@ type LiveKitGateway interface {
 }
 
 type EnsureRoomInput struct {
-	RoomName        string
-	EmptyTimeout    time.Duration
-	MaxParticipants uint32
+	RoomName         string
+	EmptyTimeout     time.Duration
+	DepartureTimeout time.Duration
+	MaxParticipants  uint32
 }
 
 type LiveKitJoinInput struct {
@@ -363,9 +365,10 @@ func (s *Service) CreateSession(ctx context.Context, input CreateSessionInput) (
 	// on join as a fallback, so a transient gateway error must not stop the
 	// candidate from receiving a token.
 	if err := s.livekit.EnsureRoom(ctx, EnsureRoomInput{
-		RoomName:        session.LiveKitRoomName,
-		EmptyTimeout:    liveKitRoomEmptyTimeout,
-		MaxParticipants: liveKitRoomMaxParticipants,
+		RoomName:         session.LiveKitRoomName,
+		EmptyTimeout:     liveKitRoomEmptyTimeout,
+		DepartureTimeout: liveKitRoomDepartureTimeout,
+		MaxParticipants:  liveKitRoomMaxParticipants,
 	}); err != nil {
 		slog.Warn("failed to ensure livekit room", "session_id", session.ID, "room", session.LiveKitRoomName, "error", err)
 	}
@@ -1010,6 +1013,7 @@ func knownEventType(eventType domain.EventType) bool {
 		domain.EventBargeInRejected,
 		domain.EventBackchannelDetected,
 		domain.EventSilenceTimeoutStarted,
+		domain.EventSilenceRecovered,
 		domain.EventWaitRequested,
 		domain.EventSoftReprompted,
 		domain.EventFollowupAsked,
@@ -1049,6 +1053,8 @@ func validateEventPayload(eventType domain.EventType, payload json.RawMessage) e
 		return validateRejectedInterruptionPayload(eventType, payload)
 	case domain.EventSilenceTimeoutStarted:
 		return validateSilenceTimeoutStartedPayload(eventType, payload)
+	case domain.EventSilenceRecovered:
+		return validateSilenceRecoveredPayload(eventType, payload)
 	case domain.EventWaitRequested:
 		return validateWaitRequestedPayload(eventType, payload)
 	case domain.EventSoftReprompted:
@@ -1326,6 +1332,52 @@ func validateSilenceTimeoutStartedPayload(eventType domain.EventType, payload js
 	}
 	if !knownSilenceTier(tier) {
 		return fmt.Errorf("%w: unsupported silence tier %q", ErrInvalidEvent, tier)
+	}
+	if _, _, err := optionalIntRangeField(object, eventType, "remaining_ms", 0, 3600000, "remaining_ms", "remainingMs"); err != nil {
+		return err
+	}
+	if _, _, err := optionalRFC3339StringField(object, eventType, "expires_at", "expires_at", "expiresAt"); err != nil {
+		return err
+	}
+	if trigger, ok, err := optionalStringField(object, eventType, "trigger", "trigger"); err != nil {
+		return err
+	} else if ok && !knownInactivityTrigger(trigger) {
+		return fmt.Errorf("%w: unsupported inactivity trigger %q", ErrInvalidEvent, trigger)
+	}
+	return nil
+}
+
+func validateSilenceRecoveredPayload(eventType domain.EventType, payload json.RawMessage) error {
+	object, err := decodePayloadObject(eventType, payload)
+	if err != nil {
+		return err
+	}
+	if _, _, err := optionalStringField(object, eventType, "question_id", "question_id", "questionId"); err != nil {
+		return err
+	}
+	tier, err := requireStringField(object, eventType, "tier", "tier")
+	if err != nil {
+		return err
+	}
+	if tier != "check_in" && tier != "warning" {
+		return fmt.Errorf("%w: unsupported recovered silence tier %q", ErrInvalidEvent, tier)
+	}
+	if _, err := requireIntRangeField(object, eventType, "silent_for_ms", 0, 3600000, "silent_for_ms", "silentForMs"); err != nil {
+		return err
+	}
+	trigger, err := requireStringField(object, eventType, "trigger", "trigger")
+	if err != nil {
+		return err
+	}
+	if !knownInactivityTrigger(trigger) {
+		return fmt.Errorf("%w: unsupported inactivity trigger %q", ErrInvalidEvent, trigger)
+	}
+	source, err := requireStringField(object, eventType, "source", "source")
+	if err != nil {
+		return err
+	}
+	if source != "voice" && source != "candidate_control" {
+		return fmt.Errorf("%w: unsupported silence recovery source %q", ErrInvalidEvent, source)
 	}
 	return nil
 }
@@ -1789,7 +1841,11 @@ func knownQuestionCompletionReason(reason string) bool {
 
 func knownSessionCompletionReason(reason string) bool {
 	switch reason {
-	case "all_questions_completed", "candidate_ended", "timeboxed", "candidate_requested_stop":
+	case "all_questions_completed",
+		"candidate_ended",
+		"timeboxed",
+		"candidate_requested_stop",
+		"max_duration_reached":
 		return true
 	default:
 		return false
@@ -1807,7 +1863,16 @@ func knownRejectedInterruptionReason(reason string) bool {
 
 func knownSilenceTier(tier string) bool {
 	switch tier {
-	case "soft_prompt", "wait_extension", "terminal":
+	case "soft_prompt", "wait_extension", "check_in", "warning", "terminal":
+		return true
+	default:
+		return false
+	}
+}
+
+func knownInactivityTrigger(trigger string) bool {
+	switch trigger {
+	case "user_away", "wait_extension", "presence_confirmation":
 		return true
 	default:
 		return false

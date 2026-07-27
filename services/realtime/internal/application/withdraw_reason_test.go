@@ -11,6 +11,7 @@ func TestKnownSessionCompletionReasonAcceptsCandidateRequestedStop(t *testing.T)
 		"candidate_ended",
 		"timeboxed",
 		"candidate_requested_stop",
+		"max_duration_reached",
 	}
 	for _, reason := range known {
 		if !knownSessionCompletionReason(reason) {

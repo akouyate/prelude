@@ -1,3 +1,10 @@
+"""Legacy provider-event state machine.
+
+Deprecated for live interviews: the production worker uses LiveKit's session
+turn lifecycle and Prelude's InterviewOrchestrator for business sequencing.
+This module remains only for deterministic simulation compatibility.
+"""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -5,7 +12,6 @@ from enum import StrEnum
 from typing import Any
 
 from app.domain.models import EventType
-
 
 INTERVIEWER_STATE_MACHINE_INSTRUCTIONS = """
 You are a structured first-screening interviewer, not an open chatbot.
@@ -39,7 +45,7 @@ class InvalidTransitionError(ValueError):
 
 
 class InterviewerStateMachine:
-    """Interview policy guardrail that keeps the IA interviewer structured."""
+    """Deprecated live-runtime guardrail retained for deterministic simulations."""
 
     def __init__(self) -> None:
         self.state = InterviewerState.CREATED

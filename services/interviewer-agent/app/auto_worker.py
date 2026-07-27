@@ -4,8 +4,10 @@ import argparse
 import asyncio
 import os
 import socket
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Protocol
 
 import redis.asyncio as redis
@@ -15,10 +17,37 @@ from app.adapters.realtime_api import HttpRealtimeApiClient
 from app.domain.models import EventType
 from app.live_worker import run_live_worker
 
-
 DEFAULT_STREAM_KEY = "prelude:agent-join:stream"
 DEFAULT_CONSUMER_GROUP = "prelude-live-workers"
 DEFAULT_PENDING_IDLE_SECONDS = 30
+
+_RENEW_LEASE_SCRIPT = """
+local pending = redis.call(
+    "XPENDING",
+    KEYS[1],
+    ARGV[1],
+    ARGV[3],
+    ARGV[3],
+    1
+)
+if #pending == 0 or pending[1][2] ~= ARGV[2] then
+    return 0
+end
+
+local claimed = redis.call(
+    "XCLAIM",
+    KEYS[1],
+    ARGV[1],
+    ARGV[2],
+    0,
+    ARGV[3],
+    "JUSTID"
+)
+if #claimed == 1 then
+    return 1
+end
+return 0
+"""
 
 
 def log(message: str, **fields: object) -> None:
@@ -35,12 +64,23 @@ class AgentJoinJob:
     message_id: str | None = None
 
 
+class SessionStartDisposition(str, Enum):
+    START = "start"
+    DEFER = "defer"
+    TERMINAL = "terminal"
+
+
 class AgentJoinQueue(Protocol):
+    @property
+    def lease_heartbeat_interval_seconds(self) -> float: ...
+
     async def next_job(self) -> AgentJoinJob | None: ...
 
     async def ack(self, job: AgentJoinJob) -> None: ...
 
     async def retry(self, job: AgentJoinJob, reason: str) -> None: ...
+
+    async def renew_lease(self, job: AgentJoinJob) -> bool: ...
 
     async def close(self) -> None: ...
 
@@ -60,12 +100,22 @@ class RedisAgentJoinQueue:
         self._client = redis.from_url(redis_url, decode_responses=True)
         self._stream_key = stream_key
         self._consumer_group = consumer_group
-        self._consumer_name = consumer_name or socket.gethostname()
+        self._consumer_name = consumer_name or (
+            f"{socket.gethostname()}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        )
         self._dead_letter_key = f"{stream_key}:dead"
         self._poll_timeout_seconds = poll_timeout_seconds
         self._pending_idle_ms = max(pending_idle_seconds, 1) * 1000
+        self._lease_heartbeat_interval_seconds = max(
+            min(pending_idle_seconds / 3, 10),
+            0.1,
+        )
         self._max_attempts = max_attempts
         self._group_ready = False
+
+    @property
+    def lease_heartbeat_interval_seconds(self) -> float:
+        return self._lease_heartbeat_interval_seconds
 
     async def next_job(self) -> AgentJoinJob | None:
         await self._ensure_group()
@@ -142,6 +192,20 @@ class RedisAgentJoinQueue:
         await self._client.xadd(self._stream_key, payload)
         await self.ack(job)
 
+    async def renew_lease(self, job: AgentJoinJob) -> bool:
+        if not job.message_id:
+            return True
+
+        renewed = await self._client.eval(
+            _RENEW_LEASE_SCRIPT,
+            1,
+            self._stream_key,
+            self._consumer_group,
+            self._consumer_name,
+            job.message_id,
+        )
+        return bool(renewed)
+
     async def close(self) -> None:
         await self._client.aclose()
 
@@ -179,32 +243,82 @@ async def run_auto_worker(
     completed_jobs = 0
     processed_jobs = 0
 
+    async def maintain_lease(job: AgentJoinJob) -> bool:
+        consecutive_errors = 0
+        while True:
+            await asyncio.sleep(queue.lease_heartbeat_interval_seconds)
+            try:
+                if not await queue.renew_lease(job):
+                    return False
+                consecutive_errors = 0
+            except Exception as exc:  # noqa: BLE001 - Redis clients expose multiple transport errors.
+                consecutive_errors += 1
+                log(
+                    "agent_job_lease_renewal_failed",
+                    session_id=job.session_id,
+                    error=str(exc),
+                    consecutive_errors=consecutive_errors,
+                )
+                if consecutive_errors >= 3:
+                    return False
+
+    async def execute_job(job: AgentJoinJob) -> str:
+        disposition = await session_start_disposition(
+            session_id=job.session_id,
+            realtime_api_url=realtime_api_url,
+            api_key=api_key,
+        )
+        if disposition is not SessionStartDisposition.START:
+            return disposition.value
+
+        log("agent_worker_starting", session_id=job.session_id)
+        await run_live_worker(
+            session_id=job.session_id,
+            realtime_api_url=realtime_api_url,
+            api_key=api_key,
+            skip_openai_handshake=skip_openai_handshake,
+        )
+        return "completed"
+
     async def run_job(job: AgentJoinJob) -> None:
         nonlocal completed_jobs, processed_jobs
+        work_task = asyncio.create_task(execute_job(job))
+        lease_task = asyncio.create_task(maintain_lease(job))
         try:
-            if not await session_can_start(
-                session_id=job.session_id,
-                realtime_api_url=realtime_api_url,
-                api_key=api_key,
-            ):
-                log("agent_job_skipped", session_id=job.session_id, reason="session_not_startable")
-                await queue.ack(job)
+            done, _ = await asyncio.wait(
+                {work_task, lease_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if lease_task in done:
+                work_task.cancel()
+                await asyncio.gather(work_task, return_exceptions=True)
+                log("agent_job_lease_lost", session_id=job.session_id)
                 return
 
-            log("agent_worker_starting", session_id=job.session_id)
-            await run_live_worker(
-                session_id=job.session_id,
-                realtime_api_url=realtime_api_url,
-                api_key=api_key,
-                skip_openai_handshake=skip_openai_handshake,
-            )
-            await queue.ack(job)
-            completed_jobs += 1
-            log("agent_worker_completed", session_id=job.session_id)
-        except Exception as exc:  # pragma: no cover - covered through behavior tests
+            lease_task.cancel()
+            await asyncio.gather(lease_task, return_exceptions=True)
+            outcome = work_task.result()
+            if outcome == "completed":
+                await queue.ack(job)
+                completed_jobs += 1
+                log("agent_worker_completed", session_id=job.session_id)
+            elif outcome == SessionStartDisposition.TERMINAL.value:
+                await queue.ack(job)
+                log("agent_job_skipped", session_id=job.session_id, reason="session_terminal")
+            else:
+                log(
+                    "agent_job_deferred",
+                    session_id=job.session_id,
+                    reason="candidate_media_not_ready",
+                )
+        except Exception as exc:  # noqa: BLE001 - worker boundary retries all provider failures.
             log("agent_worker_failed", session_id=job.session_id, error=str(exc))
             await queue.retry(job, str(exc))
         finally:
+            for task in (work_task, lease_task):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(work_task, lease_task, return_exceptions=True)
             processed_jobs += 1
 
     try:
@@ -246,6 +360,11 @@ async def run_auto_worker(
             for task in done:
                 task.result()
     finally:
+        for task in running:
+            if not task.done():
+                task.cancel()
+        if running:
+            await asyncio.gather(*running, return_exceptions=True)
         await queue.close()
 
     return completed_jobs
@@ -323,24 +442,25 @@ async def main() -> None:
     )
 
 
-async def session_can_start(
+async def session_start_disposition(
     *,
     session_id: str,
     realtime_api_url: str,
     api_key: str | None,
-) -> bool:
+) -> SessionStartDisposition:
     realtime_api = HttpRealtimeApiClient(realtime_api_url, api_key=api_key)
-    event_types = await realtime_api.get_event_types(session_id)
-    if EventType.CANDIDATE_MEDIA_READY not in event_types:
-        return False
-    if EventType.AGENT_JOINED in event_types:
-        return False
+    event_types = set(await realtime_api.get_event_types(session_id))
     if EventType.SESSION_COMPLETED in event_types:
-        return False
+        return SessionStartDisposition.TERMINAL
     if EventType.SESSION_FAILED in event_types:
-        return False
-    return True
+        return SessionStartDisposition.TERMINAL
+    if EventType.CANDIDATE_MEDIA_READY not in event_types:
+        return SessionStartDisposition.DEFER
+    return SessionStartDisposition.START
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
