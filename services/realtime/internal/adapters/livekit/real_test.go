@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/akouyate/prelude/services/realtime/internal/application"
+	protocol "github.com/livekit/protocol/livekit"
 )
 
 func TestNewGatewayFromEnvFallsBackToMockWithoutCredentials(t *testing.T) {
@@ -130,6 +131,20 @@ func TestRealGatewayStartRoomCompositeEgressRequiresTarget(t *testing.T) {
 		ObjectKey: "recordings/x/1.ogg",
 	}); err == nil {
 		t.Fatal("expected error when egress target is not configured")
+	}
+}
+
+func TestEgressStateFromInfoNormalizesTerminalDuration(t *testing.T) {
+	state := egressStateFromInfo(&protocol.EgressInfo{
+		Status:      protocol.EgressStatus_EGRESS_COMPLETE,
+		FileResults: []*protocol.FileInfo{{Duration: 190234007712}},
+	})
+
+	if state.Status != "EGRESS_COMPLETE" {
+		t.Fatalf("expected terminal status, got %s", state.Status)
+	}
+	if state.DurationMs == nil || *state.DurationMs != 190234 {
+		t.Fatalf("expected duration 190234ms, got %v", state.DurationMs)
 	}
 }
 

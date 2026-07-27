@@ -15,13 +15,14 @@ import (
 )
 
 type fakeEgress struct {
-	started  []application.StartEgressInput
-	stopped  []string
-	attempts int
-	err      error
-	stopErr  error
-	getState map[string]application.EgressState
-	getErr   error
+	started   []application.StartEgressInput
+	stopped   []string
+	attempts  int
+	err       error
+	stopErr   error
+	stopState application.EgressState
+	getState  map[string]application.EgressState
+	getErr    error
 }
 
 func (f *fakeEgress) GetEgress(_ context.Context, egressID string) (application.EgressState, error) {
@@ -45,9 +46,9 @@ func (f *fakeEgress) StartRoomCompositeEgress(_ context.Context, input applicati
 	return application.EgressHandle{EgressID: fmt.Sprintf("eg_test_%d", f.attempts)}, nil
 }
 
-func (f *fakeEgress) StopEgress(_ context.Context, egressID string) error {
+func (f *fakeEgress) StopEgress(_ context.Context, egressID string) (application.EgressState, error) {
 	f.stopped = append(f.stopped, egressID)
-	return f.stopErr
+	return f.stopState, f.stopErr
 }
 
 func newRecordingService(t *testing.T, consent, entitled bool) (*application.Service, *store.MemoryStore, *fakeEgress, application.CreateSessionOutput) {
@@ -269,6 +270,37 @@ func TestServiceStopsRecordingOnSessionCompleted(t *testing.T) {
 
 	if len(egress.stopped) != 1 || egress.stopped[0] != "eg_test_1" {
 		t.Fatalf("expected egress eg_test_1 to be stopped, got %v", egress.stopped)
+	}
+}
+
+func TestServiceFinalizesRecordingFromStopResponse(t *testing.T) {
+	service, repo, egress, session := newRecordingService(t, true, true)
+	sessionID := session.Session.ID
+	durationMs := 180000
+	egress.stopState = application.EgressState{
+		Status:     "EGRESS_COMPLETE",
+		DurationMs: &durationMs,
+	}
+
+	ingestJoined(t, service, sessionID, 1, "evt_joined")
+	ingestMediaReady(t, service, sessionID, 2, "evt_media", true)
+	ingestAgentJoined(t, service, sessionID, 3, "evt_agent")
+
+	completed := eventInput(sessionID, 4, "evt_completed", domain.EventSessionCompleted)
+	completed.Payload = json.RawMessage(`{"completed_reason":"all_questions_completed","completed_questions":3,"total_questions":3}`)
+	if _, err := service.IngestEvent(context.Background(), completed); err != nil {
+		t.Fatalf("session_completed returned error: %v", err)
+	}
+
+	recording, found, err := repo.RecordingByEgressID(context.Background(), "eg_test_1")
+	if err != nil || !found {
+		t.Fatalf("expected recording (found=%v err=%v)", found, err)
+	}
+	if recording.Status != domain.RecordingStatusAvailable {
+		t.Fatalf("expected recording available immediately after egress stopped, got %s", recording.Status)
+	}
+	if recording.DurationMs == nil || *recording.DurationMs != durationMs {
+		t.Fatalf("expected duration %d, got %v", durationMs, recording.DurationMs)
 	}
 }
 
