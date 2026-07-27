@@ -13,7 +13,7 @@ from app.adapters.livekit_openai_worker import (
     _build_livekit_turn_handling,
     _create_prelude_controlled_agent,
 )
-from app.domain.models import EventActor, EventType, InterviewEvent
+from app.domain.models import InterviewEvent
 
 
 class FakeTurnDetector:
@@ -104,7 +104,7 @@ def test_livekit_turn_handling_uses_v1_mini_and_adaptive_interruption_by_default
     assert runtime.session_turn_handling["endpointing"] == {
         "mode": "dynamic",
         "min_delay": 1.0,
-        "max_delay": 3.0,
+        "max_delay": 5.0,
     }
     assert runtime.session_turn_handling["interruption"] == {
         "enabled": True,
@@ -606,10 +606,12 @@ async def test_bridge_forwards_away_and_active_user_states() -> None:
     )
     session = FakeSession()
     state_changes: list[str] = []
+    speaking_notifications: list[str] = []
     bridge = LiveKitAgentEventBridge(
         emitter=emitter,
         candidate_away_handler=lambda: state_changes.append("away"),
         candidate_active_handler=lambda source: state_changes.append(source),
+        candidate_speaking_handler=lambda: speaking_notifications.append("speaking"),
         emit_state_events=False,
     )
     bridge.register(session)
@@ -626,6 +628,7 @@ async def test_bridge_forwards_away_and_active_user_states() -> None:
     await bridge.drain()
 
     assert state_changes == ["away", "voice", "voice"]
+    assert speaking_notifications == ["speaking"]
 
 
 def test_bridge_logs_livekit_turn_metrics_and_session_usage(

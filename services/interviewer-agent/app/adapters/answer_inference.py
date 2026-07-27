@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
@@ -53,8 +54,15 @@ class OpenAIResponsesClient(Protocol):
         temperature: float,
         max_output_tokens: int,
         timeout: float,
+        reasoning: dict[str, str],
+        text: dict[str, object],
+        store: bool,
+        prompt_cache_key: str,
     ) -> object:
         """Subset of OpenAI Responses API used by the answer inference adapter."""
+
+
+_SHARED_OPENAI_RESPONSES_CLIENT: OpenAIResponsesClient | None = None
 
 
 @dataclass(frozen=True)
@@ -107,15 +115,30 @@ class OpenAIAnswerInferenceProvider:
                 turn=turn,
             )
 
-        response = await self._client.create(
-            model=self._config.model,
-            instructions=_answer_inference_instructions(),
-            input=_answer_inference_input(plan=plan, question=question, turn=turn),
-            temperature=0,
-            # Compact JSON verdict; fewer tokens = faster within the tight budget.
-            max_output_tokens=320,
-            timeout=self._config.timeout_seconds,
-        )
+        started_at = time.perf_counter()
+        try:
+            response = await self._client.create(
+                model=self._config.model,
+                instructions=_answer_inference_instructions(),
+                input=_answer_inference_input(plan=plan, question=question, turn=turn),
+                temperature=0,
+                reasoning={"effort": "none"},
+                text={"format": _answer_inference_json_schema()},
+                store=False,
+                prompt_cache_key="prelude-answer-inference-v2",
+                # The strict verdict schema is compact and does not need a long
+                # generation tail on the live conversational path.
+                max_output_tokens=200,
+                timeout=self._config.timeout_seconds,
+            )
+        finally:
+            logger.info(
+                "answer inference request completed",
+                extra={
+                    "model": self._config.model,
+                    "latency_ms": round((time.perf_counter() - started_at) * 1000),
+                },
+            )
         payload = _json_from_response(response)
         return _assessment_from_payload(payload)
 
@@ -199,12 +222,16 @@ def _log_answer_inference_fallback(exc: Exception) -> None:
 
 
 def _openai_responses_client() -> OpenAIResponsesClient:
+    global _SHARED_OPENAI_RESPONSES_CLIENT
+    if _SHARED_OPENAI_RESPONSES_CLIENT is not None:
+        return _SHARED_OPENAI_RESPONSES_CLIENT
     try:
         from openai import AsyncOpenAI
     except ImportError as exc:
         raise RuntimeError("openai package is required for OpenAI answer inference") from exc
 
-    return AsyncOpenAI().responses
+    _SHARED_OPENAI_RESPONSES_CLIENT = AsyncOpenAI().responses
+    return _SHARED_OPENAI_RESPONSES_CLIENT
 
 
 def _answer_inference_instructions() -> str:
@@ -249,25 +276,65 @@ def _answer_inference_input(
                 "is_answer_to_active_question": turn.is_answer_to_active_question,
                 "classifier_reason": turn.classifier_reason,
             },
-            "allowed_classifications": [item.value for item in AnswerClassification],
-            "required_json_shape": {
-                "classification": "complete|vague|incomplete|silent|skipped|repeat_requested|wait_requested",
-                "reason_codes": [],
-                "confidence": 0.0,
-                "scores": {
-                    "clarity": 0,
-                    "relevance": 0,
-                    "concreteness": 0,
-                    "coherence": 0,
-                    "role_signal": 0,
-                },
-                "challenge_needed": False,
-                "challenge_reason": None,
-                "challenge_prompt": None,
-            },
         },
         ensure_ascii=False,
     )
+
+
+def _answer_inference_json_schema() -> dict[str, object]:
+    score = {"type": "integer", "minimum": 0, "maximum": 3}
+    nullable_string = {"type": ["string", "null"]}
+    return {
+        "type": "json_schema",
+        "name": "candidate_answer_assessment",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "classification": {
+                    "type": "string",
+                    "enum": [item.value for item in AnswerClassification],
+                },
+                "reason_codes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 8,
+                },
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "scores": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "clarity": score,
+                        "relevance": score,
+                        "concreteness": score,
+                        "coherence": score,
+                        "role_signal": score,
+                    },
+                    "required": [
+                        "clarity",
+                        "relevance",
+                        "concreteness",
+                        "coherence",
+                        "role_signal",
+                    ],
+                },
+                "challenge_needed": {"type": "boolean"},
+                "challenge_reason": nullable_string,
+                "challenge_prompt": nullable_string,
+            },
+            "required": [
+                "classification",
+                "reason_codes",
+                "confidence",
+                "scores",
+                "challenge_needed",
+                "challenge_reason",
+                "challenge_prompt",
+            ],
+        },
+    }
 
 
 def _json_from_response(response: object) -> dict[str, object]:

@@ -2,61 +2,64 @@
 
 ## Goal
 
-Ship GitHub issue #103: use Clerk Billing as the source of truth for
-organization plans while Prelude owns usage counters and entitlement
-enforcement.
+Upgrade Prelude's live interviewer to LiveKit Agents 1.6.7 and replace the
+home-grown turn/interruption handling where LiveKit now provides a better
+supported primitive.
 
 ## Scope
 
-- Normalize Clerk organization subscriptions into a small Prelude plan/status
-  contract.
-- Keep a minimal local projection for public candidate admission and
-  cross-service checks.
-- Replace placeholder Settings billing data with real state, usage and limits.
-- Gate new published roles, candidate-session starts and audio recording on the
-  server.
-- Keep local/mock development honest and unmetered when Clerk Billing is not
-  configured.
+- Pin the Python voice runtime and migrate to LiveKit Turn Detector and adaptive
+  interruption handling behind an explicit configuration boundary.
+- Preserve OpenAI Realtime for the interviewer voice and reasoning path.
+- Make mobile/browser disconnects recoverable instead of failing the interview
+  immediately.
+- Deprecate superseded turn-taking code and keep one production behavior path.
+- Add latency, fallback, interruption and reconnect observability.
+- Cover long pauses, genuine interruptions, backchannels, silence, reconnects
+  and closing playout with deterministic tests.
 
 ## Workflow
 
-- [x] Intake, repository investigation and Clerk documentation research
-- [x] Architecture, product and QA refinement
-- [x] Architecture decision and TDD matrix
-- [x] Implement billing domain, projection and Clerk adapter
-- [x] Implement Settings billing UI and portal handoff
-- [x] Implement role, candidate-session and recording enforcement
+- [x] Intake, repository investigation and LiveKit documentation research
+- [x] Initial architecture and behavior audit
+- [x] Pin runtime and migrate LiveKit turn handling
+- [x] Implement reconnect-safe session lifecycle
+- [x] Deprecate superseded behavior and consolidate orchestration
+- [x] Add metrics and regression scenarios
 - [x] Review, simplify and validate
-- [x] Deliver draft PR; issue closes automatically on merge
 
 ## Decisions
 
-- Clerk owns subscription/payment state; Prelude stores only a derived,
-  privacy-minimal projection and product usage.
-- Clerk's default organization plan maps to Prelude Free. The paid plan slug is
-  configurable and defaults to `v1-workspace`.
-- `past_due`, missing, unknown and provider-error states fail closed in
-  production. A canceled paid item remains entitled only until its period end.
-- Usage is derived from product rows. Candidate admission uses a serializable
-  transaction so concurrent final-slot attempts cannot exceed the limit.
-- Existing drafts and completed work stay accessible. Limits apply to newly
-  published roles, new candidate starts and recording creation.
-- Recording requires both candidate consent and a persisted per-session
-  entitlement.
-- Role creation, AI generation, editing, publication and reactivation share the
-  same owner/admin/recruiter permission and publication admission policy.
-- A safe Free projection is created during onboarding and reconciled from
-  Clerk, so webhook delivery order cannot strand a new organization.
-- Paid projections fail closed at period end or after a bounded reconciliation
-  age. Future paid items cannot override an active Free plan early.
+- Prefer official LiveKit turn detection and adaptive interruption primitives
+  over Prelude's snapshot-based overlap heuristic when the runtime supports
+  them.
+- Keep business question sequencing and evidence evaluation in Prelude.
+- Do not add synthetic verbal backchannels until interruption and endpointing
+  behavior is reliable and measured.
+- Preserve existing unrelated worktree changes.
+- Roll out new turn handling behind configuration so the current behavior
+  remains available during live comparison.
+- Use a separate aligned STT stream for Prelude's complete-turn business hook.
+- Use deterministic TTS only for contractual lines such as checkout; keep
+  OpenAI Realtime as the conversational voice.
+- Use GPT-5.4 nano for bounded live answer classification, with Prelude's
+  deterministic matrix guardrails and heuristic fallback.
 
 ## Validation target
 
-- Pure policy tests cover every supported Clerk state and unknown input.
-- Adapter/webhook tests make no live paid Clerk calls.
-- Server tests cover organization isolation, quota boundaries, retries,
-  realtime failure and recording denial.
-- Browser smoke verifies local placeholder and configured billing fixtures.
-- Monorepo tests, lint, typecheck, Go tests and relevant builds are green.
-- A real PostgreSQL final-slot smoke proves two concurrent Free starts at usage
-  four produce exactly one session and one quota rejection.
+- All existing Python, Go and candidate tests remain green.
+- The Python suite passes against the pinned LiveKit Agents version.
+- Candidate disconnects have a bounded resume window and do not immediately
+  fail the product session.
+- Tests cover false and genuine interruptions, backchannels, multi-second
+  thinking pauses, silence after every question, reconnect and final closing.
+- Runtime metrics make fallback and latency regressions observable.
+
+## Validation result
+
+- Python interviewer-agent: 196 tests passed.
+- Go realtime service: all packages passed.
+- Candidate app: 78 tests passed; typecheck and lint passed.
+- Connected LiveKit Cloud/OpenAI smoke: 3/3 questions completed, 3/3
+  `llm_assisted` evaluations, exact checkout playout, contiguous events, and no
+  strict-report anomalies (`is_c6e304f80af239f3389b27ea`).

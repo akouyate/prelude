@@ -297,7 +297,16 @@ orchestrator as the policy owner. When `OPENAI_ANSWER_INFERENCE_ENABLED=1` and
 `OPENAI_ANSWER_INFERENCE_MODEL` with a short timeout and records
 `evaluation_matrix.evaluator_mode = "llm_assisted"`. If the LLM call fails or
 times out, the worker falls back to the local heuristic evaluator so the
-interview can continue.
+interview can continue. The Responses request uses strict structured output,
+no reasoning effort, a bounded output budget, and a shared async client so live
+classification remains predictable and reuses HTTP connections.
+
+Turn completion remains owned by LiveKit's dynamic endpointing. Prelude lets the
+detector adapt between one and five seconds, then guarantees a three-second,
+cancellable grace window only before final checkout. That grace runs concurrently
+with answer inference, so it protects candidate pauses without stacking extra
+latency. Candidate speech during either operation invalidates the pending verdict;
+the continuation is merged with the previous fragment and evaluated as one answer.
 
 The implementation and compliance sources for the evaluation matrix are tracked
 in [`../../docs/sources/evaluation-matrix.md`](../../docs/sources/evaluation-matrix.md).
@@ -362,6 +371,10 @@ follow-up limits, persistence, and closing.
 the Railway worker. `v1` can be selected when the worker runs as a LiveKit Cloud
 agent. `LIVEKIT_LEGACY_TURN_HANDLING=true` is an emergency rollback only; it
 restores the previous OpenAI server VAD path and emits a deprecation warning.
+`LIVEKIT_ENDPOINTING_MIN_DELAY_SECONDS`,
+`LIVEKIT_ENDPOINTING_MAX_DELAY_SECONDS`, and
+`LIVE_WORKER_FINAL_ANSWER_GRACE_SECONDS` expose the pause contract without
+moving turn ownership back into Prelude.
 
 `TurnTakingPolicy`, `InterviewerStateMachine`, and `InterviewSessionRunner` are
 deprecated for live interviews. They remain available only for deterministic

@@ -1,6 +1,6 @@
 # LiveKit turn handling
 
-Reviewed on 2026-07-25 for the Prelude live interviewer.
+Reviewed on 2026-07-27 for the Prelude live interviewer.
 
 ## Primary sources
 
@@ -58,10 +58,17 @@ choosing the next action. Official mode therefore uses one LiveKit Inference STT
 stream and disables OpenAI Realtime input transcription to avoid duplicate and
 late transcript sources.
 
-Prelude raises LiveKit's endpointing floor to one second, with a three-second
+Prelude raises LiveKit's endpointing floor to one second, with a five-second
 ceiling. This is intentionally more patient than the general-purpose default:
 screening answers routinely contain short pauses between context, action, and
 result, and the interviewer must not advance while the candidate is still talking.
+
+The final answer has a three-second silent grace before checkout, measured from
+the start of answer inference so the two waits do not stack.
+This is a Prelude business safeguard rather than a second endpointing system:
+LiveKit still commits the turn, but any resumed candidate speech invalidates the
+in-flight verdict. Prelude retains the fragment, merges it with the next committed
+turn, and evaluates the combined answer before it can close the session.
 
 The legacy `TurnTakingPolicy` and `InterviewerStateMachine` remain simulation
 fixtures only. They must not be reintroduced into the production LiveKit worker.
