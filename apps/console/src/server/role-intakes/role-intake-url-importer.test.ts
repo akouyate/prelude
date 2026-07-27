@@ -30,6 +30,24 @@ describe("role intake public URL policy", () => {
   });
 
   it.each([
+    [
+      "https://www.linkedin.com/jobs/view/4430499568/",
+      "LinkedIn job pages cannot be imported automatically. Use the original employer careers URL or start from a manual brief.",
+    ],
+    [
+      "https://fr.indeed.com/viewjob?jk=public-job-id",
+      "Indeed job pages cannot be imported automatically. Use the original employer careers URL or start from a manual brief.",
+    ],
+  ])("gives an actionable provider-specific fallback for %s", (value, message) => {
+    expect(() => normalizeRoleIntakeUrl(value)).toThrow(
+      expect.objectContaining({
+        code: "provider_blocked",
+        message,
+      }),
+    );
+  });
+
+  it.each([
     ["8.8.8.8", true],
     ["1.1.1.1", true],
     ["127.0.0.1", false],

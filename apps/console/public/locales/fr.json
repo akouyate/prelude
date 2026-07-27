@@ -37,9 +37,9 @@
         "uploadTitle": "Importer une fiche de poste",
         "uploadDescription": "Extrayez un PDF ou DOCX de façon privée, puis vérifiez chaque champ.",
         "uploadMeta": "Le plus rapide",
-        "urlTitle": "Importer une URL publique",
-        "urlDescription": "Lisez une page d'offre publique sans exécuter ses scripts.",
-        "urlMeta": "Pages publiques",
+        "urlTitle": "Importer une page carrière",
+        "urlDescription": "Utilisez la page publique d'origine sur le site carrière de l'employeur.",
+        "urlMeta": "Site de l'entreprise",
         "unavailableTitle": "Importer une source",
         "unavailableDescription": "L'import par URL publique et par PDF/DOCX sera disponible lorsque l'import privé sera configuré."
       },
@@ -58,11 +58,11 @@
         }
       },
       "url": {
-        "title": "Importer l'URL publique d'une offre",
-        "description": "Prelude lit une page HTML publique, vérifie la politique de la source et vous demande de contrôler chaque champ extrait.",
-        "label": "URL publique de l'offre",
-        "hint": "HTTPS uniquement. Les pages LinkedIn et Indeed ne sont pas prises en charge par cet import.",
-        "placeholder": "https://careers.example.com/jobs/product-designer",
+        "title": "Importer une page carrière employeur",
+        "description": "Prelude lit la page publique d'origine de l'offre et vous demande de vérifier chaque champ extrait.",
+        "label": "URL de l'offre employeur",
+        "hint": "Utilisez la page carrière HTTPS d'origine. Les liens LinkedIn et Indeed nécessitent des intégrations partenaires dédiées et ne peuvent pas être importés ici.",
+        "placeholder": "https://careers.entreprise.com/jobs/product-designer",
         "action": "Importer la page",
         "preparing": "Préparation de l'import…",
         "errors": {
