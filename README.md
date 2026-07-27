@@ -36,6 +36,12 @@ pnpm dev
 The console app runs on `http://localhost:3000`.
 The candidate app runs on `http://localhost:3001`.
 
+Interview audio replay is disabled by default. To enable it, set
+`RECORDING_ENABLED=1` and configure the private `EGRESS_R2_*` destination from
+`.env.example`. Capture starts only after the candidate accepts the current
+audio-recording consent copy. The console reads recordings through short-lived
+signed URLs; the bucket remains private.
+
 ## Environment & secrets
 
 Config is encrypted with [dotenvx](https://dotenvx.com): a single committed root

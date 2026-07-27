@@ -150,7 +150,10 @@ type MarkRecordingDeletedInput struct {
 // disabled the service never receives one and no audio is captured.
 type EgressGateway interface {
 	StartRoomCompositeEgress(ctx context.Context, input StartEgressInput) (EgressHandle, error)
-	StopEgress(ctx context.Context, egressID string) error
+	// StopEgress returns LiveKit's resulting egress state. A terminal response lets
+	// the application expose replay immediately without waiting for a webhook or
+	// the stale-recording reconciliation sweep.
+	StopEgress(ctx context.Context, egressID string) (EgressState, error)
 	// GetEgress polls the current state of an egress job, used by reconciliation
 	// to finalize recordings whose egress_ended webhook never arrived.
 	GetEgress(ctx context.Context, egressID string) (EgressState, error)
@@ -650,8 +653,20 @@ func (s *Service) stopRecordingIfNeeded(ctx context.Context, event domain.Event)
 		return
 	}
 
-	if err := s.recorder.StopEgress(ctx, recording.EgressID); err != nil {
+	state, err := s.recorder.StopEgress(ctx, recording.EgressID)
+	if err != nil {
 		slog.Warn("failed to stop interview recording", "session_id", event.SessionID, "egress_id", recording.EgressID, "error", err)
+		return
+	}
+	if !isTerminalEgressStatus(state.Status) {
+		return
+	}
+	if err := s.FinalizeRecording(ctx, FinalizeRecordingFromEgress{
+		EgressID:   recording.EgressID,
+		Status:     state.Status,
+		DurationMs: state.DurationMs,
+	}); err != nil {
+		slog.Warn("failed to finalize stopped interview recording", "session_id", event.SessionID, "egress_id", recording.EgressID, "error", err)
 	}
 }
 
@@ -804,8 +819,17 @@ func (s *Service) EraseRecordingsForSession(ctx context.Context, sessionID strin
 			// that lands is then erased by a retry or the retention sweep. Never
 			// tombstone an in-flight row.
 			if recording.EgressID != "" && s.recorder != nil {
-				if err := s.recorder.StopEgress(ctx, recording.EgressID); err != nil {
+				state, err := s.recorder.StopEgress(ctx, recording.EgressID)
+				if err != nil {
 					slog.Warn("failed to stop egress during erasure", "recording_id", recording.ID, "egress_id", recording.EgressID, "error", err)
+				} else if isTerminalEgressStatus(state.Status) {
+					if err := s.FinalizeRecording(ctx, FinalizeRecordingFromEgress{
+						EgressID:   recording.EgressID,
+						Status:     state.Status,
+						DurationMs: state.DurationMs,
+					}); err != nil {
+						slog.Warn("failed to finalize stopped egress during erasure", "recording_id", recording.ID, "egress_id", recording.EgressID, "error", err)
+					}
 				}
 			}
 			continue
