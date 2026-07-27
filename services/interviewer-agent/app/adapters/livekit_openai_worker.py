@@ -33,6 +33,7 @@ from app.domain.models import (
     InterviewStyle,
 )
 from app.domain.orchestrator import (
+    AnswerClassification,
     InterviewOrchestrator,
     OrchestratorCommand,
     OrchestratorCommandType,
@@ -51,6 +52,9 @@ FIRST_REPLY_INSTRUCTIONS = (
 
 CLOSING_PLAYOUT_TIMEOUT_SECONDS = 25.0
 CANDIDATE_WAIT_SECONDS = 60.0
+LIVEKIT_ENDPOINTING_MIN_DELAY_SECONDS = 1.0
+LIVEKIT_ENDPOINTING_MAX_DELAY_SECONDS = 5.0
+FINAL_ANSWER_GRACE_SECONDS = 3.0
 MAX_TURN_BOUNDARY_WAIT_SECONDS = 60.0
 PRELUDE_TRANSCRIPT_TOPIC = "prelude.transcript.v1"
 PRELUDE_CANDIDATE_CONTROL_TOPIC = "prelude.candidate.control.v1"
@@ -135,6 +139,14 @@ class CandidateSupportResponse:
     prompt: str
     instructions: str
     reason: str
+
+
+@dataclass(frozen=True)
+class PendingCandidateContinuation:
+    question_id: str
+    transcript: str
+    turn_ids: tuple[str, ...]
+    occurred_at: datetime
 
 
 class CandidateTurnClassifier:
@@ -383,6 +395,14 @@ def _normalize_candidate_text(value: str) -> str:
     return re.sub(r"\s+", " ", without_punctuation).strip()
 
 
+def _join_candidate_transcripts(*parts: str) -> str:
+    return " ".join(part.strip() for part in parts if part.strip())
+
+
+def _dedupe_turn_ids(turn_ids: list[str]) -> list[str]:
+    return list(dict.fromkeys(turn_id for turn_id in turn_ids if turn_id))
+
+
 def _contains_any(value: str, markers: list[str]) -> bool:
     value_tokens = value.split()
     return any(
@@ -530,6 +550,9 @@ class OpenAILiveWorkerConfig:
     inactivity_terminate_seconds: float = 20.0
     candidate_wait_seconds: float = CANDIDATE_WAIT_SECONDS
     candidate_absence_grace_seconds: float = 300.0
+    endpointing_min_delay_seconds: float = LIVEKIT_ENDPOINTING_MIN_DELAY_SECONDS
+    endpointing_max_delay_seconds: float = LIVEKIT_ENDPOINTING_MAX_DELAY_SECONDS
+    final_answer_grace_seconds: float = FINAL_ANSWER_GRACE_SECONDS
     turn_detector_version: TurnDetectorVersion = "v1-mini"
     legacy_turn_handling: bool = False
 
@@ -546,6 +569,9 @@ class OpenAILiveWorkerConfig:
         )
         candidate_wait = env.get("LIVE_WORKER_CANDIDATE_WAIT_SECONDS")
         candidate_absence_grace = env.get("LIVE_WORKER_CANDIDATE_ABSENCE_GRACE_SECONDS")
+        endpointing_min_delay = env.get("LIVEKIT_ENDPOINTING_MIN_DELAY_SECONDS")
+        endpointing_max_delay = env.get("LIVEKIT_ENDPOINTING_MAX_DELAY_SECONDS")
+        final_answer_grace = env.get("LIVE_WORKER_FINAL_ANSWER_GRACE_SECONDS")
         return cls(
             model=env["OPENAI_REALTIME_MODEL"],
             voice=env["OPENAI_REALTIME_VOICE"],
@@ -585,6 +611,21 @@ class OpenAILiveWorkerConfig:
             ),
             candidate_absence_grace_seconds=(
                 float(candidate_absence_grace) if candidate_absence_grace else 300.0
+            ),
+            endpointing_min_delay_seconds=(
+                float(endpointing_min_delay)
+                if endpointing_min_delay
+                else LIVEKIT_ENDPOINTING_MIN_DELAY_SECONDS
+            ),
+            endpointing_max_delay_seconds=(
+                float(endpointing_max_delay)
+                if endpointing_max_delay
+                else LIVEKIT_ENDPOINTING_MAX_DELAY_SECONDS
+            ),
+            final_answer_grace_seconds=(
+                float(final_answer_grace)
+                if final_answer_grace
+                else FINAL_ANSWER_GRACE_SECONDS
             ),
             turn_detector_version=_turn_detector_version(env),
             legacy_turn_handling=_env_flag(
@@ -645,10 +686,11 @@ def _build_livekit_turn_handling(
             endpointing={
                 "mode": "dynamic",
                 # Screening answers contain natural clause-level pauses and the
-                # aligned STT result must arrive before policy runs. A patient
-                # one-second floor prevents the interviewer from cutting in.
-                "min_delay": 1.0,
-                "max_delay": 3.0,
+                # aligned STT result must arrive before policy runs. Dynamic
+                # endpointing usually commits sooner, while the five-second
+                # ceiling preserves natural argumentation pauses.
+                "min_delay": config.endpointing_min_delay_seconds,
+                "max_delay": config.endpointing_max_delay_seconds,
             },
             interruption={
                 "enabled": True,
@@ -901,6 +943,7 @@ class LiveKitAgentEventBridge:
         agent_speaking_provider: Callable[[], bool] | None = None,
         candidate_away_handler: Callable[[], None] | None = None,
         candidate_active_handler: Callable[[str], None] | None = None,
+        candidate_speaking_handler: Callable[[], None] | None = None,
         legacy_overlap_guard: bool = False,
         emit_state_events: bool = True,
         turn_flush_debounce_seconds: float = 1.0,
@@ -919,6 +962,7 @@ class LiveKitAgentEventBridge:
         self._agent_speaking_provider = agent_speaking_provider
         self._candidate_away_handler = candidate_away_handler
         self._candidate_active_handler = candidate_active_handler
+        self._candidate_speaking_handler = candidate_speaking_handler
         self._legacy_overlap_guard = legacy_overlap_guard
         self._emit_state_events = emit_state_events
         self._turn_flush_debounce_seconds = turn_flush_debounce_seconds
@@ -989,6 +1033,8 @@ class LiveKitAgentEventBridge:
                 self._candidate_active_handler("voice")
             if new_state == "speaking":
                 self._candidate_speaking = True
+                if self._candidate_speaking_handler is not None:
+                    self._candidate_speaking_handler()
                 # S5b: a resumed speaking run is the SAME turn — cancel any pending
                 # flush so mid-answer pauses coalesce into one turn for policy.
                 self._cancel_turn_flush()
@@ -1439,6 +1485,7 @@ class LiveInterviewOrchestrationController:
         transcript_publisher: TranscriptPublisher | None = None,
         legacy_interruption_filter: bool = False,
         candidate_wait_seconds: float = CANDIDATE_WAIT_SECONDS,
+        final_answer_grace_seconds: float = FINAL_ANSWER_GRACE_SECONDS,
     ) -> None:
         self._plan = plan
         self._emitter = emitter
@@ -1448,6 +1495,7 @@ class LiveInterviewOrchestrationController:
         self._answer_inference = answer_inference or HeuristicAnswerInferenceProvider()
         self._legacy_interruption_filter = legacy_interruption_filter
         self._candidate_wait_seconds = candidate_wait_seconds
+        self._final_answer_grace_seconds = max(0.0, final_answer_grace_seconds)
         self._lock = asyncio.Lock()
         self._candidate_turns = 0
         self._last_candidate_intent = CandidateTurnIntent.ANSWER_COMPLETE
@@ -1458,6 +1506,9 @@ class LiveInterviewOrchestrationController:
         self._closed = asyncio.Event()
         self._candidate_wait_task: asyncio.Task[None] | None = None
         self._candidate_wait_handler: Callable[[], None] | None = None
+        self._candidate_activity_revision = 0
+        self._candidate_activity_event = asyncio.Event()
+        self._pending_candidate_continuation: PendingCandidateContinuation | None = None
         # S1: monotonic counter bumped once per spoken prompt (question /
         # follow-up / reprompt / repeat). The bridge snapshots it at candidate
         # speech-start so a turn that finalizes after we moved on cannot drive
@@ -1493,6 +1544,12 @@ class LiveInterviewOrchestrationController:
 
     def set_candidate_wait_handler(self, handler: Callable[[], None]) -> None:
         self._candidate_wait_handler = handler
+
+    def note_candidate_speaking(self) -> None:
+        """Invalidate any in-flight verdict as soon as the candidate resumes."""
+
+        self._candidate_activity_revision += 1
+        self._candidate_activity_event.set()
 
     def pause_for_candidate_disconnect(self) -> None:
         self._candidate_connected = False
@@ -1583,12 +1640,17 @@ class LiveInterviewOrchestrationController:
             ):
                 return
             question_id = self._orchestrator.current_question_id
+            transcript, ids, occurred_at = self._merge_pending_continuation(
+                question_id=question_id,
+                transcript=transcript,
+                turn_ids=turn_ids or [],
+                occurred_at=occurred_at,
+            )
             turn = _candidate_turn_from_live_transcript(
                 question_id=question_id,
                 transcript=transcript,
                 occurred_at=occurred_at,
             )
-            ids = turn_ids or []
             if turn.withdraw_requested:
                 await self._close_for_withdrawal()
                 return
@@ -1900,12 +1962,29 @@ class LiveInterviewOrchestrationController:
     ) -> None:
         self._last_candidate_intent = turn.candidate_intent
         question = _question_by_id(self._plan, turn.question_id)
+        activity_revision = self._candidate_activity_revision
+        evaluation_started_at = asyncio.get_running_loop().time()
         assessment = await self._answer_inference.assess_answer(
             question=question,
             turn=turn,
             plan=self._plan,
         )
         if not self._candidate_connected or self._terminal:
+            return
+        if self._candidate_activity_revision != activity_revision:
+            self._defer_candidate_continuation(turn, turn_ids)
+            return
+        if (
+            assessment.classification == AnswerClassification.COMPLETE
+            and self._is_final_question(turn.question_id)
+            and await self._candidate_resumed_during_final_grace(
+                activity_revision,
+                elapsed_seconds=(
+                    asyncio.get_running_loop().time() - evaluation_started_at
+                ),
+            )
+        ):
+            self._defer_candidate_continuation(turn, turn_ids)
             return
         fallback_reason_codes = [
             code for code in assessment.reason_codes if code.startswith("llm_fallback:")
@@ -1932,6 +2011,81 @@ class LiveInterviewOrchestrationController:
             actor=EventActor.SYSTEM,
         )
         await self._execute_decision_command(decision.commands[0])
+
+    def _is_final_question(self, question_id: str) -> bool:
+        return (
+            self._orchestrator.current_question_id == question_id
+            and len(self._orchestrator.completed_question_ids)
+            == len(self._plan.questions) - 1
+        )
+
+    async def _candidate_resumed_during_final_grace(
+        self,
+        activity_revision: int,
+        *,
+        elapsed_seconds: float,
+    ) -> bool:
+        remaining_seconds = max(
+            0.0,
+            self._final_answer_grace_seconds - elapsed_seconds,
+        )
+        if remaining_seconds <= 0:
+            return False
+        if self._candidate_activity_revision != activity_revision:
+            return True
+        self._candidate_activity_event.clear()
+        if self._candidate_activity_revision != activity_revision:
+            return True
+        try:
+            await asyncio.wait_for(
+                self._candidate_activity_event.wait(),
+                timeout=remaining_seconds,
+            )
+        except TimeoutError:
+            return False
+        return self._candidate_activity_revision != activity_revision
+
+    def _defer_candidate_continuation(
+        self,
+        turn: CandidateTurn,
+        turn_ids: list[str],
+    ) -> None:
+        pending = self._pending_candidate_continuation
+        if pending is not None and pending.question_id == turn.question_id:
+            transcript = _join_candidate_transcripts(
+                pending.transcript,
+                turn.transcript,
+            )
+            ids = _dedupe_turn_ids([*pending.turn_ids, *turn_ids])
+            occurred_at = min(pending.occurred_at, turn.started_at)
+        else:
+            transcript = turn.transcript
+            ids = _dedupe_turn_ids(turn_ids)
+            occurred_at = turn.started_at
+        self._pending_candidate_continuation = PendingCandidateContinuation(
+            question_id=turn.question_id,
+            transcript=transcript,
+            turn_ids=tuple(ids),
+            occurred_at=occurred_at,
+        )
+
+    def _merge_pending_continuation(
+        self,
+        *,
+        question_id: str,
+        transcript: str,
+        turn_ids: list[str],
+        occurred_at: datetime,
+    ) -> tuple[str, list[str], datetime]:
+        pending = self._pending_candidate_continuation
+        if pending is None or pending.question_id != question_id:
+            return transcript, turn_ids, occurred_at
+        self._pending_candidate_continuation = None
+        return (
+            _join_candidate_transcripts(pending.transcript, transcript),
+            _dedupe_turn_ids([*pending.turn_ids, *turn_ids]),
+            min(pending.occurred_at, occurred_at),
+        )
 
     async def _execute_decision_command(self, command: OrchestratorCommand) -> None:
         if command.type == OrchestratorCommandType.WAIT:
@@ -2521,6 +2675,9 @@ class OpenAILiveKitWorker:
                 transcript_publisher=LiveTranscriptPublisher(room),
                 legacy_interruption_filter=turn_runtime.legacy_overlap_guard,
                 candidate_wait_seconds=self._worker_config.candidate_wait_seconds,
+                final_answer_grace_seconds=(
+                    self._worker_config.final_answer_grace_seconds
+                ),
             )
             inactivity_policy = CandidateInactivityPolicy(
                 user_away_after_seconds=(
@@ -2569,6 +2726,7 @@ class OpenAILiveKitWorker:
                 candidate_active_handler=lambda source: (
                     inactivity_coordinator.mark_active(source=source)
                 ),
+                candidate_speaking_handler=controller.note_candidate_speaking,
                 legacy_overlap_guard=turn_runtime.legacy_overlap_guard,
                 emit_state_events=False,
             )

@@ -1,6 +1,6 @@
 # Evaluation Matrix Sources
 
-Last reviewed: 2026-07-25
+Last reviewed: 2026-07-27
 
 This file tracks the sources that inform Prelude's evaluation matrix,
 post-session candidate brief synthesis, and live answer inference guardrails.
@@ -21,6 +21,9 @@ Why it matters:
 - OpenAI recommends GPT-5.4 nano for classification and extraction workloads.
   Prelude uses it for the bounded live answer matrix, with deterministic
   orchestration and a local fallback remaining authoritative.
+- Live inference uses strict JSON Schema output, `reasoning.effort = none`, a
+  small output budget, and `store = false`; provider latency is measured without
+  logging candidate text.
 
 ## Employment AI And Human Review Sources
 

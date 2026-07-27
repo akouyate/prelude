@@ -4,7 +4,18 @@ import net from "node:net";
 const MAX_URL_LENGTH = 2_048;
 const MAX_QUERY_LENGTH = 512;
 
-const blockedProviderDomains = ["indeed.com", "linkedin.com"];
+const blockedProviders = [
+  {
+    domain: "indeed.com",
+    message:
+      "Indeed job pages cannot be imported automatically. Use the original employer careers URL or start from a manual brief.",
+  },
+  {
+    domain: "linkedin.com",
+    message:
+      "LinkedIn job pages cannot be imported automatically. Use the original employer careers URL or start from a manual brief.",
+  },
+] as const;
 const sensitiveQueryParameterNames = new Set([
   "access_token",
   "api_key",
@@ -109,10 +120,13 @@ export function createRoleIntakeUrlIdentity(url: URL): string {
 }
 
 export function assertProviderAllowed(hostname: string): void {
-  if (blockedProviderDomains.some((domain) => hostname === domain || hostname.endsWith(`.${domain}`))) {
+  const blockedProvider = blockedProviders.find(
+    ({ domain }) => hostname === domain || hostname.endsWith(`.${domain}`),
+  );
+  if (blockedProvider) {
     throw new RoleIntakeUrlImportError(
       "provider_blocked",
-      "Prelude cannot import from this provider. Start from a manual brief instead.",
+      blockedProvider.message,
     );
   }
 }

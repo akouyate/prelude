@@ -48,7 +48,11 @@ from app.domain.models import (
     QuestionCategory,
     create_demo_plan,
 )
-from app.domain.orchestrator import AnswerClassification, InterviewOrchestrator
+from app.domain.orchestrator import (
+    AnswerClassification,
+    CandidateAnswerAssessment,
+    InterviewOrchestrator,
+)
 
 
 class FakeAgentSession:
@@ -104,6 +108,20 @@ class FakeTranscriptPublisher:
 
     async def publish_turn(self, transcript_turn: dict[str, object]) -> None:
         self.turns.append(transcript_turn)
+
+
+class RecordingCompleteInferenceProvider:
+    def __init__(self) -> None:
+        self.transcripts: list[str] = []
+
+    async def assess_answer(self, **kwargs: object) -> CandidateAnswerAssessment:
+        turn = kwargs["turn"]
+        self.transcripts.append(turn.transcript)
+        return CandidateAnswerAssessment(
+            classification=AnswerClassification.COMPLETE,
+            reason_codes=["answer_complete"],
+            confidence=0.95,
+        )
 
 
 class FakeLiveKitLocalParticipant:
@@ -767,6 +785,75 @@ async def test_live_orchestration_controller_completes_three_question_flow() -> 
     assert len(session.replies) == 3
     assert session.spoken[-1]["text"] == events[-2].payload["closing"]
     assert session.spoken[-1]["allow_interruptions"] is False
+
+
+@pytest.mark.asyncio
+async def test_final_answer_resume_cancels_closing_and_merges_the_continuation() -> None:
+    events: list[InterviewEvent] = []
+    plan = InterviewPlan(
+        id="pause-safe-plan",
+        role_title="Operations Manager",
+        language="fr-FR",
+        questions=[
+            InterviewQuestion(
+                id="q1",
+                prompt="Parlez-moi d'une situation complexe que vous avez gérée.",
+            )
+        ],
+    )
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    inference = RecordingCompleteInferenceProvider()
+    controller = LiveInterviewOrchestrationController(
+        plan=plan,
+        emitter=emitter,
+        session=FakeLiveSession(),
+        answer_inference=inference,
+        final_answer_grace_seconds=0.05,
+    )
+    await controller.start()
+
+    first_fragment = asyncio.create_task(
+        controller.handle_candidate_turn(
+            "J'ai réuni l'équipe et organisé une cellule de crise.",
+            datetime.now(timezone.utc),
+            turn_ids=["turn-1"],
+            turn_generation=controller.prompt_generation,
+        )
+    )
+    await asyncio.sleep(0.01)
+    controller.note_candidate_speaking()
+    await first_fragment
+
+    event_types = [event.type for event in events]
+    assert EventType.ANSWER_EVALUATED not in event_types
+    assert EventType.QUESTION_COMPLETED not in event_types
+    assert EventType.SESSION_CLOSING not in event_types
+    assert controller.current_question_id == "q1"
+
+    await controller.handle_candidate_turn(
+        "Après ce temps de réflexion, nous avons rassuré le client et livré le plan.",
+        datetime.now(timezone.utc),
+        turn_ids=["turn-2"],
+        turn_generation=controller.prompt_generation,
+    )
+
+    assert inference.transcripts == [
+        "J'ai réuni l'équipe et organisé une cellule de crise.",
+        (
+            "J'ai réuni l'équipe et organisé une cellule de crise. "
+            "Après ce temps de réflexion, nous avons rassuré le client et livré le plan."
+        ),
+    ]
+    evaluated = next(
+        event for event in events if event.type == EventType.ANSWER_EVALUATED
+    )
+    assert evaluated.payload["turn_ids"] == ["turn-1", "turn-2"]
+    assert EventType.SESSION_CLOSING in [event.type for event in events]
 
 
 def test_live_transcript_role_clarification_does_not_complete_answer() -> None:

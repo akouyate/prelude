@@ -37,9 +37,9 @@
         "uploadTitle": "Upload a role brief",
         "uploadDescription": "Extract a PDF or DOCX privately, then review every field.",
         "uploadMeta": "Fastest with a brief",
-        "urlTitle": "Import a public URL",
-        "urlDescription": "Read one public job page without executing its scripts.",
-        "urlMeta": "Public pages",
+        "urlTitle": "Import a careers page",
+        "urlDescription": "Use the original public job page from the employer's careers site.",
+        "urlMeta": "Company careers",
         "unavailableTitle": "Import a role source",
         "unavailableDescription": "Public URL and PDF/DOCX import will be available when private role intake is configured."
       },
@@ -58,11 +58,11 @@
         }
       },
       "url": {
-        "title": "Import a public job URL",
-        "description": "Prelude reads one public HTML job page, checks the source policy, and asks you to verify every extracted field.",
-        "label": "Public job URL",
-        "hint": "HTTPS only. LinkedIn and Indeed pages are not supported by this importer.",
-        "placeholder": "https://careers.example.com/jobs/product-designer",
+        "title": "Import an employer careers page",
+        "description": "Prelude reads the original public job page and asks you to verify every extracted field.",
+        "label": "Employer job URL",
+        "hint": "Use the original HTTPS careers page. LinkedIn and Indeed links require dedicated partner integrations and cannot be imported here.",
+        "placeholder": "https://careers.company.com/jobs/product-designer",
         "action": "Import job page",
         "preparing": "Preparing import…",
         "errors": {

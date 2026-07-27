@@ -126,6 +126,11 @@ async def test_openai_answer_inference_parses_llm_matrix_without_network() -> No
     assert assessment.evaluation_matrix.challenge_needed is True
     assert client.calls[0]["model"] == "gpt-test"
     assert client.calls[0]["temperature"] == 0
+    assert client.calls[0]["reasoning"] == {"effort": "none"}
+    assert client.calls[0]["store"] is False
+    assert client.calls[0]["max_output_tokens"] == 200
+    assert client.calls[0]["text"]["format"]["type"] == "json_schema"
+    assert client.calls[0]["text"]["format"]["strict"] is True
 
 
 @pytest.mark.asyncio
