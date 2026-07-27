@@ -8,6 +8,7 @@ import type {
 } from "./live-interview-types";
 
 const PRELUDE_TRANSCRIPT_TOPIC = "prelude.transcript.v1";
+const PRELUDE_CANDIDATE_CONTROL_TOPIC = "prelude.candidate.control.v1";
 const LIVEKIT_TRANSCRIPTION_TOPIC = "lk.transcription";
 
 export function resumeStorageKey(token: string) {
@@ -19,6 +20,7 @@ export async function createSession(input: {
   candidateName: string;
   consentAccepted: boolean;
   resumeToken?: string;
+  signal?: AbortSignal;
   token: string;
   videoEnabled: boolean;
 }) {
@@ -33,6 +35,7 @@ export async function createSession(input: {
       resumeToken: input.resumeToken,
       videoEnabled: input.videoEnabled,
     }),
+    ...(input.signal ? { signal: input.signal } : {}),
   });
 
   if (!response.ok) {
@@ -162,6 +165,7 @@ export async function connectRoom({
   onAudioPlaybackReady,
   onRoomConnected,
   onReconnecting,
+  signal,
 }: {
   session: LiveInterviewSession;
   stream: MediaStream;
@@ -177,7 +181,10 @@ export async function connectRoom({
   onAudioPlaybackReady: () => void;
   onRoomConnected: () => void;
   onReconnecting: () => void;
+  signal?: AbortSignal;
 }): Promise<ConnectedRoom> {
+  signal?.throwIfAborted();
+
   if (session.livekit.isMock) {
     onRoomConnected();
     await markCandidateJoined(session, stream);
@@ -187,6 +194,7 @@ export async function connectRoom({
     onAudioPlaybackReady();
     return {
       disconnect: () => onDisconnected({ intentional: true }),
+      sendControl: async () => undefined,
       startAudio: async () => undefined,
     };
   }
@@ -196,6 +204,20 @@ export async function connectRoom({
   const remoteAudioElements: HTMLMediaElement[] = [];
   const transcriptDecoder = new TextDecoder();
   let intentionalDisconnect = false;
+  let suppressDisconnectEvent = false;
+
+  const cleanupRoom = () => {
+    remoteAudioElements.forEach((element) => element.remove());
+    remoteAudioElements.length = 0;
+    room.unregisterTextStreamHandler?.(LIVEKIT_TRANSCRIPTION_TOPIC);
+    signal?.removeEventListener("abort", abortConnection);
+  };
+  const abortConnection = () => {
+    intentionalDisconnect = true;
+    suppressDisconnectEvent = true;
+    cleanupRoom();
+    room.disconnect();
+  };
 
   const markInterviewerJoined = () => {
     onInterviewerJoined();
@@ -222,9 +244,12 @@ export async function connectRoom({
 
   room.on(RoomEvent.Reconnecting, onReconnecting);
   room.on(RoomEvent.Reconnected, syncInterviewerState);
-  room.on(RoomEvent.Disconnected, () =>
-    onDisconnected({ intentional: intentionalDisconnect }),
-  );
+  room.on(RoomEvent.Disconnected, () => {
+    cleanupRoom();
+    if (!suppressDisconnectEvent) {
+      onDisconnected({ intentional: intentionalDisconnect });
+    }
+  });
   room.on(RoomEvent.ParticipantConnected, markInterviewerJoined);
   room.on(RoomEvent.ParticipantDisconnected, syncInterviewerState);
   room.on(RoomEvent.AudioPlaybackStatusChanged, () => {
@@ -287,7 +312,9 @@ export async function connectRoom({
   });
 
   try {
+    signal?.addEventListener("abort", abortConnection, { once: true });
     await room.connect(session.livekit.url, session.livekit.token);
+    signal?.throwIfAborted();
     await Promise.all(
       stream.getTracks().map((track) =>
         room.localParticipant.publishTrack(track, {
@@ -305,13 +332,24 @@ export async function connectRoom({
     if (!room.canPlaybackAudio) {
       onAudioPlaybackBlocked();
     }
+    signal?.removeEventListener("abort", abortConnection);
   } catch (cause) {
-    remoteAudioElements.forEach((element) => element.remove());
+    suppressDisconnectEvent = true;
+    cleanupRoom();
     room.disconnect();
     throw cause;
   }
 
   return {
+    sendControl: async (type) => {
+      await room.localParticipant.publishData(
+        new TextEncoder().encode(JSON.stringify({ type })),
+        {
+          reliable: true,
+          topic: PRELUDE_CANDIDATE_CONTROL_TOPIC,
+        },
+      );
+    },
     startAudio: async () => {
       await room.startAudio();
       await Promise.all(remoteAudioElements.map((element) => element.play()));
@@ -319,8 +357,7 @@ export async function connectRoom({
     },
     disconnect: () => {
       intentionalDisconnect = true;
-      remoteAudioElements.forEach((element) => element.remove());
-      room.unregisterTextStreamHandler?.(LIVEKIT_TRANSCRIPTION_TOPIC);
+      cleanupRoom();
       room.disconnect();
     },
   };

@@ -1,3 +1,10 @@
+"""Deterministic simulation runner.
+
+This runner is not the production LiveKit runtime. It keeps the deprecated
+state-machine and turn-taking adapters available for tests, CLI simulations,
+and provider benchmarks while the live worker relies on LiveKit turn handling.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -13,7 +20,6 @@ from app.application.ports import (
 )
 from app.domain.models import (
     AgentLiveKitJoin,
-    CandidateTurn,
     EventActor,
     EventType,
     InterviewEvent,
@@ -25,7 +31,7 @@ from app.domain.orchestrator import (
     OrchestratorCommand,
     OrchestratorCommandType,
 )
-from app.domain.state_machine import InterviewerStateMachine
+from app.domain.state_machine import InterviewerStateMachine, InvalidTransitionError
 from app.domain.turn_taking import (
     InterruptionClassification,
     TurnTakingAction,
@@ -42,6 +48,8 @@ class SessionResult:
 
 
 class InterviewSessionRunner:
+    """Simulation-only runner; do not wire it into a real candidate session."""
+
     def __init__(
         self,
         plan: InterviewPlan,
@@ -550,7 +558,9 @@ class InterviewSessionRunner:
     async def _emit_failure(self, exc: Exception) -> None:
         try:
             self._state_machine.apply(EventType.SESSION_FAILED)
-        except Exception:
+        except InvalidTransitionError:
+            # The original error still needs to be persisted when the simulation
+            # state machine already reached a terminal state.
             pass
 
         self._sequence += 1

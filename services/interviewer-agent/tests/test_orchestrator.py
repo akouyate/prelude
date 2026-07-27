@@ -1,5 +1,4 @@
 import pytest
-
 from app.domain.models import (
     CandidateTurn,
     InterviewPlan,
@@ -58,7 +57,9 @@ def test_orchestrator_completes_three_questions_in_order() -> None:
 
         assert decision.answer_evaluation.question_id == question_id
         assert decision.answer_evaluation.question_index == expected_index
-        assert decision.answer_evaluation.policy_action == PolicyAction.COMPLETE_QUESTION
+        assert (
+            decision.answer_evaluation.policy_action == PolicyAction.COMPLETE_QUESTION
+        )
         assert decision.commands[0].type == OrchestratorCommandType.COMPLETE_QUESTION
         assert decision.commands[0].question_index == expected_index
 
@@ -105,7 +106,7 @@ def test_vague_answer_gets_one_followup_then_completes() -> None:
     assert second.commands[0].completion_reason == "answered"
 
 
-def test_incomplete_answer_gets_one_soft_reprompt_then_timeboxes_question() -> None:
+def test_incomplete_answer_gets_two_soft_reprompts_then_timeboxes_question() -> None:
     orchestrator = InterviewOrchestrator(three_question_plan())
     command = orchestrator.start()
     orchestrator.mark_question_asked(command.question_id)
@@ -125,9 +126,19 @@ def test_incomplete_answer_gets_one_soft_reprompt_then_timeboxes_question() -> N
         reason_codes=["candidate_silent"],
     )
 
-    assert second.answer_evaluation.policy_action == PolicyAction.TIMEBOX
-    assert second.commands[0].type == OrchestratorCommandType.COMPLETE_QUESTION
-    assert second.commands[0].completion_reason == "candidate_silent"
+    assert second.answer_evaluation.policy_action == PolicyAction.SOFT_REPROMPT
+    assert second.commands[0].type == OrchestratorCommandType.SOFT_REPROMPT
+    assert second.commands[0].reprompts_used == 2
+
+    third = orchestrator.evaluate_answer(
+        classification=AnswerClassification.SILENT,
+        turn_ids=["turn-3"],
+        reason_codes=["candidate_silent"],
+    )
+
+    assert third.answer_evaluation.policy_action == PolicyAction.TIMEBOX
+    assert third.commands[0].type == OrchestratorCommandType.COMPLETE_QUESTION
+    assert third.commands[0].completion_reason == "candidate_silent"
 
 
 def test_repeat_wait_and_skip_do_not_consume_followups_or_reprompts() -> None:
@@ -164,13 +175,19 @@ def test_repeat_wait_and_skip_do_not_consume_followups_or_reprompts() -> None:
 def test_classifies_candidate_turn_without_llm_for_deterministic_signals() -> None:
     assert (
         InterviewOrchestrator.classify_candidate_turn(
-            CandidateTurn(question_id="q1", transcript="Pouvez-vous repeter ?", repeat_requested=True)
+            CandidateTurn(
+                question_id="q1",
+                transcript="Pouvez-vous repeter ?",
+                repeat_requested=True,
+            )
         )
         == AnswerClassification.REPEAT_REQUESTED
     )
     assert (
         InterviewOrchestrator.classify_candidate_turn(
-            CandidateTurn(question_id="q1", transcript="Une seconde", wait_requested=True)
+            CandidateTurn(
+                question_id="q1", transcript="Une seconde", wait_requested=True
+            )
         )
         == AnswerClassification.WAIT_REQUESTED
     )
@@ -201,8 +218,12 @@ def test_matrix_challenges_absurd_answer_instead_of_accepting_text() -> None:
     assert assessment.classification == AnswerClassification.VAGUE
     assert assessment.evaluation_matrix is not None
     assert assessment.evaluation_matrix.challenge_needed is True
-    assert assessment.evaluation_matrix.challenge_reason == "incoherent_or_absurd_answer"
-    assert assessment.evaluation_matrix.dimension_score(EvaluationDimension.COHERENCE) == 0
+    assert (
+        assessment.evaluation_matrix.challenge_reason == "incoherent_or_absurd_answer"
+    )
+    assert (
+        assessment.evaluation_matrix.dimension_score(EvaluationDimension.COHERENCE) == 0
+    )
 
     orchestrator = InterviewOrchestrator(plan)
     command = orchestrator.start()
@@ -219,6 +240,23 @@ def test_matrix_challenges_absurd_answer_instead_of_accepting_text() -> None:
     assert decision.commands[0].prompt_override is not None
     payload = decision.answer_evaluation.to_payload()
     assert payload["evaluation_matrix"]["challenge"]["needed"] is True
+
+
+def test_matrix_fallback_challenge_uses_interview_language() -> None:
+    plan = three_question_plan().model_copy(update={"language": "en"})
+    question = plan.questions[0]
+
+    assessment = InterviewOrchestrator.assess_candidate_turn(
+        plan=plan,
+        question=question,
+        turn=CandidateTurn(question_id=question.id, transcript="poop"),
+    )
+
+    assert assessment.evaluation_matrix is not None
+    assert assessment.evaluation_matrix.challenge_prompt is not None
+    assert assessment.evaluation_matrix.challenge_prompt.startswith(
+        "I may not have understood how that connects"
+    )
 
 
 @pytest.mark.parametrize(
@@ -313,7 +351,9 @@ def test_matrix_smoke_scenarios(
     expected_challenge_reason: str | None,
 ) -> None:
     plan = three_question_plan()
-    question = next(question for question in plan.questions if question.id == question_id)
+    question = next(
+        question for question in plan.questions if question.id == question_id
+    )
 
     assessment = InterviewOrchestrator.assess_candidate_turn(
         plan=plan,
@@ -328,7 +368,9 @@ def test_matrix_smoke_scenarios(
         assert assessment.evaluation_matrix.overall_score >= 10, name
     else:
         assert assessment.evaluation_matrix.challenge_needed is True, name
-        assert assessment.evaluation_matrix.challenge_reason == expected_challenge_reason, name
+        assert (
+            assessment.evaluation_matrix.challenge_reason == expected_challenge_reason
+        ), name
 
 
 def test_rejects_answer_when_no_question_is_active() -> None:

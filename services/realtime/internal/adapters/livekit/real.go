@@ -142,9 +142,10 @@ func (g *RealGateway) EnsureRoom(ctx context.Context, input application.EnsureRo
 	}
 
 	_, err := g.roomClient.CreateRoom(ctx, &livekit.CreateRoomRequest{
-		Name:            roomName,
-		EmptyTimeout:    uint32(input.EmptyTimeout.Seconds()),
-		MaxParticipants: input.MaxParticipants,
+		Name:             roomName,
+		EmptyTimeout:     uint32(input.EmptyTimeout.Seconds()),
+		DepartureTimeout: uint32(input.DepartureTimeout.Seconds()),
+		MaxParticipants:  input.MaxParticipants,
 	})
 
 	return err

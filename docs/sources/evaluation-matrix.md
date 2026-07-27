@@ -1,6 +1,6 @@
 # Evaluation Matrix Sources
 
-Last reviewed: 2026-06-21
+Last reviewed: 2026-07-25
 
 This file tracks the sources that inform Prelude's evaluation matrix,
 post-session candidate brief synthesis, and live answer inference guardrails.
@@ -9,6 +9,7 @@ post-session candidate brief synthesis, and live answer inference guardrails.
 
 - [OpenAI Responses API: create a response](https://platform.openai.com/docs/api-reference/responses/create)
 - [OpenAI structured outputs guide](https://platform.openai.com/docs/guides/structured-outputs)
+- [OpenAI GPT-5.4 mini and nano](https://openai.com/index/introducing-gpt-5-4-mini-and-nano/)
 
 Why it matters:
 
@@ -17,6 +18,9 @@ Why it matters:
   boundary.
 - Structured output guidance informs the JSON-shaped response contract, while
   Prelude's Zod schemas remain the final validation authority.
+- OpenAI recommends GPT-5.4 nano for classification and extraction workloads.
+  Prelude uses it for the bounded live answer matrix, with deterministic
+  orchestration and a local fallback remaining authoritative.
 
 ## Employment AI And Human Review Sources
 

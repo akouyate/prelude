@@ -29,6 +29,13 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+`requirements.in` contains the direct dependencies. Regenerate the fully pinned,
+cross-platform lock after dependency changes with:
+
+```bash
+uv pip compile --universal --python-version 3.14 requirements.in -o requirements.txt
+```
+
 ## Run a local simulation
 
 ```bash
@@ -162,8 +169,11 @@ LIVEKIT_URL="wss://..."
 LIVEKIT_API_KEY="..."
 LIVEKIT_API_SECRET="..."
 OPENAI_API_KEY="..."
-OPENAI_REALTIME_MODEL="gpt-realtime"
+OPENAI_REALTIME_MODEL="gpt-realtime-2.1"
 OPENAI_REALTIME_VOICE="marin"
+OPENAI_EXACT_TTS_MODEL="gpt-4o-mini-tts"
+# Optional; defaults to OPENAI_REALTIME_VOICE.
+OPENAI_EXACT_TTS_VOICE=""
 OPENAI_REALTIME_TURN_DETECTION="semantic_vad"
 OPENAI_REALTIME_REASONING_EFFORT="low"
 
@@ -298,8 +308,7 @@ For a bounded real-provider smoke:
 make live-openai-worker \
   SESSION_ID={session_id} \
   LIVE_WORKER_MAX_DURATION_SECONDS=15 \
-  LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS=120 \
-  LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS=10
+  LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS=120
 ```
 
 Manual desktop/mobile smoke:
@@ -312,10 +321,13 @@ Manual desktop/mobile smoke:
 5. Start `make live-openai-worker SESSION_ID={session_id}`.
 6. Confirm the candidate hears interviewer audio and `/transcript` contains the
    interviewer turn, then candidate turns after speech is transcribed.
-7. Stay silent after the first question and confirm the worker emits
-   `silence_timeout_started`, `answer_evaluated`, and `soft_reprompted`, then
-   the interviewer asks whether there is a technical issue or whether the
-   candidate needs a moment.
+7. Stay silent after the first question and confirm the worker emits a
+   `silence_timeout_started` check-in after 15 seconds, then a warning with a
+   20-second visible countdown. Confirm that no candidate turn or
+   `answer_evaluated` event is created for silence.
+8. Speak or tap **I'm here** and confirm `silence_recovered` cancels the
+   sequence. Repeat the test without responding and confirm the session closes
+   as retryable `candidate_inactivity_timeout`.
 
 For a local room/join smoke without calling OpenAI:
 
@@ -339,12 +351,21 @@ make live-openai-worker \
 pytest
 ```
 
-## Next wiring steps
+## Production turn ownership
 
-1. Drive question-level state from LiveKit/OpenAI conversation callbacks instead
-   of relying on prompt instructions alone.
-2. Map provider turn-taking signals into `TurnTakingPolicy` instead of letting
-   provider callbacks advance interview state directly.
-3. Add provider latency and cost metrics around every provider call.
-4. Run the same scenario set against OpenAI Realtime and ElevenLabs before
-   choosing the commercial POC provider.
+The live worker uses LiveKit Agents for VAD, endpointing, adaptive
+interruptions, backchannel filtering, false-interruption recovery, and room
+reconnection. Prelude keeps ownership of question order, answer evaluation,
+follow-up limits, persistence, and closing.
+
+`LIVEKIT_TURN_DETECTOR_VERSION` defaults to `v1-mini`, which is appropriate for
+the Railway worker. `v1` can be selected when the worker runs as a LiveKit Cloud
+agent. `LIVEKIT_LEGACY_TURN_HANDLING=true` is an emergency rollback only; it
+restores the previous OpenAI server VAD path and emits a deprecation warning.
+
+`TurnTakingPolicy`, `InterviewerStateMachine`, and `InterviewSessionRunner` are
+deprecated for live interviews. They remain available only for deterministic
+CLI simulations and provider benchmarks.
+
+The migration rationale and primary LiveKit references are recorded in
+[`docs/sources/livekit-turn-handling.md`](../../docs/sources/livekit-turn-handling.md).

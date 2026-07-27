@@ -13,12 +13,14 @@ import (
 // recordingLiveKit records the order of gateway calls so we can assert the room
 // is ensured BEFORE either participant is handed a join token.
 type recordingLiveKit struct {
-	calls     []string
-	ensureErr error
+	calls       []string
+	ensureErr   error
+	ensureInput application.EnsureRoomInput
 }
 
 func (r *recordingLiveKit) EnsureRoom(_ context.Context, input application.EnsureRoomInput) error {
 	r.calls = append(r.calls, "ensure:"+input.RoomName)
+	r.ensureInput = input
 	return r.ensureErr
 }
 
@@ -52,6 +54,12 @@ func TestServiceCreateSessionEnsuresRoomBeforeJoin(t *testing.T) {
 	}
 	if len(gateway.calls) != len(want) || gateway.calls[0] != want[0] || gateway.calls[1] != want[1] {
 		t.Fatalf("expected room ensured before join %v, got %v", want, gateway.calls)
+	}
+	if gateway.ensureInput.DepartureTimeout != 6*time.Minute {
+		t.Fatalf(
+			"expected six-minute server reconnect window, got %s",
+			gateway.ensureInput.DepartureTimeout,
+		)
 	}
 }
 

@@ -51,6 +51,10 @@ function textStreamReader({
 
 type FakeRoom = {
   emit: (event: string, ...args: unknown[]) => void;
+  localParticipant: {
+    publishData: ReturnType<typeof vi.fn>;
+    publishTrack: ReturnType<typeof vi.fn>;
+  };
   remoteParticipants: Map<string, unknown>;
   textStreamHandlers: Map<string, FakeTextStreamHandler>;
 };
@@ -63,6 +67,7 @@ vi.mock("livekit-client", () => {
   class Room {
     canPlaybackAudio = true;
     localParticipant = {
+      publishData: vi.fn(),
       publishTrack: vi.fn(),
     };
     remoteParticipants = new Map<string, unknown>();
@@ -167,6 +172,36 @@ describe("live interview client", () => {
         videoEnabled: false,
       }),
     });
+  });
+
+  it("cancels session preparation when connection recovery is aborted", async () => {
+    const controller = new AbortController();
+    vi.mocked(fetch).mockImplementationOnce((_input, init) => {
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("Aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    });
+
+    const preparation = createSession({
+      candidateEmail: "ada@example.com",
+      candidateName: "Ada Lovelace",
+      consentAccepted: true,
+      resumeToken: "resume_existing",
+      signal: controller.signal,
+      token: "public_token",
+      videoEnabled: false,
+    });
+    controller.abort();
+
+    await expect(preparation).rejects.toMatchObject({ name: "AbortError" });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/live-interview-sessions",
+      expect.objectContaining({ signal: controller.signal }),
+    );
   });
 
   it("preserves candidate lifecycle error codes from the session API", async () => {
@@ -311,6 +346,15 @@ describe("live interview client", () => {
     });
     await vi.waitFor(() => expect(onInterviewerReady).toHaveBeenCalled());
     expect(onAudioPlaybackReady).toHaveBeenCalled();
+
+    await room.sendControl("candidate_presence_confirmed");
+    expect(livekitMock.room?.localParticipant.publishData).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      {
+        reliable: true,
+        topic: "prelude.candidate.control.v1",
+      },
+    );
 
     livekitMock.room?.emit("reconnecting");
     expect(onReconnecting).toHaveBeenCalledOnce();

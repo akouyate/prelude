@@ -4,14 +4,22 @@ import asyncio
 import contextlib
 import inspect
 import json
+import logging
 import re
 import unicodedata
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Mapping, Protocol
+from datetime import datetime, timedelta, timezone
+from typing import Literal, Protocol
 
 from app.adapters.answer_inference import HeuristicAnswerInferenceProvider
+from app.application.inactivity import (
+    CandidateInactivityCoordinator,
+    CandidateInactivityPolicy,
+    InactivityStage,
+    InactivityStep,
+    InactivityTrigger,
+)
 from app.application.ports import AnswerInferenceProvider
 from app.domain.models import (
     AgentConfig,
@@ -31,6 +39,8 @@ from app.domain.orchestrator import (
 )
 from app.domain.state_machine import INTERVIEWER_STATE_MACHINE_INSTRUCTIONS
 
+logger = logging.getLogger(__name__)
+
 
 FIRST_REPLY_INSTRUCTIONS = (
     "Greet the candidate briefly in the interview language, give the required "
@@ -40,7 +50,10 @@ FIRST_REPLY_INSTRUCTIONS = (
 )
 
 CLOSING_PLAYOUT_TIMEOUT_SECONDS = 25.0
+CANDIDATE_WAIT_SECONDS = 60.0
+MAX_TURN_BOUNDARY_WAIT_SECONDS = 60.0
 PRELUDE_TRANSCRIPT_TOPIC = "prelude.transcript.v1"
+PRELUDE_CANDIDATE_CONTROL_TOPIC = "prelude.candidate.control.v1"
 
 INITIAL_GREETING_RE = re.compile(
     r"^\s*(bonjour|bonsoir|hello|hi|good morning|good afternoon|good evening)"
@@ -49,11 +62,10 @@ INITIAL_GREETING_RE = re.compile(
 )
 
 
-# Explicit, first-person duty-of-care exit requests. Detection is intentionally
-# high-precision (specific phrasing + a short-utterance guard) because closing the
-# screen by mistake is a worse failure than missing a borderline phrasing — a
-# false negative still gets a graceful verbal off-ramp from the persona.
-_WITHDRAW_MAX_WORDS = 16
+# Explicit, first-person duty-of-care exit requests. These remain high-precision,
+# but cover natural withdrawal and consent language rather than requiring a terse
+# command. The classifier handles them before inference so they are never scored.
+_WITHDRAW_MAX_WORDS = 40
 WITHDRAW_PHRASES: tuple[str, ...] = (
     "arreter l entretien",
     "arreter cet entretien",
@@ -64,6 +76,13 @@ WITHDRAW_PHRASES: tuple[str, ...] = (
     "je veux tout arreter",
     "je prefere arreter l entretien",
     "je souhaite arreter l entretien",
+    "je ne souhaite plus continuer",
+    "je ne veux plus continuer",
+    "je prefere ne pas continuer",
+    "je prefere ne pas poursuivre",
+    "je ne suis plus a l aise et je prefere ne pas continuer",
+    "je retire mon consentement",
+    "je ne consens plus",
     "je me retire",
     "je veux partir",
     "je veux parler a un humain",
@@ -80,6 +99,13 @@ WITHDRAW_PHRASES: tuple[str, ...] = (
     "end this interview",
     "i want to quit",
     "i withdraw",
+    "i withdraw my consent",
+    "i no longer consent",
+    "i do not consent anymore",
+    "i don t want to continue",
+    "i do not want to continue",
+    "i would like to stop here",
+    "i am not comfortable continuing",
     "i want to stop now",
     "i want to stop here",
     "i want to speak to a human",
@@ -159,7 +185,7 @@ class CandidateTurnClassifier:
                 reason="candidate_requested_stop",
             )
 
-        if _contains_any(
+        if _contains_candidate_request(
             normalized,
             [
                 "une seconde",
@@ -182,7 +208,7 @@ class CandidateTurnClassifier:
                 reason="candidate_requested_time",
             )
 
-        if _contains_any(
+        if _contains_candidate_request(
             normalized,
             [
                 "je passe",
@@ -236,10 +262,14 @@ class CandidateTurnClassifier:
                 "probleme de micro",
                 "mon micro",
                 "le micro",
+                "vous m entendez",
+                "est ce que vous m entendez",
                 "ça coupe",
                 "ca coupe",
                 "i cannot hear",
                 "i can t hear",
+                "can you hear me",
+                "my audio is cutting out",
             ],
         ):
             return self._non_answer_repeat(
@@ -274,7 +304,7 @@ class CandidateTurnClassifier:
                 "candidate_requested_examples",
             )
 
-        if _contains_any(
+        if _contains_candidate_request(
             normalized,
             [
                 "reformuler",
@@ -293,16 +323,19 @@ class CandidateTurnClassifier:
                 "candidate_requested_reformulation",
             )
 
-        if _contains_any(
+        if _contains_candidate_request(
             normalized,
             [
                 "repeter",
                 "répéter",
                 "repeat",
+                "pardon",
                 "pas entendu",
                 "j ai pas entendu",
                 "je n ai pas entendu",
                 "encore une fois",
+                "say that again",
+                "could you say that again",
             ],
         ):
             return self._non_answer_repeat(
@@ -310,7 +343,9 @@ class CandidateTurnClassifier:
                 "candidate_requested_repeat",
             )
 
-        if _looks_like_partial_answer(normalized):
+        if not _looks_like_compact_factual_answer(
+            normalized
+        ) and _looks_like_partial_answer(normalized):
             return CandidateTurnDecision(
                 intent=CandidateTurnIntent.ANSWER_PARTIAL,
                 is_answer_to_active_question=True,
@@ -349,11 +384,60 @@ def _normalize_candidate_text(value: str) -> str:
 
 
 def _contains_any(value: str, markers: list[str]) -> bool:
-    normalized_markers = [_normalize_candidate_text(marker) for marker in markers]
-    return any(marker in value for marker in normalized_markers)
+    value_tokens = value.split()
+    return any(
+        _contains_token_sequence(
+            value_tokens,
+            _normalize_candidate_text(marker).split(),
+        )
+        for marker in markers
+    )
+
+
+def _contains_candidate_request(value: str, markers: list[str]) -> bool:
+    """Match request phrases without treating words inside an answer as commands."""
+    value_tokens = value.split()
+    for marker in markers:
+        marker_tokens = _normalize_candidate_text(marker).split()
+        if not _contains_token_sequence(value_tokens, marker_tokens):
+            continue
+        if len(marker_tokens) > 1 or len(value_tokens) <= 4:
+            return True
+    return False
+
+
+def _contains_token_sequence(value_tokens: list[str], marker_tokens: list[str]) -> bool:
+    if not marker_tokens or len(marker_tokens) > len(value_tokens):
+        return False
+    width = len(marker_tokens)
+    return any(
+        value_tokens[index : index + width] == marker_tokens
+        for index in range(len(value_tokens) - width + 1)
+    )
 
 
 _MIN_SUBSTANTIVE_WORDS = 6
+
+
+_COMPACT_FACTUAL_ANSWER_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^(?:je suis|i am) disponible(?:\s+[a-z0-9]+){0,3}$"),
+    re.compile(r"^(?:disponible|available)(?:\s+[a-z0-9]+){0,3}$"),
+    re.compile(
+        r"^(?:dans|in)\s+(?:[0-9]+|un|une|deux|trois|one|two|three)\s+"
+        r"(?:jour|jours|semaine|semaines|mois|day|days|week|weeks|month|months)$"
+    ),
+    re.compile(
+        r"^[0-9][0-9\s.,]*(?:k|euro|euros|eur|dollar|dollars|usd|gbp)"
+        r"(?:\s+[a-z]+){0,2}$"
+    ),
+    re.compile(r"^(?:immediatement|des maintenant|immediately|right away)$"),
+)
+
+
+def _looks_like_compact_factual_answer(normalized: str) -> bool:
+    return any(
+        pattern.fullmatch(normalized) for pattern in _COMPACT_FACTUAL_ANSWER_PATTERNS
+    )
 
 
 def _looks_like_partial_answer(normalized: str) -> bool:
@@ -393,6 +477,42 @@ def _is_example_request(normalized: str) -> bool:
     )
 
 
+def _env_flag(
+    env: Mapping[str, str],
+    key: str,
+    *,
+    default: bool,
+) -> bool:
+    raw_value = env.get(key)
+    if raw_value is None:
+        return default
+    value = raw_value.strip().casefold()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{key} must be a boolean flag")
+
+
+def _env_value(
+    env: Mapping[str, str],
+    key: str,
+    default: str,
+) -> str:
+    value = env.get(key, "").strip()
+    return value or default
+
+
+TurnDetectorVersion = Literal["v1-mini", "v1"]
+
+
+def _turn_detector_version(env: Mapping[str, str]) -> TurnDetectorVersion:
+    value = env.get("LIVEKIT_TURN_DETECTOR_VERSION", "v1-mini").strip()
+    if value not in {"v1-mini", "v1"}:
+        raise ValueError("LIVEKIT_TURN_DETECTOR_VERSION must be either v1-mini or v1")
+    return value
+
+
 @dataclass(frozen=True)
 class OpenAILiveWorkerConfig:
     model: str
@@ -400,30 +520,171 @@ class OpenAILiveWorkerConfig:
     turn_detection: str
     reasoning_effort: str
     input_transcription_model: str = "gpt-4o-transcribe"
+    livekit_stt_model: str = "deepgram/nova-3"
+    exact_tts_model: str = "gpt-4o-mini-tts"
+    exact_tts_voice: str | None = None
     max_duration_seconds: float | None = None
     candidate_ready_timeout_seconds: float = 120.0
-    soft_prompt_after_seconds: float = 10.0
+    inactivity_user_away_seconds: float = 15.0
+    inactivity_warning_seconds: float = 20.0
+    inactivity_terminate_seconds: float = 20.0
+    candidate_wait_seconds: float = CANDIDATE_WAIT_SECONDS
+    candidate_absence_grace_seconds: float = 300.0
+    turn_detector_version: TurnDetectorVersion = "v1-mini"
+    legacy_turn_handling: bool = False
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> OpenAILiveWorkerConfig:
         max_duration = env.get("LIVE_WORKER_MAX_DURATION_SECONDS")
         candidate_ready_timeout = env.get("LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS")
-        soft_prompt_after = env.get("LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS")
+        inactivity_user_away = env.get(
+            "LIVE_WORKER_INACTIVITY_USER_AWAY_SECONDS"
+        )
+        inactivity_warning = env.get("LIVE_WORKER_INACTIVITY_WARNING_SECONDS")
+        inactivity_terminate = env.get(
+            "LIVE_WORKER_INACTIVITY_TERMINATE_SECONDS"
+        )
+        candidate_wait = env.get("LIVE_WORKER_CANDIDATE_WAIT_SECONDS")
+        candidate_absence_grace = env.get("LIVE_WORKER_CANDIDATE_ABSENCE_GRACE_SECONDS")
         return cls(
             model=env["OPENAI_REALTIME_MODEL"],
             voice=env["OPENAI_REALTIME_VOICE"],
             turn_detection=env["OPENAI_REALTIME_TURN_DETECTION"],
             reasoning_effort=env["OPENAI_REALTIME_REASONING_EFFORT"],
-            input_transcription_model=env.get(
+            input_transcription_model=_env_value(
+                env,
                 "OPENAI_REALTIME_TRANSCRIPTION_MODEL",
                 "gpt-4o-transcribe",
             ),
+            livekit_stt_model=_env_value(
+                env,
+                "LIVEKIT_STT_MODEL",
+                "deepgram/nova-3",
+            ),
+            exact_tts_model=_env_value(
+                env,
+                "OPENAI_EXACT_TTS_MODEL",
+                "gpt-4o-mini-tts",
+            ),
+            exact_tts_voice=env.get("OPENAI_EXACT_TTS_VOICE"),
             max_duration_seconds=float(max_duration) if max_duration else None,
             candidate_ready_timeout_seconds=float(candidate_ready_timeout)
             if candidate_ready_timeout
             else 120.0,
-            soft_prompt_after_seconds=float(soft_prompt_after) if soft_prompt_after else 10.0,
+            inactivity_user_away_seconds=(
+                float(inactivity_user_away) if inactivity_user_away else 15.0
+            ),
+            inactivity_warning_seconds=(
+                float(inactivity_warning) if inactivity_warning else 20.0
+            ),
+            inactivity_terminate_seconds=(
+                float(inactivity_terminate) if inactivity_terminate else 20.0
+            ),
+            candidate_wait_seconds=(
+                float(candidate_wait) if candidate_wait else CANDIDATE_WAIT_SECONDS
+            ),
+            candidate_absence_grace_seconds=(
+                float(candidate_absence_grace) if candidate_absence_grace else 300.0
+            ),
+            turn_detector_version=_turn_detector_version(env),
+            legacy_turn_handling=_env_flag(
+                env,
+                "LIVEKIT_LEGACY_TURN_HANDLING",
+                default=False,
+            ),
         )
+
+
+@dataclass(frozen=True)
+class LiveKitTurnHandlingRuntime:
+    realtime_turn_detection: object | None
+    session_turn_handling: object
+    legacy_overlap_guard: bool
+
+
+def _build_livekit_turn_handling(
+    agents: object,
+    realtime: object,
+    config: OpenAILiveWorkerConfig,
+) -> LiveKitTurnHandlingRuntime:
+    if config.legacy_turn_handling:
+        # Deprecated rollback only. LiveKit's Turn Detector and adaptive
+        # interruption handling are the supported default as of Agents 1.6.7.
+        logger.warning(
+            "deprecated LiveKit turn handling enabled",
+            extra={
+                "livekit_turn_handling": "deprecated_legacy",
+                "livekit_turn_detector_version": config.turn_detector_version,
+            },
+        )
+        return LiveKitTurnHandlingRuntime(
+            realtime_turn_detection=_turn_detection(realtime, config.turn_detection),
+            session_turn_handling=agents.TurnHandlingOptions(
+                turn_detection="realtime_llm",
+            ),
+            legacy_overlap_guard=True,
+        )
+
+    try:
+        turn_detector = agents.inference.TurnDetector(
+            version=config.turn_detector_version
+        )
+    except (AttributeError, ValueError) as exc:
+        raise RuntimeError(
+            f"LiveKit Turn Detector {config.turn_detector_version} is unavailable. "
+            "Configure LiveKit inference credentials or temporarily set "
+            "LIVEKIT_LEGACY_TURN_HANDLING=true."
+        ) from exc
+
+    return LiveKitTurnHandlingRuntime(
+        # The OpenAI realtime server detector must be disabled so LiveKit can own
+        # endpointing and adaptive interruption decisions.
+        realtime_turn_detection=None,
+        session_turn_handling=agents.TurnHandlingOptions(
+            turn_detection=turn_detector,
+            endpointing={
+                "mode": "dynamic",
+                # Screening answers contain natural clause-level pauses and the
+                # aligned STT result must arrive before policy runs. A patient
+                # one-second floor prevents the interviewer from cutting in.
+                "min_delay": 1.0,
+                "max_delay": 3.0,
+            },
+            interruption={
+                "enabled": True,
+                "mode": "adaptive",
+                "min_duration": 0.5,
+                "resume_false_interruption": True,
+                "false_interruption_timeout": 2.0,
+                "backchannel_boundary": (1.0, 1.0),
+            },
+        ),
+        legacy_overlap_guard=False,
+    )
+
+
+def _create_prelude_controlled_agent(
+    agents: object,
+    *,
+    instructions: str,
+    on_user_turn_completed: Callable[[object], None] | None = None,
+) -> object:
+    """Create an Agent whose user turns can only be answered by Prelude policy."""
+
+    class PreludeControlledAgent(agents.Agent):  # type: ignore[name-defined,misc]
+        async def on_user_turn_completed(
+            self,
+            turn_ctx: object,
+            new_message: object,
+        ) -> None:
+            del turn_ctx
+            if on_user_turn_completed is not None:
+                on_user_turn_completed(new_message)
+            # LiveKit Agents 1.6.7 calls this hook immediately before its automatic
+            # LLM response. Prelude's controller generates the single approved reply.
+            raise agents.StopResponse()  # type: ignore[attr-defined]
+
+    return PreludeControlledAgent(instructions=instructions)
 
 
 class PreludeEventEmitter:
@@ -473,14 +734,43 @@ class TranscriptPublisher(Protocol):
     async def publish_turn(self, transcript_turn: dict[str, object]) -> None: ...
 
 
+_LIVEKIT_METRIC_FIELDS = (
+    "end_of_utterance_delay",
+    "transcription_delay",
+    "on_user_turn_completed_delay",
+    "detection_delay",
+    "prediction_duration",
+    "total_duration",
+    "num_interruptions",
+    "num_backchannels",
+    "num_requests",
+    "ttft",
+    "e2e_latency",
+    "duration",
+    "cancelled",
+    "tokens_per_second",
+)
+
+
+def _livekit_metric_payload(metric: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "metric_type": str(getattr(metric, "type", metric.__class__.__name__)),
+    }
+    for field in _LIVEKIT_METRIC_FIELDS:
+        value = getattr(metric, field, None)
+        if isinstance(value, str | int | float | bool):
+            payload[field] = value
+    return payload
+
+
 class LiveTranscriptPublisher:
     def __init__(self, room: object) -> None:
         self._room = room
 
     async def publish_turn(self, transcript_turn: dict[str, object]) -> None:
         try:
-            local_participant = getattr(self._room, "local_participant")
-            publish_data = getattr(local_participant, "publish_data")
+            local_participant = self._room.local_participant
+            publish_data = local_participant.publish_data
             result = publish_data(
                 json.dumps(
                     {
@@ -494,9 +784,104 @@ class LiveTranscriptPublisher:
             )
             if inspect.isawaitable(result):
                 await result
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
             # The Go event log is the source of truth. Realtime transcript push is
             # a latency optimization and should never block interview progress.
+            logger.warning(
+                "live transcript delivery failed",
+                extra={
+                    "session_id": transcript_turn.get("session_id"),
+                    "turn_id": transcript_turn.get("turn_id"),
+                    "error_type": exc.__class__.__name__,
+                },
+            )
+            return
+
+
+class CandidateAbsenceMonitor:
+    """Allows reconnects without keeping an abandoned agent alive forever."""
+
+    def __init__(
+        self,
+        *,
+        candidate_identity: str,
+        grace_seconds: float,
+        on_timeout: Callable[[], Awaitable[None]],
+        on_disconnected: Callable[[], None] | None = None,
+        on_reconnected: Callable[[], None] | None = None,
+    ) -> None:
+        if grace_seconds < 0:
+            raise ValueError("candidate absence grace must be non-negative")
+        self._candidate_identity = candidate_identity
+        self._grace_seconds = grace_seconds
+        self._on_timeout = on_timeout
+        self._on_disconnected = on_disconnected
+        self._on_reconnected = on_reconnected
+        self._timeout_task: asyncio.Task[None] | None = None
+        self._candidate_absent = False
+
+    def register(self, room: object) -> None:
+        on = room.on
+
+        @on("participant_disconnected")
+        def on_participant_disconnected(participant: object) -> None:
+            if self._is_candidate(participant):
+                self._mark_candidate_absent()
+
+        @on("participant_connected")
+        def on_participant_connected(participant: object) -> None:
+            if self._is_candidate(participant):
+                self._cancel_timeout()
+                if self._candidate_absent and self._on_reconnected is not None:
+                    self._on_reconnected()
+                self._candidate_absent = False
+
+        if not self._candidate_is_present(room):
+            self._mark_candidate_absent()
+
+    async def aclose(self) -> None:
+        task = self._timeout_task
+        self._cancel_timeout()
+        if task is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+    def _is_candidate(self, participant: object) -> bool:
+        return getattr(participant, "identity", None) == self._candidate_identity
+
+    def _candidate_is_present(self, room: object) -> bool:
+        remote_participants = getattr(room, "remote_participants", None)
+        if remote_participants is None:
+            # Some room adapters do not expose an initial participant snapshot.
+            # In that case event callbacks remain the source of truth.
+            return True
+        participants = (
+            remote_participants.values()
+            if isinstance(remote_participants, Mapping)
+            else remote_participants
+        )
+        return any(self._is_candidate(participant) for participant in participants)
+
+    def _mark_candidate_absent(self) -> None:
+        if not self._candidate_absent and self._on_disconnected is not None:
+            self._on_disconnected()
+        self._candidate_absent = True
+        self._start_timeout()
+
+    def _start_timeout(self) -> None:
+        self._cancel_timeout()
+        self._timeout_task = asyncio.create_task(self._wait_for_timeout())
+
+    def _cancel_timeout(self) -> None:
+        if self._timeout_task is not None and not self._timeout_task.done():
+            self._timeout_task.cancel()
+        self._timeout_task = None
+
+    async def _wait_for_timeout(self) -> None:
+        try:
+            await asyncio.sleep(self._grace_seconds)
+            await self._on_timeout()
+        except asyncio.CancelledError:
             return
 
 
@@ -509,8 +894,14 @@ class LiveKitAgentEventBridge:
         record_transcript_handler: Callable[..., Awaitable[str | None]] | None = None,
         handle_turn_handler: Callable[..., Awaitable[None]] | None = None,
         question_id_provider: Callable[[], str | None] | None = None,
+        agent_signal_payload_provider: (
+            Callable[[], dict[str, object] | None] | None
+        ) = None,
         prompt_generation_provider: Callable[[], int] | None = None,
         agent_speaking_provider: Callable[[], bool] | None = None,
+        candidate_away_handler: Callable[[], None] | None = None,
+        candidate_active_handler: Callable[[str], None] | None = None,
+        legacy_overlap_guard: bool = False,
         emit_state_events: bool = True,
         turn_flush_debounce_seconds: float = 1.0,
     ) -> None:
@@ -523,8 +914,12 @@ class LiveKitAgentEventBridge:
         self._record_transcript_handler = record_transcript_handler
         self._handle_turn_handler = handle_turn_handler
         self._question_id_provider = question_id_provider
+        self._agent_signal_payload_provider = agent_signal_payload_provider
         self._prompt_generation_provider = prompt_generation_provider
         self._agent_speaking_provider = agent_speaking_provider
+        self._candidate_away_handler = candidate_away_handler
+        self._candidate_active_handler = candidate_active_handler
+        self._legacy_overlap_guard = legacy_overlap_guard
         self._emit_state_events = emit_state_events
         self._turn_flush_debounce_seconds = turn_flush_debounce_seconds
         self._tasks: set[asyncio.Task[None]] = set()
@@ -532,11 +927,10 @@ class LiveKitAgentEventBridge:
         self._candidate_turns = 0
         self._agent_state_turns = 0
         self._candidate_speaking = False
-        self._candidate_activity_seen = False
-        # S1 turn-token guard: snapshot, at the moment the candidate STARTS a
-        # speaking run, which prompt generation was active and whether the agent
-        # was still speaking. A transcript that finalizes later carries this
-        # snapshot so a late fragment / talk-over cannot drive interview policy.
+        self._candidate_connected = True
+        # Keep the prompt-generation snapshot to reject stale transcripts. The
+        # overlap snapshot is deprecated and populated only for the explicit
+        # LIVEKIT_LEGACY_TURN_HANDLING rollback.
         self._turn_generation_snapshot: int | None = None
         self._spoke_over_agent_snapshot = False
         # S5b turn aggregator: per-segment buffers flushed once per completed turn.
@@ -544,9 +938,11 @@ class LiveKitAgentEventBridge:
         self._turn_ids: list[str] = []
         self._turn_first_occurred_at: datetime | None = None
         self._flush_task: asyncio.Task[None] | None = None
+        self._turn_operation_lock = asyncio.Lock()
+        self._committed_user_item_ids: set[str] = set()
 
     def register(self, session: object) -> None:
-        on = getattr(session, "on")
+        on = session.on
 
         @on("agent_state_changed")
         def on_agent_state_changed(event: object) -> None:
@@ -577,19 +973,29 @@ class LiveKitAgentEventBridge:
 
         @on("user_state_changed")
         def on_user_state_changed(event: object) -> None:
+            if not self._candidate_connected:
+                return
             old_state = getattr(event, "old_state", None)
             new_state = getattr(event, "new_state", None)
             created_at = _created_at(event)
+            if new_state == "away":
+                if self._candidate_away_handler is not None:
+                    self._candidate_away_handler()
+                return
+            if (
+                new_state in {"speaking", "listening"}
+                and self._candidate_active_handler is not None
+            ):
+                self._candidate_active_handler("voice")
             if new_state == "speaking":
                 self._candidate_speaking = True
-                self._candidate_activity_seen = True
                 # S5b: a resumed speaking run is the SAME turn — cancel any pending
                 # flush so mid-answer pauses coalesce into one turn for policy.
                 self._cancel_turn_flush()
                 # S1: capture the prompt context this speaking run belongs to.
                 if self._prompt_generation_provider is not None:
                     self._turn_generation_snapshot = self._prompt_generation_provider()
-                self._spoke_over_agent_snapshot = bool(
+                self._spoke_over_agent_snapshot = self._legacy_overlap_guard and bool(
                     self._agent_speaking_provider()
                     if self._agent_speaking_provider is not None
                     else False
@@ -618,13 +1024,16 @@ class LiveKitAgentEventBridge:
                         occurred_at=created_at,
                     )
                 )
-                # S5b: the candidate stopped — flush the aggregated turn to policy
-                # after a short debounce (a quick resume cancels it, coalescing
-                # mid-answer pauses into one turn).
-                self._schedule_turn_flush()
+                if self._legacy_overlap_guard:
+                    # Deprecated fallback only: coalesce transcript fragments with
+                    # the historical pause debounce. Official mode finalizes from
+                    # LiveKit's committed user conversation item instead.
+                    self._schedule_turn_flush()
 
         @on("user_input_transcribed")
         def on_user_input_transcribed(event: object) -> None:
+            if not self._candidate_connected:
+                return
             if not getattr(event, "is_final", False):
                 return
 
@@ -632,8 +1041,13 @@ class LiveKitAgentEventBridge:
             if not transcript:
                 return
 
+            if not self._legacy_overlap_guard and self._handle_turn_handler is not None:
+                # Official LiveKit mode can emit multiple "final" STT segments for
+                # one natural answer. Policy and persistence wait for the complete
+                # ChatMessage delivered to Agent.on_user_turn_completed instead.
+                return
+
             self._candidate_turns += 1
-            self._candidate_activity_seen = True
             created_at = _created_at(event)
             if self._record_transcript_handler is not None:
                 # S5b: publish this segment now; buffer it for the per-turn flush.
@@ -677,7 +1091,8 @@ class LiveKitAgentEventBridge:
         @on("conversation_item_added")
         def on_conversation_item_added(event: object) -> None:
             item = getattr(event, "item", None)
-            if getattr(item, "role", None) != "assistant":
+            role = getattr(item, "role", None)
+            if role not in {"assistant", "user"}:
                 return
 
             text = getattr(item, "text_content", None)
@@ -687,12 +1102,29 @@ class LiveKitAgentEventBridge:
             if not text:
                 return
 
-            self._assistant_turns += 1
             created_at = _created_at(event)
+            metric = getattr(item, "metrics", None)
+            if metric is not None:
+                metric_payload = _livekit_metric_payload(metric)
+                if len(metric_payload) > 1:
+                    logger.info(
+                        "livekit turn metric",
+                        extra={
+                            "session_id": self._emitter._session_id,
+                            "question_id": self._current_question_id(),
+                            "role": role,
+                            **metric_payload,
+                        },
+                    )
+            if role != "assistant":
+                return
+
+            self._assistant_turns += 1
             turn_id = f"{self._emitter._session_id}:interviewer:{self._assistant_turns}"
-            question_id = self._current_question_id()
+            signal_payload = self._agent_signal_payload(self._assistant_turns)
+            question_id = signal_payload.get("question_id")
             payload = {
-                **self._agent_signal_payload(self._assistant_turns),
+                **signal_payload,
                 "transcript_turn": {
                     "turn_id": turn_id,
                     "session_id": self._emitter._session_id,
@@ -703,7 +1135,7 @@ class LiveKitAgentEventBridge:
                     "ended_at": created_at.isoformat(),
                 },
             }
-            if question_id:
+            if isinstance(question_id, str) and question_id:
                 payload["transcript_turn"]["question_id"] = question_id
             self._schedule(
                 self._emitter.emit(
@@ -716,28 +1148,62 @@ class LiveKitAgentEventBridge:
 
         @on("error")
         def on_error(event: object) -> None:
+            error = getattr(event, "error", event)
+            if bool(getattr(error, "recoverable", False)):
+                logger.warning(
+                    "recoverable LiveKit agent session error",
+                    extra={
+                        "session_id": self._emitter._session_id,
+                        "error_type": error.__class__.__name__,
+                    },
+                )
+                return
             self._schedule(
                 self._emitter.emit(
                     EventType.SESSION_FAILED,
                     {
                         "code": "livekit_agent_session_error",
                         "message": (
-                            "LiveKit agent session failed: "
-                            f"{getattr(event, 'error', event).__class__.__name__}"
+                            f"LiveKit agent session failed: {error.__class__.__name__}"
                         ),
-                        "retryable": True,
+                        "retryable": False,
                     },
                     actor=EventActor.SYSTEM,
                     occurred_at=_created_at(event),
                 )
             )
 
+        @on("session_usage_updated")
+        def on_session_usage_updated(event: object) -> None:
+            usage = getattr(event, "usage", None)
+            for model_usage in getattr(usage, "model_usage", ()) or ():
+                logger.info(
+                    "livekit session usage",
+                    extra={
+                        "session_id": self._emitter._session_id,
+                        "provider": getattr(model_usage, "provider", None),
+                        "model": getattr(model_usage, "model", None),
+                        "usage_type": str(
+                            getattr(
+                                model_usage,
+                                "type",
+                                model_usage.__class__.__name__,
+                            )
+                        ),
+                    },
+                )
+
     async def drain(self) -> None:
         while self._tasks:
             pending = list(self._tasks)
-            await asyncio.gather(*pending)
+            results = await asyncio.gather(*pending, return_exceptions=True)
             for task in pending:
                 self._tasks.discard(task)
+            for result in results:
+                if isinstance(result, asyncio.CancelledError):
+                    continue
+                if isinstance(result, BaseException):
+                    raise result
 
     @property
     def candidate_turn_count(self) -> int:
@@ -747,9 +1213,44 @@ class LiveKitAgentEventBridge:
     def candidate_is_speaking(self) -> bool:
         return self._candidate_speaking
 
-    @property
-    def candidate_activity_seen(self) -> bool:
-        return self._candidate_activity_seen
+    def pause_for_candidate_disconnect(self) -> None:
+        self._candidate_connected = False
+        self._candidate_speaking = False
+        self._cancel_turn_flush()
+
+    def resume_after_candidate_reconnect(self) -> None:
+        self._candidate_connected = True
+
+    def commit_official_user_message(self, message: object) -> None:
+        """Schedule policy once LiveKit has committed the complete user turn."""
+
+        if (
+            self._legacy_overlap_guard
+            or self._handle_turn_handler is None
+            or not self._candidate_connected
+        ):
+            return
+        text_content = getattr(message, "text_content", None)
+        transcript = str(
+            text_content() if callable(text_content) else text_content or ""
+        ).strip()
+        if not transcript:
+            return
+        created_at = datetime.now(timezone.utc)
+        item_id = str(
+            getattr(message, "id", None)
+            or f"{created_at.isoformat()}:{transcript}"
+        )
+        self._schedule(
+            self._commit_official_user_turn(
+                item_id=item_id,
+                transcript=transcript,
+                created_at=created_at,
+            )
+        )
+
+    def schedule(self, awaitable: Awaitable[None]) -> asyncio.Task[None]:
+        return self._schedule(awaitable)
 
     def _current_question_id(self) -> str | None:
         if self._question_id_provider is None:
@@ -758,6 +1259,13 @@ class LiveKitAgentEventBridge:
         return question_id or None
 
     def _agent_signal_payload(self, turn_index: int) -> dict[str, object]:
+        if self._agent_signal_payload_provider is not None:
+            provided = self._agent_signal_payload_provider()
+            if provided:
+                return {
+                    "source": "livekit_agent_session",
+                    **provided,
+                }
         question_id = self._current_question_id()
         utterance_kind = "question" if question_id else "intro"
         utterance_scope = question_id or "unscoped"
@@ -772,33 +1280,97 @@ class LiveKitAgentEventBridge:
             payload["question_id"] = question_id
         return payload
 
-    def _schedule(self, awaitable: Awaitable[None]) -> None:
+    def _schedule(self, awaitable: Awaitable[None]) -> asyncio.Task[None]:
         task = asyncio.create_task(awaitable)
         self._tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
+        return task
+
+    def _on_background_task_done(self, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            self._tasks.discard(task)
+            return
+        exception = task.exception()
+        if exception is None:
+            self._tasks.discard(task)
+            return
+        logger.error(
+            "livekit bridge task failed",
+            extra={
+                "session_id": self._emitter._session_id,
+                "error_type": exception.__class__.__name__,
+            },
+            exc_info=(type(exception), exception, exception.__traceback__),
+        )
 
     async def _record_and_buffer(self, transcript: str, created_at: datetime) -> None:
         # S5b: publish the segment via the controller, then buffer it (with its turn
         # id + S1 snapshot) for the per-turn policy flush. A backchannel during agent
         # speech returns None and is not aggregated.
-        if self._record_transcript_handler is None:
-            return
-        turn_id = await self._record_transcript_handler(
-            transcript,
-            created_at,
-            turn_generation=self._turn_generation_snapshot,
-            spoke_over_agent=self._spoke_over_agent_snapshot,
-        )
-        if turn_id is None:
-            return
-        self._turn_segments.append(transcript)
-        self._turn_ids.append(turn_id)
-        if self._turn_first_occurred_at is None:
-            self._turn_first_occurred_at = created_at
+        async with self._turn_operation_lock:
+            if self._record_transcript_handler is None:
+                return
+            turn_id = await self._record_transcript_handler(
+                transcript,
+                created_at,
+                turn_generation=self._turn_generation_snapshot,
+                spoke_over_agent=self._spoke_over_agent_snapshot,
+            )
+            if turn_id is None:
+                return
+            self._turn_segments.append(transcript)
+            self._turn_ids.append(turn_id)
+            if self._turn_first_occurred_at is None:
+                self._turn_first_occurred_at = created_at
+
+    async def _commit_official_user_turn(
+        self,
+        *,
+        item_id: str,
+        transcript: str,
+        created_at: datetime,
+    ) -> None:
+        async with self._turn_operation_lock:
+            if (
+                item_id in self._committed_user_item_ids
+                or not self._candidate_connected
+            ):
+                return
+            self._cancel_turn_flush()
+
+            turn_ids = list(self._turn_ids)
+            occurred_at = self._turn_first_occurred_at or created_at
+            generation = self._turn_generation_snapshot
+            if generation is None and self._prompt_generation_provider is not None:
+                generation = self._prompt_generation_provider()
+
+            if not turn_ids and self._record_transcript_handler is not None:
+                turn_id = await self._record_transcript_handler(
+                    transcript,
+                    created_at,
+                    turn_generation=generation,
+                    spoke_over_agent=False,
+                )
+                if turn_id is not None:
+                    turn_ids.append(turn_id)
+            if self._handle_turn_handler is None:
+                return
+            await self._handle_turn_handler(
+                transcript,
+                occurred_at,
+                turn_ids=turn_ids,
+                turn_generation=generation,
+                spoke_over_agent=False,
+            )
+            self._reset_turn_buffer()
+            self._candidate_turns += 1
+            self._committed_user_item_ids.add(item_id)
 
     def _schedule_turn_flush(self) -> None:
+        if not self._legacy_overlap_guard:
+            return
         self._cancel_turn_flush()
-        self._flush_task = asyncio.create_task(self._flush_turn_after_debounce())
-        self._tasks.add(self._flush_task)
+        self._flush_task = self._schedule(self._flush_turn_after_debounce())
 
     def _cancel_turn_flush(self) -> None:
         if self._flush_task is not None and not self._flush_task.done():
@@ -813,15 +1385,15 @@ class LiveKitAgentEventBridge:
         await self._flush_turn()
 
     async def _flush_turn(self) -> None:
-        segments = self._turn_segments
-        turn_ids = self._turn_ids
-        occurred_at = self._turn_first_occurred_at
-        # The S1 snapshot is owned by candidate speech-start, which cancels any
-        # pending flush — so it cannot change between the last buffered segment and
-        # this flush. Read it directly instead of shadowing it in per-flush copies.
-        generation = self._turn_generation_snapshot
-        spoke_over = self._spoke_over_agent_snapshot
-        self._reset_turn_buffer()
+        async with self._turn_operation_lock:
+            segments = self._turn_segments
+            turn_ids = self._turn_ids
+            occurred_at = self._turn_first_occurred_at
+            # The S1 snapshot is owned by candidate speech-start, which cancels any
+            # pending flush, so it cannot change between buffering and this flush.
+            generation = self._turn_generation_snapshot
+            spoke_over = self._spoke_over_agent_snapshot
+            self._reset_turn_buffer()
         if not segments or self._handle_turn_handler is None:
             return
         joined = " ".join(segment.strip() for segment in segments if segment.strip())
@@ -846,18 +1418,14 @@ def _candidate_turn_drives_policy(
     turn_generation: int | None,
     current_generation: int,
     spoke_over_agent: bool,
+    legacy_interruption_filter: bool = False,
 ) -> bool:
-    # A candidate turn only advances or closes the interview if it is a bona-fide
-    # answer to the CURRENT prompt: it must not have overlapped the agent's prompt
-    # (talk-over) and must not belong to an older prompt generation (a late
-    # fragment of a previous turn that finalized after we already moved on). Such
-    # turns are still recorded as transcript, but they never drive policy — this
-    # is the fix for the premature-end + talk-over bugs from the live log.
-    if spoke_over_agent:
+    # The generation guard remains transport-agnostic. Overlap filtering is a
+    # deprecated fallback because LiveKit adaptive interruption now decides which
+    # overlapping speech is a real barge-in versus a backchannel.
+    if legacy_interruption_filter and spoke_over_agent:
         return False
-    if turn_generation is not None and turn_generation != current_generation:
-        return False
-    return True
+    return turn_generation is None or turn_generation == current_generation
 
 
 class LiveInterviewOrchestrationController:
@@ -869,6 +1437,8 @@ class LiveInterviewOrchestrationController:
         session: object,
         answer_inference: AnswerInferenceProvider | None = None,
         transcript_publisher: TranscriptPublisher | None = None,
+        legacy_interruption_filter: bool = False,
+        candidate_wait_seconds: float = CANDIDATE_WAIT_SECONDS,
     ) -> None:
         self._plan = plan
         self._emitter = emitter
@@ -876,13 +1446,18 @@ class LiveInterviewOrchestrationController:
         self._transcript_publisher = transcript_publisher
         self._orchestrator = InterviewOrchestrator(plan)
         self._answer_inference = answer_inference or HeuristicAnswerInferenceProvider()
+        self._legacy_interruption_filter = legacy_interruption_filter
+        self._candidate_wait_seconds = candidate_wait_seconds
         self._lock = asyncio.Lock()
         self._candidate_turns = 0
         self._last_candidate_intent = CandidateTurnIntent.ANSWER_COMPLETE
         self._agent_speech_in_progress = False
         self._agent_speech_payload: dict[str, object] | None = None
         self._terminal = False
+        self._candidate_connected = True
         self._closed = asyncio.Event()
+        self._candidate_wait_task: asyncio.Task[None] | None = None
+        self._candidate_wait_handler: Callable[[], None] | None = None
         # S1: monotonic counter bumped once per spoken prompt (question /
         # follow-up / reprompt / repeat). The bridge snapshots it at candidate
         # speech-start so a turn that finalizes after we moved on cannot drive
@@ -908,6 +1483,44 @@ class LiveInterviewOrchestrationController:
     def agent_is_speaking(self) -> bool:
         return self._agent_speech_in_progress
 
+    @property
+    def current_agent_speech_payload(self) -> dict[str, object] | None:
+        return dict(self._agent_speech_payload) if self._agent_speech_payload else None
+
+    @property
+    def is_terminal(self) -> bool:
+        return self._terminal
+
+    def set_candidate_wait_handler(self, handler: Callable[[], None]) -> None:
+        self._candidate_wait_handler = handler
+
+    def pause_for_candidate_disconnect(self) -> None:
+        self._candidate_connected = False
+        self._cancel_candidate_wait()
+
+    async def resume_after_candidate_reconnect(self) -> None:
+        async with self._lock:
+            self._candidate_connected = True
+            if self._terminal or self._orchestrator.current_question_id is None:
+                return
+            question = _question_by_id(
+                self._plan,
+                self._orchestrator.current_question_id,
+            )
+            response = _reconnect_response(self._plan, question.prompt)
+            await self._speak_question_control(
+                EventType.QUESTION_REPEATED,
+                command=OrchestratorCommand(
+                    type=OrchestratorCommandType.REPEAT_QUESTION,
+                    question_id=question.id,
+                    question=question,
+                ),
+                utterance_kind="reconnect_repeat",
+                prompt=response.prompt,
+                instructions=response.instructions,
+                extra_payload={"reason": response.reason},
+            )
+
     async def record_candidate_transcript(
         self,
         transcript: str,
@@ -922,10 +1535,19 @@ class LiveInterviewOrchestrationController:
         # whole answer instead of probing every micro-fragment. Returns the turn id,
         # or None for a backchannel during agent speech (not a real turn).
         async with self._lock:
-            if self._terminal or self._orchestrator.current_question_id is None:
+            self._cancel_candidate_wait()
+            if (
+                self._terminal
+                or not self._candidate_connected
+                or self._orchestrator.current_question_id is None
+            ):
                 return None
             question_id = self._orchestrator.current_question_id
-            if self._agent_speech_in_progress and _is_backchannel(transcript):
+            if (
+                self._legacy_interruption_filter
+                and self._agent_speech_in_progress
+                and _is_backchannel(transcript)
+            ):
                 await self._emit_backchannel(question_id, transcript, occurred_at)
                 return None
             turn = _candidate_turn_from_live_transcript(
@@ -953,7 +1575,12 @@ class LiveInterviewOrchestrationController:
         # orchestrator decide (follow-up / complete / close). Withdraw and "I wasn't
         # finished" are turn-level intents, evaluated here against the full turn.
         async with self._lock:
-            if self._terminal or self._orchestrator.current_question_id is None:
+            self._cancel_candidate_wait()
+            if (
+                self._terminal
+                or not self._candidate_connected
+                or self._orchestrator.current_question_id is None
+            ):
                 return
             question_id = self._orchestrator.current_question_id
             turn = _candidate_turn_from_live_transcript(
@@ -965,13 +1592,17 @@ class LiveInterviewOrchestrationController:
             if turn.withdraw_requested:
                 await self._close_for_withdrawal()
                 return
-            if turn.candidate_intent == CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED:
+            if (
+                turn.candidate_intent
+                == CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED
+            ):
                 await self._resume_previous_answer(turn=turn, turn_ids=ids)
                 return
             if not _candidate_turn_drives_policy(
                 turn_generation=turn_generation,
                 current_generation=self._prompt_generation,
                 spoke_over_agent=spoke_over_agent,
+                legacy_interruption_filter=self._legacy_interruption_filter,
             ):
                 # A late fragment or talk-over of a prior prompt: already recorded,
                 # but it must not advance or close the interview (S1).
@@ -1006,24 +1637,157 @@ class LiveInterviewOrchestrationController:
             spoke_over_agent=spoke_over_agent,
         )
 
-    async def handle_initial_silence(self) -> None:
+    async def handle_inactivity_step(self, step: InactivityStep) -> None:
         async with self._lock:
-            if self._terminal or self._orchestrator.current_question_id is None:
+            if (
+                self._terminal
+                or not self._candidate_connected
+                or self._orchestrator.current_question_id is None
+            ):
                 return
 
             question_id = self._orchestrator.current_question_id
-            occurred_at = datetime.now(timezone.utc)
-            turn = CandidateTurn(
-                question_id=question_id,
-                transcript="",
-                is_complete=False,
-                started_at=occurred_at,
-                ended_at=occurred_at,
+            question = _question_by_id(self._plan, question_id)
+            line = _inactivity_line(
+                self._plan,
+                stage=step.stage,
+                trigger=step.trigger,
+                question_prompt=question.prompt,
             )
-            self._candidate_turns += 1
-            turn_id = f"{self._emitter._session_id}:candidate:{self._candidate_turns}"
-            await self._emit_candidate_turn(turn, turn_id, occurred_at)
-            await self._evaluate_and_execute(turn, [turn_id])
+            expires_at = datetime.now(timezone.utc) + timedelta(
+                seconds=step.next_action_in_seconds
+            )
+            await self._speak_inactivity_line(
+                line,
+                payload={
+                    "question_id": question_id,
+                    "tier": step.stage.value,
+                    "threshold_ms": max(
+                        1, int(step.silent_for_seconds * 1000)
+                    ),
+                    "silent_for_ms": max(
+                        0, int(step.silent_for_seconds * 1000)
+                    ),
+                    "remaining_ms": max(
+                        0, int(step.next_action_in_seconds * 1000)
+                    ),
+                    "expires_at": expires_at.isoformat(),
+                    "trigger": step.trigger.value,
+                },
+            )
+
+    async def handle_inactivity_recovered(
+        self,
+        stage: InactivityStage | None,
+        trigger: InactivityTrigger,
+        silent_for_seconds: float,
+        source: str,
+    ) -> None:
+        async with self._lock:
+            if (
+                self._terminal
+                or stage is None
+                or self._orchestrator.current_question_id is None
+            ):
+                return
+            await self._emitter.emit(
+                EventType.SILENCE_RECOVERED,
+                {
+                    "question_id": self._orchestrator.current_question_id,
+                    "tier": stage.value,
+                    "silent_for_ms": max(0, int(silent_for_seconds * 1000)),
+                    "trigger": trigger.value,
+                    "source": source,
+                },
+                actor=EventActor.CANDIDATE,
+            )
+
+    async def repeat_current_question_from_control(self) -> None:
+        async with self._lock:
+            if (
+                self._terminal
+                or not self._candidate_connected
+                or self._orchestrator.current_question_id is None
+            ):
+                return
+            question = _question_by_id(
+                self._plan,
+                self._orchestrator.current_question_id,
+            )
+            response = _repeat_response_for_candidate_intent(
+                plan=self._plan,
+                question_prompt=question.prompt,
+                intent=CandidateTurnIntent.REPEAT_REQUEST,
+            )
+            await self._speak_question_control(
+                EventType.QUESTION_REPEATED,
+                command=OrchestratorCommand(
+                    type=OrchestratorCommandType.REPEAT_QUESTION,
+                    question_id=question.id,
+                    question=question,
+                ),
+                utterance_kind="candidate_control_repeat",
+                prompt=response.prompt,
+                instructions=response.instructions,
+                extra_payload={"reason": "candidate_control_repeat"},
+            )
+
+    async def close_for_inactivity(
+        self,
+        trigger: InactivityTrigger,
+        silent_for_seconds: float,
+    ) -> None:
+        async with self._lock:
+            if self._terminal:
+                return
+            self._terminal = True
+            self._cancel_candidate_wait()
+            question_id = self._orchestrator.current_question_id
+            self._orchestrator.abort_session("candidate_inactivity_timeout")
+            line = _inactivity_closing_line(self._plan)
+            await self._speak_inactivity_line(
+                line,
+                payload={
+                    "question_id": question_id,
+                    "tier": "terminal",
+                    "threshold_ms": max(
+                        1, int(silent_for_seconds * 1000)
+                    ),
+                    "silent_for_ms": max(
+                        0, int(silent_for_seconds * 1000)
+                    ),
+                    "remaining_ms": 0,
+                    "trigger": trigger.value,
+                },
+                allow_interruptions=False,
+            )
+            await self._emitter.emit(
+                EventType.SESSION_FAILED,
+                {
+                    "code": "candidate_inactivity_timeout",
+                    "message": (
+                        "Candidate did not respond after the inactivity warning."
+                    ),
+                    "retryable": True,
+                },
+                actor=EventActor.SYSTEM,
+            )
+            self._closed.set()
+
+    async def close_for_max_duration(self) -> None:
+        async with self._lock:
+            if self._terminal:
+                return
+            completed_questions = len(self._orchestrator.completed_question_ids)
+            self._orchestrator.abort_session("max_duration_reached")
+            await self._close_session(
+                OrchestratorCommand(
+                    type=OrchestratorCommandType.CLOSE_SESSION,
+                    terminal_reason="max_duration_reached",
+                    completed_questions=completed_questions,
+                    total_questions=len(self._plan.questions),
+                )
+            )
 
     async def _emit_candidate_turn(
         self,
@@ -1097,7 +1861,8 @@ class LiveInterviewOrchestrationController:
             turn_ids=turn_ids,
             reason_codes=[
                 f"candidate_intent:{turn.candidate_intent.value}",
-                turn.classifier_reason or "candidate_reported_interrupted_previous_answer",
+                turn.classifier_reason
+                or "candidate_reported_interrupted_previous_answer",
                 f"resume_question:{target_question.id}",
             ],
             confidence=1.0,
@@ -1108,20 +1873,20 @@ class LiveInterviewOrchestrationController:
             actor=EventActor.SYSTEM,
         )
         command = self._orchestrator.reopen_question(target_question.id)
+        response = _repeat_response_for_candidate_intent(
+            plan=self._plan,
+            question_prompt=target_question.prompt,
+            intent=CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED,
+        )
         await self._speak_question_control(
             EventType.QUESTION_REPEATED,
             command=command,
             utterance_kind="repeat",
-            prompt=target_question.prompt,
-            instructions=(
-                "The candidate says they were interrupted and did not finish an earlier "
-                "answer. Apologize briefly, invite them to finish, and re-ask only this "
-                f"question: {target_question.prompt}. Do not move to another question."
-            ),
+            prompt=response.prompt,
+            instructions=response.instructions,
             extra_payload={
                 "reason": "candidate_requested_repeat",
-                "support_reason": turn.classifier_reason
-                or "candidate_reported_interrupted_previous_answer",
+                "support_reason": response.reason,
                 "candidate_intent": turn.candidate_intent.value,
                 "resumed_from_question_id": turn.question_id,
             },
@@ -1140,6 +1905,20 @@ class LiveInterviewOrchestrationController:
             turn=turn,
             plan=self._plan,
         )
+        if not self._candidate_connected or self._terminal:
+            return
+        fallback_reason_codes = [
+            code for code in assessment.reason_codes if code.startswith("llm_fallback:")
+        ]
+        if fallback_reason_codes:
+            logger.warning(
+                "answer inference fallback used by live interview",
+                extra={
+                    "session_id": self._emitter._session_id,
+                    "question_id": turn.question_id,
+                    "fallback_reason_codes": fallback_reason_codes,
+                },
+            )
         decision = self._orchestrator.evaluate_answer(
             classification=assessment.classification,
             turn_ids=turn_ids,
@@ -1156,14 +1935,22 @@ class LiveInterviewOrchestrationController:
 
     async def _execute_decision_command(self, command: OrchestratorCommand) -> None:
         if command.type == OrchestratorCommandType.WAIT:
-            await self._emitter.emit(
+            acknowledgement = _candidate_wait_acknowledgement(self._plan)
+            await self._speak_question_control(
                 EventType.WAIT_REQUESTED,
-                {
-                    "question_id": command.question_id,
-                    "reason": "candidate_requested_time",
-                },
-                actor=EventActor.CANDIDATE,
+                command=command,
+                utterance_kind="wait_acknowledgement",
+                prompt=acknowledgement,
+                instructions=(
+                    "Acknowledge the candidate's request for time exactly as provided, "
+                    "then remain silent."
+                ),
+                extra_payload={"reason": "candidate_requested_time"},
             )
+            if self._candidate_wait_handler is not None:
+                self._candidate_wait_handler()
+            else:
+                self._schedule_candidate_wait(command)
             return
 
         if command.type == OrchestratorCommandType.REPEAT_QUESTION:
@@ -1189,13 +1976,14 @@ class LiveInterviewOrchestrationController:
 
         if command.type == OrchestratorCommandType.SOFT_REPROMPT:
             reprompts_used = command.reprompts_used or 1
+            prompt = _soft_reprompt_line(self._plan, command.attempt_index)
             await self._speak_question_control(
                 EventType.SOFT_REPROMPTED,
                 command=command,
                 utterance_kind="soft_reprompt",
-                prompt=_soft_reprompt_line(self._plan, command.attempt_index),
+                prompt=prompt,
                 instructions=(
-                    "The candidate answer was incomplete or silent. Say this "
+                    "The candidate answer was incomplete. Say this "
                     "clarification line exactly as provided, then stop. Do not "
                     "move to the next question."
                 ),
@@ -1211,7 +1999,7 @@ class LiveInterviewOrchestrationController:
             followup = (
                 command.prompt_override
                 or question.follow_up_prompt
-                or "Pouvez-vous donner un exemple concret ?"
+                or _fallback_followup(self._plan)
             )
             followups_used = command.followups_used or 1
             await self._speak_question_control(
@@ -1229,7 +2017,9 @@ class LiveInterviewOrchestrationController:
             return
 
         if command.type != OrchestratorCommandType.COMPLETE_QUESTION:
-            raise RuntimeError(f"unsupported live orchestration command {command.type.value}")
+            raise RuntimeError(
+                f"unsupported live orchestration command {command.type.value}"
+            )
 
         completion_reason = command.completion_reason or "answered"
         await self._emitter.emit(
@@ -1350,6 +2140,64 @@ class LiveInterviewOrchestrationController:
             self._agent_speech_in_progress = False
             self._agent_speech_payload = None
 
+    async def _speak_inactivity_line(
+        self,
+        line: str,
+        *,
+        payload: dict[str, object],
+        allow_interruptions: bool = True,
+    ) -> None:
+        question_id = payload.get("question_id")
+        tier = str(payload["tier"])
+        self._prompt_generation += 1
+        utterance_id = (
+            f"{self._emitter._session_id}:live-openai:inactivity:{tier}:"
+            f"{self._prompt_generation}"
+        )
+        await self._emitter.emit(
+            EventType.SILENCE_TIMEOUT_STARTED,
+            payload,
+            actor=EventActor.SYSTEM,
+        )
+        await self._emitter.emit(
+            EventType.AGENT_SPEECH_STARTED,
+            {
+                "question_id": question_id,
+                "utterance_id": utterance_id,
+                "utterance_kind": f"inactivity_{tier}",
+            },
+            actor=EventActor.AGENT,
+        )
+        await self._publish_transcript_turn(
+            {
+                "turn_id": f"{self._emitter._session_id}:interviewer:{utterance_id}",
+                "session_id": self._emitter._session_id,
+                "question_id": question_id,
+                "speaker": "interviewer",
+                "text": line,
+                "is_final": True,
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        self._agent_speech_payload = {
+            "question_id": question_id,
+            "utterance_id": utterance_id,
+            "utterance_kind": f"inactivity_{tier}",
+        }
+        self._agent_speech_in_progress = True
+        try:
+            reply = _speak_exact_text(
+                self._session,
+                line,
+                allow_interruptions=allow_interruptions,
+            )
+            wait_for_playout = getattr(reply, "wait_for_playout", None)
+            if callable(wait_for_playout):
+                await wait_for_playout()
+        finally:
+            self._agent_speech_in_progress = False
+            self._agent_speech_payload = None
+
     async def _close_for_withdrawal(self) -> None:
         # Duty of care: an explicit stop/withdraw/human request ends the screen
         # gracefully, with no evaluation, flagged for recruiter follow-up.
@@ -1365,11 +2213,13 @@ class LiveInterviewOrchestrationController:
 
     async def _close_session(self, command: OrchestratorCommand) -> None:
         self._terminal = True
-        closing = (
-            _withdrawal_closing_message(self._plan)
-            if command.terminal_reason == "candidate_requested_stop"
-            else _closing_message(self._plan)
-        )
+        self._cancel_candidate_wait()
+        if command.terminal_reason == "candidate_requested_stop":
+            closing = _withdrawal_closing_message(self._plan)
+        elif command.terminal_reason == "max_duration_reached":
+            closing = _max_duration_closing_message(self._plan)
+        else:
+            closing = _closing_message(self._plan)
         closing_utterance_id = f"{self._emitter._session_id}:live-openai:closing"
         await self._publish_transcript_turn(
             {
@@ -1400,18 +2250,27 @@ class LiveInterviewOrchestrationController:
             actor=EventActor.AGENT,
         )
         self._orchestrator.mark_session_closed()
-        reply = _generate_exact_reply(
-            self._session,
-            closing,
-            allow_interruptions=True,
-        )
-        wait_for_playout = getattr(reply, "wait_for_playout", None)
-        closing_playout_status = "not_available"
-        if callable(wait_for_playout):
-            closing_playout_status = await _wait_for_playout_with_timeout(
-                wait_for_playout,
-                timeout_seconds=CLOSING_PLAYOUT_TIMEOUT_SECONDS,
+        self._agent_speech_payload = {
+            "utterance_id": closing_utterance_id,
+            "utterance_kind": "closing",
+        }
+        self._agent_speech_in_progress = True
+        try:
+            reply = _speak_exact_text(
+                self._session,
+                closing,
+                allow_interruptions=False,
             )
+            wait_for_playout = getattr(reply, "wait_for_playout", None)
+            closing_playout_status = "not_available"
+            if callable(wait_for_playout):
+                closing_playout_status = await _wait_for_playout_with_timeout(
+                    wait_for_playout,
+                    timeout_seconds=CLOSING_PLAYOUT_TIMEOUT_SECONDS,
+                )
+        finally:
+            self._agent_speech_in_progress = False
+            self._agent_speech_payload = None
         await self._emitter.emit(
             EventType.SESSION_COMPLETED,
             {
@@ -1425,6 +2284,67 @@ class LiveInterviewOrchestrationController:
             actor=EventActor.AGENT,
         )
         self._closed.set()
+
+    def _schedule_candidate_wait(self, command: OrchestratorCommand) -> None:
+        self._cancel_candidate_wait()
+        question_id = command.question_id
+        if question_id is None:
+            return
+        generation = self._prompt_generation
+        task = asyncio.create_task(
+            self._resume_after_candidate_wait(question_id, generation)
+        )
+        task.add_done_callback(self._on_candidate_wait_done)
+        self._candidate_wait_task = task
+
+    def _cancel_candidate_wait(self) -> None:
+        task = self._candidate_wait_task
+        if task is not None and not task.done():
+            task.cancel()
+        self._candidate_wait_task = None
+
+    def _on_candidate_wait_done(self, task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        exception = task.exception()
+        if exception is not None:
+            logger.error(
+                "candidate wait timer failed",
+                extra={
+                    "session_id": self._emitter._session_id,
+                    "error_type": exception.__class__.__name__,
+                },
+                exc_info=(type(exception), exception, exception.__traceback__),
+            )
+
+    async def _resume_after_candidate_wait(
+        self,
+        question_id: str,
+        generation: int,
+    ) -> None:
+        await asyncio.sleep(self._candidate_wait_seconds)
+        async with self._lock:
+            if (
+                self._terminal
+                or not self._candidate_connected
+                or self._orchestrator.current_question_id != question_id
+                or self._prompt_generation != generation
+            ):
+                return
+            question = _question_by_id(self._plan, question_id)
+            response = _wait_complete_response(self._plan, question.prompt)
+            await self._speak_question_control(
+                EventType.QUESTION_REPEATED,
+                command=OrchestratorCommand(
+                    type=OrchestratorCommandType.REPEAT_QUESTION,
+                    question_id=question_id,
+                    question=question,
+                ),
+                utterance_kind="wait_resume",
+                prompt=response.prompt,
+                instructions=response.instructions,
+                extra_payload={"reason": response.reason},
+            )
 
     async def _publish_transcript_turn(
         self,
@@ -1458,6 +2378,23 @@ class OpenAILiveKitWorker:
 
     async def run(self) -> int:
         try:
+            from livekit.agents.utils import http_context
+        except ImportError as exc:
+            raise RuntimeError(
+                "livekit-agents[openai] is required for the OpenAI live worker. "
+                "Install dependencies from services/interviewer-agent/requirements.txt."
+            ) from exc
+
+        # Prelude dispatches sessions from its own Redis worker instead of
+        # LiveKit's JobProcess. The inference-backed turn and interruption
+        # detectors still require the HTTP context normally opened by JobProcess.
+        async with http_context.open():
+            return await self._run_with_livekit_http_context()
+
+    async def _run_with_livekit_http_context(self) -> int:
+        absence_monitor: CandidateAbsenceMonitor | None = None
+        inactivity_coordinator: CandidateInactivityCoordinator | None = None
+        try:
             from livekit import agents, rtc
             from livekit.agents import room_io
             from livekit.plugins import noise_cancellation, openai
@@ -1476,6 +2413,14 @@ class OpenAILiveKitWorker:
                     "model": self._worker_config.model,
                     "voice": self._worker_config.voice,
                     "turn_detection": self._worker_config.turn_detection,
+                    "livekit_turn_handling": (
+                        "deprecated_legacy"
+                        if self._worker_config.legacy_turn_handling
+                        else "turn_detector_adaptive"
+                    ),
+                    "livekit_turn_detector_version": (
+                        self._worker_config.turn_detector_version
+                    ),
                     "reasoning_effort": self._worker_config.reasoning_effort,
                 },
                 "livekit": {
@@ -1514,18 +2459,24 @@ class OpenAILiveKitWorker:
                 actor=EventActor.AGENT,
             )
 
+            turn_runtime = _build_livekit_turn_handling(
+                agents,
+                realtime,
+                self._worker_config,
+            )
             llm_kwargs = {
                 "model": self._worker_config.model,
                 "voice": self._worker_config.voice,
                 "modalities": ["audio"],
-                "input_audio_transcription": realtime.AudioTranscription(
-                    model=self._worker_config.input_transcription_model,
-                    language=self._agent_config.interview_plan.language,
+                "input_audio_transcription": (
+                    realtime.AudioTranscription(
+                        model=self._worker_config.input_transcription_model,
+                        language=self._agent_config.interview_plan.language,
+                    )
+                    if turn_runtime.legacy_overlap_guard
+                    else None
                 ),
-                "turn_detection": _turn_detection(
-                    realtime,
-                    self._worker_config.turn_detection,
-                ),
+                "turn_detection": turn_runtime.realtime_turn_detection,
             }
             if _supports_realtime_reasoning(self._worker_config.model):
                 llm_kwargs["reasoning"] = realtime.RealtimeReasoning(
@@ -1533,10 +2484,32 @@ class OpenAILiveKitWorker:
                 )
             llm = openai.realtime.RealtimeModel(**llm_kwargs)
             self._realtime_model = llm
+            session_kwargs: dict[str, object] = {
+                "llm": llm,
+                # Realtime remains the conversational voice. A dedicated TTS
+                # path makes contractual lines such as checkout deterministic.
+                "tts": openai.TTS(
+                    model=self._worker_config.exact_tts_model,
+                    voice=(
+                        self._worker_config.exact_tts_voice
+                        or self._worker_config.voice
+                    ),
+                ),
+                "turn_handling": turn_runtime.session_turn_handling,
+            }
+            if not turn_runtime.legacy_overlap_guard:
+                # The audio turn detector does not require STT, but Prelude's
+                # business policy needs the complete transcript synchronously in
+                # Agent.on_user_turn_completed. Use one aligned LiveKit Inference
+                # stream and disable OpenAI's duplicate post-commit transcript.
+                session_kwargs["stt"] = agents.inference.STT(
+                    model=self._worker_config.livekit_stt_model,
+                    language=self._agent_config.interview_plan.language,
+                )
             session = agents.AgentSession(
-                llm=llm,
-                turn_handling=agents.TurnHandlingOptions(
-                    turn_detection="realtime_llm",
+                **session_kwargs,
+                user_away_timeout=(
+                    self._worker_config.inactivity_user_away_seconds
                 ),
             )
             self._agent_session = session
@@ -1546,26 +2519,135 @@ class OpenAILiveKitWorker:
                 session=session,
                 answer_inference=self._answer_inference,
                 transcript_publisher=LiveTranscriptPublisher(room),
+                legacy_interruption_filter=turn_runtime.legacy_overlap_guard,
+                candidate_wait_seconds=self._worker_config.candidate_wait_seconds,
+            )
+            inactivity_policy = CandidateInactivityPolicy(
+                user_away_after_seconds=(
+                    self._worker_config.inactivity_user_away_seconds
+                ),
+                warning_after_seconds=(
+                    self._worker_config.inactivity_warning_seconds
+                ),
+                terminate_after_seconds=(
+                    self._worker_config.inactivity_terminate_seconds
+                ),
+                wait_extension_seconds=self._worker_config.candidate_wait_seconds,
+            )
+
+            async def on_inactivity_timeout(
+                trigger: InactivityTrigger,
+                silent_for_seconds: float,
+            ) -> None:
+                await controller.close_for_inactivity(
+                    trigger,
+                    silent_for_seconds,
+                )
+                if room.isconnected():
+                    await room.disconnect()
+
+            inactivity_coordinator = CandidateInactivityCoordinator(
+                policy=inactivity_policy,
+                on_step=controller.handle_inactivity_step,
+                on_timeout=on_inactivity_timeout,
+                on_recovered=controller.handle_inactivity_recovered,
+            )
+            controller.set_candidate_wait_handler(
+                inactivity_coordinator.grant_wait_extension
             )
             bridge = LiveKitAgentEventBridge(
                 emitter=emitter,
                 record_transcript_handler=controller.record_candidate_transcript,
                 handle_turn_handler=controller.handle_candidate_turn,
                 question_id_provider=lambda: controller.current_question_id,
+                agent_signal_payload_provider=(
+                    lambda: controller.current_agent_speech_payload
+                ),
                 prompt_generation_provider=lambda: controller.prompt_generation,
                 agent_speaking_provider=lambda: controller.agent_is_speaking,
+                candidate_away_handler=inactivity_coordinator.mark_away,
+                candidate_active_handler=lambda source: (
+                    inactivity_coordinator.mark_active(source=source)
+                ),
+                legacy_overlap_guard=turn_runtime.legacy_overlap_guard,
                 emit_state_events=False,
             )
             bridge.register(session)
+            candidate_identity = f"candidate-{self._agent_config.session.candidate_id}"
+
+            @room.on("data_received")
+            def on_candidate_control(data_packet: object) -> None:
+                participant = getattr(data_packet, "participant", None)
+                if (
+                    getattr(data_packet, "topic", None)
+                    != PRELUDE_CANDIDATE_CONTROL_TOPIC
+                    or getattr(participant, "identity", None) != candidate_identity
+                ):
+                    return
+                try:
+                    payload = json.loads(
+                        bytes(getattr(data_packet, "data", b"")).decode("utf-8")
+                    )
+                except (TypeError, ValueError, UnicodeDecodeError):
+                    return
+                control_type = payload.get("type") if isinstance(payload, dict) else None
+                if control_type == "candidate_presence_confirmed":
+                    inactivity_coordinator.confirm_presence()
+                elif control_type == "repeat_question":
+                    inactivity_coordinator.confirm_presence()
+                    bridge.schedule(
+                        controller.repeat_current_question_from_control()
+                    )
+
+            async def on_candidate_absence_timeout() -> None:
+                if controller.is_terminal:
+                    return
+                await emitter.emit(
+                    EventType.SESSION_FAILED,
+                    {
+                        "code": "candidate_absence_timeout",
+                        "message": (
+                            "Candidate did not reconnect before the absence grace "
+                            "period expired."
+                        ),
+                        "retryable": True,
+                    },
+                    actor=EventActor.SYSTEM,
+                )
+                if room.isconnected():
+                    await room.disconnect()
+
+            def on_candidate_disconnected() -> None:
+                bridge.pause_for_candidate_disconnect()
+                controller.pause_for_candidate_disconnect()
+                inactivity_coordinator.pause()
+
+            def on_candidate_reconnected() -> None:
+                bridge.resume_after_candidate_reconnect()
+                inactivity_coordinator.pause()
+                bridge.schedule(controller.resume_after_candidate_reconnect())
+
+            absence_monitor = CandidateAbsenceMonitor(
+                candidate_identity=candidate_identity,
+                grace_seconds=self._worker_config.candidate_absence_grace_seconds,
+                on_timeout=on_candidate_absence_timeout,
+                on_disconnected=on_candidate_disconnected,
+                on_reconnected=on_candidate_reconnected,
+            )
+            absence_monitor.register(room)
 
             instructions = build_live_interviewer_instructions(
                 self._agent_config.interview_plan
             )
             await session.start(
                 room=room,
-                agent=agents.Agent(instructions=instructions),
+                agent=_create_prelude_controlled_agent(
+                    agents,
+                    instructions=instructions,
+                    on_user_turn_completed=bridge.commit_official_user_message,
+                ),
                 room_options=room_io.RoomOptions(
-                    participant_identity=f"candidate-{self._agent_config.session.candidate_id}",
+                    participant_identity=candidate_identity,
                     audio_input=room_io.AudioInputOptions(
                         sample_rate=24000,
                         num_channels=1,
@@ -1583,7 +2665,7 @@ class OpenAILiveKitWorker:
                         track_name="prelude-interviewer-audio",
                     ),
                     text_output=True,
-                    close_on_disconnect=True,
+                    close_on_disconnect=False,
                 ),
             )
             await session.room_io.wait_for_ready()
@@ -1599,19 +2681,10 @@ class OpenAILiveKitWorker:
             )
 
             await controller.start()
-            silence_prompt_task = asyncio.create_task(
-                _soft_prompt_after_initial_silence(
-                    bridge=bridge,
-                    threshold_seconds=self._worker_config.soft_prompt_after_seconds,
-                    on_initial_silence=controller.handle_initial_silence,
-                    emitter=emitter,
-                    question_id=self._agent_config.interview_plan.questions[0].id,
-                )
-            )
 
             try:
                 if self._worker_config.max_duration_seconds:
-                    with contextlib.suppress(asyncio.TimeoutError):
+                    try:
                         await asyncio.wait_for(
                             _wait_until_room_disconnected_or_interview_closed(
                                 room,
@@ -1619,19 +2692,37 @@ class OpenAILiveKitWorker:
                             ),
                             timeout=self._worker_config.max_duration_seconds,
                         )
+                    except TimeoutError:
+                        logger.warning(
+                            "live interview reached maximum duration",
+                            extra={
+                                "session_id": self._agent_config.session.id,
+                                "max_duration_seconds": (
+                                    self._worker_config.max_duration_seconds
+                                ),
+                            },
+                        )
+                        await _wait_for_turn_boundary(
+                            bridge,
+                            controller,
+                            timeout_seconds=MAX_TURN_BOUNDARY_WAIT_SECONDS,
+                        )
+                        await controller.close_for_max_duration()
                 else:
                     await _wait_until_room_disconnected_or_interview_closed(
                         room,
                         controller,
                     )
             finally:
-                silence_prompt_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await silence_prompt_task
+                await inactivity_coordinator.aclose()
 
             await bridge.drain()
             return emitter._sequence
         finally:
+            if inactivity_coordinator is not None:
+                await inactivity_coordinator.aclose()
+            if absence_monitor is not None:
+                await absence_monitor.aclose()
             await self.aclose()
 
     async def aclose(self) -> None:
@@ -1649,7 +2740,11 @@ class OpenAILiveKitWorker:
 def build_live_interviewer_instructions(plan: InterviewPlan) -> str:
     questions = "\n".join(
         f"{index}. [{question.category.value}] {_spoken_question_prompt(question.prompt)}"
-        + (f" Follow-up allowed: {question.follow_up_prompt}" if question.follow_up_prompt else "")
+        + (
+            f" Follow-up allowed: {question.follow_up_prompt}"
+            if question.follow_up_prompt
+            else ""
+        )
         for index, question in enumerate(plan.questions, start=1)
     )
     modalities = []
@@ -1693,7 +2788,8 @@ Role adaptation:
 - For frontline, operational, shift-based, hospitality, logistics, restaurant,
   tourism, retail, or customer-facing roles, use plain and concrete language.
 - For operational roles, prefer concrete topics such as experience, availability,
-  constraints, mobility, customer interaction, work rhythm, safety, and team fit.
+  constraints, mobility, customer interaction, work rhythm, safety, and observable
+  collaboration requirements.
 - For senior, office, product, technical, or management roles, you may use more
   nuanced language around impact, prioritization, collaboration, business context,
   ownership, and trade-offs.
@@ -1709,6 +2805,18 @@ Candidate comfort:
 - Do not over-praise the candidate. Acknowledge naturally and move forward.
 - Keep your warmth, encouragement, and pace identical regardless of how strong or weak an answer is. Never sound more pleased after a good answer or flatter after a weak one; your manner must not signal your evaluation.
 - If the candidate uses audio-only, do not mention camera comfort or video presence.
+
+Voice delivery:
+- Sound like an attentive recruiter in a real one-to-one conversation, not a
+  narrator, announcer, virtual assistant, or person reading a script.
+- In French, use natural contemporary French prosody and connected speech.
+  Avoid over-enunciating every word or placing an equal pause after every clause.
+- Vary sentence melody subtly, keep a warm neutral tone, and use short natural
+  pauses only where a human recruiter would breathe or let an idea land.
+- Keep acknowledgements understated. Do not add theatrical emotion, filler
+  sounds, laughter, or verbal tics merely to appear human.
+- Deliver each question as one conversational thought. Never read category
+  labels, numbering, punctuation, or internal instructions aloud.
 
 Listening and pacing:
 - Do not interrupt. Stop speaking when the candidate starts speaking.
@@ -1757,14 +2865,8 @@ def _spoken_question_prompt(prompt: str) -> str:
 def _first_question_spoken_prompt(plan: InterviewPlan, prompt: str) -> str:
     question = _spoken_question_prompt(prompt)
     if plan.language.startswith("en"):
-        return (
-            "Hello, this is a short structured screening interview. "
-            f"{question}"
-        )
-    return (
-        "Bonjour, ceci est un entretien de présélection structuré. "
-        f"{question}"
-    )
+        return f"Hello, this is a short structured screening interview. {question}"
+    return f"Bonjour, ceci est un entretien de présélection structuré. {question}"
 
 
 # Warmth lives in delivery, not in the standardized question text. These are
@@ -1791,6 +2893,59 @@ SOFT_REPROMPT_LINES: dict[str, tuple[str, ...]] = {
 
 def _delivery_language_key(plan: InterviewPlan) -> str:
     return "en" if plan.language.startswith("en") else "fr"
+
+
+def _inactivity_line(
+    plan: InterviewPlan,
+    *,
+    stage: InactivityStage,
+    trigger: InactivityTrigger,
+    question_prompt: str,
+) -> str:
+    language = _delivery_language_key(plan)
+    if stage == InactivityStage.WARNING:
+        if language == "en":
+            return (
+                "I still cannot hear you. If there is no response in twenty "
+                "seconds, I will end this attempt. Your answers are saved, and "
+                "you can retry using the same link."
+            )
+        return (
+            "Je ne vous entends toujours pas. Sans réponse dans vingt secondes, "
+            "je terminerai cette tentative. Vos réponses sont sauvegardées et "
+            "vous pourrez réessayer avec le même lien."
+        )
+    if trigger == InactivityTrigger.WAIT_EXTENSION:
+        if language == "en":
+            return (
+                "We can continue when you are ready. I will repeat the question: "
+                f"{_spoken_question_prompt(question_prompt)}"
+            )
+        return (
+            "Nous pouvons reprendre quand vous êtes prêt. Je répète la question : "
+            f"{_spoken_question_prompt(question_prompt)}"
+        )
+    if language == "en":
+        return (
+            "I cannot hear you at the moment. Are you still with me? Take your "
+            "time and continue when you are ready."
+        )
+    return (
+        "Je ne vous entends plus pour le moment. Êtes-vous toujours avec moi ? "
+        "Prenez votre temps et reprenez quand vous êtes prêt."
+    )
+
+
+def _inactivity_closing_line(plan: InterviewPlan) -> str:
+    if _delivery_language_key(plan) == "en":
+        return (
+            "I am going to end this attempt because I still cannot hear you. "
+            "Your answers have been saved, and you can retry using the same link."
+        )
+    return (
+        "Je vais terminer cette tentative car je ne vous entends toujours pas. "
+        "Vos réponses ont été sauvegardées et vous pourrez réessayer avec le même lien."
+    )
 
 
 def _transition_leadin(plan: InterviewPlan, index: int) -> str:
@@ -1840,7 +2995,9 @@ def _format_interview_style(style: InterviewStyle) -> str:
         lines.append(f"- Candidate tone: {style.candidate_tone}")
 
     if not lines:
-        return "- No structured style context provided. Infer from the role and questions."
+        return (
+            "- No structured style context provided. Infer from the role and questions."
+        )
 
     return "\n".join(lines)
 
@@ -1876,27 +3033,32 @@ def _withdrawal_closing_message(plan: InterviewPlan) -> str:
     )
 
 
+def _max_duration_closing_message(plan: InterviewPlan) -> str:
+    if plan.language.startswith("en"):
+        return (
+            "We have reached the time available for this interview, so I will close "
+            "the session now. Your answers have been saved. Thank you for your time."
+        )
+
+    return (
+        "Nous avons atteint le temps prévu pour cet entretien, je vais donc clôturer "
+        "la session. Vos réponses ont bien été enregistrées. Merci pour votre temps."
+    )
+
+
 def _closing_message(plan: InterviewPlan) -> str:
     if plan.language.startswith("en"):
         return (
             "Thank you, the screening interview is now complete. "
-            "The recruiting team will review your answers and follow up about the next "
-            "steps if your profile matches the role. Have a good day. Goodbye."
+            "The recruiting team will review your answers and contact you directly "
+            "about any next steps. Have a good day. Goodbye."
         )
 
     return (
         "Merci beaucoup pour vos réponses. On arrive à la fin de ce premier échange. "
-        "Vos réponses vont être partagées avec l'équipe recrutement, qui pourra revenir "
-        "vers vous pour la suite du process si votre profil correspond au poste. "
+        "Vos réponses vont être examinées par l'équipe recrutement, qui reviendra "
+        "directement vers vous au sujet de la suite éventuelle. "
         "Merci encore pour votre temps, et je vous souhaite une très bonne journée."
-    )
-
-
-def _closing_instructions(closing: str) -> str:
-    return (
-        "Say exactly this closing message, then stop speaking. "
-        "Do not ask another question and do not add extra commentary: "
-        f"{closing}"
     )
 
 
@@ -1910,25 +3072,18 @@ def _camelize_transcript_turn(turn: dict[str, object]) -> dict[str, object]:
         "ended_at": "endedAt",
     }
     return {
-        keys.get(key, key): value
-        for key, value in turn.items()
-        if value is not None
+        keys.get(key, key): value for key, value in turn.items() if value is not None
     }
 
 
-def _generate_exact_reply(
+def _speak_exact_text(
     session: object,
     text: str,
     *,
     allow_interruptions: bool,
 ) -> object:
-    return getattr(session, "generate_reply")(
-        user_input=(
-            "The interview is complete. Read this exact checkout message aloud "
-            "verbatim and do not add anything before or after it: "
-            f"{text}"
-        ),
-        instructions=_closing_instructions(text),
+    return session.say(
+        text,
         allow_interruptions=allow_interruptions,
     )
 
@@ -1940,15 +3095,12 @@ def _generate_exact_control_reply(
     context_instructions: str,
     allow_interruptions: bool,
 ) -> object:
-    return getattr(session, "generate_reply")(
-        user_input=(
-            "Read this exact interviewer line aloud verbatim. Do not add, remove, "
-            f"or rewrite anything: {text}"
-        ),
+    return session.generate_reply(
         instructions=(
-            "Say exactly the provided interviewer line, then stop speaking. "
-            "Do not improvise a different question. Context only: "
-            f"{context_instructions}"
+            "Read this exact interviewer line aloud verbatim. Do not add, remove, "
+            f"or rewrite anything: {text}\n"
+            "Then stop speaking. Do not improvise a different question. "
+            f"Context only: {context_instructions}"
         ),
         allow_interruptions=allow_interruptions,
     )
@@ -2046,71 +3198,152 @@ def _repeat_response_for_candidate_intent(
     question_prompt: str,
     intent: CandidateTurnIntent,
 ) -> CandidateSupportResponse:
+    english = plan.language.startswith("en")
     if intent == CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED:
         return CandidateSupportResponse(
-            prompt=question_prompt,
+            prompt=(
+                f"Sorry for interrupting you. Please finish your answer; I am "
+                f"listening. {question_prompt}"
+                if english
+                else f"Désolé de vous avoir interrompu. Terminez votre réponse, "
+                f"je vous écoute. {question_prompt}"
+            ),
             instructions=(
-                "The candidate says they were interrupted or did not have time to finish. "
-                "Apologize briefly, invite them to finish, then re-ask the relevant "
-                "planned question. Do not move to the next question."
+                "The candidate says they were interrupted. Deliver the apology and "
+                "invitation to continue exactly as provided. Stay on the same planned "
+                "question. Do not move to the next question."
             ),
             reason="candidate_requested_repeat",
         )
 
     if intent == CandidateTurnIntent.CLARIFY_ROLE:
         return CandidateSupportResponse(
-            prompt=f"Le poste est {plan.role_title}. {question_prompt}",
+            prompt=(
+                f"This interview is for the {plan.role_title} role. {question_prompt}"
+                if english
+                else f"Cet entretien concerne le poste de {plan.role_title}. "
+                f"{question_prompt}"
+            ),
             instructions=(
-                f"Briefly clarify that the interview is for {plan.role_title}. "
-                "Use only the known role and structured interview context. Do not invent "
-                "job details. Then re-ask the current planned question. Do not move to "
-                "the next question."
+                "Clarify the known role exactly as provided, then repeat the current "
+                "planned question. Do not invent job details. Do not move to the next "
+                "question."
             ),
             reason="candidate_requested_role_context",
         )
 
     if intent == CandidateTurnIntent.EXAMPLE_REQUEST:
         return CandidateSupportResponse(
-            prompt=question_prompt,
+            prompt=(
+                "For example, you can describe the situation, what you did, and the "
+                f"outcome, without looking for a perfect answer. {question_prompt}"
+                if english
+                else "Par exemple, vous pouvez décrire la situation, ce que vous avez "
+                f"fait et le résultat, sans chercher une réponse parfaite. {question_prompt}"
+            ),
             instructions=(
-                "The candidate asked for examples, not to answer the question yet. "
-                "Give one or two neutral examples of answer angles without giving a "
-                "model answer to copy. Keep it concise, then re-ask the same current "
-                "planned question. Do not evaluate the request. Do not move to the next "
-                "question."
+                "Give only the neutral examples and answer structure provided, never "
+                "a model answer, then repeat the same planned question. Do not move "
+                "to the next question."
             ),
             reason="candidate_requested_examples",
         )
 
     if intent == CandidateTurnIntent.REFORMULATE_REQUEST:
         return CandidateSupportResponse(
-            prompt=question_prompt,
+            prompt=(
+                "In other words, I would like to understand your experience on this "
+                f"point. {question_prompt}"
+                if english
+                else "Autrement dit, j'aimerais comprendre votre expérience sur ce "
+                f"point. {question_prompt}"
+            ),
             instructions=(
-                "The candidate asked for a reformulation. Rephrase the same current "
-                "planned question in simpler, concrete language. Do not add a new "
-                "screening question and do not move to the next question."
+                "Deliver the simpler framing exactly as provided and stay on the same "
+                "planned question."
             ),
             reason="candidate_requested_reformulation",
         )
 
     if intent == CandidateTurnIntent.TECHNICAL_ISSUE:
         return CandidateSupportResponse(
-            prompt=question_prompt,
+            prompt=(
+                f"Thank you for letting me know. Can you hear me now? I will repeat "
+                f"the question. {question_prompt}"
+                if english
+                else "Merci de me l'avoir signalé. Est-ce que vous m'entendez "
+                f"maintenant ? Je répète la question. {question_prompt}"
+            ),
             instructions=(
-                "The candidate reported an audio or technical issue. Briefly check that "
-                "they can hear you now, then repeat the same current planned question. "
-                "Do not move to the next question."
+                "Perform the brief audio check exactly as provided, then repeat the "
+                "same planned question."
             ),
             reason="candidate_reported_technical_issue",
         )
 
     return CandidateSupportResponse(
-        prompt=question_prompt,
+        prompt=(
+            f"Of course, I will repeat the question. {question_prompt}"
+            if english
+            else f"Bien sûr, je répète la question. {question_prompt}"
+        ),
         instructions=(
-            "Repeat only the current planned question. Do not move to the next question."
+            "Repeat the current planned question exactly as provided. Do not move "
+            "to the next question."
         ),
         reason="candidate_requested_repeat",
     )
+
+
+def _candidate_wait_acknowledgement(plan: InterviewPlan) -> str:
+    if plan.language.startswith("en"):
+        return "Of course. Take the time you need; I will stay here."
+    return "Bien sûr. Prenez le temps qu'il vous faut, je reste là."
+
+
+def _wait_complete_response(
+    plan: InterviewPlan,
+    question_prompt: str,
+) -> CandidateSupportResponse:
+    if plan.language.startswith("en"):
+        prompt = f"I am still here. When you are ready: {question_prompt}"
+    else:
+        prompt = f"Je suis toujours là. Quand vous êtes prêt : {question_prompt}"
+    return CandidateSupportResponse(
+        prompt=prompt,
+        instructions=(
+            "Gently resume after the requested pause and repeat only the active "
+            "planned question."
+        ),
+        reason="candidate_wait_elapsed",
+    )
+
+
+def _reconnect_response(
+    plan: InterviewPlan,
+    question_prompt: str,
+) -> CandidateSupportResponse:
+    if plan.language.startswith("en"):
+        prompt = f"Thank you, you are connected again. I will repeat: {question_prompt}"
+    else:
+        prompt = (
+            "Merci, vous êtes de nouveau connecté. Je répète la question : "
+            f"{question_prompt}"
+        )
+    return CandidateSupportResponse(
+        prompt=prompt,
+        instructions=(
+            "Acknowledge the restored connection and repeat only the active planned "
+            "question. Do not advance the interview."
+        ),
+        reason="candidate_reconnected",
+    )
+
+
+def _fallback_followup(plan: InterviewPlan) -> str:
+    if plan.language.startswith("en"):
+        return "Could you give a concrete example?"
+    return "Pouvez-vous donner un exemple concret ?"
 
 
 def _candidate_turn_completion_reason(turn: CandidateTurn) -> str:
@@ -2119,66 +3352,6 @@ def _candidate_turn_completion_reason(turn: CandidateTurn) -> str:
     if turn.repeat_requested or turn.wait_requested or not turn.is_complete:
         return "incomplete"
     return "answered"
-
-
-async def _soft_prompt_after_initial_silence(
-    *,
-    bridge: LiveKitAgentEventBridge,
-    threshold_seconds: float,
-    on_initial_silence: Callable[[], Awaitable[None]] | None = None,
-    session: object | None = None,
-    emitter: PreludeEventEmitter | None = None,
-    question_id: str | None = None,
-) -> None:
-    await asyncio.sleep(threshold_seconds)
-    await bridge.drain()
-    if (
-        bridge.candidate_activity_seen
-        or bridge.candidate_turn_count > 0
-        or bridge.candidate_is_speaking
-    ):
-        return
-
-    threshold_ms = int(threshold_seconds * 1000)
-    if on_initial_silence is not None and emitter is not None and question_id is not None:
-        await emitter.emit(
-            EventType.SILENCE_TIMEOUT_STARTED,
-            {
-                "question_id": question_id,
-                "tier": "soft_prompt",
-                "threshold_ms": threshold_ms,
-            },
-            actor=EventActor.SYSTEM,
-        )
-
-    if on_initial_silence is not None:
-        await on_initial_silence()
-        return
-
-    if session is None or emitter is None or question_id is None:
-        raise RuntimeError("legacy silence prompt requires session, emitter, and question_id")
-
-    await emitter.emit(
-        EventType.SILENCE_TIMEOUT_STARTED,
-        {
-            "question_id": question_id,
-            "tier": "soft_prompt",
-            "threshold_ms": threshold_ms,
-        },
-        actor=EventActor.SYSTEM,
-    )
-
-    reply = getattr(session, "generate_reply")(
-        instructions=(
-            "The candidate has been silent after the first question. "
-            "Briefly and politely ask if they can hear you, if there is a technical issue, "
-            "or if they need a moment. Do not move to the next planned question."
-        ),
-        allow_interruptions=True,
-    )
-    wait_for_playout = getattr(reply, "wait_for_playout", None)
-    if callable(wait_for_playout):
-        await wait_for_playout()
 
 
 def _turn_detection(realtime: object, value: str) -> object:
@@ -2226,7 +3399,9 @@ async def _wait_for_candidate_ready(
         if ready_events == required_events:
             return
         if asyncio.get_running_loop().time() >= deadline:
-            missing_events = sorted(event.value for event in required_events - ready_events)
+            missing_events = sorted(
+                event.value for event in required_events - ready_events
+            )
             raise TimeoutError(
                 "candidate readiness events were not received for session "
                 f"{session_id}: {', '.join(missing_events)}"
@@ -2235,8 +3410,27 @@ async def _wait_for_candidate_ready(
 
 
 async def _wait_until_room_disconnected(room: object) -> None:
-    while getattr(room, "isconnected")():
+    while room.isconnected():
         await asyncio.sleep(0.5)
+
+
+async def _wait_for_turn_boundary(
+    bridge: object,
+    controller: object,
+    *,
+    timeout_seconds: float,
+    poll_interval_seconds: float = 0.05,
+) -> bool:
+    """Give an active candidate or agent turn a bounded chance to finish."""
+
+    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    while bool(getattr(bridge, "candidate_is_speaking", False)) or bool(
+        getattr(controller, "agent_is_speaking", False)
+    ):
+        if asyncio.get_running_loop().time() >= deadline:
+            return False
+        await asyncio.sleep(poll_interval_seconds)
+    return True
 
 
 async def _wait_until_room_disconnected_or_interview_closed(
@@ -2259,7 +3453,7 @@ async def _wait_until_room_disconnected_or_interview_closed(
         with contextlib.suppress(asyncio.CancelledError):
             await asyncio.gather(*pending)
 
-    if controller_task.done() and getattr(room, "isconnected")():
+    if controller_task.done() and room.isconnected():
         await room.disconnect()
 
 

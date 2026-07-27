@@ -625,6 +625,49 @@ func TestServiceIngestEventTransitionsSessionState(t *testing.T) {
 	}
 }
 
+func TestServiceAcceptsMaxDurationReachedCompletionEvent(t *testing.T) {
+	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
+
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID: "plan_123",
+		CandidateID:     "candidate_123",
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	if _, err := service.IngestEvent(
+		context.Background(),
+		eventInput(session.Session.ID, 1, "evt_started", domain.EventSessionStarted),
+	); err != nil {
+		t.Fatalf("session_started returned error: %v", err)
+	}
+
+	completedInput := eventInput(
+		session.Session.ID,
+		2,
+		"evt_max_duration_completed",
+		domain.EventSessionCompleted,
+	)
+	completedInput.Payload = json.RawMessage(`{
+		"completed_reason": "max_duration_reached",
+		"completed_questions": 2,
+		"total_questions": 3
+	}`)
+	if _, err := service.IngestEvent(context.Background(), completedInput); err != nil {
+		t.Fatalf("max-duration session_completed returned error: %v", err)
+	}
+
+	completed, err := service.GetSession(context.Background(), session.Session.ID)
+	if err != nil {
+		t.Fatalf("GetSession returned error: %v", err)
+	}
+	if completed.Status != domain.SessionStatusCompleted {
+		t.Fatalf("expected completed, got %s", completed.Status)
+	}
+}
+
 func TestServiceAcceptsCandidateMediaReadinessBeforeAgentJoin(t *testing.T) {
 	clock := fixedClock{now: time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC)}
 	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, clock)
@@ -1071,7 +1114,8 @@ func TestServiceAcceptsTurnTakingGuardrailEvents(t *testing.T) {
 		{domain.EventCandidateSpeechStopped, domain.EventActorCandidate, json.RawMessage(`{"question_id":"q1"}`)},
 		{domain.EventCandidateTurnDetected, domain.EventActorSystem, json.RawMessage(`{"question_id":"q1","semantic_complete":true}`)},
 		{domain.EventWaitRequested, domain.EventActorCandidate, json.RawMessage(`{"question_id":"q1","reason":"candidate_requested_time"}`)},
-		{domain.EventSilenceTimeoutStarted, domain.EventActorSystem, json.RawMessage(`{"question_id":"q1","tier":"soft_prompt","threshold_ms":10000}`)},
+		{domain.EventSilenceTimeoutStarted, domain.EventActorSystem, json.RawMessage(`{"question_id":"q1","tier":"warning","threshold_ms":35000,"silent_for_ms":35000,"remaining_ms":20000,"expires_at":"2026-06-17T10:00:20Z","trigger":"user_away"}`)},
+		{domain.EventSilenceRecovered, domain.EventActorCandidate, json.RawMessage(`{"question_id":"q1","tier":"warning","silent_for_ms":37000,"trigger":"user_away","source":"voice"}`)},
 		{domain.EventBargeInAccepted, domain.EventActorSystem, json.RawMessage(`{"utterance_id":"q1:question:0","cancel_latency_ms":120}`)},
 		{domain.EventAgentSpeechInterrupted, domain.EventActorSystem, json.RawMessage(`{"utterance_id":"q1:question:0","cancel_latency_ms":120,"cancel_agent_audio":true}`)},
 		{domain.EventAgentSpeechCompleted, domain.EventActorAgent, json.RawMessage(`{"utterance_id":"q1:question:0"}`)},

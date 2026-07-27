@@ -102,6 +102,7 @@ class EventType(StrEnum):
     BARGE_IN_REJECTED = "barge_in_rejected"
     BACKCHANNEL_DETECTED = "backchannel_detected"
     SILENCE_TIMEOUT_STARTED = "silence_timeout_started"
+    SILENCE_RECOVERED = "silence_recovered"
     WAIT_REQUESTED = "wait_requested"
     SOFT_REPROMPTED = "soft_reprompted"
     FOLLOWUP_ASKED = "followup_asked"

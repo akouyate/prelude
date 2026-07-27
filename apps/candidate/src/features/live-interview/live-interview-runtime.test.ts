@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasClosingTranscript,
+  inactivityNoticeFromSessionState,
   selectInterviewerView,
   shouldKeepCurrentRuntimeStatus,
   statusFromSessionState,
@@ -33,8 +34,13 @@ describe("live interview runtime state", () => {
       ),
     ).toBe("candidate_speaking");
     expect(
-      statusFromSessionState(state("in_progress", [event("answer_evaluated")])),
+      statusFromSessionState(
+        state("in_progress", [event("candidate_speech_stopped")]),
+      ),
     ).toBe("listening");
+    expect(
+      statusFromSessionState(state("in_progress", [event("answer_evaluated")])),
+    ).toBe("processing");
     expect(
       statusFromSessionState(state("completed", [event("session_closing")])),
     ).toBe("completed");
@@ -50,7 +56,7 @@ describe("live interview runtime state", () => {
     expect(shouldKeepCurrentRuntimeStatus("abandoned", "listening")).toBe(true);
   });
 
-  it("derives speaking state from realtime transcript packets", () => {
+  it("derives interviewer speaking state from realtime transcript packets", () => {
     expect(
       statusFromTranscriptTurn(
         {
@@ -64,6 +70,32 @@ describe("live interview runtime state", () => {
         "connected",
       ),
     ).toBe("interviewer_speaking");
+  });
+
+  it("keeps candidate speech and answer processing states distinct", () => {
+    const candidateTurn = {
+      isFinal: false,
+      sessionId: "is_1",
+      speaker: "candidate" as const,
+      startedAt: "2026-06-21T09:00:00Z",
+      text: "I led the launch",
+      turnId: "turn_2",
+    };
+
+    expect(statusFromTranscriptTurn(candidateTurn, "listening")).toBe(
+      "candidate_speaking",
+    );
+    expect(
+      statusFromTranscriptTurn(
+        { ...candidateTurn, isFinal: true },
+        "listening",
+      ),
+    ).toBe("processing");
+    expect(
+      statusFromSessionState(
+        state("in_progress", [event("candidate_turn_finalized")]),
+      ),
+    ).toBe("processing");
   });
 
   it("extracts closing transcript turns from realtime events", () => {
@@ -92,6 +124,31 @@ describe("live interview runtime state", () => {
         turnId: "closing",
       },
     ]);
+  });
+
+  it("exposes only an active inactivity check-in or warning", () => {
+    const warning = event("silence_timeout_started", {
+      expires_at: "2026-07-27T10:00:20Z",
+      tier: "warning",
+    });
+
+    expect(
+      inactivityNoticeFromSessionState(state("in_progress", [warning])),
+    ).toEqual({
+      expiresAt: "2026-07-27T10:00:20Z",
+      stage: "warning",
+    });
+
+    expect(
+      inactivityNoticeFromSessionState(
+        state("in_progress", [warning, event("silence_recovered")]),
+      ),
+    ).toBeNull();
+    expect(
+      inactivityNoticeFromSessionState(
+        state("in_progress", [warning, event("candidate_speech_started")]),
+      ),
+    ).toBeNull();
   });
 });
 
@@ -289,7 +346,6 @@ describe("selectInterviewerView", () => {
       activeText: "And how did you",
       activeTurnId: "i2",
       isStreaming: true,
-      previous: [finals[0]],
     });
   });
 
@@ -310,7 +366,7 @@ describe("selectInterviewerView", () => {
     expect(view.isStreaming).toBe(false);
   });
 
-  it("never shows the caption's own finalized twin in the dimmed history", () => {
+  it("keeps the active caption when finalized data arrives through two paths", () => {
     // The same segment also arrives as a finalized turn (LiveKit close, the
     // prelude data packet, or HTTP polling). It must not render twice.
     const caption = turn({ text: "Second question.", turnId: "i2" });
@@ -330,7 +386,7 @@ describe("selectInterviewerView", () => {
     const view = selectInterviewerView({ finalTurns: finals, caption });
 
     expect(view.activeText).toBe("Second question.");
-    expect(view.previous.map((item) => item.turnId)).toEqual(["i1"]);
+    expect(view.activeTurnId).toBe("i2");
   });
 
   it("falls back to the latest finalized turn when there is no caption", () => {
@@ -353,7 +409,6 @@ describe("selectInterviewerView", () => {
       activeText: "Second question.",
       activeTurnId: "i2",
       isStreaming: false,
-      previous: [finals[0]],
     });
   });
 
@@ -367,7 +422,6 @@ describe("selectInterviewerView", () => {
       activeText: null,
       activeTurnId: null,
       isStreaming: false,
-      previous: [],
     });
   });
 
@@ -395,10 +449,9 @@ describe("selectInterviewerView", () => {
     const view = selectInterviewerView({ finalTurns: finals, caption });
 
     expect(view.activeText).toBe("Bonjour, qu'est-ce qui vous a donné");
-    expect(view.previous).toEqual([]);
   });
 
-  it("keeps an older distinct question that merely shares a prefix with the caption", () => {
+  it("does not expose older questions in the candidate focus view", () => {
     const finals = [
       turn({
         startedAt: "2026-06-23T10:00:00Z",
@@ -419,23 +472,10 @@ describe("selectInterviewerView", () => {
 
     const view = selectInterviewerView({ finalTurns: finals, caption });
 
-    expect(view.previous.map((item) => item.turnId)).toEqual(["old", "recent"]);
-  });
-
-  it("keeps at most the three most recent previous questions", () => {
-    const finals = [1, 2, 3, 4].map((index) =>
-      turn({
-        startedAt: `2026-06-23T10:0${index}:00Z`,
-        text: `Question ${index}.`,
-        turnId: `i${index}`,
-      }),
-    );
-    const caption = turn({ isFinal: false, text: "Live one", turnId: "live" });
-
-    expect(
-      selectInterviewerView({ finalTurns: finals, caption }).previous.map(
-        (item) => item.turnId,
-      ),
-    ).toEqual(["i2", "i3", "i4"]);
+    expect(view).toEqual({
+      activeText: "Parlez-moi de",
+      activeTurnId: "live",
+      isStreaming: true,
+    });
   });
 });

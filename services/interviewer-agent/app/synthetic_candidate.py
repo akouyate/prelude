@@ -64,6 +64,10 @@ BYTES_PER_SAMPLE = 2  # int16 little-endian
 
 # Pause inserted between sentences so the turn-detector sees a realistic gap.
 INTER_SENTENCE_SILENCE_MS = 200
+# A physical microphone keeps publishing silent frames after the speaker stops.
+# Keep the synthetic track alive past LiveKit's 3 s maximum endpointing delay
+# so the audio turn detector can commit the complete user turn.
+TURN_END_SILENCE_MS = 3_500
 # Human-like "thinking" delay before the candidate starts answering.
 PRE_ANSWER_DELAY_S = 0.8
 # After session_closing, keep polling this long for session_completed — the LLM
@@ -80,21 +84,27 @@ PREMATURE_END_MIN_SPOKEN_S = 8.0
 # --- Scripted answers (the candidate's REAL prior answers; FR, role: CSM) ---
 
 SCRIPTED_ANSWERS: tuple[str, ...] = (
-    "Ce qui me plaît dans ce poste de Customer Success Manager, c'est avant tout "
-    "l'accompagnement des clients sur la durée : construire une relation de "
-    "confiance, comprendre leurs enjeux, et les aider à tirer le maximum de valeur "
-    "du produit. J'aime être le point de contact qui transforme un client sceptique "
-    "en véritable ambassadeur.",
-    "Récemment, j'ai onboardé une cliente complètement sceptique à l'idée d'utiliser "
-    "notre outil. J'ai mis en place un accompagnement rapproché : des points "
-    "hebdomadaires, de la formation sur mesure, et un suivi régulier des indicateurs "
-    "d'usage. En trois mois, on est passés d'une satisfaction de deux à quatre "
-    "étoiles, et elle est devenue l'une de nos meilleures références.",
-    "Pour un client à risque après une implémentation difficile, je commence par un "
-    "point franc pour comprendre la cause réelle de la frustration. Ensuite je "
-    "co-construis un plan de remédiation avec des jalons concrets et un accompagnement "
-    "renforcé, et je sécurise un sponsor exécutif des deux côtés pour ancrer la "
-    "relation sur le long terme.",
+    (
+        "Ce qui me plaît dans ce poste de Customer Success Manager, c'est avant tout "
+        "l'accompagnement des clients sur la durée : construire une relation de "
+        "confiance, comprendre leurs enjeux, et les aider à tirer le maximum de valeur "
+        "du produit. J'aime être le point de contact qui transforme un client sceptique "
+        "en véritable ambassadeur."
+    ),
+    (
+        "Récemment, j'ai onboardé une cliente complètement sceptique à l'idée d'utiliser "
+        "notre outil. J'ai mis en place un accompagnement rapproché : des points "
+        "hebdomadaires, de la formation sur mesure, et un suivi régulier des indicateurs "
+        "d'usage. En trois mois, on est passés d'une satisfaction de deux à quatre "
+        "étoiles, et elle est devenue l'une de nos meilleures références."
+    ),
+    (
+        "Pour un client à risque après une implémentation difficile, je commence par un "
+        "point franc pour comprendre la cause réelle de la frustration. Ensuite je "
+        "co-construis un plan de remédiation avec des jalons concrets et un accompagnement "
+        "renforcé, et je sécurise un sponsor exécutif des deux côtés pour ancrer la "
+        "relation sur le long terme."
+    ),
 )
 
 # Generic elaboration used when a follow-up arrives but the scripted queue is empty,
@@ -133,7 +143,7 @@ class TTSProvider(Protocol):
         ...
 
 
-def _float_to_pcm16(samples: "object") -> bytes:
+def _float_to_pcm16(samples: object) -> bytes:
     """Convert a 1-D float array/tensor in [-1, 1] to int16 LE PCM bytes."""
     import numpy as np
 
@@ -142,7 +152,7 @@ def _float_to_pcm16(samples: "object") -> bytes:
     return (clipped * 32767.0).astype("<i2").tobytes()
 
 
-def _resample_to_livekit(samples: "object", src_rate: int) -> bytes:
+def _resample_to_livekit(samples: object, src_rate: int) -> bytes:
     """Resample a float signal to the LiveKit rate and return int16 PCM bytes.
 
     pocket-tts french_24l and OpenAI pcm are already 24 kHz, so this is only a
@@ -152,9 +162,9 @@ def _resample_to_livekit(samples: "object", src_rate: int) -> bytes:
 
     arr = np.asarray(samples, dtype=np.float32).reshape(-1)
     if src_rate != LIVEKIT_SAMPLE_RATE:
-        from scipy.signal import resample_poly
-
         from math import gcd
+
+        from scipy.signal import resample_poly
 
         g = gcd(int(src_rate), LIVEKIT_SAMPLE_RATE)
         arr = resample_poly(arr, LIVEKIT_SAMPLE_RATE // g, int(src_rate) // g)
@@ -203,7 +213,7 @@ class OpenAITTS:
 
     Verified against openai 2.43.0: ``audio.speech.with_streaming_response.create``
     accepts ``response_format="pcm"`` (raw 24 kHz mono int16 LE) and the response
-    exposes ``aiter_bytes()``.
+    exposes the asynchronous ``iter_bytes()`` iterator.
     """
 
     def __init__(self, *, voice: str = "alloy", model: str = "gpt-4o-mini-tts") -> None:
@@ -224,7 +234,7 @@ class OpenAITTS:
             input=sentence,
             response_format="pcm",
         ) as response:
-            async for chunk in response.aiter_bytes():
+            async for chunk in response.iter_bytes():
                 if chunk:
                     chunks.append(chunk)
         return b"".join(chunks)
@@ -396,6 +406,7 @@ class EventStore:
             ["psql", self._database_url, "-At", "-v", "ON_ERROR_STOP=1", "-c", sql],
             capture_output=True,
             text=True,
+            check=False,
         )
         if proc.returncode != 0:
             raise RuntimeError(f"psql failed: {proc.stderr.strip()[:500]}")
@@ -560,8 +571,8 @@ async def speak_answer(
             await audio.play_pcm(pcm)
             if i < len(chunks) - 1:
                 await audio.play_silence(INTER_SENTENCE_SILENCE_MS)
-        # Trailing pause so the agent's endpoint detector closes the turn cleanly.
-        await audio.play_silence(INTER_SENTENCE_SILENCE_MS)
+        # Trailing silence models an open microphone after the candidate finishes.
+        await audio.play_silence(TURN_END_SILENCE_MS)
     finally:
         state.spoken_seconds += time.monotonic() - started
         state.responses_spoken += 1
@@ -788,7 +799,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--interview-plan-id",
-        default="interview_e2e_local-live",
+        default="interview_e2e_livekit-upgrade",
         help="Published Interview id the candidate link resolves to.",
     )
     parser.add_argument(

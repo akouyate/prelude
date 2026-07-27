@@ -1,36 +1,42 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
-
 from app.adapters.livekit_openai_worker import (
-    CandidateTurnClassifier,
     FIRST_REPLY_INSTRUCTIONS,
-    LiveKitAgentEventBridge,
-    LiveInterviewOrchestrationController,
-    LiveTranscriptPublisher,
-    OpenAILiveWorkerConfig,
     PRELUDE_TRANSCRIPT_TOPIC,
-    PreludeEventEmitter,
     SOFT_REPROMPT_LINES,
     TRANSITION_LEADINS,
-    build_live_interviewer_instructions,
+    CandidateTurnClassifier,
+    LiveInterviewOrchestrationController,
+    LiveKitAgentEventBridge,
+    LiveTranscriptPublisher,
+    OpenAILiveWorkerConfig,
+    PreludeEventEmitter,
     _candidate_turn_from_live_transcript,
+    _closing_message,
     _question_spoken_text,
-    _soft_prompt_after_initial_silence,
+    _repeat_response_for_candidate_intent,
     _soft_reprompt_line,
     _spoken_question_prompt,
     _supports_realtime_reasoning,
     _transition_leadin,
     _wait_for_candidate_ready,
     _wait_for_playout_with_timeout,
+    _wait_for_turn_boundary,
     _withdrawal_closing_message,
+    build_live_interviewer_instructions,
 )
-from app.domain.orchestrator import AnswerClassification, InterviewOrchestrator
+from app.application.inactivity import (
+    InactivityStage,
+    InactivityStep,
+    InactivityTrigger,
+)
 from app.domain.models import (
     CandidateTurnIntent,
     EventActor,
@@ -42,6 +48,7 @@ from app.domain.models import (
     QuestionCategory,
     create_demo_plan,
 )
+from app.domain.orchestrator import AnswerClassification, InterviewOrchestrator
 
 
 class FakeAgentSession:
@@ -91,23 +98,6 @@ class FakeLiveSession:
         return self.last_reply
 
 
-class FakeBridge:
-    def __init__(
-        self,
-        *,
-        candidate_turn_count: int = 0,
-        candidate_is_speaking: bool = False,
-        candidate_activity_seen: bool = False,
-    ):
-        self.candidate_turn_count = candidate_turn_count
-        self.candidate_is_speaking = candidate_is_speaking
-        self.candidate_activity_seen = candidate_activity_seen
-        self.drained = False
-
-    async def drain(self) -> None:
-        self.drained = True
-
-
 class FakeTranscriptPublisher:
     def __init__(self) -> None:
         self.turns: list[dict[str, object]] = []
@@ -141,6 +131,16 @@ class FakeLiveKitLocalParticipant:
 class FakeLiveKitRoom:
     def __init__(self) -> None:
         self.local_participant = FakeLiveKitLocalParticipant()
+
+
+class FailingLiveKitLocalParticipant:
+    def publish_data(self, *_args: object, **_kwargs: object) -> None:
+        raise ConnectionError("data channel unavailable")
+
+
+class FailingLiveKitRoom:
+    def __init__(self) -> None:
+        self.local_participant = FailingLiveKitLocalParticipant()
 
 
 async def _append_event(events: list[InterviewEvent], event: InterviewEvent) -> None:
@@ -213,6 +213,33 @@ async def test_live_transcript_publisher_sends_reliable_camelcase_packet() -> No
 
 
 @pytest.mark.asyncio
+async def test_live_transcript_delivery_failure_is_observable_and_non_blocking(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    publisher = LiveTranscriptPublisher(FailingLiveKitRoom())
+
+    with caplog.at_level(logging.WARNING):
+        await publisher.publish_turn(
+            {
+                "turn_id": "turn_failed",
+                "session_id": "is_123",
+                "speaker": "candidate",
+                "text": "My answer remains persisted by the realtime API.",
+                "is_final": True,
+            }
+        )
+
+    record = next(
+        item
+        for item in caplog.records
+        if item.getMessage() == "live transcript delivery failed"
+    )
+    assert record.session_id == "is_123"
+    assert record.turn_id == "turn_failed"
+    assert record.error_type == "ConnectionError"
+
+
+@pytest.mark.asyncio
 async def test_live_orchestration_controller_pushes_transcript_turns() -> None:
     events: list[InterviewEvent] = []
     emitter = PreludeEventEmitter(
@@ -243,46 +270,99 @@ async def test_live_orchestration_controller_pushes_transcript_turns() -> None:
 
 
 @pytest.mark.asyncio
-async def test_s1_stale_or_overlapping_turn_is_recorded_but_drives_no_policy() -> None:
+async def test_s1_stale_turn_is_recorded_but_drives_no_policy() -> None:
     # S1 turn-token guard. A candidate transcript that belongs to an older prompt
     # generation (a late fragment of a previous turn) OR that overlapped the
     # agent's prompt must still be RECORDED, but must not advance/close the
     # interview. These are the premature-end + talk-over bugs seen in the live
     # session log (a Q1 tail evaluated against Q2; a fragment during the
     # follow-up completing the last question and closing the session).
-    for kwargs in ({"turn_generation": 0}, {"spoke_over_agent": True}):
-        events: list[InterviewEvent] = []
-        emitter = PreludeEventEmitter(
-            session_id="session-test",
-            candidate_id="candidate-test",
-            provider_metadata={"provider": "openai_realtime"},
-            emit_event=lambda event: _append_event(events, event),
-        )
-        session = FakeLiveSession()
-        publisher = FakeTranscriptPublisher()
-        controller = LiveInterviewOrchestrationController(
-            plan=create_demo_plan(),
-            emitter=emitter,
-            session=session,
-            transcript_publisher=publisher,
-        )
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    publisher = FakeTranscriptPublisher()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+        transcript_publisher=publisher,
+    )
 
-        await controller.start()  # asks Q1; the prompt generation is now 1
-        await controller.handle_candidate_transcript(
-            "Un fragment en retard ou par-dessus l'agent.",
-            datetime(2026, 6, 18, tzinfo=timezone.utc),
-            **kwargs,
-        )
+    await controller.start()  # asks Q1; the prompt generation is now 1
+    await controller.handle_candidate_transcript(
+        "Un fragment en retard.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+        turn_generation=0,
+    )
 
-        assert any(
-            turn["speaker"] == "candidate"
-            and turn["text"] == "Un fragment en retard ou par-dessus l'agent."
-            for turn in publisher.turns
-        ), kwargs
-        types = [event.type for event in events]
-        assert EventType.ANSWER_EVALUATED not in types, kwargs
-        assert EventType.QUESTION_COMPLETED not in types, kwargs
-        assert EventType.SESSION_CLOSING not in types, kwargs
+    assert any(
+        turn["speaker"] == "candidate" and turn["text"] == "Un fragment en retard."
+        for turn in publisher.turns
+    )
+    types = [event.type for event in events]
+    assert EventType.ANSWER_EVALUATED not in types
+    assert EventType.QUESTION_COMPLETED not in types
+    assert EventType.SESSION_CLOSING not in types
+
+
+@pytest.mark.asyncio
+async def test_official_turn_handling_allows_confirmed_overlap_to_drive_policy() -> (
+    None
+):
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=FakeLiveSession(),
+    )
+
+    await controller.start()
+    await controller.handle_candidate_transcript(
+        "Je vous interromps pour donner une reponse complete et pertinente.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+        turn_generation=controller.prompt_generation,
+        spoke_over_agent=True,
+    )
+
+    assert EventType.ANSWER_EVALUATED in [event.type for event in events]
+
+
+@pytest.mark.asyncio
+async def test_deprecated_legacy_filter_can_still_reject_overlapping_turn() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=FakeLiveSession(),
+        legacy_interruption_filter=True,
+    )
+
+    await controller.start()
+    await controller.handle_candidate_transcript(
+        "Je vous interromps pour donner une reponse complete et pertinente.",
+        datetime(2026, 6, 18, tzinfo=timezone.utc),
+        turn_generation=controller.prompt_generation,
+        spoke_over_agent=True,
+    )
+
+    assert EventType.ANSWER_EVALUATED not in [event.type for event in events]
 
 
 @pytest.mark.asyncio
@@ -338,10 +418,14 @@ async def test_s5b_record_publishes_without_policy_then_handle_drives_policy() -
     await controller.start()
     occurred = datetime(2026, 6, 18, tzinfo=timezone.utc)
 
-    turn_id = await controller.record_candidate_transcript("Premier bout de phrase.", occurred)
+    turn_id = await controller.record_candidate_transcript(
+        "Premier bout de phrase.", occurred
+    )
     assert turn_id is not None
     assert any(turn["speaker"] == "candidate" for turn in publisher.turns)  # published
-    assert EventType.ANSWER_EVALUATED not in [event.type for event in events]  # no policy
+    assert EventType.ANSWER_EVALUATED not in [
+        event.type for event in events
+    ]  # no policy
 
     await controller.handle_candidate_turn(
         "Premier bout de phrase, et voici la suite complete et detaillee de ma reponse.",
@@ -359,11 +443,20 @@ async def test_s5b_bridge_aggregates_segments_into_one_turn() -> None:
     recorded: list[str] = []
     handled: list[tuple[str, object]] = []
 
-    async def record(transcript, created_at, *, turn_generation=None, spoke_over_agent=False):
+    async def record(
+        transcript, created_at, *, turn_generation=None, spoke_over_agent=False
+    ):
         recorded.append(transcript)
         return f"turn-{len(recorded)}"
 
-    async def handle(transcript, created_at, *, turn_ids=None, turn_generation=None, spoke_over_agent=False):
+    async def handle(
+        transcript,
+        created_at,
+        *,
+        turn_ids=None,
+        turn_generation=None,
+        spoke_over_agent=False,
+    ):
         handled.append((transcript, turn_ids))
 
     async def _noop_emit(event):
@@ -381,6 +474,7 @@ async def test_s5b_bridge_aggregates_segments_into_one_turn() -> None:
         record_transcript_handler=record,
         handle_turn_handler=handle,
         turn_flush_debounce_seconds=0.01,
+        legacy_overlap_guard=True,
         emit_state_events=False,
     )
     bridge.register(session)
@@ -440,7 +534,10 @@ async def test_livekit_agent_bridge_persists_final_candidate_transcript() -> Non
     assert events[0].payload["completion_reason"] == "answered"
     assert events[0].payload["transcript_turn"]["question_id"] == "unscoped_livekit"
     assert events[0].payload["transcript_turn"]["speaker"] == "candidate"
-    assert events[0].payload["transcript_turn"]["text"] == "Je suis disponible dans deux semaines."
+    assert (
+        events[0].payload["transcript_turn"]["text"]
+        == "Je suis disponible dans deux semaines."
+    )
 
 
 @pytest.mark.asyncio
@@ -486,6 +583,38 @@ async def test_livekit_agent_bridge_persists_assistant_transcript() -> None:
 
 
 @pytest.mark.asyncio
+async def test_livekit_agent_bridge_reuses_controller_speech_scope() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeAgentSession()
+    bridge = LiveKitAgentEventBridge(
+        emitter=emitter,
+        agent_signal_payload_provider=lambda: {
+            "utterance_id": "session-test:closing",
+            "utterance_kind": "closing",
+        },
+    )
+    bridge.register(session)
+
+    session.handlers["conversation_item_added"](
+        SimpleNamespace(
+            item=AssistantItem(role="assistant", text="Merci et bonne journée."),
+            created_at=datetime(2026, 6, 18, tzinfo=timezone.utc).timestamp(),
+        )
+    )
+    await bridge.drain()
+
+    assert events[0].payload["utterance_id"] == "session-test:closing"
+    assert events[0].payload["utterance_kind"] == "closing"
+    assert "question_id" not in events[0].payload["transcript_turn"]
+
+
+@pytest.mark.asyncio
 async def test_livekit_agent_bridge_emits_contract_aligned_session_failed() -> None:
     events: list[InterviewEvent] = []
     emitter = PreludeEventEmitter(
@@ -511,8 +640,32 @@ async def test_livekit_agent_bridge_emits_contract_aligned_session_failed() -> N
     assert events[0].payload == {
         "code": "livekit_agent_session_error",
         "message": "LiveKit agent session failed: RuntimeError",
-        "retryable": True,
+        "retryable": False,
     }
+
+
+@pytest.mark.asyncio
+async def test_livekit_agent_bridge_ignores_recoverable_session_error() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeAgentSession()
+    bridge = LiveKitAgentEventBridge(emitter=emitter)
+    bridge.register(session)
+
+    session.handlers["error"](
+        SimpleNamespace(
+            error=SimpleNamespace(recoverable=True),
+            created_at=datetime(2026, 6, 18, tzinfo=timezone.utc).timestamp(),
+        )
+    )
+    await bridge.drain()
+
+    assert events == []
 
 
 @pytest.mark.asyncio
@@ -611,10 +764,9 @@ async def test_live_orchestration_controller_completes_three_question_flow() -> 
     assert events[-1].payload["total_questions"] == 3
     assert events[-1].payload["closing"] == events[-2].payload["closing"]
     assert events[-1].payload["closing_playout_status"] == "completed"
-    assert len(session.replies) >= 4
-    assert events[-2].payload["closing"] in session.replies[-1]["user_input"]
-    assert session.replies[-1]["instructions"].startswith("Say exactly this closing message")
-    assert session.replies[-1]["allow_interruptions"] is True
+    assert len(session.replies) == 3
+    assert session.spoken[-1]["text"] == events[-2].payload["closing"]
+    assert session.spoken[-1]["allow_interruptions"] is False
 
 
 def test_live_transcript_role_clarification_does_not_complete_answer() -> None:
@@ -694,7 +846,10 @@ def test_live_transcript_classifies_wait_partial_and_complete_answers() -> None:
 
     assert partial_turn.candidate_intent == CandidateTurnIntent.ANSWER_PARTIAL
     assert partial_turn.is_answer_to_active_question is True
-    assert InterviewOrchestrator.classify_candidate_turn(partial_turn) == AnswerClassification.VAGUE
+    assert (
+        InterviewOrchestrator.classify_candidate_turn(partial_turn)
+        == AnswerClassification.VAGUE
+    )
 
     assert answer_turn.candidate_intent == CandidateTurnIntent.ANSWER_COMPLETE
     assert answer_turn.is_complete is True
@@ -702,6 +857,58 @@ def test_live_transcript_classifies_wait_partial_and_complete_answers() -> None:
         InterviewOrchestrator.classify_candidate_turn(answer_turn)
         == AnswerClassification.COMPLETE
     )
+
+
+def test_candidate_intent_markers_do_not_match_inside_answer_words_or_context() -> None:
+    for transcript in [
+        "I worked as a waiter and trained five new colleagues.",
+        "We had to repeat deployments until the migration was stable.",
+        "The project required skipping optional checks only after a risk review.",
+    ]:
+        turn = _candidate_turn_from_live_transcript(
+            question_id="q1",
+            transcript=transcript,
+            occurred_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
+        )
+
+        assert turn.wait_requested is False, transcript
+        assert turn.repeat_requested is False, transcript
+        assert turn.skip_requested is False, transcript
+        assert turn.is_answer_to_active_question is True, transcript
+
+
+def test_candidate_intents_cover_short_factual_answers_and_support_phrases() -> None:
+    occurred_at = datetime(2026, 6, 18, tzinfo=timezone.utc)
+    available = _candidate_turn_from_live_transcript(
+        question_id="q1",
+        transcript="Je suis disponible immédiatement.",
+        occurred_at=occurred_at,
+    )
+    compensation = _candidate_turn_from_live_transcript(
+        question_id="q1",
+        transcript="45 000 euros brut.",
+        occurred_at=occurred_at,
+    )
+    repeat = _candidate_turn_from_live_transcript(
+        question_id="q1",
+        transcript="Pardon, pouvez-vous répéter ?",
+        occurred_at=occurred_at,
+    )
+    technical = _candidate_turn_from_live_transcript(
+        question_id="q1",
+        transcript="Vous m'entendez ?",
+        occurred_at=occurred_at,
+    )
+
+    for answer in (available, compensation):
+        assert answer.candidate_intent == CandidateTurnIntent.ANSWER_COMPLETE
+        assert answer.is_complete is True
+        assert answer.is_answer_to_active_question is True
+
+    assert repeat.candidate_intent == CandidateTurnIntent.REPEAT_REQUEST
+    assert repeat.repeat_requested is True
+    assert technical.candidate_intent == CandidateTurnIntent.TECHNICAL_ISSUE
+    assert technical.repeat_requested is True
 
 
 def test_live_transcript_treats_a_too_short_answer_as_partial() -> None:
@@ -718,7 +925,9 @@ def test_live_transcript_treats_a_too_short_answer_as_partial() -> None:
     assert turn.is_complete is False
 
 
-def test_live_transcript_does_not_confuse_answer_examples_with_example_request() -> None:
+def test_live_transcript_does_not_confuse_answer_examples_with_example_request() -> (
+    None
+):
     for transcript in [
         "Par exemple, j'ai priorise une roadmap apres un incident client.",
         "J'ai travaille sur des microservices avec l'equipe technique.",
@@ -740,7 +949,9 @@ def test_live_transcript_does_not_confuse_answer_examples_with_example_request()
 
 
 @pytest.mark.asyncio
-async def test_live_orchestration_controller_repeats_role_context_without_completing_question() -> None:
+async def test_live_orchestration_controller_repeats_role_context_without_completing_question() -> (
+    None
+):
     events: list[InterviewEvent] = []
     emitter = PreludeEventEmitter(
         session_id="session-test",
@@ -765,19 +976,27 @@ async def test_live_orchestration_controller_repeats_role_context_without_comple
     assert event_types.count(EventType.ANSWER_EVALUATED) == 1
     assert event_types.count(EventType.QUESTION_REPEATED) == 1
     assert EventType.QUESTION_COMPLETED not in event_types
-    finalized = next(event for event in events if event.type == EventType.CANDIDATE_TURN_FINALIZED)
+    finalized = next(
+        event for event in events if event.type == EventType.CANDIDATE_TURN_FINALIZED
+    )
     assert finalized.payload["candidate_intent"] == "clarify_role"
     assert finalized.payload["is_answer_to_active_question"] is False
     assert finalized.payload["classifier_reason"] == "candidate_requested_role_context"
-    evaluated = next(event for event in events if event.type == EventType.ANSWER_EVALUATED)
+    evaluated = next(
+        event for event in events if event.type == EventType.ANSWER_EVALUATED
+    )
     assert "candidate_intent:clarify_role" in evaluated.payload["reason_codes"]
-    repeated = next(event for event in events if event.type == EventType.QUESTION_REPEATED)
+    repeated = next(
+        event for event in events if event.type == EventType.QUESTION_REPEATED
+    )
     assert "Product Manager B2B SaaS" in repeated.payload["prompt"]
     assert "Do not move to the next question" in session.replies[-1]["instructions"]
 
 
 @pytest.mark.asyncio
-async def test_live_orchestration_controller_gives_examples_without_completing_question() -> None:
+async def test_live_orchestration_controller_gives_examples_without_completing_question() -> (
+    None
+):
     events: list[InterviewEvent] = []
     emitter = PreludeEventEmitter(
         session_id="session-test",
@@ -801,12 +1020,76 @@ async def test_live_orchestration_controller_gives_examples_without_completing_q
     event_types = [event.type for event in events]
     assert event_types.count(EventType.QUESTION_REPEATED) == 1
     assert EventType.QUESTION_COMPLETED not in event_types
-    repeated = next(event for event in events if event.type == EventType.QUESTION_REPEATED)
+    repeated = next(
+        event for event in events if event.type == EventType.QUESTION_REPEATED
+    )
     assert repeated.payload["candidate_intent"] == "example_request"
     assert repeated.payload["reason"] == "candidate_requested_repeat"
     assert repeated.payload["support_reason"] == "candidate_requested_examples"
     assert "neutral examples" in session.replies[-1]["instructions"]
     assert "Do not move to the next question" in session.replies[-1]["instructions"]
+    assert "Par exemple" in session.replies[-1]["instructions"]
+
+
+@pytest.mark.parametrize(
+    ("intent", "expected_fr", "expected_en"),
+    [
+        (CandidateTurnIntent.REFORMULATE_REQUEST, "Autrement dit", "In other words"),
+        (CandidateTurnIntent.EXAMPLE_REQUEST, "Par exemple", "For example"),
+        (CandidateTurnIntent.TECHNICAL_ISSUE, "entendez", "hear"),
+        (
+            CandidateTurnIntent.PREVIOUS_ANSWER_NOT_COMPLETED,
+            "Désolé",
+            "Sorry",
+        ),
+    ],
+)
+def test_candidate_support_responses_are_spoken_and_localized(
+    intent: CandidateTurnIntent,
+    expected_fr: str,
+    expected_en: str,
+) -> None:
+    plan_fr = create_demo_plan()
+    plan_en = InterviewPlan(
+        id="p-en",
+        role_title="Support Agent",
+        language="en-GB",
+        questions=[InterviewQuestion(id="q1", prompt="Tell me about your experience.")],
+    )
+
+    response_fr = _repeat_response_for_candidate_intent(
+        plan=plan_fr,
+        question_prompt=plan_fr.questions[0].prompt,
+        intent=intent,
+    )
+    response_en = _repeat_response_for_candidate_intent(
+        plan=plan_en,
+        question_prompt=plan_en.questions[0].prompt,
+        intent=intent,
+    )
+
+    assert expected_fr in response_fr.prompt
+    assert plan_fr.questions[0].prompt in response_fr.prompt
+    assert expected_en in response_en.prompt
+    assert plan_en.questions[0].prompt in response_en.prompt
+
+
+def test_role_clarification_is_localized_in_english() -> None:
+    plan = InterviewPlan(
+        id="p-en",
+        role_title="Support Agent",
+        language="en-GB",
+        questions=[InterviewQuestion(id="q1", prompt="Tell me about your experience.")],
+    )
+
+    response = _repeat_response_for_candidate_intent(
+        plan=plan,
+        question_prompt=plan.questions[0].prompt,
+        intent=CandidateTurnIntent.CLARIFY_ROLE,
+    )
+
+    assert response.prompt.startswith("This interview is for the Support Agent role.")
+    assert "Le poste est" not in response.prompt
 
 
 @pytest.mark.asyncio
@@ -827,17 +1110,24 @@ async def test_live_orchestration_controller_speaks_exact_planned_questions() ->
 
     await controller.start()
 
-    assert "pouvez-vous vous presenter brievement" in session.replies[-1]["user_input"]
-    assert "Read this exact interviewer line aloud verbatim" in session.replies[-1][
-        "user_input"
-    ]
-    assert "Do not improvise a different question" in session.replies[-1][
-        "instructions"
-    ]
+    assert "user_input" not in session.replies[-1]
+    assert (
+        "pouvez-vous vous presenter brievement"
+        in session.replies[-1]["instructions"]
+    )
+    assert (
+        "Read this exact interviewer line aloud verbatim"
+        in session.replies[-1]["instructions"]
+    )
+    assert (
+        "Do not improvise a different question" in session.replies[-1]["instructions"]
+    )
 
 
 @pytest.mark.asyncio
-async def test_live_orchestration_controller_ignores_backchannel_while_agent_speaks() -> None:
+async def test_live_orchestration_controller_ignores_backchannel_while_agent_speaks() -> (
+    None
+):
     events: list[InterviewEvent] = []
     emitter = PreludeEventEmitter(
         session_id="session-test",
@@ -850,6 +1140,7 @@ async def test_live_orchestration_controller_ignores_backchannel_while_agent_spe
         plan=create_demo_plan(),
         emitter=emitter,
         session=session,
+        legacy_interruption_filter=True,
     )
     controller._agent_speech_in_progress = True
     controller._agent_speech_payload = {
@@ -869,7 +1160,9 @@ async def test_live_orchestration_controller_ignores_backchannel_while_agent_spe
 
 
 @pytest.mark.asyncio
-async def test_live_orchestration_controller_reopens_previous_intro_when_candidate_was_cut() -> None:
+async def test_live_orchestration_controller_reopens_previous_intro_when_candidate_was_cut() -> (
+    None
+):
     events: list[InterviewEvent] = []
     emitter = PreludeEventEmitter(
         session_id="session-test",
@@ -919,7 +1212,7 @@ async def test_wait_for_playout_with_timeout_never_blocks_session_completion() -
 
 
 @pytest.mark.asyncio
-async def test_live_orchestration_controller_routes_initial_silence_to_soft_reprompt() -> None:
+async def test_inactivity_check_in_never_creates_or_evaluates_candidate_turn() -> None:
     events: list[InterviewEvent] = []
     emitter = PreludeEventEmitter(
         session_id="session-test",
@@ -935,21 +1228,124 @@ async def test_live_orchestration_controller_routes_initial_silence_to_soft_repr
     )
     await controller.start()
 
-    await _soft_prompt_after_initial_silence(
-        bridge=FakeBridge(),
-        threshold_seconds=0,
-        on_initial_silence=controller.handle_initial_silence,
-        emitter=emitter,
-        question_id="q1",
+    await controller.handle_inactivity_step(
+        InactivityStep(
+            stage=InactivityStage.CHECK_IN,
+            trigger=InactivityTrigger.USER_AWAY,
+            silent_for_seconds=15,
+            next_action_in_seconds=20,
+        )
     )
 
     event_types = [event.type for event in events]
     assert EventType.SILENCE_TIMEOUT_STARTED in event_types
-    assert EventType.ANSWER_EVALUATED in event_types
-    assert EventType.SOFT_REPROMPTED in event_types
-    evaluated = next(event for event in events if event.type == EventType.ANSWER_EVALUATED)
-    assert evaluated.payload["classification"] == "silent"
-    assert evaluated.payload["policy_action"] == "soft_reprompt"
+    assert EventType.ANSWER_EVALUATED not in event_types
+    assert EventType.CANDIDATE_TURN_FINALIZED not in event_types
+    silence = next(
+        event for event in events if event.type == EventType.SILENCE_TIMEOUT_STARTED
+    )
+    assert silence.payload["tier"] == "check_in"
+    assert silence.payload["remaining_ms"] == 20000
+    assert "Êtes-vous toujours avec moi" in session.spoken[-1]["text"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_inactivity_closes_as_retryable_failure() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+    await controller.start()
+
+    await controller.close_for_inactivity(
+        InactivityTrigger.USER_AWAY,
+        silent_for_seconds=55,
+    )
+
+    event_types = [event.type for event in events]
+    assert EventType.SESSION_FAILED in event_types
+    assert EventType.SESSION_COMPLETED not in event_types
+    assert EventType.ANSWER_EVALUATED not in event_types
+    failed = next(event for event in events if event.type == EventType.SESSION_FAILED)
+    assert failed.payload["code"] == "candidate_inactivity_timeout"
+    assert failed.payload["retryable"] is True
+    assert controller.is_terminal
+
+
+@pytest.mark.asyncio
+async def test_wait_request_is_acknowledged_then_current_question_is_resumed() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+        candidate_wait_seconds=0.01,
+    )
+    await controller.start()
+
+    await controller.handle_candidate_transcript(
+        "Laissez-moi un moment s'il vous plaît.",
+        datetime.now(timezone.utc),
+    )
+    assert "Prenez le temps" in session.replies[-1]["instructions"]
+
+    await asyncio.sleep(0.02)
+
+    assert EventType.WAIT_REQUESTED in [event.type for event in events]
+    assert (
+        create_demo_plan().questions[0].prompt
+        in session.replies[-1]["instructions"]
+    )
+    assert EventType.QUESTION_COMPLETED not in [event.type for event in events]
+
+
+@pytest.mark.asyncio
+async def test_disconnect_pauses_controller_and_reconnect_repeats_active_question() -> (
+    None
+):
+    events: list[InterviewEvent] = []
+    plan = create_demo_plan()
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=plan,
+        emitter=emitter,
+        session=session,
+    )
+    await controller.start()
+    initial_reply_count = len(session.replies)
+    controller.pause_for_candidate_disconnect()
+
+    await controller.handle_candidate_transcript(
+        "This stale transcript must not advance the interview.",
+        datetime.now(timezone.utc),
+    )
+    await controller.resume_after_candidate_reconnect()
+
+    assert len(session.replies) == initial_reply_count + 1
+    assert plan.questions[0].prompt in session.replies[-1]["instructions"]
+    assert EventType.QUESTION_COMPLETED not in [event.type for event in events]
 
 
 @pytest.mark.asyncio
@@ -987,6 +1383,114 @@ async def test_controller_closes_gracefully_on_candidate_withdrawal() -> None:
     assert EventType.ANSWER_EVALUATED not in event_types
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "candidate_request",
+    [
+        "Je ne suis plus à l'aise et je préfère ne pas continuer cet entretien.",
+        "Je retire mon consentement et je souhaite arrêter ici.",
+        "I no longer consent to this interview.",
+        "I am not comfortable continuing and would like to stop here.",
+    ],
+)
+async def test_natural_consent_withdrawal_closes_without_scoring(
+    candidate_request: str,
+) -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+    await controller.start()
+
+    await controller.handle_candidate_transcript(
+        candidate_request,
+        datetime.now(timezone.utc),
+    )
+
+    assert EventType.SESSION_COMPLETED in [event.type for event in events]
+    assert EventType.ANSWER_EVALUATED not in [event.type for event in events]
+
+
+@pytest.mark.asyncio
+async def test_controller_closes_with_localized_reason_on_max_duration() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    session = FakeLiveSession()
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=session,
+    )
+    await controller.start()
+
+    await controller.close_for_max_duration()
+
+    closing = next(event for event in events if event.type == EventType.SESSION_CLOSING)
+    completed = next(
+        event for event in events if event.type == EventType.SESSION_COMPLETED
+    )
+    assert controller.is_terminal is True
+    assert completed.payload["completed_reason"] == "max_duration_reached"
+    assert completed.payload["completed_questions"] == 0
+    assert closing.payload["closing"] == completed.payload["closing"]
+    assert "temps prévu" in closing.payload["closing"]
+    assert "enregistrées" in closing.payload["closing"]
+    assert session.spoken[-1]["text"] == closing.payload["closing"]
+    assert completed.payload["closing_playout_status"] == "completed"
+    assert session.spoken[-1]["allow_interruptions"] is False
+
+
+def test_standard_checkout_is_neutral_and_mentions_human_review() -> None:
+    message_fr = _closing_message(create_demo_plan()).lower()
+    plan_en = InterviewPlan(
+        id="p-en",
+        role_title="Support Agent",
+        language="en-GB",
+        questions=[InterviewQuestion(id="q1", prompt="Tell me about yourself.")],
+    )
+    message_en = _closing_message(plan_en).lower()
+
+    assert "équipe recrutement" in message_fr
+    assert "recruiting team" in message_en
+    assert "si votre profil correspond" not in message_fr
+    assert "if your profile matches" not in message_en
+
+
+@pytest.mark.asyncio
+async def test_max_duration_waits_for_candidate_turn_boundary() -> None:
+    bridge = SimpleNamespace(candidate_is_speaking=True)
+    controller = SimpleNamespace(agent_is_speaking=False)
+
+    async def finish_turn() -> None:
+        await asyncio.sleep(0.01)
+        bridge.candidate_is_speaking = False
+
+    finish_task = asyncio.create_task(finish_turn())
+    reached_boundary = await _wait_for_turn_boundary(
+        bridge,
+        controller,
+        timeout_seconds=0.1,
+        poll_interval_seconds=0.001,
+    )
+    await finish_task
+
+    assert reached_boundary is True
+
+
 def test_live_worker_config_reads_max_duration_from_env() -> None:
     config = OpenAILiveWorkerConfig.from_env(
         {
@@ -994,94 +1498,38 @@ def test_live_worker_config_reads_max_duration_from_env() -> None:
             "OPENAI_REALTIME_VOICE": "marin",
             "OPENAI_REALTIME_TURN_DETECTION": "semantic_vad",
             "OPENAI_REALTIME_REASONING_EFFORT": "low",
-            "LIVE_WORKER_MAX_DURATION_SECONDS": "2.5",
-            "LIVE_WORKER_SOFT_PROMPT_AFTER_SECONDS": "8",
-        }
-    )
+                "LIVE_WORKER_MAX_DURATION_SECONDS": "2.5",
+                "LIVE_WORKER_INACTIVITY_USER_AWAY_SECONDS": "15",
+                "LIVE_WORKER_INACTIVITY_WARNING_SECONDS": "20",
+                "LIVE_WORKER_INACTIVITY_TERMINATE_SECONDS": "20",
+                "LIVE_WORKER_CANDIDATE_WAIT_SECONDS": "60",
+            }
+        )
 
     assert config.max_duration_seconds == 2.5
     assert config.candidate_ready_timeout_seconds == 120.0
-    assert config.soft_prompt_after_seconds == 8
+    assert config.inactivity_user_away_seconds == 15
+    assert config.inactivity_warning_seconds == 20
+    assert config.inactivity_terminate_seconds == 20
+    assert config.candidate_wait_seconds == 60
 
 
-@pytest.mark.asyncio
-async def test_soft_prompt_after_initial_silence_emits_event_and_reprompts() -> None:
-    events: list[InterviewEvent] = []
-    emitter = PreludeEventEmitter(
-        session_id="session-test",
-        candidate_id="candidate-test",
-        provider_metadata={"provider": "openai_realtime"},
-        emit_event=lambda event: _append_event(events, event),
-    )
-    session = FakeLiveSession()
-    bridge = FakeBridge()
-
-    await _soft_prompt_after_initial_silence(
-        session=session,
-        emitter=emitter,
-        bridge=bridge,
-        question_id="q1",
-        threshold_seconds=0,
+def test_live_worker_config_uses_model_defaults_for_blank_env_values() -> None:
+    config = OpenAILiveWorkerConfig.from_env(
+        {
+            "OPENAI_REALTIME_MODEL": "gpt-realtime-2.1",
+            "OPENAI_REALTIME_VOICE": "marin",
+            "OPENAI_REALTIME_TURN_DETECTION": "semantic_vad",
+            "OPENAI_REALTIME_REASONING_EFFORT": "low",
+            "OPENAI_REALTIME_TRANSCRIPTION_MODEL": " ",
+            "LIVEKIT_STT_MODEL": "",
+            "OPENAI_EXACT_TTS_MODEL": "",
+        }
     )
 
-    assert bridge.drained
-    assert events[0].type == EventType.SILENCE_TIMEOUT_STARTED
-    assert events[0].actor == EventActor.SYSTEM
-    assert events[0].payload == {
-        "question_id": "q1",
-        "tier": "soft_prompt",
-        "threshold_ms": 0,
-    }
-    assert session.replies
-    assert session.replies[0]["allow_interruptions"] is True
-    assert session.last_reply is not None
-    assert session.last_reply.playout_waited
-
-
-@pytest.mark.asyncio
-async def test_soft_prompt_after_initial_silence_skips_when_candidate_answered() -> None:
-    events: list[InterviewEvent] = []
-    emitter = PreludeEventEmitter(
-        session_id="session-test",
-        candidate_id="candidate-test",
-        provider_metadata={"provider": "openai_realtime"},
-        emit_event=lambda event: _append_event(events, event),
-    )
-    session = FakeLiveSession()
-
-    await _soft_prompt_after_initial_silence(
-        session=session,
-        emitter=emitter,
-        bridge=FakeBridge(candidate_turn_count=1),
-        question_id="q1",
-        threshold_seconds=0,
-    )
-
-    assert events == []
-    assert session.replies == []
-
-
-@pytest.mark.asyncio
-async def test_soft_prompt_after_initial_silence_skips_when_candidate_had_activity() -> None:
-    events: list[InterviewEvent] = []
-    emitter = PreludeEventEmitter(
-        session_id="session-test",
-        candidate_id="candidate-test",
-        provider_metadata={"provider": "openai_realtime"},
-        emit_event=lambda event: _append_event(events, event),
-    )
-    session = FakeLiveSession()
-
-    await _soft_prompt_after_initial_silence(
-        session=session,
-        emitter=emitter,
-        bridge=FakeBridge(candidate_activity_seen=True),
-        question_id="q1",
-        threshold_seconds=0,
-    )
-
-    assert events == []
-    assert session.replies == []
+    assert config.input_transcription_model == "gpt-4o-transcribe"
+    assert config.livekit_stt_model == "deepgram/nova-3"
+    assert config.exact_tts_model == "gpt-4o-mini-tts"
 
 
 @pytest.mark.asyncio
@@ -1183,10 +1631,10 @@ def test_live_interviewer_instructions_adapt_to_operational_roles() -> None:
     )
     assert "plain and concrete language" in instructions
     assert "experience, availability" in instructions
-    assert (
-        "mobility, customer interaction, work rhythm, safety, and team fit"
-        in instructions
-    )
+    assert "mobility, customer interaction, work rhythm, safety" in instructions
+    assert "observable" in instructions
+    assert "collaboration requirements" in instructions
+    assert "team fit" not in instructions
     assert "Never force a corporate interview style" in instructions
 
 
@@ -1216,8 +1664,14 @@ def test_live_interviewer_instructions_use_listening_without_fake_empathy() -> N
     assert "Candidate comfort:" in instructions
     assert "fixed canned comfort phrases" in instructions
     assert "Do not pretend to feel emotions" in instructions
-    assert 'Avoid generic reassurance such as "don\'t worry" or "rassurez-vous"' in instructions
+    assert (
+        'Avoid generic reassurance such as "don\'t worry" or "rassurez-vous"'
+        in instructions
+    )
     assert "Listening and pacing:" in instructions
+    assert "Voice delivery:" in instructions
+    assert "natural contemporary French prosody" in instructions
+    assert "narrator, announcer, virtual assistant" in instructions
     assert "Do not interrupt" in instructions
     assert "Avoid paraphrasing every answer" in instructions
     assert "If an answer is complete, move to the next planned question" in instructions
@@ -1233,12 +1687,15 @@ def test_live_interviewer_instructions_avoid_restarting_greeting() -> None:
     assert "do not add another greeting" in instructions
 
 
-def test_live_interviewer_instructions_strip_prompt_initial_greeting_for_speech() -> None:
+def test_live_interviewer_instructions_strip_prompt_initial_greeting_for_speech() -> (
+    None
+):
     instructions = build_live_interviewer_instructions(create_demo_plan())
 
-    assert _spoken_question_prompt(
-        "Bonjour, pouvez-vous vous presenter brievement ?"
-    ) == "pouvez-vous vous presenter brievement ?"
+    assert (
+        _spoken_question_prompt("Bonjour, pouvez-vous vous presenter brievement ?")
+        == "pouvez-vous vous presenter brievement ?"
+    )
     assert _spoken_question_prompt("Hello! Tell me about yourself.") == (
         "Tell me about yourself."
     )
@@ -1261,8 +1718,7 @@ def test_live_interviewer_instructions_forbid_emotion_inference_from_voice() -> 
     instructions = build_live_interviewer_instructions(create_demo_plan())
 
     assert (
-        "Do not infer, guess, or act on the candidate's emotional state"
-        in instructions
+        "Do not infer, guess, or act on the candidate's emotional state" in instructions
     )
     assert "Respond only to the words they say and to observable events" in instructions
     assert "you sound nervous" in instructions
@@ -1313,8 +1769,7 @@ def test_transition_leadins_rotate_neutral_and_localize() -> None:
         assert line in TRANSITION_LEADINS["fr"]
         lowered = line.lower()
         assert all(
-            word not in lowered
-            for word in ("bravo", "parfait", "excellent", "super")
+            word not in lowered for word in ("bravo", "parfait", "excellent", "super")
         )
 
     plan_en = InterviewPlan(
@@ -1337,9 +1792,7 @@ def test_question_spoken_text_warms_transitions_but_not_the_first() -> None:
     assert "présélection structuré" in first_text
     assert not first_text.startswith(tuple(TRANSITION_LEADINS["fr"]))
 
-    later = _question_spoken_text(
-        plan, plan.questions[1].prompt, first=False, index=1
-    )
+    later = _question_spoken_text(plan, plan.questions[1].prompt, first=False, index=1)
     # A later question opens with a neutral lead-in, then the verbatim question.
     assert later.startswith(_transition_leadin(plan, 1))
     assert _spoken_question_prompt(plan.questions[1].prompt) in later
@@ -1403,8 +1856,10 @@ def test_classifier_does_not_treat_answer_content_as_withdrawal() -> None:
     for answer in [
         "Je veux arrêter de procrastiner et mieux organiser mes journées de travail.",
         "I had to stop the project midway last year when the priorities shifted.",
-        "Dans mon dernier poste je devais souvent parler à un humain au support "
-        "avant d'escalader un incident critique à l'équipe technique concernée.",
+        (
+            "Dans mon dernier poste je devais souvent parler à un humain au support "
+            "avant d'escalader un incident critique à l'équipe technique concernée."
+        ),
     ]:
         turn = classifier.classify(
             question_id="q1", transcript=answer, occurred_at=occurred
@@ -1444,4 +1899,51 @@ def test_live_interviewer_instructions_never_expose_the_expected_signal() -> Non
 
 def test_realtime_reasoning_is_only_enabled_for_supported_models() -> None:
     assert _supports_realtime_reasoning("gpt-realtime-2")
+    assert _supports_realtime_reasoning("gpt-realtime-2.1")
     assert not _supports_realtime_reasoning("gpt-realtime")
+
+
+@pytest.mark.asyncio
+async def test_controller_logs_answer_inference_fallback_with_question_context(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class FallbackInference:
+        async def assess_answer(self, **_kwargs: object) -> object:
+            return SimpleNamespace(
+                classification=AnswerClassification.COMPLETE,
+                reason_codes=["llm_fallback:TimeoutError"],
+                confidence=0.4,
+                evaluation_matrix=None,
+            )
+
+    async def emit_event(_event: InterviewEvent) -> None:
+        return None
+
+    emitter = PreludeEventEmitter(
+        session_id="session-test",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=emit_event,
+    )
+    controller = LiveInterviewOrchestrationController(
+        plan=create_demo_plan(),
+        emitter=emitter,
+        session=FakeLiveSession(),
+        answer_inference=FallbackInference(),
+    )
+    await controller.start()
+
+    with caplog.at_level(logging.WARNING):
+        await controller.handle_candidate_transcript(
+            "Voici une réponse complète avec assez de contexte pour être évaluée.",
+            datetime(2026, 6, 18, tzinfo=timezone.utc),
+        )
+
+    record = next(
+        item
+        for item in caplog.records
+        if item.getMessage() == "answer inference fallback used by live interview"
+    )
+    assert record.session_id == "session-test"
+    assert record.question_id == "q1"
+    assert record.fallback_reason_codes == ["llm_fallback:TimeoutError"]

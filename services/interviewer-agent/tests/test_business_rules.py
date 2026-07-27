@@ -1,7 +1,6 @@
 import pytest
-
-from app.adapters.realtime_api import InMemoryRealtimeApiClient
 from app.adapters.mock_openai_realtime import MockOpenAIRealtimeAdapter
+from app.adapters.realtime_api import InMemoryRealtimeApiClient
 from app.application.session_runner import InterviewSessionRunner
 from app.domain.models import (
     CandidateTurn,
@@ -288,7 +287,7 @@ async def test_runner_challenges_absurd_answer_with_evaluation_matrix() -> None:
         event for event in realtime_api.events if event.type == EventType.FOLLOWUP_ASKED
     ]
     assert len(followups) == 1
-    assert "recentrer" in followups[0].payload["prompt"]
+    assert "pas bien compris le lien" in followups[0].payload["prompt"]
 
 
 @pytest.mark.asyncio

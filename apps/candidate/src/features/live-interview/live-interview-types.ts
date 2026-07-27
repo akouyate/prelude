@@ -8,6 +8,7 @@ export type RoomStatus =
   | "connected"
   | "interviewer_speaking"
   | "candidate_speaking"
+  | "processing"
   | "listening"
   | "reconnecting"
   | "closing"
@@ -58,7 +59,15 @@ export type LiveSessionState = {
 
 export type ConnectedRoom = {
   disconnect: () => void;
+  sendControl: (
+    type: "candidate_presence_confirmed" | "repeat_question",
+  ) => Promise<void>;
   startAudio: () => Promise<void>;
+};
+
+export type CandidateInactivityNotice = {
+  stage: "check_in" | "warning";
+  expiresAt: string | null;
 };
 
 export type LiveTranscriptTurnHandler = (turn: LiveTranscriptTurn) => void;
