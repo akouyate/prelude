@@ -194,15 +194,21 @@ func (g *RealGateway) StartRoomCompositeEgress(ctx context.Context, input applic
 
 // StopEgress ends an in-flight egress so the recording finalizes promptly. It is
 // best-effort at the call site; LiveKit also auto-stops on room close.
-func (g *RealGateway) StopEgress(ctx context.Context, egressID string) error {
+func (g *RealGateway) StopEgress(ctx context.Context, egressID string) (application.EgressState, error) {
 	egressID = strings.TrimSpace(egressID)
 	if egressID == "" {
-		return fmt.Errorf("livekit egress id is required")
+		return application.EgressState{}, fmt.Errorf("livekit egress id is required")
 	}
 
-	_, err := g.egressClient.StopEgress(ctx, &livekit.StopEgressRequest{EgressId: egressID})
+	info, err := g.egressClient.StopEgress(ctx, &livekit.StopEgressRequest{EgressId: egressID})
+	if err != nil {
+		return application.EgressState{}, err
+	}
+	if info == nil {
+		return application.EgressState{}, fmt.Errorf("livekit stop egress response was empty")
+	}
 
-	return err
+	return egressStateFromInfo(info), nil
 }
 
 // GetEgress polls one egress job's current state (via ListEgress filtered by id).
