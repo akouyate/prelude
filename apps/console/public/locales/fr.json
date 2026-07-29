@@ -37,9 +37,9 @@
         "uploadTitle": "Importer une fiche de poste",
         "uploadDescription": "Extrayez un PDF ou DOCX de façon privée, puis vérifiez chaque champ.",
         "uploadMeta": "Le plus rapide",
-        "urlTitle": "Importer une page carrière",
-        "urlDescription": "Utilisez la page publique d'origine sur le site carrière de l'employeur.",
-        "urlMeta": "Site de l'entreprise",
+        "urlTitle": "Coller un lien d'offre",
+        "urlDescription": "Importez un lien public LinkedIn, Indeed, ATS ou site carrière.",
+        "urlMeta": "Toute offre publique",
         "unavailableTitle": "Importer une source",
         "unavailableDescription": "L'import par URL publique et par PDF/DOCX sera disponible lorsque l'import privé sera configuré."
       },
@@ -58,12 +58,12 @@
         }
       },
       "url": {
-        "title": "Importer une page carrière employeur",
-        "description": "HireCall lit la page publique d'origine de l'offre et vous demande de vérifier chaque champ extrait.",
-        "label": "URL de l'offre employeur",
-        "hint": "Utilisez la page carrière HTTPS d'origine. Les liens LinkedIn et Indeed nécessitent des intégrations partenaires dédiées et ne peuvent pas être importés ici.",
-        "placeholder": "https://careers.entreprise.com/jobs/product-designer",
-        "action": "Importer la page",
+        "title": "Importer un lien d'offre",
+        "description": "Collez un lien LinkedIn, Indeed, ATS ou site carrière. HireCall prépare un brouillon modifiable et vous demande de vérifier chaque champ.",
+        "label": "URL publique de l'offre",
+        "hint": "Utilisez le lien HTTPS public de l'offre exacte.",
+        "placeholder": "https://www.linkedin.com/jobs/view/…",
+        "action": "Préparer le brouillon",
         "preparing": "Préparation de l'import…",
         "errors": {
           "required": "Saisissez l'URL HTTPS publique d'une offre."
@@ -111,7 +111,7 @@
       "review": {
         "title": "Vérifiez la fiche de poste",
         "fileDescription": "HireCall a extrait le document sans inventer les informations manquantes. Confirmez les détails avant la rédaction des questions.",
-        "urlDescription": "HireCall a extrait la page publique sans exécuter ses scripts. Confirmez les détails avant la rédaction des questions.",
+        "urlDescription": "HireCall a préparé un brouillon modifiable depuis la source publique. Confirmez les détails avant la rédaction des questions.",
         "warningTitle": "Un détail demande votre attention",
         "validationSummary": "Ajoutez l'intitulé et la description du poste avant de continuer.",
         "roleTitle": "Intitulé du poste",
@@ -128,10 +128,12 @@
         "creating": "Création du poste…",
         "continue": "Utiliser cette fiche",
         "publicSource": "Source publique",
+        "indexedPublicSource": "Source indexée vérifiée",
         "uploadedSource": "Source importée",
         "sourceDetails": "Intitulé : {{title}} · Description : {{description}} · Localisation : {{location}}",
         "fieldSources": {
           "heading": "titre de la page",
+          "indexedSearch": "source indexée vérifiée",
           "jobPostingData": "données structurées de l'offre",
           "visiblePage": "contenu visible",
           "pageTitle": "titre de la page",
@@ -139,8 +141,12 @@
         }
       },
       "warnings": {
+        "indexed_source_review_required": "Ce brouillon provient d'une source publique indexée. Vérifiez chaque champ sur l'offre liée avant de continuer.",
         "extraction_truncated": "Le document était particulièrement long. Vérifiez la fin de la description, car le texte extrait a été raccourci.",
         "docx_parser_notice": "Une partie de la mise en forme du DOCX n'a pas pu être conservée. Vérifiez le texte extrait avant de continuer."
+      },
+      "manualFallback": {
+        "retainedLink": "Lien d'origine de l'offre conservé"
       }
     },
     "share": {

@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  createRoleIntakeUrlIdentity,
   RoleIntakeUrlImportError,
   extractRoleIntakeUrlDraft,
   fetchRoleIntakePublicPage,
   getPinnedLookupResult,
+  getRoleIntakeUrlAcquisitionStrategy,
   isGloballyRoutableIpAddress,
   normalizeRoleIntakeUrl,
 } from "./role-intake-url-importer";
@@ -19,6 +21,19 @@ describe("role intake public URL policy", () => {
   });
 
   it.each([
+    [
+      "https://www.linkedin.com/jobs/view/4436807221/?trk=public_jobs&trackingId=abc",
+      "https://www.linkedin.com/jobs/view/4436807221/",
+    ],
+    [
+      "https://fr.indeed.com/viewjob?vjk=f066959d3108e72b&from=serp",
+      "https://fr.indeed.com/viewjob?jk=f066959d3108e72b",
+    ],
+  ])("removes provider tracking from %s", (source, expected) => {
+    expect(normalizeRoleIntakeUrl(source).toString()).toBe(expected);
+  });
+
+  it.each([
     "http://careers.example.com/jobs/123",
     "https://user:password@careers.example.com/jobs/123",
     "https://127.0.0.1/jobs/123",
@@ -26,25 +41,34 @@ describe("role intake public URL policy", () => {
     "https://careers.example.com:8443/jobs/123",
     "https://careers.example.com/jobs/123?token=private",
   ])("rejects an unsafe or non-public source URL: %s", (value) => {
-    expect(() => normalizeRoleIntakeUrl(value)).toThrow(RoleIntakeUrlImportError);
+    expect(() => normalizeRoleIntakeUrl(value)).toThrow(
+      RoleIntakeUrlImportError,
+    );
+  });
+
+  it.each([
+    ["https://www.linkedin.com/jobs/view/4430499568/", "indexed_search"],
+    ["https://fr.indeed.com/viewjob?jk=public-job-id", "indexed_search"],
+    ["https://careers.example.com/jobs/123", "direct_html"],
+  ] as const)("routes %s through %s", (value, strategy) => {
+    const url = normalizeRoleIntakeUrl(value);
+
+    expect(getRoleIntakeUrlAcquisitionStrategy(url)).toBe(strategy);
   });
 
   it.each([
     [
-      "https://www.linkedin.com/jobs/view/4430499568/",
-      "LinkedIn job pages cannot be imported automatically. Use the original employer careers URL or start from a manual brief.",
+      "https://www.linkedin.com/jobs/view/4436807221/",
+      "https://fr.linkedin.com/jobs/view/site-engineer-4436807221?trk=public_jobs",
     ],
     [
-      "https://fr.indeed.com/viewjob?jk=public-job-id",
-      "Indeed job pages cannot be imported automatically. Use the original employer careers URL or start from a manual brief.",
+      "https://fr.indeed.com/viewjob?jk=f066959d3108e72b",
+      "https://www.indeed.com/viewjob?vjk=f066959d3108e72b&utm_source=search",
     ],
-  ])("gives an actionable provider-specific fallback for %s", (value, message) => {
-    expect(() => normalizeRoleIntakeUrl(value)).toThrow(
-      expect.objectContaining({
-        code: "provider_blocked",
-        message,
-      }),
-    );
+  ])("deduplicates provider aliases for %s", (first, second) => {
+    expect(
+      createRoleIntakeUrlIdentity(normalizeRoleIntakeUrl(first)),
+    ).toBe(createRoleIntakeUrlIdentity(normalizeRoleIntakeUrl(second)));
   });
 
   it.each([
@@ -63,9 +87,12 @@ describe("role intake public URL policy", () => {
     ["fe80::1", false],
     ["2001:db8::1", false],
     ["::ffff:127.0.0.1", false],
-  ])("classifies %s without treating special-purpose space as public", (address, expected) => {
-    expect(isGloballyRoutableIpAddress(address)).toBe(expected);
-  });
+  ])(
+    "classifies %s without treating special-purpose space as public",
+    (address, expected) => {
+      expect(isGloballyRoutableIpAddress(address)).toBe(expected);
+    },
+  );
 });
 
 describe("role intake public URL fetch", () => {
@@ -94,12 +121,17 @@ describe("role intake public URL fetch", () => {
         headers: { "content-type": "text/html; charset=utf-8" },
         statusCode: 200,
       });
-    const resolve = vi.fn().mockResolvedValue([{ address: "8.8.8.8", family: 4 }]);
+    const resolve = vi
+      .fn()
+      .mockResolvedValue([{ address: "8.8.8.8", family: 4 }]);
 
-    const result = await fetchRoleIntakePublicPage("https://careers.example.com/jobs/123", {
-      resolve,
-      request,
-    });
+    const result = await fetchRoleIntakePublicPage(
+      "https://careers.example.com/jobs/123",
+      {
+        resolve,
+        request,
+      },
+    );
 
     expect(request).toHaveBeenCalledTimes(2);
     expect(request).toHaveBeenNthCalledWith(
@@ -114,7 +146,9 @@ describe("role intake public URL fetch", () => {
       2,
       expect.objectContaining({
         address: "8.8.8.8",
-        headers: expect.not.objectContaining({ authorization: expect.anything() }),
+        headers: expect.not.objectContaining({
+          authorization: expect.anything(),
+        }),
         url: "https://careers.example.com/jobs/123",
       }),
     );
@@ -145,6 +179,16 @@ describe("role intake public URL fetch", () => {
   });
 
   it("revalidates each redirect and refuses a blocked provider before requesting it", async () => {
+    const indexedSearch = vi.fn().mockResolvedValue({
+      canonicalUrl: "https://www.linkedin.com/jobs/view/123",
+      citations: ["https://www.linkedin.com/jobs/view/123"],
+      draft: {
+        description:
+          "Build reliable product workflows and collaborate with engineering partners.",
+        location: "Paris",
+        title: "Product Designer",
+      },
+    });
     const request = vi
       .fn()
       .mockResolvedValueOnce({
@@ -160,11 +204,18 @@ describe("role intake public URL fetch", () => {
 
     await expect(
       fetchRoleIntakePublicPage("https://careers.example.com/jobs/123", {
+        indexedSearch,
         resolve: async () => [{ address: "8.8.8.8", family: 4 }],
         request,
       }),
-    ).rejects.toMatchObject({ code: "provider_blocked" });
+    ).resolves.toMatchObject({
+      acquisitionStrategy: "indexed_search",
+      canonicalUrl: "https://www.linkedin.com/jobs/view/123",
+    });
     expect(request).toHaveBeenCalledTimes(2);
+    expect(indexedSearch).toHaveBeenCalledWith(
+      new URL("https://www.linkedin.com/jobs/view/123"),
+    );
   });
 
   it("honors a robots denial and gives a manual fallback error", async () => {
@@ -178,6 +229,78 @@ describe("role intake public URL fetch", () => {
         }),
       }),
     ).rejects.toMatchObject({ code: "robots_disallowed" });
+  });
+
+  it("uses indexed search for LinkedIn without sending a crawler request", async () => {
+    const request = vi.fn();
+    const indexedSearch = vi.fn().mockResolvedValue({
+      canonicalUrl: "https://www.linkedin.com/jobs/view/4430499568",
+      citations: ["https://www.linkedin.com/jobs/view/4430499568/"],
+      draft: {
+        description:
+          "Design and operate production AI systems with distributed engineering teams.",
+        location: "Nice, France",
+        title: "Senior Software Engineer - AI (EMEA)",
+      },
+    });
+
+    const result = await fetchRoleIntakePublicPage(
+      "https://www.linkedin.com/jobs/view/4430499568/",
+      {
+        indexedSearch,
+        request,
+      },
+    );
+
+    expect(request).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      acquisitionStrategy: "indexed_search",
+      citationUrls: ["https://www.linkedin.com/jobs/view/4430499568/"],
+      extractorVersion: "indexed-web-search-v1",
+      fieldSources: {
+        description: "indexed_web_search",
+        location: "indexed_web_search",
+        title: "indexed_web_search",
+      },
+    });
+  });
+
+  it("falls back to indexed search when a public page has no usable static content", async () => {
+    const indexedSearch = vi.fn().mockResolvedValue({
+      canonicalUrl: "https://jobs.example.com/roles/456",
+      citations: ["https://jobs.example.com/roles/456"],
+      draft: {
+        description:
+          "Own the purchasing strategy, supplier relationships, and procurement reporting.",
+        location: null,
+        title: "Senior Buyer",
+      },
+    });
+    const request = vi
+      .fn()
+      .mockResolvedValueOnce({
+        body: "User-agent: PreludeRoleImporter\nAllow: /",
+        headers: { "content-type": "text/plain" },
+        statusCode: 200,
+      })
+      .mockResolvedValueOnce({
+        body: '<html><body><div id="app"></div><script>render()</script></body></html>',
+        headers: { "content-type": "text/html" },
+        statusCode: 200,
+      });
+
+    const result = await fetchRoleIntakePublicPage(
+      "https://jobs.example.com/roles/456",
+      {
+        indexedSearch,
+        request,
+        resolve: async () => [{ address: "8.8.8.8", family: 4 }],
+      },
+    );
+
+    expect(indexedSearch).toHaveBeenCalledOnce();
+    expect(result.acquisitionStrategy).toBe("indexed_search");
+    expect(result.fieldSources.location).toBe("unavailable");
   });
 });
 

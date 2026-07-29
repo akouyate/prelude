@@ -160,6 +160,7 @@ type InterviewAgentBuilderProps = {
   initialJobId?: string;
   initialJobLocation?: string;
   initialJobTitle?: string;
+  initialSourceUrl?: string;
 };
 
 type PersistedInterviewDraft = {
@@ -203,6 +204,7 @@ export function InterviewAgentBuilder({
   initialJobId,
   initialJobLocation = "",
   initialJobTitle = "",
+  initialSourceUrl,
 }: InterviewAgentBuilderProps) {
   const router = useRouter();
   const [currentStep, setCurrentStep] = React.useState<StepId>(
@@ -847,6 +849,7 @@ export function InterviewAgentBuilder({
               jobDescription={jobDescription}
               jobTitle={jobTitle}
               location={location}
+              sourceUrl={initialSourceUrl}
               onJobDescriptionChange={(value) => {
                 setJobDescription(value);
                 setSaveError(undefined);
@@ -1097,6 +1100,7 @@ function BriefStep({
   onJobDescriptionChange,
   onJobTitleChange,
   onLocationChange,
+  sourceUrl,
 }: {
   jobDescription: string;
   jobTitle: string;
@@ -1104,7 +1108,10 @@ function BriefStep({
   onJobDescriptionChange: (value: string) => void;
   onJobTitleChange: (value: string) => void;
   onLocationChange: (value: string) => void;
+  sourceUrl?: string;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="min-w-0">
       <div className="rounded-[24px] border border-[#e7e2d8] bg-white/58 p-4 sm:p-5">
@@ -1120,6 +1127,28 @@ function BriefStep({
             </p>
           </div>
         </div>
+
+        {sourceUrl ? (
+          <div className="mb-5 flex items-start gap-3 rounded-[16px] border border-[#e7e2d8] bg-[#f9f8f3] p-4">
+            <Link2
+              aria-hidden="true"
+              className="mt-0.5 h-4 w-4 shrink-0 text-olive-800"
+            />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-ink-900">
+                {t("roleIntake.manualFallback.retainedLink")}
+              </p>
+              <a
+                className="mt-1 block truncate text-sm text-ink-600 underline decoration-ink-300 underline-offset-4 hover:text-ink-900"
+                href={sourceUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                {sourceUrl}
+              </a>
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid gap-5">
           <TextField
@@ -1571,7 +1600,9 @@ function QuestionsStep({
                 onClick={() => void addWithAI(addTopic || "screening fit")}
               >
                 <Sparkles aria-hidden="true" className="h-4 w-4" />
-                {workingQuestionId === "new" ? "Adding..." : "Add with HireCall"}
+                {workingQuestionId === "new"
+                  ? "Adding..."
+                  : "Add with HireCall"}
               </Button>
             </div>
           </div>

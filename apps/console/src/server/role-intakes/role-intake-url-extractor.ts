@@ -26,6 +26,7 @@ const ignoredHtmlElements = new Set([
 const boilerplateHtmlElements = new Set(["aside", "footer", "header", "nav"]);
 
 export type RoleIntakeFieldSource =
+  | "indexed_web_search"
   | "job_posting_json_ld"
   | "main_content"
   | "heading"
@@ -47,23 +48,37 @@ export function extractRoleIntakeUrlDraft(html: string): {
   fieldSources: RoleIntakeUrlFieldSources;
   warnings: RoleIntakeWarning[];
 } {
-  const document = parseDocument(html, { decodeEntities: true, lowerCaseAttributeNames: true });
+  const document = parseDocument(html, {
+    decodeEntities: true,
+    lowerCaseAttributeNames: true,
+  });
   const nodes = collectHtmlNodes(document as unknown as HtmlNode);
   const structured = extractJobPosting(nodes);
   const main = findFirstElement(nodes, ["main", "article"]);
   const body = findFirstElement(nodes, ["body"]);
-  const visibleContent = normalizeVisibleText(main ?? body ?? (document as unknown as HtmlNode), {
-    excludeBoilerplate: !main,
-  });
+  const visibleContent = normalizeVisibleText(
+    main ?? body ?? (document as unknown as HtmlNode),
+    {
+      excludeBoilerplate: !main,
+    },
+  );
   const heading = normalizeText(nodeText(findFirstElement(nodes, ["h1"])));
-  const pageTitle = normalisePageTitle(nodeText(findFirstElement(nodes, ["title"])));
+  const pageTitle = normalisePageTitle(
+    nodeText(findFirstElement(nodes, ["title"])),
+  );
   const structuredDescription = structured?.description
-    ? normalizeVisibleText(parseDocument(structured.description) as unknown as HtmlNode, {
-        excludeBoilerplate: false,
-      })
+    ? normalizeVisibleText(
+        parseDocument(structured.description) as unknown as HtmlNode,
+        {
+          excludeBoilerplate: false,
+        },
+      )
     : "";
   const description = firstUsefulText(structuredDescription, visibleContent);
-  if (description.length < MIN_ROLE_DESCRIPTION_CHARACTERS || looksLikeAuthenticationGate(description)) {
+  if (
+    description.length < MIN_ROLE_DESCRIPTION_CHARACTERS ||
+    looksLikeAuthenticationGate(description)
+  ) {
     throw new RoleIntakeUrlImportError(
       "no_usable_text",
       "HireCall could not find a usable public job description. Start from a manual brief instead.",
@@ -87,19 +102,22 @@ export function extractRoleIntakeUrlDraft(html: string): {
   if (!title) {
     warnings.push({
       code: "title_unavailable",
-      message: "HireCall could not identify a role title. Add one before continuing.",
+      message:
+        "HireCall could not identify a role title. Add one before continuing.",
     });
   }
   if (!location) {
     warnings.push({
       code: "location_unavailable",
-      message: "HireCall could not identify a location. Add one if it matters for this role.",
+      message:
+        "HireCall could not identify a location. Add one if it matters for this role.",
     });
   }
   if (!structuredDescription) {
     warnings.push({
       code: "description_extracted_from_page",
-      message: "The job description was extracted from visible page content. Review it before continuing.",
+      message:
+        "The job description was extracted from visible page content. Review it before continuing.",
     });
   }
 
@@ -132,8 +150,13 @@ function collectHtmlNodes(root: HtmlNode): HtmlNode[] {
   return nodes;
 }
 
-function findFirstElement(nodes: HtmlNode[], names: string[]): HtmlNode | undefined {
-  return nodes.find((node) => node.type === "tag" && node.name && names.includes(node.name));
+function findFirstElement(
+  nodes: HtmlNode[],
+  names: string[],
+): HtmlNode | undefined {
+  return nodes.find(
+    (node) => node.type === "tag" && node.name && names.includes(node.name),
+  );
 }
 
 function nodeText(node: HtmlNode | undefined): string {
@@ -159,7 +182,10 @@ function rawNodeText(node: HtmlNode | undefined): string {
   return node.children?.map(rawNodeText).join("") ?? "";
 }
 
-function normalizeVisibleText(root: HtmlNode, options: { excludeBoilerplate: boolean }): string {
+function normalizeVisibleText(
+  root: HtmlNode,
+  options: { excludeBoilerplate: boolean },
+): string {
   const visit = (node: HtmlNode): string => {
     if (node.type === "text") {
       return node.data ?? "";
@@ -172,7 +198,8 @@ function normalizeVisibleText(root: HtmlNode, options: { excludeBoilerplate: boo
       return "";
     }
     const content = node.children?.map(visit).join(" ") ?? "";
-    return node.name && ["br", "div", "li", "p", "section", "h1", "h2", "h3"].includes(node.name)
+    return node.name &&
+      ["br", "div", "li", "p", "section", "h1", "h2", "h3"].includes(node.name)
       ? `${content}\n`
       : content;
   };
@@ -227,7 +254,8 @@ function flattenStructuredJson(value: unknown): Record<string, unknown>[] {
 function isJobPosting(value: Record<string, unknown>): boolean {
   const type = value["@type"];
   return (Array.isArray(type) ? type : [type]).some(
-    (candidate) => typeof candidate === "string" && candidate.toLowerCase() === "jobposting",
+    (candidate) =>
+      typeof candidate === "string" && candidate.toLowerCase() === "jobposting",
   );
 }
 
@@ -247,13 +275,15 @@ function extractJobLocation(value: unknown): string | null {
     return null;
   }
   const record = address as Record<string, unknown>;
-  return [record.addressLocality, record.addressRegion, record.addressCountry]
-    .flatMap((part) => {
-      const value = asString(part);
-      return value ? [value] : [];
-    })
-    .join(", ")
-    .trim() || null;
+  return (
+    [record.addressLocality, record.addressRegion, record.addressCountry]
+      .flatMap((part) => {
+        const value = asString(part);
+        return value ? [value] : [];
+      })
+      .join(", ")
+      .trim() || null
+  );
 }
 
 function asString(value: unknown): string | null {
@@ -261,19 +291,33 @@ function asString(value: unknown): string | null {
 }
 
 function firstUsefulText(...values: string[]): string {
-  return values.find((value) => value.length >= MIN_ROLE_DESCRIPTION_CHARACTERS) ?? "";
+  return (
+    values.find((value) => value.length >= MIN_ROLE_DESCRIPTION_CHARACTERS) ??
+    ""
+  );
 }
 
-function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
-  return values.find((value): value is string => Boolean(value?.trim()))?.trim() ?? null;
+function firstNonEmpty(
+  ...values: Array<string | null | undefined>
+): string | null {
+  return (
+    values.find((value): value is string => Boolean(value?.trim()))?.trim() ??
+    null
+  );
 }
 
 function normalisePageTitle(value: string): string {
-  return normalizeText(value).split(/\s+[|—–-]\s+/)[0]?.trim() ?? "";
+  return (
+    normalizeText(value)
+      .split(/\s+[|—–-]\s+/)[0]
+      ?.trim() ?? ""
+  );
 }
 
 function looksLikeAuthenticationGate(value: string): boolean {
-  return /^(sign in|log in|please wait|verify you are human|access denied)/i.test(value.trim());
+  return /^(sign in|log in|please wait|verify you are human|access denied)/i.test(
+    value.trim(),
+  );
 }
 
 function normalizeText(value: string): string {

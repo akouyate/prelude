@@ -2,71 +2,66 @@
 
 ## Goal
 
-Rebrand the visible product from Prelude to HireCall, prepare the next
-first-party integration capabilities, and ship a chaptered interview replay
-that lets recruiters play a complete recording or one question segment.
+Ship V1 copied-job-link intake so a recruiter can paste a LinkedIn, Indeed,
+employer-career, ATS, or other public job URL and reach an editable role draft
+or an immediate manual fallback without a dead end.
 
 ## Scope
 
-- Replace user-visible Prelude and Prelude.ai branding with HireCall across the
-  recruiter app, candidate app, email copy, metadata and product documentation.
-- Keep internal package names, database identifiers and historical migrations
-  stable to avoid a risky namespace migration.
-- Use the supplied HireCall wordmark and favicons throughout both web apps.
-- Replace placeholder integration marks with sourced brand SVGs.
-- Preserve the working Google Calendar OAuth capability and document the
-  capability boundaries for Gmail, LinkedIn and Indeed.
-- Derive replay chapters from persisted question/transcript timestamps.
-- Let question and key-moment actions seek the shared player, with bounded
-  playback for a selected question and an explicit full-interview mode.
+- Preserve the existing SSRF-safe, robots-aware direct HTML importer.
+- Route LinkedIn, Indeed, and unusable script-only pages through a verified
+  indexed web-search adapter instead of scraping provider pages.
+- Accept search-derived fields only when citations match the submitted job URL
+  or its stable provider job identifier.
+- Preserve acquisition strategy, field source, timestamp, and verified
+  citations as recruiter-visible provenance.
+- Keep every imported field editable and require recruiter review before
+  question generation.
+- Keep CI deterministic and free of paid network calls; real-link tests remain
+  explicit opt-in smoke tests.
 
 ## Workflow
 
 - [x] Intake and repository audit
-- [x] Current provider/API research
-- [x] Complete visible HireCall rebrand
-- [x] Consolidate integration presentation and source documentation
-- [x] Implement chaptered replay and shared seek controls
-- [x] Refine integration GitHub issues
-- [x] Run automated validation
-- [ ] Run signed-in browser validation
-- [x] Review and simplify
-- [x] Commit and open PR
+- [x] Provider/API and policy research
+- [x] Refine implementation ticket #133
+- [x] Add failing routing, verification, and failure tests
+- [x] Implement acquisition router and indexed-search adapter
+- [x] Extend provenance and recovery UX
+- [x] Validate real LinkedIn, Indeed, and public-link paths
+- [ ] Review, simplify, document, and merge
 
 ## Decisions
 
-- Use `HireCall` as the product spelling and `hirecall.ai` in display-only URL
-  examples.
-- Preserve `@prelude/*`, environment variable names, database names, internal
-  type names and migration history in this pass.
-- Request Google scopes incrementally by capability. Calendar and Gmail must
-  remain independently connectable even when they share one Google account.
-- Treat LinkedIn and Indeed as partner-access integrations, not public-page
-  scraping features.
-- Store integration logos locally so settings do not depend on a third-party
-  CDN at runtime.
-- Derive chapter boundaries deterministically from persisted transcript turns;
-  the next question start is the current question end.
-- Keep one HTML audio element and one playback authority for the page.
+- Do not use LinkedIn Apply Connect or Indeed Job Sync for copied-link intake.
+- Do not crawl LinkedIn or Indeed directly, collect provider credentials, or
+  use undocumented provider endpoints.
+- Use OpenAI Responses `web_search` only as an indexed-source adapter behind a
+  provider-neutral interface.
+- Fail closed when the result cannot be tied to the submitted source.
+- Define "handled" as either a verified editable draft or a retained-URL manual
+  fallback, not a claim that every private or expired page can be extracted.
+- Keep raw pages and complete search responses out of persistence.
 
 ## Validation target
 
-- No user-visible Prelude brand remains in either app or notification output.
-- Google Calendar connection and scheduling behavior remains unchanged.
-- Integration rows use sourced logos and honest availability states.
-- A replay chapter click seeks and starts at the expected question.
-- Question playback pauses at that chapter's end and full playback remains
-  available.
-- Existing unit, typecheck and lint suites remain green.
-- Desktop and mobile browser smoke tests show no overlap or horizontal scroll.
+- LinkedIn and Indeed URLs normalize and route without a provider-blocked error.
+- Search-derived content is rejected without exact source evidence.
+- Direct public HTML import behavior and SSRF controls remain unchanged.
+- Errors are stable, actionable, and retain the submitted URL.
+- Unit, typecheck, lint, and focused browser smoke tests pass.
+- Live smoke tests cover representative LinkedIn, Indeed, and ATS URLs when
+  `ALLOW_LIVE_JOB_URL_TESTS=1`.
 
 ## Validation result
 
-- `pnpm run test`: 19/19 tasks passed; console 356/356 non-live tests passed.
-- `pnpm run typecheck`: 19/19 tasks passed.
-- `pnpm run lint`: 19/19 tasks passed.
-- `make test-services`: Go packages passed; Python 196/196 passed.
-- A source audit found no remaining user-visible Prelude branding; stable
-  technical identifiers are documented and intentionally retained.
-- Signed-in visual and interaction smoke testing is pending because the
-  in-app browser was not exposed to this Codex session.
+- Mocked console suite: 371 passed, 6 skipped.
+- Live indexed-source smoke: current LinkedIn job `4436807221` and current
+  Indeed job `f066959d3108e72b` both produced an exact-source draft.
+- Live direct-source smoke: current Greenhouse job `4911620101` produced a
+  structured draft through the robots-aware HTML importer.
+- Contracts and console TypeScript checks passed.
+- Console ESLint and production build passed.
+- Browser runtime was unavailable in the active Codex session; server and
+  worker startup were checked locally, with the UI interaction smoke still to
+  be completed if the runtime becomes available before merge.

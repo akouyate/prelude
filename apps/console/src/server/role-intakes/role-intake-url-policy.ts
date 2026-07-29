@@ -4,18 +4,7 @@ import net from "node:net";
 const MAX_URL_LENGTH = 2_048;
 const MAX_QUERY_LENGTH = 512;
 
-const blockedProviders = [
-  {
-    domain: "indeed.com",
-    message:
-      "Indeed job pages cannot be imported automatically. Use the original employer careers URL or start from a manual brief.",
-  },
-  {
-    domain: "linkedin.com",
-    message:
-      "LinkedIn job pages cannot be imported automatically. Use the original employer careers URL or start from a manual brief.",
-  },
-] as const;
+const indexedSearchProviders = ["indeed.com", "linkedin.com"] as const;
 const sensitiveQueryParameterNames = new Set([
   "access_token",
   "api_key",
@@ -31,15 +20,22 @@ const sensitiveQueryParameterNames = new Set([
   "state",
   "token",
 ]);
-const trackingQueryParameterNames = new Set(["fbclid", "gclid", "mc_cid", "mc_eid"]);
+const trackingQueryParameterNames = new Set([
+  "fbclid",
+  "gclid",
+  "mc_cid",
+  "mc_eid",
+]);
 
 export class RoleIntakeUrlImportError extends Error {
   constructor(
     readonly code:
       | "invalid_url"
+      | "indexed_search_invalid"
+      | "indexed_search_unavailable"
+      | "indexed_search_unverified"
       | "no_usable_text"
       | "private_destination"
-      | "provider_blocked"
       | "redirect_limit"
       | "remote_unavailable"
       | "response_too_large"
@@ -63,7 +59,9 @@ export class RoleIntakeUrlImportError extends Error {
 export function normalizeRoleIntakeUrl(value: string): URL {
   const candidate = value.trim();
   if (!candidate || candidate.length > MAX_URL_LENGTH) {
-    throw invalidUrl("Enter a public HTTPS job URL shorter than 2,048 characters.");
+    throw invalidUrl(
+      "Enter a public HTTPS job URL shorter than 2,048 characters.",
+    );
   }
 
   let url: URL;
@@ -79,10 +77,15 @@ export function normalizeRoleIntakeUrl(value: string): URL {
     url.password ||
     (url.port && url.port !== "443")
   ) {
-    throw invalidUrl("HireCall accepts public HTTPS job pages without credentials.");
+    throw invalidUrl(
+      "HireCall accepts public HTTPS job pages without credentials.",
+    );
   }
 
-  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const hostname = url.hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "")
+    .replace(/\.$/, "");
   if (
     !hostname ||
     net.isIP(hostname) ||
@@ -99,36 +102,72 @@ export function normalizeRoleIntakeUrl(value: string): URL {
   url.hash = "";
 
   if (url.search.length > MAX_QUERY_LENGTH) {
-    throw invalidUrl("The job URL query is too long. Use the public job-page URL instead.");
+    throw invalidUrl(
+      "The job URL query is too long. Use the public job-page URL instead.",
+    );
   }
   for (const [name] of [...url.searchParams]) {
     const normalizedName = name.trim().toLowerCase();
     if (sensitiveQueryParameterNames.has(normalizedName)) {
-      throw invalidUrl("Use a public job URL without authentication parameters.");
+      throw invalidUrl(
+        "Use a public job URL without authentication parameters.",
+      );
     }
-    if (normalizedName.startsWith("utm_") || trackingQueryParameterNames.has(normalizedName)) {
+    if (
+      normalizedName.startsWith("utm_") ||
+      trackingQueryParameterNames.has(normalizedName)
+    ) {
       url.searchParams.delete(name);
     }
   }
 
-  assertProviderAllowed(url.hostname);
+  const indexedProvider = getRoleIntakeIndexedSearchDomain(url);
+  if (indexedProvider === "linkedin.com") {
+    url.search = "";
+  } else if (indexedProvider === "indeed.com") {
+    const jobKey = url.searchParams.get("jk") ?? url.searchParams.get("vjk");
+    url.search = "";
+    if (jobKey) {
+      url.searchParams.set("jk", jobKey);
+    }
+  }
+
   return url;
 }
 
 export function createRoleIntakeUrlIdentity(url: URL): string {
-  return createHash("sha256").update(url.toString()).digest("hex");
+  const provider = getRoleIntakeIndexedSearchDomain(url);
+  const providerIdentity =
+    provider === "linkedin.com"
+      ? url.pathname.match(/(?:^|[-/])(\d{7,})(?:\/)?$/)?.[1]
+      : provider === "indeed.com"
+        ? (url.searchParams.get("jk") ?? url.searchParams.get("vjk"))
+        : null;
+  const identitySource =
+    provider && providerIdentity
+      ? `${provider}:${providerIdentity}`
+      : url.toString();
+
+  return createHash("sha256").update(identitySource).digest("hex");
 }
 
-export function assertProviderAllowed(hostname: string): void {
-  const blockedProvider = blockedProviders.find(
-    ({ domain }) => hostname === domain || hostname.endsWith(`.${domain}`),
+export type RoleIntakeUrlAcquisitionStrategy = "direct_html" | "indexed_search";
+
+export function getRoleIntakeUrlAcquisitionStrategy(
+  url: URL,
+): RoleIntakeUrlAcquisitionStrategy {
+  return getRoleIntakeIndexedSearchDomain(url)
+    ? "indexed_search"
+    : "direct_html";
+}
+
+export function getRoleIntakeIndexedSearchDomain(url: URL): string | null {
+  return (
+    indexedSearchProviders.find(
+      (domain) =>
+        url.hostname === domain || url.hostname.endsWith(`.${domain}`),
+    ) ?? null
   );
-  if (blockedProvider) {
-    throw new RoleIntakeUrlImportError(
-      "provider_blocked",
-      blockedProvider.message,
-    );
-  }
 }
 
 /**
@@ -153,7 +192,10 @@ function invalidUrl(message: string): RoleIntakeUrlImportError {
 
 function isGloballyRoutableIpv4(address: string): boolean {
   const parts = address.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
     return false;
   }
   const [first = -1, second = -1, third = -1] = parts;
@@ -165,7 +207,8 @@ function isGloballyRoutableIpv4(address: string): boolean {
     (first === 100 && second >= 64 && second <= 127) ||
     (first === 169 && second === 254) ||
     (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && (second === 0 || second === 2 || second === 88 || second === 168)) ||
+    (first === 192 &&
+      (second === 0 || second === 2 || second === 88 || second === 168)) ||
     (first === 198 && (second === 18 || second === 19 || second === 51)) ||
     (first === 203 && second === 0 && third === 113)
   ) {
@@ -179,7 +222,8 @@ function isGloballyRoutableIpv6(address: string): boolean {
   if (value === null) {
     return false;
   }
-  const mappedIpv4 = value >> 32n === 0xffffn ? bigIntToIpv4(value & 0xffffffffn) : null;
+  const mappedIpv4 =
+    value >> 32n === 0xffffn ? bigIntToIpv4(value & 0xffffffffn) : null;
   if (mappedIpv4) {
     return isGloballyRoutableIpv4(mappedIpv4);
   }
@@ -196,16 +240,22 @@ function isGloballyRoutableIpv6(address: string): boolean {
     ["fe80::", 10],
     ["ff00::", 8],
   ];
-  return !specialUseRanges.some(([network, prefix]) => isIpv6InRange(value, network, prefix));
+  return !specialUseRanges.some(([network, prefix]) =>
+    isIpv6InRange(value, network, prefix),
+  );
 }
 
-function isIpv6InRange(value: bigint, network: string, prefix: number): boolean {
+function isIpv6InRange(
+  value: bigint,
+  network: string,
+  prefix: number,
+): boolean {
   const base = ipv6ToBigInt(network);
   if (base === null) {
     return true;
   }
   const shift = BigInt(128 - prefix);
-  return (value >> shift) === (base >> shift);
+  return value >> shift === base >> shift;
 }
 
 function ipv6ToBigInt(address: string): bigint | null {
@@ -222,7 +272,10 @@ function ipv6ToBigInt(address: string): bigint | null {
   const parts = raw.includes("::")
     ? [...headParts, ...Array(Math.max(0, missing)).fill("0"), ...tailParts]
     : headParts;
-  if (parts.length !== 8 || parts.some((part) => !/^[0-9a-f]{1,4}$/.test(part))) {
+  if (
+    parts.length !== 8 ||
+    parts.some((part) => !/^[0-9a-f]{1,4}$/.test(part))
+  ) {
     return null;
   }
   return BigInt(`0x${parts.map((part) => part.padStart(4, "0")).join("")}`);
@@ -243,5 +296,7 @@ function expandIpv4Hextet(part: string): string[] {
 }
 
 function bigIntToIpv4(value: bigint): string {
-  return [24n, 16n, 8n, 0n].map((shift) => Number((value >> shift) & 0xffn)).join(".");
+  return [24n, 16n, 8n, 0n]
+    .map((shift) => Number((value >> shift) & 0xffn))
+    .join(".");
 }
