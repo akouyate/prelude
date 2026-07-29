@@ -85,7 +85,7 @@ type ResponseMode = InterviewResponseMode;
 
 // Mirrors `deterministicGeneratorProvider` in interview-draft-generation: the
 // provider the generate action reports when the AI request fell back to
-// Prelude's built-in deterministic templates.
+// HireCall's built-in deterministic templates.
 const DETERMINISTIC_GENERATOR_PROVIDER = "deterministic";
 
 const steps: Array<{ id: StepId; label: string; title: string }> = [
@@ -294,7 +294,7 @@ export function InterviewAgentBuilder({
       });
     } catch {
       setSaveError(
-        "Prelude could not generate the role screen right now. Please retry.",
+        "HireCall could not generate the role screen right now. Please retry.",
       );
       return null;
     }
@@ -313,7 +313,7 @@ export function InterviewAgentBuilder({
     setGeneratorProvider(result.provider);
     setGeneratorModel(result.modelName);
     // Mirrors `deterministicGeneratorProvider`: the action reports this provider
-    // when OpenAI was unavailable and the draft came from Prelude's templates.
+    // when OpenAI was unavailable and the draft came from HireCall's templates.
     setUsedDeterministicFallback(
       result.provider === DETERMINISTIC_GENERATOR_PROVIDER,
     );
@@ -567,7 +567,7 @@ export function InterviewAgentBuilder({
         setSelectedQuestionId(result.questionId);
         markDraftDirty();
       } catch {
-        setSaveError("Prelude could not refine that question. Please retry.");
+        setSaveError("HireCall could not refine that question. Please retry.");
       } finally {
         setWorkingQuestionId(undefined);
       }
@@ -642,7 +642,7 @@ export function InterviewAgentBuilder({
         markDraftDirty();
         return true;
       } catch {
-        setSaveError("Prelude could not add that question. Please retry.");
+        setSaveError("HireCall could not add that question. Please retry.");
         return false;
       } finally {
         setWorkingQuestionId(undefined);
@@ -678,7 +678,7 @@ export function InterviewAgentBuilder({
         return {
           ...current,
           questions,
-          rationale: `Prelude prepared ${questions.length} focused questions for this first-screening role screen.`,
+          rationale: `HireCall prepared ${questions.length} focused questions for this first-screening role screen.`,
         };
       });
       markDraftDirty();
@@ -937,7 +937,7 @@ export function InterviewAgentBuilder({
               className="mt-5 rounded-2xl border border-gold-800/20 bg-gold-100 px-4 py-3 text-sm font-medium text-gold-800"
               role="status"
             >
-              Generated with Prelude&apos;s built-in templates — AI tailoring
+              Generated with HireCall&apos;s built-in templates — AI tailoring
               was unavailable. You can edit every question before publishing.
             </p>
           ) : null}
@@ -1115,7 +1115,7 @@ function BriefStep({
           <div className="min-w-0">
             <p className="text-sm font-semibold text-ink-950">Manual brief</p>
             <p className="mt-1 max-w-[620px] text-sm leading-6 text-ink-500">
-              Add the role title and the job context. Prelude will use this
+              Add the role title and the job context. HireCall will use this
               brief to draft focused first-screening questions.
             </p>
           </div>
@@ -1358,7 +1358,7 @@ function QuestionsStep({
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-100 pb-4">
         <p className="max-w-xl text-sm leading-6 text-ink-600">
-          Prelude prepared these screening questions. Listen, edit, or add one
+          HireCall prepared these screening questions. Listen, edit, or add one
           if a signal is missing.
         </p>
         <Button variant="secondary" onClick={onRegenerate}>
@@ -1552,13 +1552,13 @@ function QuestionsStep({
                 Add a question
               </p>
               <p className="mt-1 text-sm leading-5 text-ink-600">
-                Tell Prelude what signal is missing, or write the question
+                Tell HireCall what signal is missing, or write the question
                 directly later.
               </p>
             </div>
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
               <input
-                aria-label="Ask Prelude to add a question about"
+                aria-label="Ask HireCall to add a question about"
                 className="h-10 min-w-0 rounded-2xl border border-ink-200 bg-white/88 px-3 text-sm outline-none focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
                 value={addTopic}
                 placeholder="salary alignment, mobility, language..."
@@ -1571,7 +1571,7 @@ function QuestionsStep({
                 onClick={() => void addWithAI(addTopic || "screening fit")}
               >
                 <Sparkles aria-hidden="true" className="h-4 w-4" />
-                {workingQuestionId === "new" ? "Adding..." : "Add with Prelude"}
+                {workingQuestionId === "new" ? "Adding..." : "Add with HireCall"}
               </Button>
             </div>
           </div>
@@ -1589,7 +1589,7 @@ function QuestionsStep({
                 Add question
               </span>
               <span className="mt-1 block text-sm text-ink-600">
-                Ask Prelude for one missing screening signal.
+                Ask HireCall for one missing screening signal.
               </span>
             </span>
           </button>
@@ -1831,7 +1831,7 @@ function ShareStep({
 }) {
   const { t } = useTranslation();
   const candidateLink = publishedInterview
-    ? `prelude.ai${publishedInterview.candidatePath}`
+    ? `hirecall.ai${publishedInterview.candidatePath}`
     : "Publish to create the candidate link";
   const publicationIssues = getInterviewPlanPublicationIssues(
     {

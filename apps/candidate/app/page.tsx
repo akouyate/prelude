@@ -12,7 +12,7 @@ export default function CandidateHomePage() {
             Open the link shared by the recruiter.
           </h1>
           <p className="mt-4 text-sm leading-6 text-ink-600">
-            Prelude interviews are available from a unique, published interview
+            HireCall interviews are available from a unique, published interview
             link. If you expected to start now, ask the recruiter to resend the
             invitation.
           </p>

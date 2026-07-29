@@ -7,11 +7,11 @@
 - Google Calendar: “Choose Google Calendar API scopes”
   https://developers.google.com/workspace/calendar/api/auth
 
-## Applied decisions for Prelude V1
+## Applied decisions for HireCall V1
 
 - Use first-party OAuth for V1 instead of Nango/Nylas/Paragon. This keeps
-  provider behavior, cost, scopes, and product state under Prelude control.
-- Treat Google as a user-level connected account inside one Prelude
+  provider behavior, cost, scopes, and product state under HireCall control.
+- Treat Google as a user-level connected account inside one HireCall
   organization. Organization-level reuse must be an explicit future workflow.
 - Keep OAuth code exchange, refresh, revoke, and token storage server-side only.
 - Store only encrypted token material in Postgres.

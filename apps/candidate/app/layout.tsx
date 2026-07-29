@@ -25,8 +25,22 @@ const titleSans = Plus_Jakarta_Sans({
 });
 
 export const metadata: Metadata = {
-  title: "Prelude.ai Candidate",
-  description: "Candidate pre-interview experience.",
+  title: "Interview · HireCall",
+  description: "Secure candidate pre-interview experience by HireCall.",
+  icons: {
+    icon: [
+      {
+        media: "(prefers-color-scheme: light)",
+        type: "image/svg+xml",
+        url: "/favicon-light.svg",
+      },
+      {
+        media: "(prefers-color-scheme: dark)",
+        type: "image/svg+xml",
+        url: "/favicon-dark.svg",
+      },
+    ],
+  },
 };
 
 export default function RootLayout({

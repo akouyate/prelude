@@ -40,6 +40,7 @@ import {
   getOrganizationOnboardingProgress,
   saveOrganizationOnboardingProgress,
 } from "../../../../src/server/onboarding/organization-onboarding";
+import { IntegrationLogo } from "../../../../src/features/integrations/integration-logo";
 
 type StepId =
   | "welcome"
@@ -76,21 +77,6 @@ const steps: StepId[] = [
   "mode",
   "ready",
 ];
-
-const indeedLogo = {
-  color: "#003A9B",
-  path: "M11.566 21.5633v-8.762c.2553.0231.5009.0346.758.0346 1.2225 0 2.3739-.3206 3.3506-.8928v9.6182c0 .8219-.1957 1.4287-.5757 1.8338-.378.4033-.8808.6049-1.491.6049-.6007 0-1.0766-.2016-1.468-.6183-.3781-.4032-.5739-1.01-.5739-1.8184zM11.589.5659c2.5447-.8929 5.4424-.8449 7.6186.987.405.3687.8673.8334 1.0515 1.3806.2207.6913-.7695-.073-.9057-.167-.71-.4532-1.4182-.8334-2.2127-1.0946C12.8614.3873 8.8122 2.709 6.2945 6.315c-1.0516 1.5939-1.7367 3.2721-2.299 5.1174-.0614.2017-.1094.4647-.2207.6413-.1113.2036-.048-.5453-.048-.5702.0845-.7623.2438-1.4997.4414-2.237C5.3292 5.3375 7.897 2.0655 11.5891.5658zm4.9281 7.0587c0 1.6686-1.353 3.0224-3.0205 3.0224-1.6677 0-3.0186-1.3538-3.0186-3.0224 0-1.6687 1.351-3.0224 3.0186-3.0224 1.6676 0 3.0205 1.3518 3.0205 3.0224Z",
-};
-
-const linkedinLogo = {
-  viewBox: "0 0 455.731 455.731",
-  background: "M0 0h455.731v455.731H0z",
-  paths: [
-    "M107.255 69.215c20.873.017 38.088 17.257 38.043 38.234-.05 21.965-18.278 38.52-38.3 38.043-20.308.411-38.155-16.551-38.151-38.188 0-20.985 17.282-38.105 38.408-38.089z",
-    "M129.431 386.471H84.71c-5.804 0-10.509-4.705-10.509-10.509V185.18c0-5.804 4.705-10.509 10.509-10.509h44.721c5.804 0 10.509 4.705 10.509 10.509v190.783c-.001 5.803-4.705 10.508-10.509 10.508z",
-    "M386.884 241.682c0-39.996-32.423-72.42-72.42-72.42h-11.47c-21.882 0-41.214 10.918-52.842 27.606-1.268 1.819-2.442 3.708-3.52 5.658-.373-.056-.594-.085-.599-.075v-23.418c0-2.409-1.953-4.363-4.363-4.363h-55.795c-2.409 0-4.363 1.953-4.363 4.363V382.11c0 2.409 1.952 4.362 4.361 4.363l57.011.014c2.41.001 4.364-1.953 4.364-4.363V264.801c0-20.28 16.175-37.119 36.454-37.348 10.352-.117 19.737 4.031 26.501 10.799 6.675 6.671 10.802 15.895 10.802 26.079v117.808c0 2.409 1.953 4.362 4.361 4.363l57.152.014c2.41.001 4.364-1.953 4.364-4.363V241.682z",
-  ],
-};
 
 const companySizes = [
   { label: "1-10", value: "1-10" },
@@ -212,7 +198,7 @@ const importedJobs = [
 
 const interviewModes = [
   {
-    description: "Prelude speaks with the candidate and adapts live.",
+    description: "HireCall speaks with the candidate and adapts live.",
     icon: Microphone,
     label: "Voice first",
     value: "Voice first",
@@ -388,7 +374,7 @@ export function OnboardingWizard() {
   if (isLoadingProgress) {
     return (
       <StepShell
-        eyebrow="Prelude onboarding"
+        eyebrow="HireCall onboarding"
         title={
           <>
             Preparing your{" "}
@@ -409,7 +395,7 @@ export function OnboardingWizard() {
 
   return (
     <StepShell
-      eyebrow={step === "welcome" ? "Prelude onboarding" : "Workspace setup"}
+      eyebrow={step === "welcome" ? "HireCall onboarding" : "Workspace setup"}
       footer={
         <WizardFooter
           canContinue={canContinue}
@@ -635,33 +621,11 @@ function JobSourceGrid({
 
 function SourceLogo({ source }: { source: JobSource }) {
   if (source === "linkedin") {
-    return (
-      <svg
-        aria-hidden="true"
-        className="h-7 w-7"
-        role="img"
-        viewBox={linkedinLogo.viewBox}
-      >
-        <path d={linkedinLogo.background} fill="#0084B1" />
-        {linkedinLogo.paths.map((path) => (
-          <path key={path} d={path} fill="#FFFFFF" />
-        ))}
-      </svg>
-    );
+    return <IntegrationLogo brand="linkedin" className="h-11 w-11" />;
   }
 
   if (source === "indeed") {
-    return (
-      <svg
-        aria-hidden="true"
-        className="h-7 w-7"
-        fill={indeedLogo.color}
-        role="img"
-        viewBox="0 0 24 24"
-      >
-        <path d={indeedLogo.path} />
-      </svg>
-    );
+    return <IntegrationLogo brand="indeed" className="h-11 w-11" />;
   }
 
   return <EditPencil aria-hidden="true" className="h-6 w-6 text-ink-800" />;
@@ -753,7 +717,7 @@ function StepTitle({ state, step }: { state: OnboardingState; step: StepId }) {
 
 function getStepDescription(step: StepId, state: OnboardingState) {
   if (step === "welcome") {
-    return "A few focused questions help Prelude tailor the first interview draft without turning setup into an admin form.";
+    return "A few focused questions help HireCall tailor the first interview draft without turning setup into an admin form.";
   }
 
   if (step === "size") {
@@ -767,7 +731,7 @@ function getStepDescription(step: StepId, state: OnboardingState) {
   if (step === "jobs") {
     return state.jobSource === "manual"
       ? "Enter the first job title. You can add the description and criteria before generating questions."
-      : "Pick one active post. Prelude will use it to generate your first interview draft.";
+      : "Pick one active post. HireCall will use it to generate your first interview draft.";
   }
 
   if (step === "mode") {

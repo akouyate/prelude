@@ -372,7 +372,7 @@ async def run_auto_worker(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the Prelude auto-worker that starts live interviewer agents from Redis."
+        description="Run the HireCall auto-worker that starts live interviewer agents from Redis."
     )
     parser.add_argument("--redis-url", required=True, help="Redis URL, e.g. redis://localhost:6379/0.")
     parser.add_argument("--realtime-api-url", required=True, help="Go realtime API base URL.")

@@ -53,7 +53,7 @@ describe("interview agent draft policy", () => {
 
   it("generates a publishable first-screen draft with the target question count", () => {
     const draft = generateDeterministicInterviewDraft({
-      companyName: "Prelude",
+      companyName: "HireCall",
       focus: [
         "role_skills",
         "situational_judgment",
@@ -71,7 +71,7 @@ describe("interview agent draft policy", () => {
     expect(draft.guardrails.join(" ")).toContain(
       "Ask every candidate the same questions",
     );
-    expect(draft.rationale).toContain("Prelude generated 5 focused questions");
+    expect(draft.rationale).toContain("HireCall generated 5 focused questions");
 
     for (const question of draft.questions) {
       expect(question.expectedSignal.length).toBeGreaterThan(0);
@@ -91,7 +91,7 @@ describe("interview agent draft policy", () => {
 
   it("emits the Hybrid question shape from the question library focus mapping", () => {
     const draft = generateDeterministicInterviewDraft({
-      companyName: "Prelude",
+      companyName: "HireCall",
       focus: ["motivation", "role_skills", "situational_judgment", "communication"],
       jobDescription:
         "Hire a mid-level customer success manager to own onboarding and reduce churn risk.",
@@ -155,7 +155,7 @@ describe("interview agent draft policy", () => {
     "generates role-specific first-screen questions for $jobTitle",
     ({ expectedSignals, jobDescription, jobTitle, seniority }) => {
       const draft = generateDeterministicInterviewDraft({
-        companyName: "Prelude",
+        companyName: "HireCall",
         focus: [
           "role_skills",
           "situational_judgment",
@@ -206,7 +206,7 @@ describe("N10 deterministic generator invariants", () => {
   ];
 
   const complexInput = () => ({
-    companyName: "Prelude",
+    companyName: "HireCall",
     focus: allFocus,
     jobDescription:
       "Lead cross-functional enterprise strategy with managers, customers, ambiguous priorities, travel, hybrid collaboration, ownership, and stakeholder alignment.".repeat(
@@ -253,7 +253,7 @@ describe("N10 deterministic generator invariants", () => {
 
   it("falls back to the default focus set when no focus is provided", () => {
     const withDefault = generateDeterministicInterviewDraft({
-      companyName: "Prelude",
+      companyName: "HireCall",
       focus: [],
       jobDescription:
         "Support the operations team with day-to-day coordination and follow-up.",
@@ -281,7 +281,7 @@ describe("N10 deterministic generator invariants", () => {
 
     for (const seniority of seniorities) {
       const draft = generateDeterministicInterviewDraft({
-        companyName: "Prelude",
+        companyName: "HireCall",
         focus: allFocus,
         jobDescription:
           "Own onboarding, manage stakeholders, and improve support workflows for SMB customers.",
@@ -359,7 +359,7 @@ describe("N10 deterministic generator never emits protected-topic text", () => {
         // Empty focus exercises the default-focus path too.
         for (const focus of [allFocus, [] as InterviewFocus[]]) {
           const draft = generateDeterministicInterviewDraft({
-            companyName: "Prelude",
+            companyName: "HireCall",
             focus,
             jobDescription: role.jobDescription,
             jobTitle: role.jobTitle,

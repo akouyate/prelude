@@ -18,7 +18,7 @@ def positive_int(value: str) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run repeatable Prelude live IA interviewer provider benchmarks."
+        description="Run repeatable HireCall live IA interviewer provider benchmarks."
     )
     parser.add_argument(
         "--provider",

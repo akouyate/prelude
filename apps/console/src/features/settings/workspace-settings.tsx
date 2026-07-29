@@ -4,7 +4,6 @@ import * as React from "react";
 import {
   Calendar,
   Check,
-  GoogleCircle,
   Refresh,
   Trash,
   WarningTriangle,
@@ -21,7 +20,6 @@ import {
   SelectField,
   StatusBadge,
   TextField,
-  cn,
 } from "@prelude/ui";
 import type { OrganizationRole } from "@prelude/types";
 
@@ -45,6 +43,7 @@ import {
   updateNotificationPreferencesAction,
   updateWorkspaceSettingsAction,
 } from "../../server/settings/workspace-settings-actions";
+import { IntegrationLogo } from "../integrations/integration-logo";
 import { SettingsLanguageSelect } from "./settings-language-select";
 import { BillingSection } from "./settings-billing-section";
 import { SettingsSectionNav } from "./settings-section-nav";
@@ -252,7 +251,7 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
           />
           <SettingsUrlField
             label={t("settings.workspace.url")}
-            prefix="prelude.ai/"
+            prefix="hirecall.ai/"
             value={slugFor(data.organization.name)}
           />
           <SettingsField
@@ -753,51 +752,49 @@ function IntegrationsSection({
   );
   const integrations = [
     {
+      availability: "partner",
       description: t("settings.integrations.jobPosts"),
-      logo: <LinkedInLogo />,
+      logo: <IntegrationLogo brand="linkedin" />,
       name: "LinkedIn",
       provider: "linkedin",
       type: "status",
     },
     {
+      availability: "partner",
       description: t("settings.integrations.jobPosts"),
-      logo: <IndeedLogo />,
+      logo: <IntegrationLogo brand="indeed" />,
       name: "Indeed",
       provider: "indeed",
       type: "status",
     },
     {
+      availability: "coming_soon",
       description: t("settings.integrations.ats"),
-      logo: <GenericIntegrationLogo label="GH" />,
+      logo: <IntegrationLogo brand="greenhouse" muted />,
       name: "Greenhouse",
       provider: "greenhouse",
       type: "status",
     },
     {
+      availability: "available",
       description: t("settings.integrations.calendar"),
-      logo: (
-        <IconIntegrationLogo>
-          <GoogleCircle aria-hidden={true} className="h-6 w-6" />
-        </IconIntegrationLogo>
-      ),
+      logo: <IntegrationLogo brand="google-calendar" />,
       name: "Google Calendar",
       provider: "google_calendar",
       type: "google_calendar",
     },
     {
+      availability: "planned",
       description: t("settings.integrations.gmail"),
-      logo: (
-        <IconIntegrationLogo muted>
-          <GoogleCircle aria-hidden={true} className="h-6 w-6" />
-        </IconIntegrationLogo>
-      ),
+      logo: <IntegrationLogo brand="gmail" muted />,
       name: "Gmail",
       provider: "google_gmail",
       type: "status",
     },
     {
+      availability: "coming_soon",
       description: t("settings.integrations.microsoft"),
-      logo: <GenericIntegrationLogo label="M" muted />,
+      logo: <IntegrationLogo brand="microsoft-teams" muted />,
       name: "Microsoft Teams",
       provider: "microsoft_teams",
       type: "status",
@@ -850,7 +847,11 @@ function IntegrationsSection({
               >
                 {connected
                   ? t("settings.integrations.connected")
-                  : t("settings.integrations.comingSoon")}
+                  : integration.availability === "partner"
+                    ? t("settings.integrations.partnerAccessRequired")
+                    : integration.availability === "planned"
+                      ? t("settings.integrations.planned")
+                      : t("settings.integrations.comingSoon")}
               </StatusBadge>
             </div>
           );
@@ -1105,64 +1106,6 @@ function ResidencyChoice({
       selected={active}
       title={label}
     />
-  );
-}
-
-function LinkedInLogo() {
-  return (
-    <span className="grid h-[42px] w-[42px] shrink-0 place-items-center overflow-hidden rounded-[11px] bg-[#0A66C2] text-sm font-bold text-white">
-      in
-    </span>
-  );
-}
-
-function IndeedLogo() {
-  return (
-    <span className="grid h-[42px] w-[42px] shrink-0 place-items-center overflow-hidden rounded-[11px] bg-[#003A9B] text-lg font-bold text-white">
-      i
-    </span>
-  );
-}
-
-function GenericIntegrationLogo({
-  label,
-  muted = false,
-}: {
-  label: string;
-  muted?: boolean;
-}) {
-  return (
-    <span
-      className={cn(
-        "grid h-[42px] w-[42px] shrink-0 place-items-center rounded-[11px] text-sm font-bold",
-        muted
-          ? "border border-ink-100 bg-white text-ink-500"
-          : "bg-meadow-600 text-white",
-      )}
-    >
-      {label}
-    </span>
-  );
-}
-
-function IconIntegrationLogo({
-  children,
-  muted = false,
-}: {
-  children: React.ReactNode;
-  muted?: boolean;
-}) {
-  return (
-    <span
-      className={cn(
-        "grid h-[42px] w-[42px] shrink-0 place-items-center rounded-[11px]",
-        muted
-          ? "border border-ink-100 bg-white text-ink-500"
-          : "bg-white text-ink-900",
-      )}
-    >
-      {children}
-    </span>
   );
 }
 

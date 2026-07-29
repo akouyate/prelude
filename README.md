@@ -1,6 +1,6 @@
-# Prelude.ai
+# HireCall
 
-Prelude.ai is a focused pre-interview product for SMBs, small mid-market companies, and scale-ups. It helps recruiters turn a job posting into a short guided candidate pre-interview, then review a clear candidate brief before deciding who to call.
+HireCall is a focused pre-interview product for SMBs, small mid-market companies, and scale-ups. It helps recruiters turn a job posting into a short guided candidate pre-interview, then review a clear candidate brief before deciding who to call.
 
 This repository is a pnpm/Turborepo monorepo with two Next.js App Router apps and shared packages for UI, design tokens, contracts, data access, and domain logic.
 
@@ -119,7 +119,7 @@ plan slug defaults to `v1-workspace` and can be changed with
 period end or after 35 days without reconciliation, whichever comes first.
 Tune the maximum fail-closed window with
 `CLERK_BILLING_PROJECTION_MAX_AGE_SECONDS`. Keep Billing disabled in local mock
-mode; Prelude then shows an explicit unmetered placeholder and does not expose
+mode; HireCall then shows an explicit unmetered placeholder and does not expose
 payment actions. Production fails closed when Billing is disabled or a paid
 projection is unavailable or stale.
 

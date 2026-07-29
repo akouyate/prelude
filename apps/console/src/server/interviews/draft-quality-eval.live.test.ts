@@ -57,7 +57,7 @@ describe("live OpenAI draft quality judge", () => {
 
 function goodPlan(): InterviewPlan {
   const draft = generateDeterministicInterviewDraft({
-    companyName: "Prelude",
+    companyName: "HireCall",
     jobTitle: "Customer Success Manager",
     jobDescription:
       "We are hiring a Customer Success Manager to onboard SMB customers, spot early retention risks, coordinate with support and product, and communicate clearly with customers during implementation.",

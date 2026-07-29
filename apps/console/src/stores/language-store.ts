@@ -5,7 +5,7 @@ import { persist } from "zustand/middleware";
 
 import i18n from "../libs/i18n";
 
-// Mirrors the Fluenceur `language-store`. Prelude supports the same two locales
+// Mirrors the Fluenceur `language-store`. HireCall supports the same two locales
 // as the compliance copy: English (default) and French.
 export type Language = "en" | "fr";
 

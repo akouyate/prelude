@@ -1,7 +1,16 @@
 "use client";
 
 import { PauseSolid, PlaySolid } from "iconoir-react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import {
+  formatReplayTime,
+  type InterviewReplayChapter,
+} from "./interview-replay";
+import {
+  type ReplayRequest,
+  useInterviewReplay,
+} from "./interview-replay-controller";
 
 // Structural match of the server CandidateRecording (kept local so this client
 // component pulls in no server-only code).
@@ -12,15 +21,18 @@ type CandidateRecording = {
 };
 
 export function CandidateVoicePlayer({
+  chapters,
   fallbackDurationMs,
   recording,
 }: {
+  chapters: InterviewReplayChapter[];
   fallbackDurationMs: number;
   recording: CandidateRecording | null;
 }) {
   if (recording?.status === "available" && recording.url) {
     return (
       <VoicePlayer
+        chapters={chapters}
         durationMs={recording.durationMs ?? fallbackDurationMs}
         url={recording.url}
       />
@@ -38,12 +50,44 @@ export function CandidateVoicePlayer({
   );
 }
 
-function VoicePlayer({ durationMs, url }: { durationMs: number; url: string }) {
+function VoicePlayer({
+  chapters,
+  durationMs,
+  url,
+}: {
+  chapters: InterviewReplayChapter[];
+  durationMs: number;
+  url: string;
+}) {
+  const { playFullInterview, playRange, registerPlayer } = useInterviewReplay();
   const audioRef = useRef<HTMLAudioElement>(null);
+  const segmentEndRef = useRef<number | null>(null);
+  const totalMsRef = useRef(durationMs);
+  const [activeRequest, setActiveRequest] = useState<ReplayRequest | null>(
+    null,
+  );
   const [isPlaying, setIsPlaying] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [totalMs, setTotalMs] = useState(durationMs);
+
+  useEffect(() => {
+    totalMsRef.current = totalMs;
+  }, [totalMs]);
+
+  const stopAtSegmentBoundary = useCallback((nextElapsedMs: number) => {
+    const audio = audioRef.current;
+    const segmentEndMs = segmentEndRef.current;
+
+    if (!audio || segmentEndMs === null || nextElapsedMs < segmentEndMs) {
+      return false;
+    }
+
+    audio.pause();
+    audio.currentTime = segmentEndMs / 1000;
+    setElapsedMs(segmentEndMs);
+    return true;
+  }, []);
 
   useEffect(() => {
     if (!isPlaying) {
@@ -61,7 +105,11 @@ function VoicePlayer({ durationMs, url }: { durationMs: number; url: string }) {
       // Ten visual updates per second keep the playhead fluid without causing
       // an unnecessary React render on every animation frame.
       if (timestamp - lastUpdate >= 100) {
-        setElapsedMs(Math.round(audio.currentTime * 1000));
+        const nextElapsedMs = Math.round(audio.currentTime * 1000);
+        if (stopAtSegmentBoundary(nextElapsedMs)) {
+          return;
+        }
+        setElapsedMs(nextElapsedMs);
         lastUpdate = timestamp;
       }
       animationFrame = window.requestAnimationFrame(updateProgress);
@@ -69,7 +117,43 @@ function VoicePlayer({ durationMs, url }: { durationMs: number; url: string }) {
 
     animationFrame = window.requestAnimationFrame(updateProgress);
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [isPlaying]);
+  }, [isPlaying, stopAtSegmentBoundary]);
+
+  const playRequest = useCallback((request: ReplayRequest) => {
+    const audio = audioRef.current;
+    if (!audio) {
+      return;
+    }
+
+    const resolvedStartMs = Math.min(
+      totalMsRef.current,
+      Math.max(0, request.startMs),
+    );
+    const resolvedEndMs =
+      request.endMs === null
+        ? null
+        : Math.min(
+            totalMsRef.current,
+            Math.max(resolvedStartMs + 250, request.endMs),
+          );
+
+    audio.currentTime = resolvedStartMs / 1000;
+    segmentEndRef.current = resolvedEndMs;
+    setActiveRequest({ ...request, endMs: resolvedEndMs });
+    setElapsedMs(resolvedStartMs);
+    setPlaybackError(null);
+    void audio.play().catch(() => {
+      setIsPlaying(false);
+      setPlaybackError(
+        "The recording could not be played. Check your connection and retry.",
+      );
+    });
+  }, []);
+
+  useEffect(() => {
+    registerPlayer(playRequest);
+    return () => registerPlayer(null);
+  }, [playRequest, registerPlayer]);
 
   const togglePlayback = async () => {
     const audio = audioRef.current;
@@ -77,9 +161,15 @@ function VoicePlayer({ durationMs, url }: { durationMs: number; url: string }) {
       return;
     }
     if (audio.paused) {
-      if (audio.ended) {
-        audio.currentTime = 0;
-        setElapsedMs(0);
+      const activeEndMs = segmentEndRef.current;
+      const shouldRestart =
+        audio.ended ||
+        (activeEndMs !== null &&
+          Math.round(audio.currentTime * 1000) >= activeEndMs - 100);
+      if (shouldRestart) {
+        const nextStartMs = activeRequest?.startMs ?? 0;
+        audio.currentTime = nextStartMs / 1000;
+        setElapsedMs(nextStartMs);
       }
       setPlaybackError(null);
       try {
@@ -101,11 +191,20 @@ function VoicePlayer({ durationMs, url }: { durationMs: number; url: string }) {
       return;
     }
     const clampedElapsedMs = Math.min(totalMs, Math.max(0, nextElapsedMs));
+    segmentEndRef.current = null;
+    setActiveRequest(null);
     audio.currentTime = clampedElapsedMs / 1000;
     setElapsedMs(clampedElapsedMs);
   };
 
   const progress = totalMs > 0 ? Math.min(100, (elapsedMs / totalMs) * 100) : 0;
+  const currentChapter = useMemo(
+    () =>
+      chapters.find(
+        (chapter) => elapsedMs >= chapter.startMs && elapsedMs < chapter.endMs,
+      ) ?? null,
+    [chapters, elapsedMs],
+  );
 
   return (
     <section
@@ -157,20 +256,37 @@ function VoicePlayer({ durationMs, url }: { durationMs: number; url: string }) {
         </button>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-[13px] font-semibold text-ink-950">
-              Voice interview
-            </p>
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-ink-950">
+                Voice interview
+              </p>
+              <p className="mt-0.5 truncate text-[11.5px] text-[#8a8178]">
+                {activeRequest?.label ??
+                  currentChapter?.label ??
+                  "Full interview"}
+              </p>
+            </div>
             <p className="font-mono text-xs tabular-nums text-[#8a8178]">
-              {formatDurationLabel(elapsedMs)} / {formatDurationLabel(totalMs)}
+              {formatReplayTime(elapsedMs)} / {formatReplayTime(totalMs)}
             </p>
           </div>
-          <div className="relative mt-2 flex h-[30px] w-full items-center">
+          <div className="relative mt-2 flex h-[32px] w-full items-center">
             <span className="h-[6px] w-full overflow-hidden rounded-full bg-[#ece8de]">
               <span
                 className="block h-full rounded-full bg-olive-700"
                 style={{ width: `${progress}%` }}
               />
             </span>
+            {chapters.slice(1).map((chapter) => (
+              <span
+                aria-hidden={true}
+                className="pointer-events-none absolute top-1/2 h-[14px] w-px -translate-y-1/2 bg-white"
+                key={chapter.id}
+                style={{
+                  left: `${totalMs > 0 ? (chapter.startMs / totalMs) * 100 : 0}%`,
+                }}
+              />
+            ))}
             <span
               className="pointer-events-none absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full"
               style={{
@@ -189,6 +305,52 @@ function VoicePlayer({ durationMs, url }: { durationMs: number; url: string }) {
               value={Math.min(elapsedMs, Math.max(totalMs, 1))}
             />
           </div>
+          {chapters.length > 0 ? (
+            <div
+              aria-label="Interview chapters"
+              className="mt-1 flex gap-1.5 overflow-x-auto pb-1"
+            >
+              <button
+                className={`h-7 shrink-0 cursor-pointer rounded-full border px-2.5 text-[11px] font-semibold transition ${
+                  activeRequest?.id === "full-interview" || !activeRequest
+                    ? "border-ink-950 bg-ink-950 text-white"
+                    : "border-[#e2ddd2] bg-white text-[#5b574f] hover:border-ink-950"
+                }`}
+                onClick={playFullInterview}
+                type="button"
+              >
+                Full
+              </button>
+              {chapters.map((chapter) => {
+                const active = activeRequest?.id === chapter.id;
+
+                return (
+                  <button
+                    aria-label={`Play question ${chapter.questionNumber}: ${chapter.label}`}
+                    className={`h-7 shrink-0 cursor-pointer rounded-full border px-2.5 text-[11px] font-semibold transition ${
+                      active
+                        ? "border-olive-800 bg-[#eef0e3] text-olive-950"
+                        : "border-[#e2ddd2] bg-white text-[#5b574f] hover:border-ink-950"
+                    }`}
+                    key={chapter.id}
+                    onClick={() =>
+                      playRange({
+                        endMs: chapter.endMs,
+                        id: chapter.id,
+                        label: chapter.label,
+                        startMs: chapter.startMs,
+                      })
+                    }
+                    title={chapter.label}
+                    type="button"
+                  >
+                    Q{chapter.questionNumber} ·{" "}
+                    {formatReplayTime(chapter.startMs)}
+                  </button>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       </div>
       {playbackError ? (
@@ -228,17 +390,4 @@ function VoicePlayerPlaceholder({
       <p className="text-[13px] text-[#7c766b]">{message}</p>
     </section>
   );
-}
-
-function formatDurationLabel(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const hours = Math.floor(totalSeconds / 3600);
-  const minutes = Math.floor((totalSeconds % 3600) / 60);
-  const seconds = totalSeconds % 60;
-  const paddedMinutes =
-    hours > 0 ? String(minutes).padStart(2, "0") : String(minutes);
-  const paddedSeconds = String(seconds).padStart(2, "0");
-  return hours > 0
-    ? `${hours}:${paddedMinutes}:${paddedSeconds}`
-    : `${paddedMinutes}:${paddedSeconds}`;
 }

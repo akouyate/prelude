@@ -12,7 +12,7 @@ import {
 const now = new Date("2026-07-24T10:00:00.000Z");
 
 describe("normalizeBillingSubscription", () => {
-  it("maps Clerk's active default plan to Prelude Free", () => {
+  it("maps Clerk's active default plan to HireCall Free", () => {
     const result = normalizeBillingSubscription(
       subscription({
         items: [

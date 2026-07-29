@@ -249,7 +249,7 @@ Payload:
 
 Emitted after a finalized candidate turn and before any policy action that
 advances, repeats, waits, reprompts, or follows up on the current question.
-This is the semantic audit event that explains why Prelude took the next
+This is the semantic audit event that explains why HireCall took the next
 bounded action.
 
 Expected actor: `system`

@@ -1399,7 +1399,7 @@ function LiveInterviewStage({
       <div className="flex shrink-0 items-center justify-between gap-4">
         <div>
           <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white/42">
-            Powered by Prelude.ai
+            Powered by HireCall
           </p>
           <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-white/82">
             <span className="grid h-8 w-8 place-items-center rounded-full bg-white/10">

@@ -2,7 +2,7 @@
 
 ## Context
 
-Prelude's differentiator is a live IA interviewer for first-screen recruiting interviews. The product should feel like a structured, human-like interviewer, not a free-form chatbot and not only a generated form.
+HireCall's differentiator is a live IA interviewer for first-screen recruiting interviews. The product should feel like a structured, human-like interviewer, not a free-form chatbot and not only a generated form.
 
 This POC keeps the architecture small while preserving boundaries that can survive a commercial pilot:
 
@@ -25,7 +25,7 @@ Do not build custom WebRTC in Go for the POC. That would move the main risk from
 
 ```mermaid
 flowchart LR
-  Recruiter["Recruiter app (Next.js)"] --> API["Prelude Realtime API (Go)"]
+  Recruiter["Recruiter app (Next.js)"] --> API["HireCall Realtime API (Go)"]
   Candidate["Candidate app (Next.js)"] --> API
   API --> DB["Postgres event store"]
   API --> Queue["Worker dispatch / queue"]

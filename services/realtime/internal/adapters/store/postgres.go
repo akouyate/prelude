@@ -512,7 +512,7 @@ func followUpPrompt(category string, language string) string {
 func summarizeRoleBrief(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "Prelude is screening candidates for a structured first interview before recruiter review."
+		return "HireCall is screening candidates for a structured first interview before recruiter review."
 	}
 	if len(value) <= 220 {
 		return value

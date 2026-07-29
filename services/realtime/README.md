@@ -1,6 +1,6 @@
-# Prelude Realtime API
+# HireCall Realtime API
 
-Prelude Realtime API is the POC control plane for live IA interviews.
+HireCall Realtime API is the POC control plane for live IA interviews.
 
 It owns product/session orchestration and keeps media/provider details behind
 ports so the POC can start with mocked LiveKit behavior, then swap in real room

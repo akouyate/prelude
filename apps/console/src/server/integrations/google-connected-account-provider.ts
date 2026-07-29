@@ -10,6 +10,7 @@ import {
 } from "./connected-account-provider";
 import {
   connectedAccountCapabilityCalendar,
+  connectedAccountCapabilityGmail,
   connectedAccountProviderGoogle,
   type ConnectedAccountCapability,
 } from "./connected-account-types";
@@ -22,6 +23,8 @@ const userInfoEndpoint = "https://openidconnect.googleapis.com/v1/userinfo";
 
 export const googleCalendarEventsScope =
   "https://www.googleapis.com/auth/calendar.events";
+export const googleGmailSendScope =
+  "https://www.googleapis.com/auth/gmail.send";
 
 const googleIdentityScopes = ["openid", "email", "profile"];
 
@@ -30,11 +33,15 @@ type FetchLike = typeof fetch;
 export function googleScopesForCapability(
   capability: ConnectedAccountCapability,
 ) {
-  if (capability !== connectedAccountCapabilityCalendar) {
-    return googleIdentityScopes;
+  if (capability === connectedAccountCapabilityCalendar) {
+    return [...googleIdentityScopes, googleCalendarEventsScope];
   }
 
-  return [...googleIdentityScopes, googleCalendarEventsScope];
+  if (capability === connectedAccountCapabilityGmail) {
+    return [...googleIdentityScopes, googleGmailSendScope];
+  }
+
+  return googleIdentityScopes;
 }
 
 export function createGoogleConnectedAccountProvider(

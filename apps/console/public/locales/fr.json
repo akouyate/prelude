@@ -7,7 +7,7 @@
       "criterionWarning": "Ce critère fait référence à un sujet protégé ou interdit et ne peut pas être publié. Reformulez-le pour qu'il reste lié au poste.",
       "overrideTitle": "Un contrôle de conformité automatique a signalé ceci",
       "overrideFlagSummary": "Un contrôle automatique a signalé une question ou un critère comme pouvant relever d'un sujet protégé ({{category}}) : {{reason}}",
-      "overrideWarning": "Si vous publiez malgré tout, vous confirmez que ce contenu est lié au poste et non discriminatoire. C'est vous — et non le contrôle automatique de Prelude — qui en êtes responsable, et cette dérogation est enregistrée avec votre identité.",
+      "overrideWarning": "Si vous publiez malgré tout, vous confirmez que ce contenu est lié au poste et non discriminatoire. C'est vous — et non le contrôle automatique de HireCall — qui en êtes responsable, et cette dérogation est enregistrée avec votre identité.",
       "overrideReformulate": "Reformuler plutôt",
       "overrideStart": "Passer outre ce contrôle",
       "overrideJustificationLabel": "Expliquez en quoi c'est lié au poste",
@@ -30,7 +30,7 @@
       "source": {
         "eyebrow": "Nouveau poste",
         "title": "Comment souhaitez-vous ajouter ce poste ?",
-        "description": "Partez d'une fiche de poste existante ou saisissez les informations vous-même. Vous validerez tout avant que Prelude ne rédige les questions.",
+        "description": "Partez d'une fiche de poste existante ou saisissez les informations vous-même. Vous validerez tout avant que HireCall ne rédige les questions.",
         "manualTitle": "Saisir manuellement",
         "manualDescription": "Renseignez vous-même l'intitulé, le contexte et les responsabilités.",
         "manualMeta": "Contrôle total",
@@ -45,7 +45,7 @@
       },
       "upload": {
         "title": "Importer une fiche de poste",
-        "description": "Ajoutez un PDF ou DOCX contenant du texte. Prelude le vérifie de façon privée et vous demande de confirmer les informations extraites avant toute création.",
+        "description": "Ajoutez un PDF ou DOCX contenant du texte. HireCall le vérifie de façon privée et vous demande de confirmer les informations extraites avant toute création.",
         "choose": "Choisir un PDF ou DOCX",
         "dropNow": "Déposez le document ici",
         "dragHint": "Glissez-déposez ou cliquez pour parcourir",
@@ -53,13 +53,13 @@
         "errors": {
           "empty": "Le document sélectionné est vide.",
           "too_large": "Choisissez un document de moins de 10 Mo ou commencez manuellement.",
-          "unsupported": "Prelude accepte uniquement les fiches de poste PDF et DOCX.",
+          "unsupported": "HireCall accepte uniquement les fiches de poste PDF et DOCX.",
           "uploadFailed": "L'import privé n'a pas abouti. Sélectionnez à nouveau le document."
         }
       },
       "url": {
         "title": "Importer une page carrière employeur",
-        "description": "Prelude lit la page publique d'origine de l'offre et vous demande de vérifier chaque champ extrait.",
+        "description": "HireCall lit la page publique d'origine de l'offre et vous demande de vérifier chaque champ extrait.",
         "label": "URL de l'offre employeur",
         "hint": "Utilisez la page carrière HTTPS d'origine. Les liens LinkedIn et Indeed nécessitent des intégrations partenaires dédiées et ne peuvent pas être importés ici.",
         "placeholder": "https://careers.entreprise.com/jobs/product-designer",
@@ -83,19 +83,19 @@
       "privacy": {
         "pending_deletion": "La source reste privée et sera supprimée après l'extraction ou sous 24 heures.",
         "deleted": "Le fichier source a été supprimé. Son contenu n'est plus conservé.",
-        "not_stored": "Prelude ne conserve ni n'affiche la page publique. Seules les informations validées continuent."
+        "not_stored": "HireCall ne conserve ni n'affiche la page publique. Seules les informations validées continuent."
       },
       "failure": {
         "manual": {
           "title": "Ce document ne contient aucun texte lisible",
-          "description": "Prelude ne devine pas le contenu des documents scannés ou composés d'images. Saisissez le poste manuellement ou choisissez un PDF ou DOCX contenant du texte."
+          "description": "HireCall ne devine pas le contenu des documents scannés ou composés d'images. Saisissez le poste manuellement ou choisissez un PDF ou DOCX contenant du texte."
         },
         "replace": {
           "title": "Ce document ne peut pas être importé en sécurité",
           "description": "Aucun poste n'a été créé. Choisissez un autre PDF ou DOCX, ou saisissez le poste manuellement."
         },
         "resume": {
-          "title": "Cette fiche existe déjà dans Prelude",
+          "title": "Cette fiche existe déjà dans HireCall",
           "description": "Reprenez l'import privé existant plutôt que de créer un poste en double.",
           "action": "Reprendre l'import existant"
         },
@@ -110,8 +110,8 @@
       },
       "review": {
         "title": "Vérifiez la fiche de poste",
-        "fileDescription": "Prelude a extrait le document sans inventer les informations manquantes. Confirmez les détails avant la rédaction des questions.",
-        "urlDescription": "Prelude a extrait la page publique sans exécuter ses scripts. Confirmez les détails avant la rédaction des questions.",
+        "fileDescription": "HireCall a extrait le document sans inventer les informations manquantes. Confirmez les détails avant la rédaction des questions.",
+        "urlDescription": "HireCall a extrait la page publique sans exécuter ses scripts. Confirmez les détails avant la rédaction des questions.",
         "warningTitle": "Un détail demande votre attention",
         "validationSummary": "Ajoutez l'intitulé et la description du poste avant de continuer.",
         "roleTitle": "Intitulé du poste",
@@ -485,7 +485,7 @@
       },
       "workspace": {
         "title": "Espace de travail",
-        "description": "Les informations générales de votre organisation dans Prelude.",
+        "description": "Les informations générales de votre organisation dans HireCall.",
         "uploadLogo": "Importer un logo",
         "logoHint": "L'import de logo n'est pas encore disponible en V1. Les initiales de l'espace sont utilisées pour l'instant.",
         "name": "Nom de l'espace",
@@ -554,7 +554,7 @@
       },
       "integrations": {
         "title": "Intégrations",
-        "description": "Sources candidats et outils synchronisés avec Prelude.",
+        "description": "Sources candidats et outils synchronisés avec HireCall.",
         "jobPosts": "Importer les offres actives",
         "ats": "ATS · pousser les candidats qualifiés",
         "calendar": "Planifier les appels de suivi",
@@ -563,6 +563,8 @@
         "connected": "Connecté",
         "connectedAs": "Connecté avec {{email}}.",
         "comingSoon": "Bientôt",
+        "partnerAccessRequired": "Accès partenaire requis",
+        "planned": "Planifié",
         "connect": "Connecter",
         "disconnect": "Déconnecter",
         "error": "Erreur",
@@ -574,7 +576,7 @@
       },
       "notifications": {
         "title": "Notifications",
-        "description": "Choisissez les e-mails envoyés par Prelude.",
+        "description": "Choisissez les e-mails envoyés par HireCall.",
         "screensReady": "Entretiens prêts à revoir",
         "screensReadyDescription": "Quand un brief recruteur est prêt ou demande une action.",
         "candidateCompletion": "Confirmation de fin d'entretien",
@@ -584,7 +586,7 @@
         "weeklyDigest": "Résumé hebdomadaire",
         "weeklyDigestDescription": "Un résumé le lundi de l'activité du pipeline.",
         "productUpdates": "Nouveautés produit",
-        "productUpdatesDescription": "Quelques nouvelles sur les évolutions de Prelude."
+        "productUpdatesDescription": "Quelques nouvelles sur les évolutions de HireCall."
       },
       "billing": {
         "currentPlan": "Forfait actuel",

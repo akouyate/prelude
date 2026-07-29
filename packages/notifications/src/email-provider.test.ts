@@ -21,11 +21,11 @@ describe("notification provider configuration", () => {
       getNotificationProviderConfig({
         NOTIFICATIONS_ENABLED: "1",
         RESEND_API_KEY: "re_test",
-        RESEND_FROM_EMAIL: "Prelude <notifications@prelude.ai>",
+        RESEND_FROM_EMAIL: "HireCall <notifications@hirecall.ai>",
       }),
     ).toEqual({
       apiKey: "re_test",
-      fromEmail: "Prelude <notifications@prelude.ai>",
+      fromEmail: "HireCall <notifications@hirecall.ai>",
       status: "ready",
     });
   });

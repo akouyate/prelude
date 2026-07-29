@@ -5,6 +5,7 @@ vi.mock("server-only", () => ({}));
 import {
   createGoogleConnectedAccountProvider,
   googleCalendarEventsScope,
+  googleGmailSendScope,
 } from "./google-connected-account-provider";
 
 const config = {
@@ -19,7 +20,7 @@ describe("google connected account provider", () => {
     const url = new URL(
       await provider.getAuthorizationUrl({
         capability: "calendar",
-        loginHint: "recruiter@prelude.ai",
+        loginHint: "recruiter@hirecall.ai",
         state: "signed-state",
       }),
     );
@@ -31,7 +32,7 @@ describe("google connected account provider", () => {
     expect(url.searchParams.get("include_granted_scopes")).toBe("true");
     expect(url.searchParams.get("prompt")).toBe("consent");
     expect(url.searchParams.get("state")).toBe("signed-state");
-    expect(url.searchParams.get("login_hint")).toBe("recruiter@prelude.ai");
+    expect(url.searchParams.get("login_hint")).toBe("recruiter@hirecall.ai");
 
     const scopes = new Set(url.searchParams.get("scope")?.split(" "));
     expect(scopes.has("openid")).toBe(true);
@@ -39,6 +40,26 @@ describe("google connected account provider", () => {
     expect(scopes.has("profile")).toBe(true);
     expect(scopes.has(googleCalendarEventsScope)).toBe(true);
     expect([...scopes].some((scope) => scope.includes("gmail"))).toBe(false);
+  });
+
+  it("keeps Gmail authorization incremental and limited to send", async () => {
+    const provider = createGoogleConnectedAccountProvider(config);
+    const url = new URL(
+      await provider.getAuthorizationUrl({
+        capability: "gmail",
+        state: "signed-state",
+      }),
+    );
+    const scopes = new Set(url.searchParams.get("scope")?.split(" "));
+
+    expect(scopes.has(googleGmailSendScope)).toBe(true);
+    expect(scopes.has(googleCalendarEventsScope)).toBe(false);
+    expect([...scopes].some((scope) => scope.includes("gmail.readonly"))).toBe(
+      false,
+    );
+    expect([...scopes].some((scope) => scope.includes("gmail.modify"))).toBe(
+      false,
+    );
   });
 
   it("redacts provider token fields from thrown errors", async () => {

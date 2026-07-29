@@ -1,7 +1,7 @@
 """Legacy provider-event state machine.
 
 Deprecated for live interviews: the production worker uses LiveKit's session
-turn lifecycle and Prelude's InterviewOrchestrator for business sequencing.
+turn lifecycle and HireCall's InterviewOrchestrator for business sequencing.
 This module remains only for deterministic simulation compatibility.
 """
 

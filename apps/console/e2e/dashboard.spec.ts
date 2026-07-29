@@ -87,8 +87,8 @@ test("interview agent saves and publishes a draft", async ({ page }) => {
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Add question" }).click();
-  await page.getByLabel("Ask Prelude to add a question about").fill("mobility");
-  await page.getByRole("button", { name: "Add with Prelude" }).click();
+  await page.getByLabel("Ask HireCall to add a question about").fill("mobility");
+  await page.getByRole("button", { name: "Add with HireCall" }).click();
   await expect(page.getByText("5 questions", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "Review evaluation" }).click();
@@ -113,5 +113,5 @@ test("interview agent saves and publishes a draft", async ({ page }) => {
 
   await page.getByRole("button", { name: "Publish role screen" }).click();
   await expect(page.getByText("Role screen published")).toBeVisible();
-  await expect(page.getByText("prelude.ai/interview/ci_")).toBeVisible();
+  await expect(page.getByText("hirecall.ai/interview/ci_")).toBeVisible();
 });

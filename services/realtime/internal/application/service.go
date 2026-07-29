@@ -2001,7 +2001,7 @@ func demoInterviewPlan(planID string) InterviewPlan {
 				"handle roadmap trade-offs under customer pressure",
 				"communicate clearly with SMB stakeholders",
 			},
-			CompanyContext: "Prelude is screening candidates for a structured first interview before recruiter review.",
+			CompanyContext: "HireCall is screening candidates for a structured first interview before recruiter review.",
 			CandidateTone:  "professional, concise, and concrete",
 		},
 		Questions: []InterviewQuestion{

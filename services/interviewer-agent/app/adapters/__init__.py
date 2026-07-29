@@ -1,2 +1,2 @@
-"""Infrastructure adapters for providers and Prelude services."""
+"""Infrastructure adapters for providers and HireCall services."""
 

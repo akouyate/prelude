@@ -335,7 +335,7 @@ const billingService = createBillingService({
   store: prismaBillingStore,
 });
 
-/** Reads only Prelude's local billing projection; it never calls Clerk. */
+/** Reads only HireCall's local billing projection; it never calls Clerk. */
 export const getWorkspaceBilling = billingService.getWorkspaceBilling;
 export const getWorkspaceBillingOverview =
   billingService.getWorkspaceBillingOverview;

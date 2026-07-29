@@ -45,7 +45,7 @@ export async function InterviewOverview({
     },
     t,
   );
-  const candidateLinkLabel = `prelude.ai${interview.candidatePath}`;
+  const candidateLinkLabel = `hirecall.ai${interview.candidatePath}`;
   const candidates = interview.candidateSessions.map((session) => ({
     analysisStatus: session.analysisStatus,
     candidateLabel: session.candidateLabel,

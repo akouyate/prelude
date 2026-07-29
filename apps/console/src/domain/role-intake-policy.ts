@@ -82,7 +82,7 @@ export function validateRoleIntakeFile(
   }
 
   if (!supportedMimeTypes.has(contentType)) {
-    return { ok: false, error: "Prelude accepts PDF and DOCX job briefs only." };
+    return { ok: false, error: "HireCall accepts PDF and DOCX job briefs only." };
   }
 
   return {

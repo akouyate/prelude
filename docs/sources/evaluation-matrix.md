@@ -2,7 +2,7 @@
 
 Last reviewed: 2026-07-27
 
-This file tracks the sources that inform Prelude's evaluation matrix,
+This file tracks the sources that inform HireCall's evaluation matrix,
 post-session candidate brief synthesis, and live answer inference guardrails.
 
 ## OpenAI Implementation Sources
@@ -14,12 +14,12 @@ post-session candidate brief synthesis, and live answer inference guardrails.
 Why it matters:
 
 - The post-session candidate brief adapter uses the Responses API as a
-  provider-specific implementation behind Prelude's `CandidateBriefSynthesizer`
+  provider-specific implementation behind HireCall's `CandidateBriefSynthesizer`
   boundary.
 - Structured output guidance informs the JSON-shaped response contract, while
-  Prelude's Zod schemas remain the final validation authority.
+  HireCall's Zod schemas remain the final validation authority.
 - OpenAI recommends GPT-5.4 nano for classification and extraction workloads.
-  Prelude uses it for the bounded live answer matrix, with deterministic
+  HireCall uses it for the bounded live answer matrix, with deterministic
   orchestration and a local fallback remaining authoritative.
 - Live inference uses strict JSON Schema output, `reasoning.effort = none`, a
   small output budget, and `store = false`; provider latency is measured without
@@ -33,7 +33,7 @@ Why it matters:
 
 Why it matters:
 
-- Prelude is positioned as a recruiter-assist first-screening workflow, not an
+- HireCall is positioned as a recruiter-assist first-screening workflow, not an
   automated hiring, ranking, rejection, or archive decision system.
 - Recruiter-facing analysis must remain evidence-backed, job-related, and
   explicitly human-reviewed.

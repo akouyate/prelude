@@ -1,11 +1,11 @@
-# Prelude Design System
+# HireCall Design System
 
-Prelude UI is built from three layers:
+HireCall UI is built from three layers:
 
 1. `@prelude/design-system` owns tokens: color scales, semantic surfaces,
    radius, spacing, shadows, fonts, and breakpoints.
 2. `@prelude/ui` owns reusable React primitives. Interactive primitives should
-   wrap Base UI first, then apply Prelude visual styling.
+   wrap Base UI first, then apply HireCall visual styling.
 3. App features compose `@prelude/ui` primitives and avoid duplicating control,
    panel, field, tab, and notice classes locally.
 

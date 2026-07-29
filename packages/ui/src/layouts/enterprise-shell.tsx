@@ -58,7 +58,7 @@ export function EnterpriseShell({
   onCollapsedChange,
 }: EnterpriseShellProps) {
   const organizationName = account?.organizationName ?? "Recruiter console";
-  const userName = account?.userName ?? "Prelude user";
+  const userName = account?.userName ?? "HireCall user";
   const userEmail = account?.userEmail ?? "workspace";
 
   return (

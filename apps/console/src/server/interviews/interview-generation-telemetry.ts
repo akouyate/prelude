@@ -2,7 +2,7 @@
  * N9: structured telemetry for the interview-plan generator pipeline.
  *
  * These events make the otherwise-silent failure modes of generation auditable:
- *   - the AI generator falling back to Prelude's deterministic templates,
+ *   - the AI generator falling back to HireCall's deterministic templates,
  *   - the keyword policy filter dropping generated questions/criteria, and
  *   - the N6 protected-topic classifier outcome at publish.
  *

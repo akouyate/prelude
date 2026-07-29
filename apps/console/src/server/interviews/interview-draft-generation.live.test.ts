@@ -53,7 +53,7 @@ describe("live OpenAI interview draft generation", () => {
 
 function input(): InterviewDraftGenerationInput {
   return {
-    companyName: "Prelude",
+    companyName: "HireCall",
     focus: [
       "role_skills",
       "situational_judgment",

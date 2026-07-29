@@ -116,7 +116,7 @@ export function mockUserId() {
 }
 
 export function mockUserEmail() {
-  return process.env.MOCK_CLERK_USER_EMAIL || "recruiter@prelude.ai";
+  return process.env.MOCK_CLERK_USER_EMAIL || "recruiter@hirecall.ai";
 }
 
 export function mockUserName() {

@@ -13,7 +13,7 @@ class MockOpenAIRealtimeAdapter:
 
     async def start_session(self, plan: InterviewPlan) -> str:
         return (
-            "Bonjour, je suis l'interviewer IA de Prelude. "
+            "Bonjour, je suis l'interviewer IA de HireCall. "
             f"Nous allons faire un premier entretien court pour le poste {plan.role_title}."
         )
 

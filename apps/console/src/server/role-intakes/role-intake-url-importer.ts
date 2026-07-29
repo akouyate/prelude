@@ -27,6 +27,8 @@ export {
   type RoleIntakeUrlFieldSources,
 } from "./role-intake-url-extractor";
 
+// Keep the established crawler token stable across the product rebrand so
+// existing robots.txt allowlists continue to work.
 const IMPORTER_USER_AGENT = "PreludeRoleImporter/1.0";
 const MAX_REDIRECTS = 3;
 const MAX_RESPONSE_BYTES = 1_500_000;
@@ -135,7 +137,7 @@ export async function fetchRoleIntakePublicPage(
     if (response.statusCode === 401 || response.statusCode === 403) {
       throw new RoleIntakeUrlImportError(
         "source_not_public",
-        "Prelude can only import a job page that is publicly available without sign-in.",
+        "HireCall can only import a job page that is publicly available without sign-in.",
       );
     }
     if (response.statusCode >= 500) {
@@ -148,19 +150,19 @@ export async function fetchRoleIntakePublicPage(
     if (response.statusCode !== 200) {
       throw new RoleIntakeUrlImportError(
         "source_not_public",
-        "Prelude could not access a public job page at this URL. Start from a manual brief instead.",
+        "HireCall could not access a public job page at this URL. Start from a manual brief instead.",
       );
     }
     if (!isHtmlContentType(response.headers["content-type"])) {
       throw new RoleIntakeUrlImportError(
         "unsupported_content",
-        "Prelude can import public HTML job pages only. Start from a manual brief instead.",
+        "HireCall can import public HTML job pages only. Start from a manual brief instead.",
       );
     }
     if (!isIdentityEncoding(response.headers["content-encoding"])) {
       throw new RoleIntakeUrlImportError(
         "unsupported_content",
-        "Prelude could not read this job page safely. Start from a manual brief instead.",
+        "HireCall could not read this job page safely. Start from a manual brief instead.",
       );
     }
 
@@ -202,13 +204,13 @@ async function assertRobotsAllows(
   if (response.statusCode !== 200 || !isTextContentType(response.headers["content-type"])) {
     throw new RoleIntakeUrlImportError(
       "robots_unavailable",
-      "Prelude could not verify the source site policy. Start from a manual brief instead.",
+      "HireCall could not verify the source site policy. Start from a manual brief instead.",
     );
   }
   if (!robotsAllowPath(response.body, `${source.pathname}${source.search}`)) {
     throw new RoleIntakeUrlImportError(
       "robots_disallowed",
-      "This source site does not allow Prelude to import this job page. Start from a manual brief instead.",
+      "This source site does not allow HireCall to import this job page. Start from a manual brief instead.",
     );
   }
 }
@@ -225,7 +227,7 @@ async function requestPublicUrl(
   if (!addresses.length || addresses.some((address) => !isGloballyRoutableIpAddress(address.address))) {
     throw new RoleIntakeUrlImportError(
       "private_destination",
-      "Prelude can only import public job pages.",
+      "HireCall can only import public job pages.",
     );
   }
   const address = addresses.find((candidate) => candidate.family === 4) ?? addresses[0]!;

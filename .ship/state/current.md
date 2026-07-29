@@ -2,64 +2,71 @@
 
 ## Goal
 
-Upgrade Prelude's live interviewer to LiveKit Agents 1.6.7 and replace the
-home-grown turn/interruption handling where LiveKit now provides a better
-supported primitive.
+Rebrand the visible product from Prelude to HireCall, prepare the next
+first-party integration capabilities, and ship a chaptered interview replay
+that lets recruiters play a complete recording or one question segment.
 
 ## Scope
 
-- Pin the Python voice runtime and migrate to LiveKit Turn Detector and adaptive
-  interruption handling behind an explicit configuration boundary.
-- Preserve OpenAI Realtime for the interviewer voice and reasoning path.
-- Make mobile/browser disconnects recoverable instead of failing the interview
-  immediately.
-- Deprecate superseded turn-taking code and keep one production behavior path.
-- Add latency, fallback, interruption and reconnect observability.
-- Cover long pauses, genuine interruptions, backchannels, silence, reconnects
-  and closing playout with deterministic tests.
+- Replace user-visible Prelude and Prelude.ai branding with HireCall across the
+  recruiter app, candidate app, email copy, metadata and product documentation.
+- Keep internal package names, database identifiers and historical migrations
+  stable to avoid a risky namespace migration.
+- Use the supplied HireCall wordmark and favicons throughout both web apps.
+- Replace placeholder integration marks with sourced brand SVGs.
+- Preserve the working Google Calendar OAuth capability and document the
+  capability boundaries for Gmail, LinkedIn and Indeed.
+- Derive replay chapters from persisted question/transcript timestamps.
+- Let question and key-moment actions seek the shared player, with bounded
+  playback for a selected question and an explicit full-interview mode.
 
 ## Workflow
 
-- [x] Intake, repository investigation and LiveKit documentation research
-- [x] Initial architecture and behavior audit
-- [x] Pin runtime and migrate LiveKit turn handling
-- [x] Implement reconnect-safe session lifecycle
-- [x] Deprecate superseded behavior and consolidate orchestration
-- [x] Add metrics and regression scenarios
-- [x] Review, simplify and validate
+- [x] Intake and repository audit
+- [x] Current provider/API research
+- [x] Complete visible HireCall rebrand
+- [x] Consolidate integration presentation and source documentation
+- [x] Implement chaptered replay and shared seek controls
+- [x] Refine integration GitHub issues
+- [x] Run automated validation
+- [ ] Run signed-in browser validation
+- [x] Review and simplify
+- [ ] Commit and merge
 
 ## Decisions
 
-- Prefer official LiveKit turn detection and adaptive interruption primitives
-  over Prelude's snapshot-based overlap heuristic when the runtime supports
-  them.
-- Keep business question sequencing and evidence evaluation in Prelude.
-- Do not add synthetic verbal backchannels until interruption and endpointing
-  behavior is reliable and measured.
-- Preserve existing unrelated worktree changes.
-- Roll out new turn handling behind configuration so the current behavior
-  remains available during live comparison.
-- Use a separate aligned STT stream for Prelude's complete-turn business hook.
-- Use deterministic TTS only for contractual lines such as checkout; keep
-  OpenAI Realtime as the conversational voice.
-- Use GPT-5.4 nano for bounded live answer classification, with Prelude's
-  deterministic matrix guardrails and heuristic fallback.
+- Use `HireCall` as the product spelling and `hirecall.ai` in display-only URL
+  examples.
+- Preserve `@prelude/*`, environment variable names, database names, internal
+  type names and migration history in this pass.
+- Request Google scopes incrementally by capability. Calendar and Gmail must
+  remain independently connectable even when they share one Google account.
+- Treat LinkedIn and Indeed as partner-access integrations, not public-page
+  scraping features.
+- Store integration logos locally so settings do not depend on a third-party
+  CDN at runtime.
+- Derive chapter boundaries deterministically from persisted transcript turns;
+  the next question start is the current question end.
+- Keep one HTML audio element and one playback authority for the page.
 
 ## Validation target
 
-- All existing Python, Go and candidate tests remain green.
-- The Python suite passes against the pinned LiveKit Agents version.
-- Candidate disconnects have a bounded resume window and do not immediately
-  fail the product session.
-- Tests cover false and genuine interruptions, backchannels, multi-second
-  thinking pauses, silence after every question, reconnect and final closing.
-- Runtime metrics make fallback and latency regressions observable.
+- No user-visible Prelude brand remains in either app or notification output.
+- Google Calendar connection and scheduling behavior remains unchanged.
+- Integration rows use sourced logos and honest availability states.
+- A replay chapter click seeks and starts at the expected question.
+- Question playback pauses at that chapter's end and full playback remains
+  available.
+- Existing unit, typecheck and lint suites remain green.
+- Desktop and mobile browser smoke tests show no overlap or horizontal scroll.
 
 ## Validation result
 
-- Python interviewer-agent: 196 tests passed.
-- Go realtime service: all packages passed.
-- Candidate app: 78 tests passed; typecheck and lint passed.
-- Connected LiveKit Cloud/OpenAI smoke: 3/3 questions completed, 3/3
-  `llm_assisted` evaluations, exact checkout playout, contiguous events, and no
-  strict-report anomalies (`is_c6e304f80af239f3389b27ea`).
+- `pnpm run test`: 19/19 tasks passed; console 356/356 non-live tests passed.
+- `pnpm run typecheck`: 19/19 tasks passed.
+- `pnpm run lint`: 19/19 tasks passed.
+- `make test-services`: Go packages passed; Python 196/196 passed.
+- A source audit found no remaining user-visible Prelude branding; stable
+  technical identifiers are documented and intentionally retained.
+- Signed-in visual and interaction smoke testing is pending because the
+  in-app browser was not exposed to this Codex session.

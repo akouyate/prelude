@@ -67,7 +67,7 @@ class RoleBenchmarkRow:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the Prelude role-style benchmark matrix."
+        description="Run the HireCall role-style benchmark matrix."
     )
     parser.add_argument(
         "--provider",

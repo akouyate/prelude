@@ -168,7 +168,7 @@ def create_demo_plan() -> InterviewPlan:
                 "communicate clearly with SMB stakeholders",
             ],
             company_context=(
-                "Prelude is screening candidates for a structured first interview "
+                "HireCall is screening candidates for a structured first interview "
                 "before recruiter review."
             ),
             candidate_tone="professional, concise, and concrete",

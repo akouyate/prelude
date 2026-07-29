@@ -123,7 +123,7 @@ async def test_prelude_controlled_agent_stops_livekit_automatic_response() -> No
     committed_messages: list[object] = []
     agent = _create_prelude_controlled_agent(
         agents,
-        instructions="Prelude owns every spoken response.",
+        instructions="HireCall owns every spoken response.",
         on_user_turn_completed=committed_messages.append,
     )
     message = UserItem(item_id="complete-turn", text="The complete answer.")

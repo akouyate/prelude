@@ -212,7 +212,7 @@ describe("interview draft generation", () => {
     const draft = await generator.generateDraft(input());
 
     expect(draft.questions).toHaveLength(4);
-    expect(draft.rationale).toContain("Prelude prepared 4 focused");
+    expect(draft.rationale).toContain("HireCall prepared 4 focused");
   });
 
   it("drops malformed and unsafe draft items before filling with deterministic content", async () => {
@@ -264,7 +264,7 @@ describe("interview draft generation", () => {
     expect(draft.criteria.length).toBeGreaterThanOrEqual(3);
     expect(content).not.toContain("how old are you");
     expect(content).not.toContain("fit score");
-    expect(draft.rationale).toContain("Prelude prepared 4 focused");
+    expect(draft.rationale).toContain("HireCall prepared 4 focused");
   });
 
   it("reports the openai provider in provenance when generation succeeds", async () => {
@@ -451,7 +451,7 @@ describe("interview draft generation", () => {
 
 function input(): InterviewDraftGenerationInput {
   return {
-    companyName: "Prelude",
+    companyName: "HireCall",
     focus: [
       "role_skills",
       "situational_judgment",
@@ -537,7 +537,7 @@ const sampleDraft = {
     },
   ],
   rationale:
-    "Prelude prepared four focused questions for first-screen customer success evidence.",
+    "HireCall prepared four focused questions for first-screen customer success evidence.",
 };
 
 // N10.D — the OpenAI structured-output json_schema enums must stay in lockstep
