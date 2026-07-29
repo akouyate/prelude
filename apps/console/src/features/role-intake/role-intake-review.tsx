@@ -11,22 +11,13 @@ import {
 import { useTranslation } from "react-i18next";
 
 import type { RoleIntakeSummary } from "@prelude/contracts";
-import {
-  Button,
-  Field,
-  Input,
-  Notice,
-  Textarea,
-} from "@prelude/ui";
+import { Button, Field, Input, Notice, Textarea } from "@prelude/ui";
 
 import {
   getRoleIntakeReviewIssues,
   type RoleIntakeReviewDraft,
 } from "./role-intake-experience";
-import {
-  RoleIntakePrivacyNote,
-  RoleIntakeShell,
-} from "./role-intake-layout";
+import { RoleIntakePrivacyNote, RoleIntakeShell } from "./role-intake-layout";
 
 export type { RoleIntakeReviewDraft } from "./role-intake-experience";
 
@@ -52,8 +43,7 @@ export function RoleIntakeReview({
   const descriptionRef = React.useRef<HTMLTextAreaElement>(null);
   const issues = getRoleIntakeReviewIssues(review);
   const titleInvalid = showValidation && issues.includes("title");
-  const descriptionInvalid =
-    showValidation && issues.includes("description");
+  const descriptionInvalid = showValidation && issues.includes("description");
 
   return (
     <RoleIntakeShell
@@ -92,7 +82,12 @@ export function RoleIntakeReview({
         </Notice>
       ) : null}
       {error ? (
-        <Notice aria-live="assertive" className="mt-6" role="alert" tone="danger">
+        <Notice
+          aria-live="assertive"
+          className="mt-6"
+          role="alert"
+          tone="danger"
+        >
           {error}
         </Notice>
       ) : null}
@@ -184,9 +179,7 @@ export function RoleIntakeReview({
                 }))
               }
               maxLength={500_000}
-              placeholder={t(
-                "roleIntake.review.jobDescriptionPlaceholder",
-              )}
+              placeholder={t("roleIntake.review.jobDescriptionPlaceholder")}
               ref={descriptionRef}
               value={review.description}
             />
@@ -212,7 +205,9 @@ export function RoleIntakeReview({
   );
 }
 
-export function toRoleIntakeReviewDraft(intake?: RoleIntakeSummary): RoleIntakeReviewDraft {
+export function toRoleIntakeReviewDraft(
+  intake?: RoleIntakeSummary,
+): RoleIntakeReviewDraft {
   return {
     description: intake?.reviewedDraft.description ?? "",
     location: intake?.reviewedDraft.location ?? "",
@@ -237,16 +232,33 @@ function RoleIntakeSourceDetails({ intake }: { intake: RoleIntakeSummary }) {
         <div className="min-w-0">
           <p className="text-sm font-semibold text-ink-900">
             {isUrl
-              ? t("roleIntake.review.publicSource")
+              ? t(
+                  intake.source.acquisitionStrategy === "indexed_search"
+                    ? "roleIntake.review.indexedPublicSource"
+                    : "roleIntake.review.publicSource",
+                )
               : t("roleIntake.review.uploadedSource")}
           </p>
-          <p className="mt-0.5 break-all text-sm leading-6 text-ink-600">
-            {isUrl
-              ? intake.source.canonicalUrl ??
+          {isUrl ? (
+            <a
+              className="mt-0.5 block break-all text-sm leading-6 text-ink-600 underline decoration-ink-300 underline-offset-4 hover:text-ink-900"
+              href={
+                intake.source.canonicalUrl ??
                 intake.source.submittedUrl ??
-                intake.source.displayName
-              : intake.source.displayName}
-          </p>
+                undefined
+              }
+              rel="noreferrer"
+              target="_blank"
+            >
+              {intake.source.canonicalUrl ??
+                intake.source.submittedUrl ??
+                intake.source.displayName}
+            </a>
+          ) : (
+            <p className="mt-0.5 break-all text-sm leading-6 text-ink-600">
+              {intake.source.displayName}
+            </p>
+          )}
           {isUrl && fields ? (
             <p className="mt-2 text-xs leading-5 text-ink-500">
               {t("roleIntake.review.sourceDetails", {
@@ -264,16 +276,13 @@ function RoleIntakeSourceDetails({ intake }: { intake: RoleIntakeSummary }) {
 }
 
 function formatFieldSource(
-  source: NonNullable<
-    RoleIntakeSummary["source"]["fieldSources"]
-  >["title"],
+  source: NonNullable<RoleIntakeSummary["source"]["fieldSources"]>["title"],
   t: ReturnType<typeof useTranslation>["t"],
 ): string {
   return {
     heading: t("roleIntake.review.fieldSources.heading"),
-    job_posting_json_ld: t(
-      "roleIntake.review.fieldSources.jobPostingData",
-    ),
+    indexed_web_search: t("roleIntake.review.fieldSources.indexedSearch"),
+    job_posting_json_ld: t("roleIntake.review.fieldSources.jobPostingData"),
     main_content: t("roleIntake.review.fieldSources.visiblePage"),
     page_title: t("roleIntake.review.fieldSources.pageTitle"),
     unavailable: t("roleIntake.review.fieldSources.notFound"),

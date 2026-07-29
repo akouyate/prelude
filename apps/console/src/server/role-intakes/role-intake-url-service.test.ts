@@ -13,7 +13,10 @@ const prismaMock = vi.hoisted(() => ({
 vi.mock("@prelude/db", () => ({
   Prisma: {
     PrismaClientKnownRequestError: class PrismaClientKnownRequestError extends Error {},
-    sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({ strings, values }),
+    sql: (strings: TemplateStringsArray, ...values: unknown[]) => ({
+      strings,
+      values,
+    }),
   },
   prisma: prismaMock,
 }));
@@ -35,11 +38,18 @@ const scope = {
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.ROLE_INTAKE_ENABLED = "1";
-  prismaMock.roleIntake.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) =>
-    roleIntake({ ...data, id: "intake_123" }),
+  prismaMock.roleIntake.create.mockImplementation(
+    async ({ data }: { data: Record<string, unknown> }) =>
+      roleIntake({ ...data, id: "intake_123" }),
   );
-  prismaMock.roleIntake.update.mockImplementation(async ({ data, where }: { data: Record<string, unknown>; where: { id: string } }) =>
-    roleIntake({ ...data, id: where.id }),
+  prismaMock.roleIntake.update.mockImplementation(
+    async ({
+      data,
+      where,
+    }: {
+      data: Record<string, unknown>;
+      where: { id: string };
+    }) => roleIntake({ ...data, id: where.id }),
   );
 });
 
@@ -62,7 +72,9 @@ describe("public URL role intake service", () => {
     expect(created).toMatchObject({
       ok: true,
       value: {
-        source: expect.objectContaining({ submittedUrl: "https://careers.example.com/jobs/123" }),
+        source: expect.objectContaining({
+          submittedUrl: "https://careers.example.com/jobs/123",
+        }),
         sourceKind: "url",
         status: "queued",
       },
@@ -77,7 +89,10 @@ describe("public URL role intake service", () => {
       }),
     );
 
-    const repeated = await createRoleIntakeUrl(scope, "https://careers.example.com/jobs/123");
+    const repeated = await createRoleIntakeUrl(
+      scope,
+      "https://careers.example.com/jobs/123",
+    );
 
     expect(repeated).toMatchObject({ ok: true, value: { id: "intake_123" } });
     expect(prismaMock.roleIntake.create).toHaveBeenCalledTimes(1);
@@ -101,10 +116,13 @@ describe("public URL role intake service", () => {
     const result = await processNextRoleIntake({
       storage: null,
       urlImporter: async () => ({
+        acquisitionStrategy: "direct_html",
         canonicalUrl: "https://careers.example.com/jobs/123",
+        citationUrls: ["https://careers.example.com/jobs/123"],
         contentHash: "not-persisted",
         draft: {
-          description: "Own customer onboarding, retention, and feedback workflows across the B2B product.",
+          description:
+            "Own customer onboarding, retention, and feedback workflows across the B2B product.",
           location: "Paris",
           title: "Customer Success Manager",
         },
@@ -120,12 +138,18 @@ describe("public URL role intake service", () => {
       }),
     });
 
-    expect(result).toEqual({ kind: "processed", intakeId: "intake_123", status: "ready_for_review" });
+    expect(result).toEqual({
+      kind: "processed",
+      intakeId: "intake_123",
+      status: "ready_for_review",
+    });
     expect(prismaMock.roleIntake.update).toHaveBeenLastCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
           canonicalUrl: "https://careers.example.com/jobs/123",
           sourceMetadata: {
+            acquisition_strategy: "direct_html",
+            citation_urls: ["https://careers.example.com/jobs/123"],
             extractor_version: "static-html-v1",
             fetched_at: "2026-07-17T12:00:00.000Z",
             field_sources: {
@@ -139,7 +163,9 @@ describe("public URL role intake service", () => {
         }),
       }),
     );
-    expect(JSON.stringify(prismaMock.roleIntake.update.mock.calls)).not.toContain("not-persisted");
+    expect(
+      JSON.stringify(prismaMock.roleIntake.update.mock.calls),
+    ).not.toContain("not-persisted");
   });
 
   it("refuses a stale review version instead of overwriting another recruiter's edits", async () => {
@@ -167,7 +193,8 @@ describe("public URL role intake service", () => {
         },
       }),
     ).resolves.toEqual({
-      error: "This review changed in another browser. Refresh it before saving your edits.",
+      error:
+        "This review changed in another browser. Refresh it before saving your edits.",
       ok: false,
     });
   });

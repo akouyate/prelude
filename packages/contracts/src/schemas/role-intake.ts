@@ -31,6 +31,7 @@ export const roleIntakeWarningSchema = z.object({
 });
 
 export const roleIntakeFieldSourceSchema = z.enum([
+  "indexed_web_search",
   "job_posting_json_ld",
   "main_content",
   "heading",
@@ -39,7 +40,12 @@ export const roleIntakeFieldSourceSchema = z.enum([
 ]);
 
 export const roleIntakeSourceProvenanceSchema = z.object({
+  acquisitionStrategy: z
+    .enum(["direct_html", "indexed_search"])
+    .nullable()
+    .default(null),
   canonicalUrl: z.string().url().max(2_048).nullable().default(null),
+  citationUrls: z.array(z.string().url().max(2_048)).max(20).default([]),
   displayName: z.string().trim().min(1).max(255),
   extractorVersion: z.string().trim().min(1).max(80).nullable().default(null),
   fetchedAt: z.string().datetime().nullable().default(null),
@@ -79,4 +85,6 @@ export type RoleIntakeStatus = z.infer<typeof roleIntakeStatusSchema>;
 export type RoleIntakeSummary = z.infer<typeof roleIntakeSummarySchema>;
 export type RoleIntakeWarning = z.infer<typeof roleIntakeWarningSchema>;
 export type RoleIntakeFieldSource = z.infer<typeof roleIntakeFieldSourceSchema>;
-export type RoleIntakeSourceProvenance = z.infer<typeof roleIntakeSourceProvenanceSchema>;
+export type RoleIntakeSourceProvenance = z.infer<
+  typeof roleIntakeSourceProvenanceSchema
+>;

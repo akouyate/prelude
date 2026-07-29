@@ -90,7 +90,9 @@ export function useRoleIntakeFlow(initialIntake?: RoleIntakeSummary) {
         setError(consumed.error);
         return;
       }
-      router.push(`/roles/new?jobId=${encodeURIComponent(consumed.value.jobId)}`);
+      router.push(
+        `/roles/new?jobId=${encodeURIComponent(consumed.value.jobId)}`,
+      );
     } finally {
       setIsCreatingRole(false);
     }
@@ -100,7 +102,11 @@ export function useRoleIntakeFlow(initialIntake?: RoleIntakeSummary) {
     if (intake) {
       await recordRoleIntakeManualFallbackAction(intake.id);
     }
-    router.push("/roles/new?source=manual");
+    const params = new URLSearchParams({ source: "manual" });
+    if (intake?.source.submittedUrl) {
+      params.set("sourceUrl", intake.source.submittedUrl);
+    }
+    router.push(`/roles/new?${params.toString()}`);
   }, [intake, router]);
 
   return {

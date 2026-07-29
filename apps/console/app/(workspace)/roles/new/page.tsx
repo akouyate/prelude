@@ -19,6 +19,7 @@ type NewRoleScreenPageProps = {
     jobId?: string;
     intakeId?: string;
     source?: string;
+    sourceUrl?: string;
   }>;
 };
 
@@ -27,12 +28,16 @@ export default async function NewRoleScreenPage({
 }: NewRoleScreenPageProps) {
   const params = await searchParams;
   const source =
-    params.source === "manual" || params.source === "upload" || params.source === "url"
+    params.source === "manual" ||
+    params.source === "upload" ||
+    params.source === "url"
       ? params.source
       : undefined;
 
   if (!params.draftId && !params.jobId && !source) {
-    return <RoleIntakeSourcePicker importEnabled={isRoleIntakeFeatureEnabled()} />;
+    return (
+      <RoleIntakeSourcePicker importEnabled={isRoleIntakeFeatureEnabled()} />
+    );
   }
 
   if (source === "upload") {
@@ -40,7 +45,11 @@ export default async function NewRoleScreenPage({
     const intake = params.intakeId
       ? await getRoleIntakeSummary(scope, params.intakeId)
       : null;
-    return <RoleIntakeUploadFlow initialIntake={intake?.ok ? intake.value : undefined} />;
+    return (
+      <RoleIntakeUploadFlow
+        initialIntake={intake?.ok ? intake.value : undefined}
+      />
+    );
   }
 
   if (source === "url") {
@@ -48,13 +57,18 @@ export default async function NewRoleScreenPage({
     const intake = params.intakeId
       ? await getRoleIntakeSummary(scope, params.intakeId)
       : null;
-    return <RoleIntakeUrlFlow initialIntake={intake?.ok ? intake.value : undefined} />;
+    return (
+      <RoleIntakeUrlFlow
+        initialIntake={intake?.ok ? intake.value : undefined}
+      />
+    );
   }
 
   const context = await getInterviewBuilderContext({
     draftId: params.draftId,
     jobId: params.jobId,
   });
+  const sourceUrl = safePublicSourceUrl(params.sourceUrl);
 
   return (
     <>
@@ -72,7 +86,22 @@ export default async function NewRoleScreenPage({
         initialJobId={context.initialJob?.id}
         initialJobLocation={context.initialJob?.location ?? undefined}
         initialJobTitle={context.initialJob?.title}
+        initialSourceUrl={sourceUrl}
       />
     </>
   );
+}
+
+function safePublicSourceUrl(value: string | undefined): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password
+      ? url.toString()
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }

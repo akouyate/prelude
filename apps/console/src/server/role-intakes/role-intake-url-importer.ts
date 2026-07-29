@@ -5,11 +5,15 @@ import https from "node:https";
 import type { ImportedRoleDraft, RoleIntakeWarning } from "@prelude/contracts";
 
 import {
-  assertProviderAllowed,
+  getRoleIntakeUrlAcquisitionStrategy,
   isGloballyRoutableIpAddress,
   normalizeRoleIntakeUrl,
   RoleIntakeUrlImportError,
 } from "./role-intake-url-policy";
+import {
+  createRoleIntakeIndexedSearchFromEnv,
+  type RoleIntakeIndexedSearch,
+} from "./role-intake-indexed-search";
 import {
   extractRoleIntakeUrlDraft,
   type RoleIntakeUrlFieldSources,
@@ -17,6 +21,7 @@ import {
 
 export {
   createRoleIntakeUrlIdentity,
+  getRoleIntakeUrlAcquisitionStrategy,
   isGloballyRoutableIpAddress,
   normalizeRoleIntakeUrl,
   RoleIntakeUrlImportError,
@@ -35,9 +40,21 @@ const MAX_RESPONSE_BYTES = 1_500_000;
 const MAX_RESPONSE_HEADER_BYTES = 32 * 1024;
 const REQUEST_TIMEOUT_MS = 12_000;
 const EXTRACTOR_VERSION = "static-html-v1";
+const INDEXED_SEARCH_EXTRACTOR_VERSION = "indexed-web-search-v1";
+const INDEXED_SEARCH_FALLBACK_ERRORS = new Set([
+  "no_usable_text",
+  "remote_unavailable",
+  "response_too_large",
+  "robots_disallowed",
+  "robots_unavailable",
+  "source_not_public",
+  "unsupported_content",
+]);
 
 export type RoleIntakePublicPage = {
+  acquisitionStrategy: "direct_html" | "indexed_search";
   canonicalUrl: string;
+  citationUrls: string[];
   contentHash: string;
   draft: ImportedRoleDraft;
   extractorVersion: string;
@@ -67,6 +84,7 @@ type RoleIntakeUrlResponse = {
 };
 
 export type RoleIntakeUrlImporterDependencies = {
+  indexedSearch?: RoleIntakeIndexedSearch | null;
   now?: () => Date;
   request?: (input: RoleIntakeUrlRequest) => Promise<RoleIntakeUrlResponse>;
   resolve?: (hostname: string) => Promise<ResolvedAddress[]>;
@@ -79,8 +97,16 @@ export function getPinnedLookupResult(
   family: 4 | 6,
   all: true,
 ): Array<{ address: string; family: 4 | 6 }>;
-export function getPinnedLookupResult(address: string, family: 4 | 6, all: false): string;
-export function getPinnedLookupResult(address: string, family: 4 | 6, all: boolean) {
+export function getPinnedLookupResult(
+  address: string,
+  family: 4 | 6,
+  all: false,
+): string;
+export function getPinnedLookupResult(
+  address: string,
+  family: 4 | 6,
+  all: boolean,
+) {
   return all ? [{ address, family }] : address;
 }
 
@@ -95,88 +121,111 @@ export async function fetchRoleIntakePublicPage(
   const request = dependencies.request ?? requestPinnedHttps;
   const resolve = dependencies.resolve ?? resolvePublicHostname;
   const now = dependencies.now ?? (() => new Date());
+  const indexedSearch =
+    dependencies.indexedSearch === undefined
+      ? createRoleIntakeIndexedSearchFromEnv()
+      : dependencies.indexedSearch;
   let url = normalizeRoleIntakeUrl(source);
 
-  for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
-    assertProviderAllowed(url.hostname);
-    await assertRobotsAllows(url, { request, resolve });
+  if (getRoleIntakeUrlAcquisitionStrategy(url) === "indexed_search") {
+    return fetchIndexedRoleIntakePublicPage(url, indexedSearch, now);
+  }
 
-    const response = await requestPublicUrl(url, {
-      accept: "text/html,application/xhtml+xml;q=0.9",
-      request,
-      resolve,
-    });
-    if (isRedirect(response.statusCode)) {
-      if (redirects === MAX_REDIRECTS) {
-        throw new RoleIntakeUrlImportError(
-          "redirect_limit",
-          "The public job page redirected too many times. Start from a manual brief instead.",
-        );
-      }
-      const location = response.headers.location;
-      if (!location) {
-        throw new RoleIntakeUrlImportError(
-          "remote_unavailable",
-          "The public job page returned an incomplete redirect. Start from a manual brief instead.",
-        );
-      }
-      try {
-        url = normalizeRoleIntakeUrl(new URL(location, url).toString());
-      } catch (error) {
-        if (error instanceof RoleIntakeUrlImportError) {
-          throw error;
+  try {
+    for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
+      await assertRobotsAllows(url, { request, resolve });
+
+      const response = await requestPublicUrl(url, {
+        accept: "text/html,application/xhtml+xml;q=0.9",
+        request,
+        resolve,
+      });
+      if (isRedirect(response.statusCode)) {
+        if (redirects === MAX_REDIRECTS) {
+          throw new RoleIntakeUrlImportError(
+            "redirect_limit",
+            "The public job page redirected too many times. Start from a manual brief instead.",
+          );
         }
+        const location = response.headers.location;
+        if (!location) {
+          throw new RoleIntakeUrlImportError(
+            "remote_unavailable",
+            "The public job page returned an incomplete redirect. Start from a manual brief instead.",
+          );
+        }
+        try {
+          url = normalizeRoleIntakeUrl(new URL(location, url).toString());
+        } catch (error) {
+          if (error instanceof RoleIntakeUrlImportError) {
+            throw error;
+          }
+          throw new RoleIntakeUrlImportError(
+            "remote_unavailable",
+            "The public job page returned an invalid redirect. Start from a manual brief instead.",
+          );
+        }
+        if (getRoleIntakeUrlAcquisitionStrategy(url) === "indexed_search") {
+          return fetchIndexedRoleIntakePublicPage(url, indexedSearch, now);
+        }
+        continue;
+      }
+
+      if (response.statusCode === 401 || response.statusCode === 403) {
         throw new RoleIntakeUrlImportError(
-          "remote_unavailable",
-          "The public job page returned an invalid redirect. Start from a manual brief instead.",
+          "source_not_public",
+          "HireCall can only import a job page that is publicly available without sign-in.",
         );
       }
-      continue;
-    }
+      if (response.statusCode >= 500) {
+        throw new RoleIntakeUrlImportError(
+          "remote_unavailable",
+          "The public job page is temporarily unavailable. Please retry or start from a manual brief.",
+          true,
+        );
+      }
+      if (response.statusCode !== 200) {
+        throw new RoleIntakeUrlImportError(
+          "source_not_public",
+          "HireCall could not access a public job page at this URL. Start from a manual brief instead.",
+        );
+      }
+      if (!isHtmlContentType(response.headers["content-type"])) {
+        throw new RoleIntakeUrlImportError(
+          "unsupported_content",
+          "HireCall can import public HTML job pages only. Start from a manual brief instead.",
+        );
+      }
+      if (!isIdentityEncoding(response.headers["content-encoding"])) {
+        throw new RoleIntakeUrlImportError(
+          "unsupported_content",
+          "HireCall could not read this job page safely. Start from a manual brief instead.",
+        );
+      }
 
-    if (response.statusCode === 401 || response.statusCode === 403) {
-      throw new RoleIntakeUrlImportError(
-        "source_not_public",
-        "HireCall can only import a job page that is publicly available without sign-in.",
-      );
+      const extraction = extractRoleIntakeUrlDraft(response.body);
+      return {
+        acquisitionStrategy: "direct_html",
+        canonicalUrl: url.toString(),
+        citationUrls: [url.toString()],
+        contentHash: createHash("sha256").update(response.body).digest("hex"),
+        draft: extraction.draft,
+        extractorVersion: EXTRACTOR_VERSION,
+        fetchedAt: now(),
+        fieldSources: extraction.fieldSources,
+        sourceHost: url.hostname,
+        warnings: extraction.warnings,
+      };
     }
-    if (response.statusCode >= 500) {
-      throw new RoleIntakeUrlImportError(
-        "remote_unavailable",
-        "The public job page is temporarily unavailable. Please retry or start from a manual brief.",
-        true,
-      );
+  } catch (error) {
+    if (
+      indexedSearch &&
+      error instanceof RoleIntakeUrlImportError &&
+      shouldTryIndexedSearch(error)
+    ) {
+      return fetchIndexedRoleIntakePublicPage(url, indexedSearch, now);
     }
-    if (response.statusCode !== 200) {
-      throw new RoleIntakeUrlImportError(
-        "source_not_public",
-        "HireCall could not access a public job page at this URL. Start from a manual brief instead.",
-      );
-    }
-    if (!isHtmlContentType(response.headers["content-type"])) {
-      throw new RoleIntakeUrlImportError(
-        "unsupported_content",
-        "HireCall can import public HTML job pages only. Start from a manual brief instead.",
-      );
-    }
-    if (!isIdentityEncoding(response.headers["content-encoding"])) {
-      throw new RoleIntakeUrlImportError(
-        "unsupported_content",
-        "HireCall could not read this job page safely. Start from a manual brief instead.",
-      );
-    }
-
-    const extraction = extractRoleIntakeUrlDraft(response.body);
-    return {
-      canonicalUrl: url.toString(),
-      contentHash: createHash("sha256").update(response.body).digest("hex"),
-      draft: extraction.draft,
-      extractorVersion: EXTRACTOR_VERSION,
-      fetchedAt: now(),
-      fieldSources: extraction.fieldSources,
-      sourceHost: url.hostname,
-      warnings: extraction.warnings,
-    };
+    throw error;
   }
 
   throw new RoleIntakeUrlImportError(
@@ -185,9 +234,64 @@ export async function fetchRoleIntakePublicPage(
   );
 }
 
+async function fetchIndexedRoleIntakePublicPage(
+  source: URL,
+  indexedSearch: RoleIntakeIndexedSearch | null,
+  now: () => Date,
+): Promise<RoleIntakePublicPage> {
+  if (!indexedSearch) {
+    throw new RoleIntakeUrlImportError(
+      "indexed_search_unavailable",
+      "HireCall cannot search this job source right now. Continue manually with the same link.",
+    );
+  }
+  const result = await indexedSearch(source);
+  const canonicalUrl = normalizeRoleIntakeUrl(result.canonicalUrl);
+  const citationUrls = result.citations.flatMap((value) => {
+    try {
+      return [normalizeRoleIntakeUrl(value).toString()];
+    } catch {
+      return [];
+    }
+  });
+  const fieldSources: RoleIntakeUrlFieldSources = {
+    description: "indexed_web_search",
+    location: result.draft.location ? "indexed_web_search" : "unavailable",
+    title: result.draft.title ? "indexed_web_search" : "unavailable",
+  };
+
+  return {
+    acquisitionStrategy: "indexed_search",
+    canonicalUrl: canonicalUrl.toString(),
+    citationUrls: [...new Set(citationUrls)],
+    contentHash: createHash("sha256")
+      .update(JSON.stringify(result.draft))
+      .digest("hex"),
+    draft: result.draft,
+    extractorVersion: INDEXED_SEARCH_EXTRACTOR_VERSION,
+    fetchedAt: now(),
+    fieldSources,
+    sourceHost: canonicalUrl.hostname,
+    warnings: [
+      {
+        code: "indexed_source_review_required",
+        message:
+          "This draft comes from an indexed public source. Confirm every field against the linked job page before continuing.",
+      },
+    ],
+  };
+}
+
+function shouldTryIndexedSearch(error: RoleIntakeUrlImportError): boolean {
+  return INDEXED_SEARCH_FALLBACK_ERRORS.has(error.code);
+}
+
 async function assertRobotsAllows(
   source: URL,
-  dependencies: Pick<RoleIntakeUrlImporterDependencies, "request" | "resolve"> & {
+  dependencies: Pick<
+    RoleIntakeUrlImporterDependencies,
+    "request" | "resolve"
+  > & {
     request: NonNullable<RoleIntakeUrlImporterDependencies["request"]>;
     resolve: NonNullable<RoleIntakeUrlImporterDependencies["resolve"]>;
   },
@@ -201,7 +305,10 @@ async function assertRobotsAllows(
   if (response.statusCode === 404) {
     return;
   }
-  if (response.statusCode !== 200 || !isTextContentType(response.headers["content-type"])) {
+  if (
+    response.statusCode !== 200 ||
+    !isTextContentType(response.headers["content-type"])
+  ) {
     throw new RoleIntakeUrlImportError(
       "robots_unavailable",
       "HireCall could not verify the source site policy. Start from a manual brief instead.",
@@ -224,13 +331,17 @@ async function requestPublicUrl(
   },
 ): Promise<RoleIntakeUrlResponse> {
   const addresses = await dependencies.resolve(url.hostname);
-  if (!addresses.length || addresses.some((address) => !isGloballyRoutableIpAddress(address.address))) {
+  if (
+    !addresses.length ||
+    addresses.some((address) => !isGloballyRoutableIpAddress(address.address))
+  ) {
     throw new RoleIntakeUrlImportError(
       "private_destination",
       "HireCall can only import public job pages.",
     );
   }
-  const address = addresses.find((candidate) => candidate.family === 4) ?? addresses[0]!;
+  const address =
+    addresses.find((candidate) => candidate.family === 4) ?? addresses[0]!;
   try {
     return await dependencies.request({
       address: address.address,
@@ -255,7 +366,9 @@ async function requestPublicUrl(
   }
 }
 
-async function resolvePublicHostname(hostname: string): Promise<ResolvedAddress[]> {
+async function resolvePublicHostname(
+  hostname: string,
+): Promise<ResolvedAddress[]> {
   const addresses = await dns.lookup(hostname, { all: true, verbatim: true });
   return addresses.flatMap((address) =>
     address.family === 4 || address.family === 6
@@ -269,7 +382,9 @@ async function resolvePublicHostname(hostname: string): Promise<ResolvedAddress[
  * A standalone DNS check would leave a TOCTOU window for DNS rebinding.
  * Source: OWASP SSRF Prevention Cheat Sheet and Node HTTPS request options.
  */
-async function requestPinnedHttps(input: RoleIntakeUrlRequest): Promise<RoleIntakeUrlResponse> {
+async function requestPinnedHttps(
+  input: RoleIntakeUrlRequest,
+): Promise<RoleIntakeUrlResponse> {
   const url = new URL(input.url);
   return new Promise((resolve, reject) => {
     const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
@@ -279,10 +394,17 @@ async function requestPinnedHttps(input: RoleIntakeUrlRequest): Promise<RoleInta
         hostname: url.hostname,
         lookup: (_hostname, options, callback) => {
           if (options.all) {
-            callback(null, getPinnedLookupResult(input.address, input.family, true));
+            callback(
+              null,
+              getPinnedLookupResult(input.address, input.family, true),
+            );
             return;
           }
-          callback(null, getPinnedLookupResult(input.address, input.family, false), input.family);
+          callback(
+            null,
+            getPinnedLookupResult(input.address, input.family, false),
+            input.family,
+          );
         },
         method: "GET",
         path: `${url.pathname}${url.search}`,
@@ -306,8 +428,13 @@ async function requestPinnedHttps(input: RoleIntakeUrlRequest): Promise<RoleInta
           );
           return;
         }
-        const declaredLength = Number(response.headers["content-length"] ?? "0");
-        if (Number.isFinite(declaredLength) && declaredLength > input.maxBytes) {
+        const declaredLength = Number(
+          response.headers["content-length"] ?? "0",
+        );
+        if (
+          Number.isFinite(declaredLength) &&
+          declaredLength > input.maxBytes
+        ) {
           request.destroy();
           reject(
             new RoleIntakeUrlImportError(
@@ -385,20 +512,27 @@ function normaliseHeaders(
 
 function robotsAllowPath(content: string, target: string): boolean {
   const groups = parseRobots(content);
-  const exactGroups = groups.filter((group) => group.agents.includes("preluderoleimporter"));
+  const exactGroups = groups.filter((group) =>
+    group.agents.includes("preluderoleimporter"),
+  );
   const matchingGroups = exactGroups.length
     ? exactGroups
     : groups.filter((group) => group.agents.includes("*"));
   const matches = matchingGroups.flatMap((group) =>
     group.rules
       .filter((rule) => robotRuleMatches(target, rule.path))
-      .map((rule) => ({ ...rule, length: rule.path.replaceAll("*", "").replaceAll("$", "").length })),
+      .map((rule) => ({
+        ...rule,
+        length: rule.path.replaceAll("*", "").replaceAll("$", "").length,
+      })),
   );
   if (!matches.length) {
     return true;
   }
   const mostSpecific = Math.max(...matches.map((rule) => rule.length));
-  return matches.some((rule) => rule.length === mostSpecific && rule.kind === "allow");
+  return matches.some(
+    (rule) => rule.length === mostSpecific && rule.kind === "allow",
+  );
 }
 
 function parseRobots(content: string): Array<{
