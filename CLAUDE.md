@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Prelude.ai is a pre-interview product for SMBs and scale-ups: recruiters turn a job posting into a short, guided **live IA (AI) interview**, then review a candidate brief before deciding who to call. The differentiator is a live, voice-based AI interviewer that feels structured and human — not a chatbot and not just a generated form.
+HireCall is a pre-interview product for SMBs and scale-ups: recruiters turn a job posting into a short, guided **live IA (AI) interview**, then review a candidate brief before deciding who to call. The differentiator is a live, voice-based AI interviewer that feels structured and human — not a chatbot and not just a generated form.
 
-The repo is a **pnpm + Turborepo monorepo** (two Next.js apps + shared packages) plus **two standalone backend services** (`services/`) that are *not* part of the pnpm workspace and have their own toolchains (Go, Python).
+The repo is a **pnpm + Turborepo monorepo** (two Next.js apps + shared packages) plus **two standalone backend services** (`services/`) that are _not_ part of the pnpm workspace and have their own toolchains (Go, Python).
 
 ## Commands
 
@@ -81,7 +81,7 @@ Stack: Next 16, React 19, Tailwind 4, Clerk auth, TanStack Query, Vitest 4, Play
 
 The live interview is **Go + LiveKit + Python** by deliberate design. Read `docs/architecture/live-ia-interviewer.md` before touching this path.
 
-- `services/realtime` — **Go control plane** ("Prelude Realtime API"). Owns session orchestration and an **append-only Postgres event store**; mints short-lived LiveKit join tokens; ingests realtime events idempotently. Lightweight clean architecture (`domain` / `application` / `adapters/{httpapi,livekit,store,redisqueue}`). It deliberately **rejects payloads/metadata whose keys look like secrets** (api keys, auth headers, tokens). It does *not* own question-progression policy — that lives in the Python worker.
+- `services/realtime` — **Go control plane** ("HireCall Realtime API"). Owns session orchestration and an **append-only Postgres event store**; mints short-lived LiveKit join tokens; ingests realtime events idempotently. Lightweight clean architecture (`domain` / `application` / `adapters/{httpapi,livekit,store,redisqueue}`). It deliberately **rejects payloads/metadata whose keys look like secrets** (api keys, auth headers, tokens). It does _not_ own question-progression policy — that lives in the Python worker.
 - `services/interviewer-agent` — **Python LiveKit Agent** runtime (the IA interviewer loop). Runs in the LiveKit room, talks to OpenAI Realtime (primary voice) with ElevenLabs as benchmark/fallback, and reports events back to the Go API. Managed with `uv`.
 
 Boundaries: browsers never hold provider secrets and never call OpenAI/ElevenLabs directly; interview-state authority is server-side, not in the browser.
@@ -97,7 +97,7 @@ Organization → Job → InterviewDraft → Interview → CandidateSession
 
 Key distinctions to respect:
 
-- **`CandidateSession` is the durable product aggregate** for a candidate result. Recruiter-facing pages should start from `CandidateSession`, *not* from `LiveInterviewSession`.
+- **`CandidateSession` is the durable product aggregate** for a candidate result. Recruiter-facing pages should start from `CandidateSession`, _not_ from `LiveInterviewSession`.
 - **`LiveInterviewSession` is runtime evidence** from the realtime service, linked via `CandidateSession.realtimeSessionId`. Rooms can fail/retry, so it is never the primary product record.
 - **`InterviewDraft` is the editable recruiter workspace**; **`Interview` is the published, immutable snapshot** the candidate link resolves to. Don't conflate them.
 - **All console reads/writes must be scoped by `organizationId`.** The Organization owns all recruiter data.
@@ -113,7 +113,7 @@ Key distinctions to respect:
 
 ## Issue tracking & project planning
 
-**The GitHub Projects board is the single source of truth for status and progression — do not track progress in this repo (README/CLAUDE.md/docs).** This section documents only the stable *conventions* for navigating the board, not its current state. When picking up a task, find its issue on GitHub (`akouyate/prelude`) and read the parent **`type:epic`** for context.
+**The GitHub Projects board is the single source of truth for status and progression — do not track progress in this repo (README/CLAUDE.md/docs).** This section documents only the stable _conventions_ for navigating the board, not its current state. When picking up a task, find its issue on GitHub (`akouyate/prelude`) and read the parent **`type:epic`** for context.
 
 - **Milestones = release phases:** `V1 E2E Demo` → `V1 Commercial POC` → `Post-V1 Research`.
 - **`type:`** `epic` (large initiative) · `task` (actionable) · `research` (benchmark/exploration).

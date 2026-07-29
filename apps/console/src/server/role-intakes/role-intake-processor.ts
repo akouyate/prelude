@@ -91,7 +91,7 @@ export async function extractRoleIntakeDocument(
   if (!normalizedText) {
     throw new RoleIntakeProcessingError(
       "no_usable_text",
-      "Prelude could not find usable text in this document. Start from a manual brief instead.",
+      "HireCall could not find usable text in this document. Start from a manual brief instead.",
     );
   }
 
@@ -198,7 +198,7 @@ async function extractPdfText(input: Buffer): Promise<{
     }
     const failure = new RoleIntakeProcessingError(
       "document_corrupt",
-      "Prelude could not read this PDF safely.",
+      "HireCall could not read this PDF safely.",
     );
     failure.cause = error;
     throw failure;
@@ -230,7 +230,7 @@ async function extractDocxText(input: Buffer): Promise<{
   } catch {
     throw new RoleIntakeProcessingError(
       "document_corrupt",
-      "Prelude could not read this DOCX file safely.",
+      "HireCall could not read this DOCX file safely.",
     );
   }
 }
@@ -242,7 +242,7 @@ async function inspectDocxPackage(input: Buffer): Promise<void> {
         reject(
           new RoleIntakeProcessingError(
             "document_corrupt",
-            "Prelude could not read this DOCX file safely.",
+            "HireCall could not read this DOCX file safely.",
           ),
         );
         return;
@@ -272,7 +272,7 @@ async function inspectDocxPackage(input: Buffer): Promise<void> {
         fail(
           new RoleIntakeProcessingError(
             "document_corrupt",
-            "Prelude could not read this DOCX file safely.",
+            "HireCall could not read this DOCX file safely.",
           ),
         ),
       );
@@ -310,7 +310,7 @@ async function inspectDocxPackage(input: Buffer): Promise<void> {
             fail(
               new RoleIntakeProcessingError(
                 "document_corrupt",
-                "Prelude could not inspect this DOCX file safely.",
+                "HireCall could not inspect this DOCX file safely.",
               ),
             );
             return;
@@ -322,7 +322,7 @@ async function inspectDocxPackage(input: Buffer): Promise<void> {
             fail(
               new RoleIntakeProcessingError(
                 "document_corrupt",
-                "Prelude could not inspect this DOCX file safely.",
+                "HireCall could not inspect this DOCX file safely.",
               ),
             ),
           );

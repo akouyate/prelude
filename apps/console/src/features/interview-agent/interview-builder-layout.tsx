@@ -157,7 +157,7 @@ export function InterviewBuilderAgentCard({
       </span>
       <div className="min-w-0 pt-px">
         <p className="flex items-center gap-2 text-[11.5px] font-bold uppercase tracking-[0.06em] text-ink-400">
-          Prelude agent
+          HireCall agent
           {isThinking ? (
             <span className="inline-flex gap-1">
               <span className="h-1 w-1 animate-pulse rounded-full bg-olive-700" />

@@ -224,7 +224,7 @@ def _load_role_specific_scenario(
                         "measure acquisition impact and customer revenue quality",
                     ],
                     company_context=(
-                        "Prelude is screening a senior marketing leader before recruiter review."
+                        "HireCall is screening a senior marketing leader before recruiter review."
                     ),
                     candidate_tone="strategic, direct, and evidence-led",
                 ),
@@ -283,7 +283,7 @@ def _load_role_specific_scenario(
                         "communicate savings, risk, and delivery impact",
                     ],
                     company_context=(
-                        "Prelude is screening a procurement candidate before recruiter review."
+                        "HireCall is screening a procurement candidate before recruiter review."
                     ),
                     candidate_tone="practical, precise, and numbers-oriented",
                 ),
@@ -342,7 +342,7 @@ def _load_role_specific_scenario(
                         "handle compliance, conflict, and sensitive communication",
                     ],
                     company_context=(
-                        "Prelude is screening an HR leader before recruiter review."
+                        "HireCall is screening an HR leader before recruiter review."
                     ),
                     candidate_tone="calm, structured, and human",
                 ),
@@ -401,7 +401,7 @@ def _load_role_specific_scenario(
                         "coordinate product, data, and operations teams",
                     ],
                     company_context=(
-                        "Prelude is screening an AI workflow owner before recruiter review."
+                        "HireCall is screening an AI workflow owner before recruiter review."
                     ),
                     candidate_tone="systems-oriented, pragmatic, and precise",
                 ),

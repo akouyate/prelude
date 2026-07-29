@@ -1,2 +1,2 @@
-"""Prelude live interviewer agent POC."""
+"""HireCall live interviewer agent POC."""
 

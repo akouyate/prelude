@@ -11,7 +11,6 @@ import {
   NavArrowDown,
   NavArrowLeft,
   NavArrowRight,
-  PlaySolid,
   ShareIos,
   ShieldCheck,
   Sparks,
@@ -43,6 +42,15 @@ import {
 } from "../../../../src/features/candidate-screens";
 import { CandidateDetailTabs } from "../../../../src/features/interview-detail/candidate-detail-tabs";
 import { CandidateVoicePlayer } from "../../../../src/features/interview-detail/candidate-voice-player";
+import {
+  buildInterviewReplayChapters,
+  replayOffsetMs,
+  type InterviewReplayChapter,
+} from "../../../../src/features/interview-detail/interview-replay";
+import {
+  InterviewReplayProvider,
+  ReplaySeekButton,
+} from "../../../../src/features/interview-detail/interview-replay-controller";
 import { DeleteRecordingButton } from "../../../../src/features/interview-detail/delete-recording-button";
 import { ScheduleCallDialog } from "../../../../src/features/interview-detail/schedule-call-dialog";
 import { canDeleteRecording } from "../../../../src/domain/recording-policy";
@@ -160,6 +168,15 @@ function CandidateSessionReview({
     : session.analysisStatus;
   const detailPath = `/interviews/${session.realtimeSessionId ?? session.id}`;
   const signalSummary = getSignalSummary(session.criteriaDistribution);
+  const replayDurationMs = getRecordingDurationMs(
+    session.evidence.transcriptTurns,
+  );
+  const replayChapters = buildInterviewReplayChapters({
+    questionAnswerSequence: session.evidence.questionAnswerSequence,
+    questions: session.questions,
+    totalDurationMs: session.evidence.recording?.durationMs ?? replayDurationMs,
+    transcriptTurns: session.evidence.transcriptTurns,
+  });
 
   return (
     <main className="mx-auto max-w-[1140px] pb-20">
@@ -213,7 +230,7 @@ function CandidateSessionReview({
               <span className="font-semibold text-[#5b574f]">
                 {session.roleTitle}
               </span>{" "}
-              · {session.jobTitle} · applied via Prelude
+              · {session.jobTitle} · applied via HireCall
             </p>
           </div>
         </div>
@@ -226,73 +243,81 @@ function CandidateSessionReview({
         </button>
       </header>
 
-      <CandidateDetailTabs
-        answers={
-          <QuestionAnswerCard
-            evidence={session.evidence}
-            questions={session.questions}
-          />
-        }
-        evidence={
-          <div className="space-y-6">
-            {session.brief ? (
-              <AuditGuardrailsPanel
-                eventCount={session.eventCount}
-                realtimeSessionId={session.realtimeSessionId}
-                transcriptTurnCount={session.transcriptTurnCount}
-              />
-            ) : (
-              <AnalysisStateCard
-                displayedAnalysisStatus={displayedAnalysisStatus}
-                eventCount={session.eventCount}
-                realtimeSessionId={session.realtimeSessionId}
-              />
-            )}
-            {session.evidence.status === "completed" &&
-            session.brief?.status !== "completed" ? (
-              shouldAutoGenerateBrief(
-                session.evidence.status,
-                session.brief?.status,
-              ) ? (
-                // #5: evidence is ready and no usable brief yet — generate
-                // automatically instead of waiting for a manual click.
-                <AutoGenerateBrief
-                  detailPath={detailPath}
-                  sessionId={session.id}
+      <InterviewReplayProvider>
+        <CandidateDetailTabs
+          answers={
+            <QuestionAnswerCard
+              chapters={replayChapters}
+              evidence={session.evidence}
+              questions={session.questions}
+            />
+          }
+          evidence={
+            <div className="space-y-6">
+              {session.brief ? (
+                <AuditGuardrailsPanel
+                  eventCount={session.eventCount}
+                  realtimeSessionId={session.realtimeSessionId}
+                  transcriptTurnCount={session.transcriptTurnCount}
                 />
               ) : (
-                // Processing or failed — keep the manual (retry) affordance.
-                <GenerateBriefCard
-                  detailPath={detailPath}
-                  hasFailed={session.brief?.status === "failed"}
-                  sessionId={session.id}
+                <AnalysisStateCard
+                  displayedAnalysisStatus={displayedAnalysisStatus}
+                  eventCount={session.eventCount}
+                  realtimeSessionId={session.realtimeSessionId}
                 />
-              )
-            ) : null}
-            <DataLimitationsCard
-              brief={session.brief}
-              evidence={session.evidence}
-              limitationsCount={session.limitationsCount}
-              questionCompletionRate={session.questionCompletionRate}
+              )}
+              {session.evidence.status === "completed" &&
+              session.brief?.status !== "completed" ? (
+                shouldAutoGenerateBrief(
+                  session.evidence.status,
+                  session.brief?.status,
+                ) ? (
+                  // #5: evidence is ready and no usable brief yet — generate
+                  // automatically instead of waiting for a manual click.
+                  <AutoGenerateBrief
+                    detailPath={detailPath}
+                    sessionId={session.id}
+                  />
+                ) : (
+                  // Processing or failed — keep the manual (retry) affordance.
+                  <GenerateBriefCard
+                    detailPath={detailPath}
+                    hasFailed={session.brief?.status === "failed"}
+                    sessionId={session.id}
+                  />
+                )
+              ) : null}
+              <DataLimitationsCard
+                brief={session.brief}
+                evidence={session.evidence}
+                limitationsCount={session.limitationsCount}
+                questionCompletionRate={session.questionCompletionRate}
+              />
+            </div>
+          }
+          nextCall={<NextCallPrepSection session={session} />}
+          rail={
+            <CandidateReviewRail
+              canManageReview={canManageReview}
+              detailPath={detailPath}
+              displayedAnalysisStatus={displayedAnalysisStatus}
+              calendarConnectionStatus={calendarConnectionStatus}
+              session={session}
+              sessionId={session.id}
+              signalSummary={signalSummary}
             />
-          </div>
-        }
-        nextCall={<NextCallPrepSection session={session} />}
-        rail={
-          <CandidateReviewRail
-            canManageReview={canManageReview}
-            detailPath={detailPath}
-            displayedAnalysisStatus={displayedAnalysisStatus}
-            calendarConnectionStatus={calendarConnectionStatus}
-            session={session}
-            sessionId={session.id}
-            signalSummary={signalSummary}
-          />
-        }
-        recording={
-          <CandidateRecordingView canDelete={canDelete} session={session} />
-        }
-      />
+          }
+          recording={
+            <CandidateRecordingView
+              canDelete={canDelete}
+              chapters={replayChapters}
+              replayDurationMs={replayDurationMs}
+              session={session}
+            />
+          }
+        />
+      </InterviewReplayProvider>
     </main>
   );
 }
@@ -304,9 +329,13 @@ type CandidateReviewStatus = CandidateSessionReviewSession["reviewStatus"];
 
 function CandidateRecordingView({
   canDelete,
+  chapters,
+  replayDurationMs,
   session,
 }: {
   canDelete: boolean;
+  chapters: InterviewReplayChapter[];
+  replayDurationMs: number;
   session: CandidateSessionReviewSession;
 }) {
   const moments = getKeyMoments(session);
@@ -324,7 +353,7 @@ function CandidateRecordingView({
           </span>
           <div className="min-w-0">
             <p className="text-[10.5px] font-bold uppercase tracking-[0.14em] text-[#a29b8d]">
-              Prelude summary
+              HireCall summary
             </p>
             <p className="mt-[5px] max-w-[60ch] text-[14.5px] leading-[1.6] text-[#3c392f]">
               {session.brief?.summary ??
@@ -335,9 +364,8 @@ function CandidateRecordingView({
       </section>
 
       <CandidateVoicePlayer
-        fallbackDurationMs={getRecordingDurationMs(
-          session.evidence.transcriptTurns,
-        )}
+        chapters={chapters}
+        fallbackDurationMs={replayDurationMs}
         recording={session.evidence.recording}
       />
       <DeleteRecordingButton
@@ -351,20 +379,23 @@ function CandidateRecordingView({
           <p className="px-[22px] pt-[18px] text-[11px] font-bold uppercase tracking-[0.12em] text-[#a29b8d]">
             Key moments
           </p>
-          <button
+          <a
             className="mr-[22px] mt-[18px] inline-flex cursor-pointer items-center gap-1.5 text-[12.5px] font-semibold text-[#5b574f] transition hover:text-ink-950"
-            type="button"
+            href="#answers"
           >
-            Full transcript
+            View answers
             <ArrowRight aria-hidden={true} className="h-3.5 w-3.5" />
-          </button>
+          </a>
         </div>
         <div className="flex flex-col gap-2 px-[22px] pb-5 pt-3">
           {moments.map((moment) => (
-            <button
+            <ReplaySeekButton
+              ariaLabel={`Play ${moment.label} at ${moment.time}`}
               className="flex w-full cursor-pointer items-start gap-[13px] rounded-[13px] border border-[#ece8de] bg-white px-[14px] py-3 text-left transition hover:border-[#cbc4b6]"
               key={`${moment.time}-${moment.quote}`}
-              type="button"
+              label={moment.label}
+              showIcon={false}
+              startMs={moment.startMs}
             >
               <span className="mt-px inline-flex h-[21px] shrink-0 items-center rounded-md border border-[#e7e2d8] bg-white px-2 font-mono text-[11px] font-medium text-[#5b574f]">
                 {moment.time}
@@ -381,7 +412,7 @@ function CandidateRecordingView({
                   {moment.quote}
                 </p>
               </div>
-            </button>
+            </ReplaySeekButton>
           ))}
         </div>
       </section>
@@ -720,7 +751,7 @@ function CandidateMetadataCard({
   return (
     <section className="rounded-[18px] border border-[#e7e2d8] bg-white px-[18px] py-1.5">
       <MetadataRow label="Role" value={session.roleTitle} />
-      <MetadataRow label="Applied" value="Prelude" />
+      <MetadataRow label="Applied" value="HireCall" />
       <MetadataRow
         label="Interviewed"
         value={formatDateCompact(session.completedAt ?? session.startedAt)}
@@ -747,9 +778,11 @@ function MetadataRow({ label, value }: { label: string; value: string }) {
 }
 
 function QuestionAnswerCard({
+  chapters,
   evidence,
   questions,
 }: {
+  chapters: InterviewReplayChapter[];
   evidence: CandidateSessionEvidence;
   questions: Array<{
     id: string;
@@ -780,6 +813,7 @@ function QuestionAnswerCard({
           const candidateTurns = group?.candidateTurns ?? [];
           const answered = candidateTurns.length > 0;
           const firstCandidateTurn = candidateTurns[0] ?? null;
+          const chapter = chapters.find((item) => item.id === question.id);
 
           return (
             <details
@@ -830,17 +864,18 @@ function QuestionAnswerCard({
                     {firstCandidateTurn.text}
                   </blockquote>
                 ) : null}
-                <button
-                  className="mt-[11px] inline-flex h-[30px] cursor-pointer items-center gap-1.5 rounded-full border border-[#e2ddd2] bg-white px-[11px] text-xs font-semibold text-[#5b574f] transition hover:border-[#171715] hover:text-[#171715]"
-                  type="button"
-                >
-                  <PlaySolid aria-hidden={true} className="h-[13px] w-[13px]" />
-                  Listen at{" "}
-                  {formatTurnTime(
-                    firstCandidateTurn?.startedAt ?? null,
-                    evidence.transcriptTurns[0]?.startedAt ?? null,
-                  )}
-                </button>
+                {chapter ? (
+                  <ReplaySeekButton
+                    chapter={chapter}
+                    className="mt-[11px] inline-flex h-[30px] cursor-pointer items-center gap-1.5 rounded-full border border-[#e2ddd2] bg-white px-[11px] text-xs font-semibold text-[#5b574f] transition hover:border-[#171715] hover:text-[#171715]"
+                    label={`Listen to question ${index + 1} at ${formatTurnTime(
+                      firstCandidateTurn?.startedAt ??
+                        group?.interviewerTurns[0]?.startedAt ??
+                        null,
+                      evidence.transcriptTurns[0]?.startedAt ?? null,
+                    )}`}
+                  />
+                ) : null}
               </div>
             </details>
           );
@@ -1206,6 +1241,10 @@ function getKeyMoments(session: CandidateSessionReviewSession) {
             dot: criterionColor(criterion.status),
             label: criterion.label,
             quote: item.text,
+            startMs: replayOffsetMs(
+              turn?.startedAt ?? null,
+              session.evidence.transcriptTurns,
+            ),
             time: formatTurnTime(turn?.startedAt ?? null, firstStartedAt),
           };
         }),
@@ -1220,6 +1259,7 @@ function getKeyMoments(session: CandidateSessionReviewSession) {
       dot: turn.speaker === "candidate" ? "#5c7606" : "#a29b8d",
       label: turn.speaker === "candidate" ? "Candidate answer" : "Interviewer",
       quote: turn.text,
+      startMs: replayOffsetMs(turn.startedAt, session.evidence.transcriptTurns),
       time: formatTurnTime(turn.startedAt, firstStartedAt),
     }));
 
@@ -1231,6 +1271,7 @@ function getKeyMoments(session: CandidateSessionReviewSession) {
           label: "No transcript yet",
           quote:
             "The recording will show key moments once transcript turns are persisted.",
+          startMs: 0,
           time: "0:00",
         },
       ];

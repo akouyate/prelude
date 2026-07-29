@@ -1,4 +1,4 @@
-# Prelude Interviewer Agent
+# HireCall Interviewer Agent
 
 Python POC runtime for the live IA interviewer in epic #11.
 
@@ -212,7 +212,7 @@ python -m app.benchmark_cli \
 The OpenAI smoke creates a Go interview session, mints an agent LiveKit token
 from `LIVEKIT_*`, joins the `prelude-{session_id}` room, opens an OpenAI
 Realtime session handshake, then runs a deterministic candidate scenario through
-Prelude's state machine. Candidate answers are still scripted in this POC so the
+HireCall's state machine. Candidate answers are still scripted in this POC so the
 benchmark remains reproducible until the candidate browser/mobile media path is
 implemented.
 
@@ -280,10 +280,10 @@ falling back to inference from the role title and planned questions.
 Then the worker waits for the candidate readiness event, joins the LiveKit room
 as `agent-{session_id}`, starts a LiveKit Agents `AgentSession` with OpenAI
 Realtime, publishes the interviewer audio back into the same room, listens to
-candidate microphone audio, and persists normalized Prelude events and
+candidate microphone audio, and persists normalized HireCall events and
 transcript turns back to the Go API.
 
-Question progression is owned by Prelude's deterministic
+Question progression is owned by HireCall's deterministic
 `InterviewOrchestrator`, not by the realtime model. The worker disables automatic
 provider responses where supported, emits `candidate_turn_finalized`, then emits
 `answer_evaluated` before it repeats, waits, soft-reprompts, asks a bounded
@@ -301,7 +301,7 @@ interview can continue. The Responses request uses strict structured output,
 no reasoning effort, a bounded output budget, and a shared async client so live
 classification remains predictable and reuses HTTP connections.
 
-Turn completion remains owned by LiveKit's dynamic endpointing. Prelude lets the
+Turn completion remains owned by LiveKit's dynamic endpointing. HireCall lets the
 detector adapt between one and five seconds, then guarantees a three-second,
 cancellable grace window only before final checkout. That grace runs concurrently
 with answer inference, so it protects candidate pauses without stacking extra
@@ -364,7 +364,7 @@ pytest
 
 The live worker uses LiveKit Agents for VAD, endpointing, adaptive
 interruptions, backchannel filtering, false-interruption recovery, and room
-reconnection. Prelude keeps ownership of question order, answer evaluation,
+reconnection. HireCall keeps ownership of question order, answer evaluation,
 follow-up limits, persistence, and closing.
 
 `LIVEKIT_TURN_DETECTOR_VERSION` defaults to `v1-mini`, which is appropriate for
@@ -374,7 +374,7 @@ restores the previous OpenAI server VAD path and emits a deprecation warning.
 `LIVEKIT_ENDPOINTING_MIN_DELAY_SECONDS`,
 `LIVEKIT_ENDPOINTING_MAX_DELAY_SECONDS`, and
 `LIVE_WORKER_FINAL_ANSWER_GRACE_SECONDS` expose the pause contract without
-moving turn ownership back into Prelude.
+moving turn ownership back into HireCall.
 
 `TurnTakingPolicy`, `InterviewerStateMachine`, and `InterviewSessionRunner` are
 deprecated for live interviews. They remain available only for deterministic

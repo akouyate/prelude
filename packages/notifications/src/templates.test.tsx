@@ -17,7 +17,7 @@ describe("notification templates", () => {
     );
 
     expect(html).toContain("Your interview is complete");
-    expect(html).toContain("Prelude does not make hiring decisions.");
+    expect(html).toContain("HireCall does not make hiring decisions.");
     expect(html).not.toContain("recommendation");
     expect(html).not.toContain("evidence");
   });
@@ -25,7 +25,7 @@ describe("notification templates", () => {
   it("renders concise recruiter templates with a candidate record link", async () => {
     const props = {
       candidateLabel: "Ada Martin",
-      detailUrl: "https://console.prelude.ai/interviews/cs_123",
+      detailUrl: "https://console.hirecall.ai/interviews/cs_123",
       roleTitle: "Customer Success Manager",
     };
 

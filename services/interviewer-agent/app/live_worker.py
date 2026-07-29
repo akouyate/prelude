@@ -24,7 +24,7 @@ REQUIRED_OPENAI_ENV = (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run the OpenAI-only Prelude live interviewer worker for one session."
+        description="Run the OpenAI-only HireCall live interviewer worker for one session."
     )
     parser.add_argument("--session-id", required=True, help="Go realtime session id.")
     parser.add_argument(

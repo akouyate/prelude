@@ -28,6 +28,7 @@ readiness). This runbook covers turning the **code-ready** live path into a
 Set `APP_ENV=production` everywhere. Do **not** set `ALLOW_MOCK_INTERVIEW`.
 
 **Go realtime service** (`services/realtime`) — refuses to start without:
+
 - `DATABASE_URL` — same Postgres the console uses (Prisma-managed schema).
 - `REDIS_URL` — agent dispatch; without it agents never join.
 - `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET`.
@@ -35,12 +36,14 @@ Set `APP_ENV=production` everywhere. Do **not** set `ALLOW_MOCK_INTERVIEW`.
   `AGENT_JOIN_STREAM_KEY`.
 
 **Python interviewer agent** (`services/interviewer-agent`, the autoworker):
+
 - `OPENAI_API_KEY` + `OPENAI_REALTIME_MODEL` / `OPENAI_REALTIME_VOICE` /
   `OPENAI_REALTIME_TURN_DETECTION` / `OPENAI_REALTIME_REASONING_EFFORT`
   (the worker refuses a real handshake without these).
 - `REALTIME_API_URL` (the Go API), `REALTIME_API_KEY`, `REDIS_URL`, `APP_ENV`.
 
 **Candidate app** (`apps/candidate`):
+
 - ⚠️ `PRELUDE_REALTIME_API_URL` — the candidate app reads **this** name, which is
   **distinct** from the worker's `REALTIME_API_URL`. If only `REALTIME_API_URL`
   is set, the candidate app falls back to `http://127.0.0.1:8080` and live
@@ -48,6 +51,7 @@ Set `APP_ENV=production` everywhere. Do **not** set `ALLOW_MOCK_INTERVIEW`.
 - `APP_ENV=production`, `DATABASE_URL`.
 
 **Console app** (`apps/console`):
+
 - `CONSOLE_AUTH_PROVIDER=clerk` with real Clerk keys (mock auth is refused in
   production), `DATABASE_URL`, `INTERVIEW_DRAFT_GENERATOR=openai` +
   `OPENAI_API_KEY`, and the protected-topic classifier config.

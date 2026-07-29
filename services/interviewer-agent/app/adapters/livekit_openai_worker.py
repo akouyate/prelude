@@ -711,7 +711,7 @@ def _create_prelude_controlled_agent(
     instructions: str,
     on_user_turn_completed: Callable[[object], None] | None = None,
 ) -> object:
-    """Create an Agent whose user turns can only be answered by Prelude policy."""
+    """Create an Agent whose user turns can only be answered by HireCall policy."""
 
     class PreludeControlledAgent(agents.Agent):  # type: ignore[name-defined,misc]
         async def on_user_turn_completed(
@@ -2913,7 +2913,7 @@ def build_live_interviewer_instructions(plan: InterviewPlan) -> str:
 
     return f"""{INTERVIEWER_STATE_MACHINE_INSTRUCTIONS}
 
-You are Prelude's live interview agent for a first screening interview.
+You are HireCall's live interview agent for a first screening interview.
 Role: {plan.role_title}
 Language: {plan.language}
 Allowed candidate modalities: {", ".join(modalities) or "audio"}

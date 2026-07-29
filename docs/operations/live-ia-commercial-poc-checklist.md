@@ -7,7 +7,7 @@ Issue: #23
 This checklist defines when the live IA interviewer is strong enough to demo to
 early recruiters or use in a bounded commercial pilot.
 
-The POC is a first-screening workflow. Prelude helps recruiters collect
+The POC is a first-screening workflow. HireCall helps recruiters collect
 structured evidence faster, but it does not rank candidates or make hiring
 decisions.
 
@@ -46,7 +46,7 @@ The POC is demo-ready only when all of these are true:
 - Recruiter receives a structured candidate brief after completion.
 - Recruiter can inspect evidence by transcript or question/answer.
 - Recruiter can see limitations, missing data, and not-assessable criteria.
-- Recruiter understands that Prelude supports human review only.
+- Recruiter understands that HireCall supports human review only.
 
 ## Technical Success Criteria
 

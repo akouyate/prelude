@@ -66,7 +66,7 @@ export function extractRoleIntakeUrlDraft(html: string): {
   if (description.length < MIN_ROLE_DESCRIPTION_CHARACTERS || looksLikeAuthenticationGate(description)) {
     throw new RoleIntakeUrlImportError(
       "no_usable_text",
-      "Prelude could not find a usable public job description. Start from a manual brief instead.",
+      "HireCall could not find a usable public job description. Start from a manual brief instead.",
     );
   }
 
@@ -87,13 +87,13 @@ export function extractRoleIntakeUrlDraft(html: string): {
   if (!title) {
     warnings.push({
       code: "title_unavailable",
-      message: "Prelude could not identify a role title. Add one before continuing.",
+      message: "HireCall could not identify a role title. Add one before continuing.",
     });
   }
   if (!location) {
     warnings.push({
       code: "location_unavailable",
-      message: "Prelude could not identify a location. Add one if it matters for this role.",
+      message: "HireCall could not identify a location. Add one if it matters for this role.",
     });
   }
   if (!structuredDescription) {

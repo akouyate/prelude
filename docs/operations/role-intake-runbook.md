@@ -24,7 +24,7 @@ dotenvx set ROLE_INTAKE_CLAMAV_PORT 3310
 ```json
 [
   {
-    "AllowedOrigins": ["http://localhost:3000", "https://app.prelude.ai"],
+    "AllowedOrigins": ["http://localhost:3000", "https://app.hirecall.ai"],
     "AllowedMethods": ["PUT"],
     "AllowedHeaders": ["content-type"],
     "ExposeHeaders": [],

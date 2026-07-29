@@ -4,8 +4,8 @@ Issue: #20
 
 ## Product Positioning
 
-Prelude performs a structured AI-assisted first screen. It collects job-related
-candidate answers and transcript evidence for human recruiter review. Prelude
+HireCall performs a structured AI-assisted first screen. It collects job-related
+candidate answers and transcript evidence for human recruiter review. HireCall
 does not make final hiring, rejection, ranking, or archive decisions.
 
 ## Candidate Disclosure Copy
@@ -16,14 +16,14 @@ Use this copy or a localized equivalent before a live interview starts:
 
 > You are speaking with an AI-guided interviewer for a first screening. This
 > interview is audio-recorded so a recruiter can review your answers later. Your
-> answers are reviewed by a recruiter; Prelude does not assess protected
+> answers are reviewed by a recruiter; HireCall does not assess protected
 > attributes, appearance, accent, tone, or emotion.
 
 The candidate consent copy must disclose that the candidate's **voice is
 audio-recorded** (not only transcribed), the purpose (recruiter replay), the
 **retention period** (kept up to 90 days, then permanently deleted), the **right
 to request deletion** at any time, and that the audio is **stored in the EU** and
-processed by Prelude's recording provider (LiveKit / Cloudflare R2).
+processed by HireCall's recording provider (LiveKit / Cloudflare R2).
 
 Canonical consent copy version: `candidate-consent-v2`. Only sessions consented
 under `candidate-consent-v2`+ may be audio-recorded — `candidate-consent-v1`
@@ -35,7 +35,7 @@ Canonical copy version: `recruiter-limitation-v1`.
 
 Use this copy or a localized equivalent on recruiter review surfaces:
 
-> Prelude supports human screening review only. It must not be used as an
+> HireCall supports human screening review only. It must not be used as an
 > automated hiring or rejection decision, and it excludes protected traits,
 > appearance, accent, tone, emotion, personality, and biometric signals.
 
@@ -49,7 +49,7 @@ the candidate answered every question.
 
 ## Disallowed Question And Review Topics
 
-Prelude must not ask questions about, infer, score, or summarize:
+HireCall must not ask questions about, infer, score, or summarize:
 
 - age
 - appearance

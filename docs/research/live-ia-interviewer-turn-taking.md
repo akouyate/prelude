@@ -12,7 +12,7 @@ signals and decides whether the interviewer may speak, must keep listening,
 should repeat, should wait, should soft-reprompt, or must cancel/truncate agent
 audio.
 
-The provider emits signals. Prelude owns the interview behavior.
+The provider emits signals. HireCall owns the interview behavior.
 
 ## Why This Matters
 
@@ -97,7 +97,7 @@ voice through LiveKit Agents. Treat VAD-only mode as a degraded fallback.
 
 Avoid running two competing end-of-turn authorities. If LiveKit owns turn
 detection, OpenAI/ElevenLabs provider settings should not independently advance
-Prelude's business state.
+HireCall's business state.
 
 ### OpenAI Realtime
 
@@ -110,7 +110,7 @@ matches what the candidate heard.
 
 Use patient turn eagerness for interviews. Keep interruption handling available,
 but do not make short silence timeouts the business rule for candidate silence.
-Configure the soft prompt separately in Prelude policy.
+Configure the soft prompt separately in HireCall policy.
 
 ## Events And Metrics
 

@@ -124,7 +124,7 @@ export async function scheduleCandidateCall(input: {
     input.schedule.candidateEmail !== persistedCandidateEmail
   ) {
     throw new CandidateCallSchedulingError(
-      "The invitation must use the candidate email saved in Prelude.",
+      "The invitation must use the candidate email saved in HireCall.",
       "not_ready",
     );
   }

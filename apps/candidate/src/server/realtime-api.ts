@@ -1,4 +1,4 @@
-// Server-to-server config for the Prelude realtime (Go) API. The candidate
+// Server-to-server config for the HireCall realtime (Go) API. The candidate
 // browser never calls it directly — these route handlers do, on the candidate's
 // behalf. REALTIME_API_KEY is the shared secret the Go API verifies on every
 // non-public route; when it is unset (local dev) no header is sent and the Go

@@ -138,7 +138,7 @@ function buildPromptInput(input: CandidateBriefSynthesizerInput) {
 function openAISystemInstructions() {
   // Source rationale: docs/sources/evaluation-matrix.md and docs/sources/compliance-guardrails.md.
   return [
-    "You write concise first-screening recruiter briefs for Prelude.ai.",
+    "You write concise first-screening recruiter briefs for HireCall.",
     "Return only JSON that matches the requested schema.",
     "Use only transcript evidence from the input. Do not invent facts.",
     "Separate facts, inferred job-related signals, risks, missing information, and recruiter next step.",

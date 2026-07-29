@@ -4,7 +4,7 @@ Issue map: #23, #37, #54, #55, #56, #57, #58, #59, #60, #61, #62.
 
 ## Goal
 
-Ship Prelude's recruiter-to-candidate-to-review workflow through small vertical
+Ship HireCall's recruiter-to-candidate-to-review workflow through small vertical
 slices that can each be refined, implemented, smoke-tested, reviewed, and
 released independently.
 

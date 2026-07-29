@@ -79,7 +79,7 @@ export function normalizeRoleIntakeUrl(value: string): URL {
     url.password ||
     (url.port && url.port !== "443")
   ) {
-    throw invalidUrl("Prelude accepts public HTTPS job pages without credentials.");
+    throw invalidUrl("HireCall accepts public HTTPS job pages without credentials.");
   }
 
   const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
@@ -92,7 +92,7 @@ export function normalizeRoleIntakeUrl(value: string): URL {
   ) {
     throw new RoleIntakeUrlImportError(
       "private_destination",
-      "Prelude can only import public job pages.",
+      "HireCall can only import public job pages.",
     );
   }
   url.hostname = hostname;

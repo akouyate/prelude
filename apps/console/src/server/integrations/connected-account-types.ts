@@ -2,6 +2,7 @@ import type { Prisma } from "@prelude/db";
 
 export const connectedAccountProviderGoogle = "google" as const;
 export const connectedAccountCapabilityCalendar = "calendar" as const;
+export const connectedAccountCapabilityGmail = "gmail" as const;
 
 export const connectedAccountStatusValues = [
   "not_connected",
@@ -15,7 +16,8 @@ export const connectedAccountStatusValues = [
 
 export type ConnectedAccountProviderId = typeof connectedAccountProviderGoogle;
 export type ConnectedAccountCapability =
-  typeof connectedAccountCapabilityCalendar;
+  | typeof connectedAccountCapabilityCalendar
+  | typeof connectedAccountCapabilityGmail;
 export type ConnectedAccountStatus =
   (typeof connectedAccountStatusValues)[number];
 
@@ -126,7 +128,8 @@ function readCapabilities(
 ): ConnectedAccountCapability[] {
   return readStringArray(value).filter(
     (item): item is ConnectedAccountCapability =>
-      item === connectedAccountCapabilityCalendar,
+      item === connectedAccountCapabilityCalendar ||
+      item === connectedAccountCapabilityGmail,
   );
 }
 

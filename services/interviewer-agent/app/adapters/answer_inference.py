@@ -399,7 +399,7 @@ def _matrix_from_payload(payload: dict[str, object]) -> EvaluationMatrix:
     ]
     # A first screen should not keep probing an answer whose every dimension is
     # already usable. The model may suggest an aspirational follow-up even after
-    # assigning strong scores; Prelude owns this bounded business rule.
+    # assigning strong scores; HireCall owns this bounded business rule.
     challenge_needed = bool(payload.get("challenge_needed")) and any(
         dimension.score <= 1 for dimension in dimensions
     )

@@ -74,7 +74,7 @@ export function verifyConnectedAccountOAuthState(
   if (
     parsed.v !== 1 ||
     parsed.provider !== "google" ||
-    parsed.capability !== "calendar" ||
+    (parsed.capability !== "calendar" && parsed.capability !== "gmail") ||
     typeof parsed.organizationId !== "string" ||
     typeof parsed.userId !== "string" ||
     typeof parsed.returnTo !== "string" ||

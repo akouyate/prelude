@@ -57,7 +57,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
   const now = new Date();
   const ids = idsFor(runId);
   const recruiterEmail =
-    process.env.MOCK_CLERK_USER_EMAIL || "recruiter@prelude.ai";
+    process.env.MOCK_CLERK_USER_EMAIL || "recruiter@hirecall.ai";
   const draft = interviewDraft();
   const publicToken = `iv_e2e_${runId}`;
   const candidateInvitationToken = `ci_e2e_${runId}`;
@@ -70,11 +70,11 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
       create: {
         clerkUserId: ids.clerkUserId,
         email: recruiterEmail,
-        name: "Prelude E2E Recruiter",
+        name: "HireCall E2E Recruiter",
       },
       update: {
         email: recruiterEmail,
-        name: "Prelude E2E Recruiter",
+        name: "HireCall E2E Recruiter",
       },
       where: { clerkUserId: ids.clerkUserId },
     });
@@ -85,10 +85,10 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         companySize: "11-50",
         defaultInterviewMode: "audio",
         hiringFocus: "recruiting",
-        name: `Prelude E2E ${runId}`,
+        name: `HireCall E2E ${runId}`,
         onboardingCompletedAt: now,
         onboardingState: {
-          companyName: `Prelude E2E ${runId}`,
+          companyName: `HireCall E2E ${runId}`,
           companySize: "11-50",
           hiringFocus: "recruiting",
           interviewMode: "audio",
@@ -101,7 +101,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         companySize: "11-50",
         defaultInterviewMode: "audio",
         hiringFocus: "recruiting",
-        name: `Prelude E2E ${runId}`,
+        name: `HireCall E2E ${runId}`,
         onboardingCompletedAt: now,
         onboardingStep: "done",
       },
@@ -1018,7 +1018,7 @@ function parseArgs(values) {
 }
 
 function formatMarkdown(report) {
-  return `# Prelude V1 E2E Smoke
+  return `# HireCall V1 E2E Smoke
 
 - Generated: ${report.generatedAt}
 - Decision: **${report.decision}**

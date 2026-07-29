@@ -111,7 +111,7 @@ describe("AI compliance policy", () => {
     ).toEqual(["qualified profiles", "candidate score"]);
     expect(
       findForbiddenAutomatedDecisionPhrases(
-        "Prelude supports human screening review only.",
+        "HireCall supports human screening review only.",
       ),
     ).toHaveLength(0);
   });

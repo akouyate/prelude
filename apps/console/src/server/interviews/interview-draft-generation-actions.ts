@@ -103,7 +103,7 @@ export async function refineInterviewQuestionAction(
   const question = input.draft.questions.find((item) => item.id === input.questionId);
 
   if (!question) {
-    return { error: "Select a question before asking Prelude to refine it.", ok: false };
+    return { error: "Select a question before asking HireCall to refine it.", ok: false };
   }
 
   const authorizationError = await roleManagementAuthorizationError();
@@ -127,7 +127,7 @@ export async function refineInterviewQuestionAction(
         questions: input.draft.questions.map((item) =>
           item.id === input.questionId ? nextQuestion : item,
         ),
-        rationale: `Prelude refined one question while keeping this role screen focused on ${input.draft.questions.length} first-screening questions.`,
+        rationale: `HireCall refined one question while keeping this role screen focused on ${input.draft.questions.length} first-screening questions.`,
       },
       modelName: generator.modelName,
       ok: true,
@@ -177,7 +177,7 @@ export async function addInterviewQuestionAction(
         ...input.draft,
         estimatedMinutes: estimateMinutes(questions),
         questions,
-        rationale: `Prelude prepared ${questions.length} focused questions for this first-screening role screen.`,
+        rationale: `HireCall prepared ${questions.length} focused questions for this first-screening role screen.`,
       },
       modelName: generator.modelName,
       ok: true,
@@ -223,7 +223,7 @@ function normalizeGenerationInput(
 
   if (roleBrief.length < 40) {
     return {
-      error: "Add enough job context for Prelude to draft a fair first screen.",
+      error: "Add enough job context for HireCall to draft a fair first screen.",
       ok: false,
     };
   }
@@ -283,11 +283,11 @@ function estimateMinutes(questions: InterviewQuestionDraft[]) {
 
 function toPublicGenerationError(error: unknown) {
   const message =
-    error instanceof Error ? error.message : "Prelude could not generate this draft.";
+    error instanceof Error ? error.message : "HireCall could not generate this draft.";
 
   if (message.includes("not configured")) {
     return message;
   }
 
-  return "Prelude could not generate the role draft. Please retry in a moment.";
+  return "HireCall could not generate the role draft. Please retry in a moment.";
 }

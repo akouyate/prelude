@@ -36,7 +36,7 @@ def build_livekit_agent_join(
     token = (
         api.AccessToken(env["LIVEKIT_API_KEY"], env["LIVEKIT_API_SECRET"])
         .with_identity(participant)
-        .with_name("Prelude IA interviewer")
+        .with_name("HireCall IA interviewer")
         .with_kind("agent")
         .with_grants(
             api.VideoGrants(

@@ -5,7 +5,7 @@ It is product and engineering guidance, not legal advice.
 
 ## Product Rule
 
-- Prelude generates a first-screen role interview, not a full hiring interview.
+- HireCall generates a first-screen role interview, not a full hiring interview.
 - The recruiter does not choose the question count manually.
 - The generator targets 3 to 5 planned questions:
   - 3 for simple junior or low-ambiguity roles.

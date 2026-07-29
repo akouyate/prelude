@@ -9,13 +9,13 @@ export default function AboutPage() {
         <section className="flex flex-1 items-center py-16">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.24em] text-olive-900">
-              Prelude.ai
+              HireCall
             </p>
             <h1 className="mt-5 max-w-3xl text-5xl font-semibold leading-[1.02] text-ink-950 md:text-7xl">
               First interviews, without the heavy ATS feeling.
             </h1>
             <p className="mt-6 max-w-2xl text-lg leading-8 text-ink-600">
-              Prelude helps recruiters create focused pre-interviews, run a
+              HireCall helps recruiters create focused pre-interviews, run a
               live AI interviewer, and review candidate signals in one calm
               workspace.
             </p>

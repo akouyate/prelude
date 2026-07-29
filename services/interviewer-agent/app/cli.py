@@ -12,7 +12,7 @@ from app.domain.models import create_demo_plan
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run a mocked Prelude live interviewer session.")
+    parser = argparse.ArgumentParser(description="Run a mocked HireCall live interviewer session.")
     parser.add_argument("--session-id", default=f"session-{uuid4()}", help="Interview session id.")
     parser.add_argument(
         "--realtime-api-url",

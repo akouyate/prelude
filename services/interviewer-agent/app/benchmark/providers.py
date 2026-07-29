@@ -66,7 +66,7 @@ class ScriptedBenchmarkProvider:
 
     async def start_session(self, plan: InterviewPlan) -> str:
         return (
-            "Bonjour, je suis l'interviewer IA de Prelude. "
+            "Bonjour, je suis l'interviewer IA de HireCall. "
             f"Nous allons comparer le provider {self._provider_name} "
             f"sur le scenario {self._scenario.name.value} pour le poste {plan.role_title}."
         )

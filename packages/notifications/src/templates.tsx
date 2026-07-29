@@ -25,7 +25,7 @@ export function CandidateInterviewCompletedEmail({
       </Text>
       <Text style={paragraph}>
         A recruiter will review the conversation and follow up about next steps.
-        Prelude does not make hiring decisions.
+        HireCall does not make hiring decisions.
       </Text>
     </EmailFrame>
   );
@@ -49,7 +49,7 @@ export function RecruiterBriefReadyEmail({
       </Text>
       <EmailButton href={detailUrl}>Open candidate</EmailButton>
       <Text style={muted}>
-        Prelude supports human review only. Review the evidence before taking
+        HireCall supports human review only. Review the evidence before taking
         any next step.
       </Text>
     </EmailFrame>
@@ -69,7 +69,7 @@ export function RecruiterBriefNeedsAttentionEmail({
     <EmailFrame preview={`A ${roleTitle} screen needs attention`}>
       <Heading style={heading}>Screen needs attention</Heading>
       <Text style={paragraph}>
-        Prelude could not prepare the recruiter brief for {candidateLabel}'s
+        HireCall could not prepare the recruiter brief for {candidateLabel}'s
         {roleTitle} screen. Review the candidate record and retry the brief if
         appropriate.
       </Text>
@@ -95,7 +95,7 @@ function EmailFrame({
       <Preview>{preview}</Preview>
       <Body style={body}>
         <Container style={container}>
-          <Section style={brand}>Prelude.ai</Section>
+          <Section style={brand}>HireCall</Section>
           {children}
         </Container>
       </Body>

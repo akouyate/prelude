@@ -19,7 +19,7 @@ const archetypes: Array<{ name: string; input: InterviewDraftInput }> = [
   {
     name: "Customer Success Manager",
     input: {
-      companyName: "Prelude",
+      companyName: "HireCall",
       jobTitle: "Customer Success Manager",
       jobDescription:
         "Onboard SMB customers, spot early retention risks, coordinate with support and product, and communicate clearly during implementation.",
@@ -35,7 +35,7 @@ const archetypes: Array<{ name: string; input: InterviewDraftInput }> = [
   {
     name: "Chief Marketing Officer",
     input: {
-      companyName: "Prelude",
+      companyName: "HireCall",
       jobTitle: "Chief Marketing Officer",
       jobDescription:
         "Own brand, demand generation, and growth strategy across the enterprise. Lead cross-functional alignment with sales and product on pipeline and revenue.",
@@ -46,7 +46,7 @@ const archetypes: Array<{ name: string; input: InterviewDraftInput }> = [
   {
     name: "Procurement Buyer",
     input: {
-      companyName: "Prelude",
+      companyName: "HireCall",
       jobTitle: "Procurement Buyer",
       jobDescription:
         "Manage suppliers and category strategy, balancing cost, quality, risk, and delivery for a growing operations team.",
@@ -57,7 +57,7 @@ const archetypes: Array<{ name: string; input: InterviewDraftInput }> = [
   {
     name: "HR Manager",
     input: {
-      companyName: "Prelude",
+      companyName: "HireCall",
       jobTitle: "HR Manager",
       jobDescription:
         "Lead talent acquisition and people operations, partnering with hiring managers on structured, fair, job-related screening.",
@@ -68,7 +68,7 @@ const archetypes: Array<{ name: string; input: InterviewDraftInput }> = [
   {
     name: "Logistics Coordinator",
     input: {
-      companyName: "Prelude",
+      companyName: "HireCall",
       jobTitle: "Logistics Coordinator",
       jobDescription:
         "Coordinate shipments, carriers, and warehouse exceptions for a hybrid operations team handling time-sensitive deliveries.",

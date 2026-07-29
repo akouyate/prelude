@@ -149,7 +149,7 @@ func main() {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
-	slog.Info("starting prelude realtime api", "addr", server.Addr)
+	slog.Info("starting HireCall realtime api", "addr", server.Addr)
 	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)

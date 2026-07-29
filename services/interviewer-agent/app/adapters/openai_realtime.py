@@ -57,7 +57,7 @@ class OpenAIRealtimeSmokeProvider:
 
     async def start_session(self, plan: InterviewPlan) -> str:
         return (
-            "Bonjour, je suis l'interviewer IA de Prelude. "
+            "Bonjour, je suis l'interviewer IA de HireCall. "
             "Nous allons valider le chemin OpenAI Realtime et LiveKit "
             f"pour le poste {plan.role_title}."
         )

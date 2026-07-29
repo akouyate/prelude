@@ -256,7 +256,7 @@ function ScheduleCallForm({
                 Send candidate invitation
               </p>
               <p className="mt-0.5 text-[12.5px] leading-5 text-ink-500">
-                Google Calendar sends this invite. Prelude insights stay
+                Google Calendar sends this invite. HireCall insights stay
                 private.
               </p>
             </div>
@@ -384,7 +384,7 @@ function CalendarConnectionRequired({
           ? "Google Calendar is being connected. Complete the authorization, then return here to schedule the call."
           : isReconnect
           ? "Your Google Calendar connection needs to be renewed before a call can be scheduled."
-          : "Connect Google Calendar to schedule this follow-up from Prelude."}
+          : "Connect Google Calendar to schedule this follow-up from HireCall."}
       </Notice>
       {!isConnecting ? <ReconnectCalendarButton detailPath={detailPath} isReconnect={isReconnect} /> : null}
     </div>

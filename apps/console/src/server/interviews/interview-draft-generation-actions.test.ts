@@ -30,7 +30,7 @@ vi.mock("./interview-draft-generation", () => ({
 import { generateInterviewDraftAction } from "./interview-draft-generation-actions";
 
 const input = {
-  companyName: "Prelude",
+  companyName: "HireCall",
   focus: ["role_skills" as const],
   responseModes: ["audio" as const],
   roleBrief:

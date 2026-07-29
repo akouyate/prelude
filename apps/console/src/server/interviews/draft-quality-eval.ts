@@ -598,7 +598,7 @@ function buildJudgeInput(plan: InterviewPlan) {
 
 function judgeSystemInstructions() {
   return [
-    "You are a hiring-quality reviewer for Prelude.ai first-screen interview drafts.",
+    "You are a hiring-quality reviewer for HireCall first-screen interview drafts.",
     "Score the draft from 0-100 on each rubric dimension, then give an overall 0-100 score.",
     "Rubric dimensions:",
     "- job-relatedness: every question and criterion is tied to the role brief and seniority, not generic.",

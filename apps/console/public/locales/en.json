@@ -7,7 +7,7 @@
       "criterionWarning": "This criterion references a protected or disallowed topic and can't be published. Keep it job-related.",
       "overrideTitle": "An automated compliance check flagged this",
       "overrideFlagSummary": "An automated check flagged a question or criterion as possibly relating to a protected topic ({{category}}): {{reason}}",
-      "overrideWarning": "If you publish anyway, you confirm this content is job-related and non-discriminatory. You — not Prelude's automated check — are responsible for that decision, and this override is recorded with your identity.",
+      "overrideWarning": "If you publish anyway, you confirm this content is job-related and non-discriminatory. You — not HireCall's automated check — are responsible for that decision, and this override is recorded with your identity.",
       "overrideReformulate": "Reformulate instead",
       "overrideStart": "Override this check",
       "overrideJustificationLabel": "Explain why this is job-related",
@@ -30,7 +30,7 @@
       "source": {
         "eyebrow": "New role",
         "title": "How do you want to add this role?",
-        "description": "Start from a role brief you already have, or enter the details yourself. You will review everything before Prelude drafts questions.",
+        "description": "Start from a role brief you already have, or enter the details yourself. You will review everything before HireCall drafts questions.",
         "manualTitle": "Start manually",
         "manualDescription": "Enter the title, context, and responsibilities yourself.",
         "manualMeta": "Full control",
@@ -45,7 +45,7 @@
       },
       "upload": {
         "title": "Upload a role brief",
-        "description": "Add a text-based PDF or DOCX. Prelude checks it privately and asks you to confirm the extracted details before creating anything.",
+        "description": "Add a text-based PDF or DOCX. HireCall checks it privately and asks you to confirm the extracted details before creating anything.",
         "choose": "Choose a PDF or DOCX",
         "dropNow": "Drop the document here",
         "dragHint": "Drag and drop, or click to browse",
@@ -53,13 +53,13 @@
         "errors": {
           "empty": "The selected document is empty.",
           "too_large": "Choose a document smaller than 10 MB, or start manually.",
-          "unsupported": "Prelude accepts PDF and DOCX role briefs only.",
+          "unsupported": "HireCall accepts PDF and DOCX role briefs only.",
           "uploadFailed": "The private upload did not finish. Choose the document again."
         }
       },
       "url": {
         "title": "Import an employer careers page",
-        "description": "Prelude reads the original public job page and asks you to verify every extracted field.",
+        "description": "HireCall reads the original public job page and asks you to verify every extracted field.",
         "label": "Employer job URL",
         "hint": "Use the original HTTPS careers page. LinkedIn and Indeed links require dedicated partner integrations and cannot be imported here.",
         "placeholder": "https://careers.company.com/jobs/product-designer",
@@ -83,7 +83,7 @@
       "privacy": {
         "pending_deletion": "The source stays private and is deleted after extraction or within 24 hours.",
         "deleted": "The source file has been deleted. Its contents are no longer retained.",
-        "not_stored": "Prelude does not retain or render the public page. Only the reviewed role details continue."
+        "not_stored": "HireCall does not retain or render the public page. Only the reviewed role details continue."
       },
       "failure": {
         "manual": {
@@ -95,7 +95,7 @@
           "description": "No role was created. Choose another PDF or DOCX, or enter the role manually."
         },
         "resume": {
-          "title": "This brief is already in Prelude",
+          "title": "This brief is already in HireCall",
           "description": "Resume the existing private import instead of creating a duplicate role.",
           "action": "Resume existing import"
         },
@@ -110,8 +110,8 @@
       },
       "review": {
         "title": "Check the role brief",
-        "fileDescription": "Prelude extracted the document without inventing missing fields. Confirm the details before questions are drafted.",
-        "urlDescription": "Prelude extracted the public page without running its scripts. Confirm the details before questions are drafted.",
+        "fileDescription": "HireCall extracted the document without inventing missing fields. Confirm the details before questions are drafted.",
+        "urlDescription": "HireCall extracted the public page without running its scripts. Confirm the details before questions are drafted.",
         "warningTitle": "A detail needs your attention",
         "validationSummary": "Add the required role title and job description before continuing.",
         "roleTitle": "Role title",
@@ -485,7 +485,7 @@
       },
       "workspace": {
         "title": "Workspace",
-        "description": "General details for your organization on Prelude.",
+        "description": "General details for your organization on HireCall.",
         "uploadLogo": "Upload logo",
         "logoHint": "Logo upload is not available in V1 yet. Workspace initials are used for now.",
         "name": "Workspace name",
@@ -554,7 +554,7 @@
       },
       "integrations": {
         "title": "Integrations",
-        "description": "Sources for candidates and tools that sync with Prelude.",
+        "description": "Sources for candidates and tools that sync with HireCall.",
         "jobPosts": "Import active job posts",
         "ats": "ATS · push qualified candidates",
         "calendar": "Schedule follow-up calls",
@@ -563,6 +563,8 @@
         "connected": "Connected",
         "connectedAs": "Connected as {{email}}.",
         "comingSoon": "Coming soon",
+        "partnerAccessRequired": "Partner access required",
+        "planned": "Planned",
         "connect": "Connect",
         "disconnect": "Disconnect",
         "error": "Error",
@@ -574,7 +576,7 @@
       },
       "notifications": {
         "title": "Notifications",
-        "description": "Choose what Prelude emails you about.",
+        "description": "Choose what HireCall emails you about.",
         "screensReady": "Screens ready for review",
         "screensReadyDescription": "When a recruiter brief is ready or needs attention.",
         "candidateCompletion": "Candidate completion confirmation",
@@ -584,7 +586,7 @@
         "weeklyDigest": "Weekly digest",
         "weeklyDigestDescription": "A Monday summary of pipeline activity.",
         "productUpdates": "Product updates",
-        "productUpdatesDescription": "Occasional news about new Prelude features."
+        "productUpdatesDescription": "Occasional news about new HireCall features."
       },
       "billing": {
         "currentPlan": "Current plan",

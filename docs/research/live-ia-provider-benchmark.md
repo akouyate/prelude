@@ -4,7 +4,7 @@ Issue: #19
 
 ## Purpose
 
-Choose the provider strategy for Prelude's live IA first-screen interviewer by
+Choose the provider strategy for HireCall's live IA first-screen interviewer by
 running the same interview scenarios against OpenAI Realtime and ElevenLabs.
 
 The benchmark must measure live-interview fitness, not generic chatbot quality:
@@ -63,16 +63,16 @@ ElevenLabs:
 
 Run each provider against the same scenarios:
 
-| Scenario | Purpose |
-| --- | --- |
-| `normal` | Baseline direct answers. |
-| `interrupt` | Candidate barge-in while the IA interviewer is speaking. |
-| `repeat` | Candidate asks the interviewer to repeat a question. |
-| `silence` | Candidate is initially silent and recovers after a soft prompt. |
-| `vague` | Candidate gives a vague answer requiring one controlled follow-up. |
-| `noise` | Initial background noise before a usable answer. |
-| `audio_only` | Candidate completes without video. |
-| `video_enabled` | Candidate joins with video, but scoring remains content-only. |
+| Scenario        | Purpose                                                            |
+| --------------- | ------------------------------------------------------------------ |
+| `normal`        | Baseline direct answers.                                           |
+| `interrupt`     | Candidate barge-in while the IA interviewer is speaking.           |
+| `repeat`        | Candidate asks the interviewer to repeat a question.               |
+| `silence`       | Candidate is initially silent and recovers after a soft prompt.    |
+| `vague`         | Candidate gives a vague answer requiring one controlled follow-up. |
+| `noise`         | Initial background noise before a usable answer.                   |
+| `audio_only`    | Candidate completes without video.                                 |
+| `video_enabled` | Candidate joins with video, but scoring remains content-only.      |
 
 ## Metrics
 
@@ -106,14 +106,14 @@ Subjective scoring should remain separate and use a 1-5 rubric:
 
 Use this first scorecard for provider recommendation:
 
-| Area | Weight |
-| --- | ---: |
-| Turn-taking and interruption handling | 30% |
-| Latency and perceived responsiveness | 20% |
-| Transcript quality | 15% |
-| Voice quality and candidate comfort | 15% |
-| Control, observability, and debugging | 10% |
-| Cost and reliability | 10% |
+| Area                                  | Weight |
+| ------------------------------------- | -----: |
+| Turn-taking and interruption handling |    30% |
+| Latency and perceived responsiveness  |    20% |
+| Transcript quality                    |    15% |
+| Voice quality and candidate comfort   |    15% |
+| Control, observability, and debugging |    10% |
+| Cost and reliability                  |    10% |
 
 Initial go/no-go thresholds:
 
@@ -126,7 +126,7 @@ Initial go/no-go thresholds:
 
 OpenAI Realtime should remain the primary POC candidate if it provides:
 
-- Better state and tool-control alignment with Prelude's Python runtime.
+- Better state and tool-control alignment with HireCall's Python runtime.
 - Reliable interruption cancellation and transcript reconstruction.
 - Acceptable French recruiter voice quality.
 - Predictable cost and debugging metadata.
@@ -139,7 +139,7 @@ ElevenLabs should become the preferred voice path if it materially improves:
 
 But ElevenLabs should not own business state unless it can preserve:
 
-- Prelude's one-question-at-a-time rule.
+- HireCall's one-question-at-a-time rule.
 - One controlled follow-up per planned question.
 - Provider-neutral event emission.
 - No protected-trait or video-derived scoring.

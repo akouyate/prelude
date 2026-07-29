@@ -138,8 +138,8 @@ export async function createRoleIntakeUpload(
     });
     return { ok: true, value: { intake: toSummary(created), uploadUrl } };
   } catch {
-    await failRoleIntake(created.id, "storage_unavailable", "Prelude could not prepare a private upload.");
-    return { ok: false, error: "Prelude could not prepare a private upload. Please retry." };
+    await failRoleIntake(created.id, "storage_unavailable", "HireCall could not prepare a private upload.");
+    return { ok: false, error: "HireCall could not prepare a private upload. Please retry." };
   }
 }
 
@@ -217,7 +217,7 @@ export async function createRoleIntakeUrl(
         return { ok: true, value: toSummary(duplicate) };
       }
     }
-    return { ok: false, error: "Prelude could not prepare this public job URL. Please retry." };
+    return { ok: false, error: "HireCall could not prepare this public job URL. Please retry." };
   }
 }
 
@@ -313,12 +313,12 @@ export async function finalizeRoleIntakeUpload(
     await cleanupAndFailRoleIntake({
       code: "upload_finalize_failed",
       intake: { ...intake, sealedObjectKey },
-      message: "Prelude could not secure this upload. Please retry with a fresh file.",
+      message: "HireCall could not secure this upload. Please retry with a fresh file.",
       storage,
     });
     return {
       ok: false,
-      error: "Prelude could not secure this upload. Please retry with a fresh file.",
+      error: "HireCall could not secure this upload. Please retry with a fresh file.",
     };
   }
 }
@@ -533,7 +533,7 @@ export async function consumeRoleIntake(
       error:
         error instanceof Error && error.message === INCOMPLETE_REVIEW_ERROR
           ? INCOMPLETE_REVIEW_ERROR
-          : "Prelude could not create this role. Please retry.",
+          : "HireCall could not create this role. Please retry.",
     };
   }
 }
@@ -729,7 +729,7 @@ export async function processNextRoleIntake(
     const message =
       error instanceof RoleIntakeProcessingError
         ? error.message
-        : "Prelude could not read this document safely.";
+        : "HireCall could not read this document safely.";
     const code = error instanceof RoleIntakeProcessingError ? error.code : "processing_failed";
     await cleanupAndFailRoleIntake({
       code,
@@ -865,7 +865,7 @@ async function processRoleIntakeUrl(
       error instanceof RoleIntakeUrlImportError ? error.code : "processing_failed",
       error instanceof RoleIntakeUrlImportError
         ? error.message
-        : "Prelude could not import this public job page. Start from a manual brief instead.",
+        : "HireCall could not import this public job page. Start from a manual brief instead.",
     );
     return { kind: "processed", intakeId: intake.id, status: "failed" };
   }
@@ -936,7 +936,7 @@ async function retryOrFailUnavailableScanner(
     await failRoleIntake(
       intake.id,
       SCANNER_UNAVAILABLE_ERROR,
-      "Prelude could not verify this document safely. Please retry later or start from a manual brief.",
+      "HireCall could not verify this document safely. Please retry later or start from a manual brief.",
     );
     return;
   }

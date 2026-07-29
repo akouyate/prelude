@@ -64,7 +64,7 @@ candidate signals.
 
 5. Separate state policy from voice provider behavior.
    OpenAI Realtime or ElevenLabs can provide speech and transcript, but the
-   Prelude state machine decides what action is allowed next.
+   HireCall state machine decides what action is allowed next.
 
 ## State Model
 

@@ -2,7 +2,7 @@
 
 Issue: #64
 
-This note explains the source rationale behind Prelude V1 compliance copy and
+This note explains the source rationale behind HireCall V1 compliance copy and
 AI synthesis guardrails. It is product guidance for implementation, not legal
 advice.
 
