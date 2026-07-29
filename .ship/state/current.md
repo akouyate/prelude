@@ -31,7 +31,7 @@ that lets recruiters play a complete recording or one question segment.
 - [x] Run automated validation
 - [ ] Run signed-in browser validation
 - [x] Review and simplify
-- [ ] Commit and merge
+- [x] Commit and open PR
 
 ## Decisions
 
