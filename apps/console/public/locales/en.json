@@ -40,6 +40,8 @@
         "urlTitle": "Paste a job link",
         "urlDescription": "Import a public LinkedIn, Indeed, ATS, or employer careers link.",
         "urlMeta": "Any public job link",
+        "urlSupportedSources": "Supports LinkedIn, Indeed, Greenhouse, and other public job pages",
+        "urlMoreSources": "Other public job pages",
         "unavailableTitle": "Import a role source",
         "unavailableDescription": "Public URL and PDF/DOCX import will be available when private role intake is configured."
       },

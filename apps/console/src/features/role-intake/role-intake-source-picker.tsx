@@ -1,7 +1,8 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
-import { Attachment, EditPencil, Link as LinkIcon } from "iconoir-react";
+import { Attachment, EditPencil, Plus } from "iconoir-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@prelude/ui";
@@ -45,9 +46,14 @@ export function RoleIntakeSourcePicker({
               <SourceLink
                 description={t("roleIntake.source.urlDescription")}
                 href="/roles/new?source=url"
-                icon={<LinkIcon aria-hidden="true" className="h-6 w-6" />}
                 meta={t("roleIntake.source.urlMeta")}
                 title={t("roleIntake.source.urlTitle")}
+                visual={
+                  <JobLinkSources
+                    label={t("roleIntake.source.urlSupportedSources")}
+                    moreLabel={t("roleIntake.source.urlMoreSources")}
+                  />
+                }
               />
             </>
           ) : (
@@ -78,12 +84,14 @@ function SourceLink({
   icon,
   meta,
   title,
+  visual,
 }: {
   description: string;
   href: string;
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
   meta: string;
   title: string;
+  visual?: React.ReactNode;
 }) {
   return (
     <Link
@@ -93,14 +101,56 @@ function SourceLink({
       )}
       href={href}
     >
-      <span className="grid h-12 w-12 place-items-center rounded-2xl border border-ink-200 bg-[#f7f6f1] text-ink-900 transition group-hover:border-olive-200 group-hover:bg-[#f2f4e9]">
-        {icon}
-      </span>
+      {visual ?? (
+        <span className="grid h-12 w-12 place-items-center rounded-2xl border border-ink-200 bg-[#f7f6f1] text-ink-900 transition group-hover:border-olive-200 group-hover:bg-[#f2f4e9]">
+          {icon}
+        </span>
+      )}
       <span className="mt-5 text-xs font-medium uppercase text-olive-800">
         {meta}
       </span>
       <h2 className="mt-auto text-xl font-semibold text-ink-900">{title}</h2>
       <p className="mt-2 text-sm leading-6 text-ink-600">{description}</p>
     </Link>
+  );
+}
+
+const jobLinkSources = [
+  { alt: "LinkedIn", src: "/integrations/linkedin.svg" },
+  { alt: "Indeed", src: "/integrations/indeed.svg" },
+  { alt: "Greenhouse", src: "/integrations/greenhouse.svg" },
+] as const;
+
+function JobLinkSources({
+  label,
+  moreLabel,
+}: {
+  label: string;
+  moreLabel: string;
+}) {
+  return (
+    <div aria-label={label} className="flex h-12 items-center gap-2" role="img">
+      {jobLinkSources.map((source) => (
+        <span
+          className="grid h-11 w-11 place-items-center rounded-[14px] border border-ink-200 bg-white"
+          key={source.alt}
+          title={source.alt}
+        >
+          <Image
+            alt=""
+            aria-hidden="true"
+            height={22}
+            src={source.src}
+            width={22}
+          />
+        </span>
+      ))}
+      <span
+        className="grid h-11 w-11 place-items-center rounded-[14px] border border-ink-200 bg-[#f7f6f1] text-ink-700"
+        title={moreLabel}
+      >
+        <Plus aria-hidden="true" className="h-5 w-5" />
+      </span>
+    </div>
   );
 }

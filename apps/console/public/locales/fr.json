@@ -40,6 +40,8 @@
         "urlTitle": "Coller un lien d'offre",
         "urlDescription": "Importez un lien public LinkedIn, Indeed, ATS ou site carrière.",
         "urlMeta": "Toute offre publique",
+        "urlSupportedSources": "Compatible avec LinkedIn, Indeed, Greenhouse et d'autres pages d'offre publiques",
+        "urlMoreSources": "Autres pages d'offre publiques",
         "unavailableTitle": "Importer une source",
         "unavailableDescription": "L'import par URL publique et par PDF/DOCX sera disponible lorsque l'import privé sera configuré."
       },
