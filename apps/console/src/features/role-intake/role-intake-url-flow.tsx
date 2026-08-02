@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Link as LinkIcon, Plus, WarningTriangle } from "iconoir-react";
+import { Link as LinkIcon, WarningTriangle } from "iconoir-react";
 import { useTranslation } from "react-i18next";
 
 import type { RoleIntakeSummary } from "@prelude/contracts";
@@ -20,10 +20,7 @@ import {
 } from "./role-intake-layout";
 import { RoleIntakeReview } from "./role-intake-review";
 import { useRoleIntakeFlow } from "./use-role-intake-flow";
-import {
-  detectRoleIntakeUrlBrand,
-  roleIntakeUrlBrands,
-} from "./role-intake-url-brand";
+import { detectRoleIntakeUrlBrand } from "./role-intake-url-brand";
 
 export function RoleIntakeUrlFlow({
   initialIntake,
@@ -97,15 +94,13 @@ export function RoleIntakeUrlFlow({
       title={t("roleIntake.url.title")}
     >
       {!intake ? (
-        <>
-          <JobLinkSourceLogos label={t("roleIntake.url.supportedSources")} />
-          <form
-            className="mt-8 max-w-2xl space-y-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void importUrl();
-            }}
-          >
+        <form
+          className="mt-10 max-w-2xl space-y-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void importUrl();
+          }}
+        >
             <Field
               description={t("roleIntake.url.hint")}
               label={t("roleIntake.url.label")}
@@ -137,8 +132,7 @@ export function RoleIntakeUrlFlow({
                 ? t("roleIntake.url.preparing")
                 : t("roleIntake.url.action")}
             </Button>
-          </form>
-        </>
+        </form>
       ) : intake.status === "failed" ? (
         <section className="mt-10 rounded-[24px] border border-coral-100 bg-coral-50 p-5 sm:p-6">
           <div className="flex items-start gap-3">
@@ -191,23 +185,5 @@ export function RoleIntakeUrlFlow({
         </Notice>
       ) : null}
     </RoleIntakeShell>
-  );
-}
-
-function JobLinkSourceLogos({ label }: { label: string }) {
-  const { t } = useTranslation();
-
-  return (
-    <div className="mt-6 flex flex-wrap items-center gap-2" role="img" aria-label={label}>
-      {roleIntakeUrlBrands.map((brand) => (
-        <IntegrationLogo brand={brand} key={brand} size="compact" />
-      ))}
-      <span
-        className="grid h-9 w-9 place-items-center rounded-[11px] border border-ink-200 bg-[#f7f6f1] text-ink-700"
-        title={t("roleIntake.source.urlMoreSources")}
-      >
-        <Plus aria-hidden="true" className="h-4 w-4" />
-      </span>
-    </div>
   );
 }
