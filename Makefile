@@ -48,7 +48,7 @@ help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "HireCall local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 env-up: ## Start local Docker services.
-	$(COMPOSE) up -d
+	POSTGRES_PORT="$(POSTGRES_PORT)" REDIS_PORT="$(REDIS_PORT)" $(COMPOSE) up -d
 	@printf "Waiting for Postgres to become healthy"
 	@container_id="$$( $(COMPOSE) ps -q postgres )"; \
 	if [ -z "$$container_id" ]; then \
@@ -308,5 +308,8 @@ e2e-voice-smoke: ## Drive a full live interview as a synthetic candidate (TTS po
 	fi; \
 	cd services/interviewer-agent && PYTHONPATH=. uv run --python $(VOICE_SMOKE_PYTHON) $$uv_with python -m app.synthetic_candidate $$harness_args
 
-dev: env-up ## Start local infrastructure, then run the app dev stack.
-	@$(LOAD_ENV); pnpm dev
+dev: env-up ## Start local infrastructure, app dev stack, and role-intake worker.
+	@$(LOAD_ENV); \
+	pnpm --filter @prelude/console role-intake:worker & worker_pid=$$!; \
+	trap 'kill "$$worker_pid" 2>/dev/null || true' 0 INT TERM; \
+	pnpm dev
