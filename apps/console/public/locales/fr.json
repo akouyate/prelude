@@ -64,6 +64,8 @@
         "description": "Collez un lien LinkedIn, Indeed, ATS ou site carrière. HireCall prépare un brouillon modifiable et vous demande de vérifier chaque champ.",
         "label": "URL publique de l'offre",
         "hint": "Utilisez le lien HTTPS public de l'offre exacte.",
+        "supportedSources": "Compatible avec LinkedIn, Indeed, Greenhouse et d'autres pages d'offre publiques",
+        "detectedSource": "Lien {{provider}} détecté",
         "placeholder": "https://www.linkedin.com/jobs/view/…",
         "action": "Préparer le brouillon",
         "preparing": "Préparation de l'import…",

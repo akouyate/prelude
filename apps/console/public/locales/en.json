@@ -64,6 +64,8 @@
         "description": "Paste a LinkedIn, Indeed, ATS, or employer careers link. HireCall prepares an editable draft and asks you to verify every field.",
         "label": "Public job URL",
         "hint": "Use the public HTTPS link to the exact job posting.",
+        "supportedSources": "Supports LinkedIn, Indeed, Greenhouse, and other public job pages",
+        "detectedSource": "{{provider}} link detected",
         "placeholder": "https://www.linkedin.com/jobs/view/…",
         "action": "Prepare role draft",
         "preparing": "Preparing import…",

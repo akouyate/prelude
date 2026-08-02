@@ -47,17 +47,23 @@ export function IntegrationLogo({
   brand,
   className,
   muted = false,
+  size = "default",
 }: {
   brand: IntegrationBrand;
   className?: string;
   muted?: boolean;
+  size?: "compact" | "default";
 }) {
   const metadata = integrationBrandMetadata[brand];
+  const imageSize = size === "compact" ? 20 : 26;
 
   return (
     <span
       className={cn(
-        "grid h-[42px] w-[42px] shrink-0 place-items-center rounded-[12px] border border-[#ece8de] bg-white",
+        "grid shrink-0 place-items-center border border-[#ece8de] bg-white",
+        size === "compact"
+          ? "h-9 w-9 rounded-[11px]"
+          : "h-[42px] w-[42px] rounded-[12px]",
         muted && "grayscale opacity-55",
         className,
       )}
@@ -65,10 +71,10 @@ export function IntegrationLogo({
       <Image
         alt=""
         aria-hidden={true}
-        height={26}
+        height={imageSize}
         src={metadata.src}
         title={metadata.label}
-        width={26}
+        width={imageSize}
       />
     </span>
   );

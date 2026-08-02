@@ -1,12 +1,13 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { Attachment, EditPencil, Plus } from "iconoir-react";
 import { useTranslation } from "react-i18next";
 
 import { cn } from "@prelude/ui";
 
+import { IntegrationLogo } from "../integrations/integration-logo";
+import { roleIntakeUrlBrands } from "./role-intake-url-brand";
 export function RoleIntakeSourcePicker({
   importEnabled,
 }: {
@@ -115,12 +116,6 @@ function SourceLink({
   );
 }
 
-const jobLinkSources = [
-  { alt: "LinkedIn", src: "/integrations/linkedin.svg" },
-  { alt: "Indeed", src: "/integrations/indeed.svg" },
-  { alt: "Greenhouse", src: "/integrations/greenhouse.svg" },
-] as const;
-
 function JobLinkSources({
   label,
   moreLabel,
@@ -130,20 +125,12 @@ function JobLinkSources({
 }) {
   return (
     <div aria-label={label} className="flex h-12 items-center gap-2" role="img">
-      {jobLinkSources.map((source) => (
-        <span
-          className="grid h-11 w-11 place-items-center rounded-[14px] border border-ink-200 bg-white"
-          key={source.alt}
-          title={source.alt}
-        >
-          <Image
-            alt=""
-            aria-hidden="true"
-            height={22}
-            src={source.src}
-            width={22}
-          />
-        </span>
+      {roleIntakeUrlBrands.map((brand) => (
+        <IntegrationLogo
+          brand={brand}
+          className="h-11 w-11 rounded-[14px] border-ink-200"
+          key={brand}
+        />
       ))}
       <span
         className="grid h-11 w-11 place-items-center rounded-[14px] border border-ink-200 bg-[#f7f6f1] text-ink-700"
