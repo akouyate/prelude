@@ -5,37 +5,7 @@ import {
   prepareCandidateSession,
   toProductCandidateLifecycleStatus,
 } from "../../../src/server/public-interviews";
-import { realtimeAuthHeaders } from "../../../src/server/realtime-api";
-
-const REALTIME_API_URL =
-  process.env.PRELUDE_REALTIME_API_URL ?? "http://127.0.0.1:8080";
-
-// Default-deny, and never in production: a real candidate must never silently
-// sit through a fake, no-audio (mock) interview. Mock rooms are allowed only in
-// an explicitly opted-in, non-production environment for local smoke runs.
-function mockInterviewAllowed(): boolean {
-  if (process.env.APP_ENV === "production") {
-    return false;
-  }
-  const flag = (process.env.ALLOW_MOCK_INTERVIEW ?? "").trim().toLowerCase();
-  return flag === "1" || flag === "true" || flag === "yes";
-}
-
-type RealtimeSessionResponse = {
-  session: {
-    id: string;
-    status: string;
-    livekit_room_name: string;
-    allowed_modalities: string[];
-  };
-  livekit_join: {
-    room_name: string;
-    url: string;
-    token: string;
-    participant: string;
-    expires_at: string;
-  };
-};
+import { provisionRealtimeSession } from "../../../src/server/realtime-session-provisioning";
 
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => null)) as {
@@ -70,56 +40,27 @@ export async function POST(request: Request) {
     );
   }
 
-  let realtimeResponse: Response;
-  try {
-    realtimeResponse = await fetch(
-      `${REALTIME_API_URL}/v1/interview-sessions`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...realtimeAuthHeaders(),
-        },
-        body: JSON.stringify({
-          interview_plan_id: prepared.interviewPlanId,
-          candidate_id: prepared.candidateId,
-          allowed_modalities: prepared.allowedModalities,
-        }),
-        cache: "no-store",
-      },
-    );
-  } catch {
+  const provisioned = await provisionRealtimeSession({
+    allowedModalities: prepared.allowedModalities,
+    candidateId: prepared.candidateId,
+    interviewPlanId: prepared.interviewPlanId,
+  });
+  if (!provisioned.ok) {
     await markProvisioningFailed(prepared);
-
-    return NextResponse.json(
-      { error: { code: "realtime_api_unavailable" } },
-      { status: 502 },
-    );
-  }
-
-  if (!realtimeResponse.ok) {
-    await markProvisioningFailed(prepared);
-
     return NextResponse.json(
       {
         error: {
-          code: "realtime_api_failed",
-          status: realtimeResponse.status,
+          code: provisioned.code,
+          ...(provisioned.message ? { message: provisioned.message } : {}),
+          ...(provisioned.realtimeStatus
+            ? { status: provisioned.realtimeStatus }
+            : {}),
         },
       },
-      { status: 502 },
+      { status: provisioned.status },
     );
   }
-
-  const rawPayload = await realtimeResponse.json().catch(() => null);
-  if (!isRealtimeSessionResponse(rawPayload)) {
-    await markProvisioningFailed(prepared);
-    return NextResponse.json(
-      { error: { code: "realtime_api_invalid_response" } },
-      { status: 502 },
-    );
-  }
-  const payload = rawPayload;
+  const { isMock, payload } = provisioned;
 
   if (prepared.productSession) {
     const productStatus = toProductCandidateLifecycleStatus(
@@ -141,27 +82,6 @@ export async function POST(request: Request) {
         },
       });
     }
-  }
-
-  const isMock = payload.livekit_join.token.startsWith("mock_lk_");
-  if (isMock && !mockInterviewAllowed()) {
-    // Refuse loudly instead of silently dropping the candidate into the no-audio
-    // form fallback — a fake interview must never reach a real candidate.
-    console.error(
-      "[live-interview] Refusing a mock LiveKit token (mock_lk_*) outside an explicitly mock-enabled, non-production environment.",
-    );
-    await markProvisioningFailed(prepared);
-
-    return NextResponse.json(
-      {
-        error: {
-          code: "mock_interview_refused",
-          message:
-            "The live interview service is not available right now. Please try again later.",
-        },
-      },
-      { status: 502 },
-    );
   }
 
   if (prepared.supersededSessionId) {
@@ -209,36 +129,4 @@ async function markProvisioningFailed(prepared: PreparedCandidateSession) {
       },
     });
   }
-}
-
-function isRealtimeSessionResponse(
-  value: unknown,
-): value is RealtimeSessionResponse {
-  if (!isRecord(value) || !isRecord(value.session)) {
-    return false;
-  }
-  if (!isRecord(value.livekit_join)) {
-    return false;
-  }
-
-  return (
-    isNonEmptyString(value.session.id) &&
-    isNonEmptyString(value.session.status) &&
-    isNonEmptyString(value.session.livekit_room_name) &&
-    Array.isArray(value.session.allowed_modalities) &&
-    value.session.allowed_modalities.every(isNonEmptyString) &&
-    isNonEmptyString(value.livekit_join.room_name) &&
-    isNonEmptyString(value.livekit_join.url) &&
-    isNonEmptyString(value.livekit_join.token) &&
-    isNonEmptyString(value.livekit_join.participant) &&
-    isNonEmptyString(value.livekit_join.expires_at)
-  );
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.trim().length > 0;
 }

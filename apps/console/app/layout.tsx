@@ -42,17 +42,11 @@ export const metadata: Metadata = {
     "Create role-specific pre-interviews and review candidate evidence with HireCall.",
   icons: {
     icon: [
-      {
-        media: "(prefers-color-scheme: light)",
-        type: "image/svg+xml",
-        url: "/favicon-light.svg",
-      },
-      {
-        media: "(prefers-color-scheme: dark)",
-        type: "image/svg+xml",
-        url: "/favicon-dark.svg",
-      },
+      { type: "image/svg+xml", url: "/favicon.svg" },
+      { sizes: "32x32", type: "image/png", url: "/favicon-32x32.png" },
     ],
+    apple: [{ sizes: "180x180", url: "/apple-touch-icon.png" }],
+    shortcut: ["/favicon.ico"],
   },
 };
 

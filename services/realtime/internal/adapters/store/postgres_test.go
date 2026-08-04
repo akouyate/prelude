@@ -133,3 +133,61 @@ func TestPostgresStoreRejectsOutOfOrderEvents(t *testing.T) {
 		t.Fatalf("expected ErrInvalidEvent, got %v", err)
 	}
 }
+
+func TestPostgresStorePurgesOnlyExpiredPreviewSessions(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for Postgres store integration test")
+	}
+
+	ctx := context.Background()
+	postgresStore, err := store.NewPostgresStore(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("NewPostgresStore returned error: %v", err)
+	}
+	defer postgresStore.Close()
+
+	now := time.Now().UTC()
+	suffix := now.Format("20060102150405.000000000")
+	expiredAt := now.Add(-time.Minute)
+	activeUntil := now.Add(time.Hour)
+	expired := domain.Session{
+		ID:                "it_preview_expired_" + suffix,
+		InterviewPlanID:   "pv_expired",
+		CandidateID:       "preview_expired",
+		Status:            domain.SessionStatusWaitingCandidate,
+		LiveKitRoomName:   "hirecall-it-preview-expired",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio},
+		Kind:              domain.SessionKindPreview,
+		ExpiresAt:         &expiredAt,
+		CreatedAt:         now.Add(-time.Hour),
+		UpdatedAt:         now.Add(-time.Hour),
+	}
+	active := expired
+	active.ID = "it_preview_active_" + suffix
+	active.InterviewPlanID = "pv_active"
+	active.CandidateID = "preview_active"
+	active.LiveKitRoomName = "hirecall-it-preview-active"
+	active.ExpiresAt = &activeUntil
+
+	if err := postgresStore.CreateSession(ctx, expired); err != nil {
+		t.Fatalf("CreateSession(expired) returned error: %v", err)
+	}
+	if err := postgresStore.CreateSession(ctx, active); err != nil {
+		t.Fatalf("CreateSession(active) returned error: %v", err)
+	}
+
+	deleted, err := postgresStore.PurgeExpiredCandidatePreviewData(ctx, now)
+	if err != nil {
+		t.Fatalf("PurgeExpiredCandidatePreviewData returned error: %v", err)
+	}
+	if deleted < 1 {
+		t.Fatalf("expected at least one deleted row, got %d", deleted)
+	}
+	if _, err := postgresStore.GetSession(ctx, expired.ID); !errors.Is(err, application.ErrSessionNotFound) {
+		t.Fatalf("expected expired preview to be deleted, got %v", err)
+	}
+	if _, err := postgresStore.GetSession(ctx, active.ID); err != nil {
+		t.Fatalf("expected active preview to remain, got %v", err)
+	}
+}

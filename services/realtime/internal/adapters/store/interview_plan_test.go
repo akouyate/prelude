@@ -45,6 +45,42 @@ func TestDecodeInterviewQuestionsClampsCategoryToWorkerSet(t *testing.T) {
 	}
 }
 
+func TestDecodeCandidatePreviewPlanUsesTheCanonicalSnapshot(t *testing.T) {
+	raw := []byte(`{
+		"companyName":"Acme",
+		"jobId":"job_1",
+		"jobTitle":"Backend Engineer",
+		"schemaVersion":1,
+		"plan":{
+			"roleTitle":"Backend Engineer",
+			"roleBrief":"Own backend services and incident response.",
+			"seniority":"mid",
+			"responseModes":["audio"],
+			"questions":[{
+				"id":"q1",
+				"prompt":"Describe a production incident you investigated end to end.",
+				"category":"experience",
+				"expectedSignal":"structured problem solving"
+			}],
+			"guardrails":["Keep every question job related."]
+		}
+	}`)
+
+	plan, err := decodeCandidatePreviewPlan("pv_123", raw)
+	if err != nil {
+		t.Fatalf("expected preview plan to decode: %v", err)
+	}
+	if plan.ID != "pv_123" || plan.RoleTitle != "Backend Engineer" {
+		t.Fatalf("unexpected preview plan identity: %+v", plan)
+	}
+	if len(plan.Questions) != 1 || plan.Questions[0].ExpectedSignal != "structured problem solving" {
+		t.Fatalf("expected the canonical preview question, got %+v", plan.Questions)
+	}
+	if plan.InterviewStyle.Seniority != "mid" {
+		t.Fatalf("expected seniority to reach the agent, got %q", plan.InterviewStyle.Seniority)
+	}
+}
+
 // The recruiter-approved stored category must win — never the old keyword
 // heuristic that sniffed the prompt/signal/source text.
 func TestDecodeInterviewQuestionsHonorsStoredCategory(t *testing.T) {

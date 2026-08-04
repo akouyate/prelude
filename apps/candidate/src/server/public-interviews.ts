@@ -47,6 +47,23 @@ export type PublicInterviewContext =
       };
     }
   | {
+      kind: "preview";
+      expiresAt: Date;
+      returnPath: string;
+      interview: {
+        companyName: string;
+        estimatedMinutes: number | null;
+        id: string;
+        jobId: string;
+        jobTitle: string;
+        organizationId: string;
+        publicToken: string;
+        questions: PublicInterviewQuestion[];
+        responseModes: string[];
+        roleTitle: string;
+      };
+    }
+  | {
       kind: "not_found";
     };
 
@@ -194,7 +211,7 @@ export async function prepareCandidateSession(
   const token = input.candidateToken.trim();
   const context = await getPublicInterviewContext(token);
 
-  if (context.kind === "not_found") {
+  if (context.kind !== "published") {
     return {
       ok: false as const,
       error: "interview_not_found" as const,

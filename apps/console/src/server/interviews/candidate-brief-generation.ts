@@ -22,6 +22,7 @@ import {
 export const candidateBriefPromptVersion = "candidate-brief-v1";
 export const candidateBriefSchemaVersion = 1;
 export const defaultCandidateBriefLlmModel = "gpt-4.1-mini";
+export const defaultCandidateBriefLlmTimeoutMs = 20_000;
 
 const notificationDispatcher = createNotificationDispatcher();
 
@@ -746,12 +747,12 @@ function isEnabled(value: string | undefined) {
 
 function toTimeoutMs(value: string | undefined) {
   if (!value) {
-    return 8000;
+    return defaultCandidateBriefLlmTimeoutMs;
   }
 
   const seconds = Number(value);
   if (!Number.isFinite(seconds) || seconds <= 0) {
-    return 8000;
+    return defaultCandidateBriefLlmTimeoutMs;
   }
 
   return Math.min(Math.round(seconds * 1000), 30000);

@@ -2,15 +2,19 @@
 
 import * as React from "react";
 import { candidateConsentCopy, candidateDisclosureCopy } from "@prelude/core";
-import { Button, Input } from "@prelude/ui";
+import {
+  BrandMark,
+  Button,
+  CandidateInterviewIntro,
+  CandidatePreflightExperience,
+  CandidateWelcomeExperience,
+} from "@prelude/ui";
 import {
   CheckCircle,
   EditPencil,
-  Mail,
   Microphone as Mic,
   PhoneXmark as PhoneOff,
   Refresh as RefreshCcw,
-  ShieldCheck,
   WarningTriangle as AlertTriangle,
 } from "iconoir-react";
 
@@ -51,10 +55,15 @@ import { prepareVoiceLevelMeter, VoiceLevelMeter } from "./voice-level-meter";
 
 type CandidateStep = "welcome" | "setup" | "form";
 
-type PublishedInterview = Extract<
+type CandidateInterview = Exclude<
   PublicInterviewContext,
-  { kind: "published" }
+  { kind: "not_found" }
 >["interview"];
+
+const previewDisclosureCopy =
+  "You are viewing the real candidate experience in recruiter preview mode. Nothing is added to your candidate pipeline. You can continue to run a live test with the interviewer.";
+const previewConsentCopy =
+  "I understand that this is a recruiter live test. My microphone audio is transmitted to the AI interviewer for this session, but it is not recorded, retained, evaluated as a candidate, or added to the candidate pipeline.";
 
 const statusCopy: Record<RoomStatus, string> = {
   ready: "Ready",
@@ -267,17 +276,31 @@ export function LiveInterviewRoom({
     setStatus("preparing");
 
     try {
+      if (context.kind === "preview") {
+        setStatus("permission_required");
+        grantedStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
+        startController.signal.throwIfAborted();
+        setLocalStream(grantedStream);
+      }
+
       nextSession = await createSession({
         candidateEmail,
         candidateName,
         consentAccepted: hasAcceptedConsent,
         resumeToken:
-          window.localStorage.getItem(resumeStorageKey(token)) ?? undefined,
+          context.kind === "preview"
+            ? undefined
+            : (window.localStorage.getItem(resumeStorageKey(token)) ??
+              undefined),
+        preview: context.kind === "preview",
         signal: startController.signal,
         token,
         videoEnabled: false,
       });
-      if (nextSession.resumeToken) {
+      if (context.kind !== "preview" && nextSession.resumeToken) {
         window.localStorage.setItem(
           resumeStorageKey(token),
           nextSession.resumeToken,
@@ -286,14 +309,17 @@ export function LiveInterviewRoom({
       sessionRef.current = nextSession;
       setSession(nextSession);
 
-      setStatus("permission_required");
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: false,
-      });
-      grantedStream = stream;
-      startController.signal.throwIfAborted();
-      setLocalStream(stream);
+      if (!grantedStream) {
+        setStatus("permission_required");
+        grantedStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: false,
+        });
+        startController.signal.throwIfAborted();
+        setLocalStream(grantedStream);
+      }
+
+      const stream = grantedStream;
 
       async function connectPreparedSession(
         preparedSession: LiveInterviewSession,
@@ -425,21 +451,30 @@ export function LiveInterviewRoom({
                 recoveryWindowMs: remainingRecoveryMs,
               },
               attempt: async ({ signal }) => {
-                const refreshedSession = await createSession({
-                  candidateEmail,
-                  candidateName,
-                  consentAccepted: hasAcceptedConsent,
-                  resumeToken:
-                    latestSession.resumeToken ??
-                    window.localStorage.getItem(resumeStorageKey(token)) ??
-                    undefined,
-                  signal,
-                  token,
-                  videoEnabled: false,
-                });
+                const refreshedSession =
+                  context.kind === "preview"
+                    ? latestSession
+                    : await createSession({
+                        candidateEmail,
+                        candidateName,
+                        consentAccepted: hasAcceptedConsent,
+                        resumeToken:
+                          latestSession.resumeToken ??
+                          window.localStorage.getItem(
+                            resumeStorageKey(token),
+                          ) ??
+                          undefined,
+                        preview: false,
+                        signal,
+                        token,
+                        videoEnabled: false,
+                      });
                 latestSession = refreshedSession;
                 sessionRef.current = refreshedSession;
-                if (refreshedSession.resumeToken) {
+                if (
+                  context.kind !== "preview" &&
+                  refreshedSession.resumeToken
+                ) {
                   window.localStorage.setItem(
                     resumeStorageKey(token),
                     refreshedSession.resumeToken,
@@ -628,6 +663,15 @@ export function LiveInterviewRoom({
     allowedModes.includes("form") && formQuestions.length > 0;
   const canStart = hasAcceptedConsent && candidateName.trim().length > 1;
   const isLiveExperience = isBusy || isRoomActive;
+  const candidateStartLabel = startButtonLabel({
+    canStart,
+    candidateName,
+    hasAcceptedConsent,
+  });
+  const primaryStartLabel =
+    context.kind === "preview" && candidateStartLabel === "Join the interview"
+      ? "Start live test"
+      : candidateStartLabel;
 
   const submitWrittenAnswers = React.useCallback(async () => {
     if (context.kind === "not_found" || !canStart || !isFormFallbackAvailable) {
@@ -640,6 +684,14 @@ export function LiveInterviewRoom({
     }));
     if (answers.some((answer) => answer.text.length <= 1)) {
       setError("Please answer each question before submitting.");
+      return;
+    }
+
+    if (context.kind === "preview") {
+      sessionRef.current = null;
+      setSession(null);
+      setElapsedSeconds(0);
+      setStatus("completed");
       return;
     }
 
@@ -808,10 +860,26 @@ export function LiveInterviewRoom({
 
   if (status === "ready" && step === "welcome") {
     return (
-      <WelcomeScreen
-        allowedModes={allowedModes}
-        interview={interview}
+      <CandidateWelcomeExperience
+        companyName={interview.companyName}
+        disclosureCopy={
+          context.kind === "preview"
+            ? previewDisclosureCopy
+            : candidateDisclosureCopy
+        }
+        evidenceNotice={
+          context.kind === "preview"
+            ? {
+                body: "A temporary transcript powers this live test and never enters the candidate pipeline.",
+                title: "Temporary live-test transcript",
+              }
+            : undefined
+        }
+        estimatedMinutes={interview.estimatedMinutes}
+        jobTitle={interview.jobTitle}
         onStart={() => setStep("setup")}
+        responseModes={allowedModes}
+        roleTitle={interview.roleTitle}
       />
     );
   }
@@ -823,6 +891,7 @@ export function LiveInterviewRoom({
           candidateName={candidateName}
           companyName={interview.companyName}
           elapsedSeconds={elapsedSeconds}
+          isPreview={context.kind === "preview"}
         />
       </section>
     );
@@ -845,6 +914,11 @@ export function LiveInterviewRoom({
         <FormFallbackPanel
           answers={formAnswers}
           canSubmit={canStart && !isSubmittingForm}
+          description={
+            context.kind === "preview"
+              ? "Use this fallback to test the complete written experience. These answers stay outside the candidate pipeline."
+              : undefined
+          }
           error={error}
           isSubmitting={isSubmittingForm}
           onAnswerChange={updateFormAnswer}
@@ -884,12 +958,28 @@ export function LiveInterviewRoom({
 
   return (
     <section className="grid flex-1 items-center gap-8 py-8 lg:grid-cols-[minmax(0,1fr)_minmax(360px,430px)] lg:py-12">
-      <InterviewIntro allowedModes={allowedModes} interview={interview} />
+      <CandidateInterviewIntro
+        companyName={interview.companyName}
+        description={
+          context.kind === "preview"
+            ? "This is the same setup candidates see. Your test answers stay outside the candidate pipeline."
+            : undefined
+        }
+        estimatedMinutes={interview.estimatedMinutes}
+        jobTitle={interview.jobTitle}
+        responseModes={allowedModes}
+        roleTitle={interview.roleTitle}
+      />
       <div className="rounded-[2rem] border border-ink-100 bg-white/82 p-5 text-ink-900 backdrop-blur">
-        <PreflightPanel
+        <CandidatePreflightExperience
           candidateEmail={candidateEmail}
           candidateName={candidateName}
           consentAccepted={hasAcceptedConsent}
+          consentCopy={
+            context.kind === "preview"
+              ? previewConsentCopy
+              : candidateConsentCopy
+          }
           estimatedMinutes={interview.estimatedMinutes}
           jobTitle={interview.jobTitle}
           onCandidateEmailChange={setCandidateEmail}
@@ -936,11 +1026,7 @@ export function LiveInterviewRoom({
               ) : (
                 <Mic aria-hidden="true" className="h-4 w-4" />
               )}
-              {startButtonLabel({
-                canStart,
-                candidateName,
-                hasAcceptedConsent,
-              })}
+              {primaryStartLabel}
             </Button>
           )}
           {isFormFallbackAvailable ? (
@@ -960,127 +1046,16 @@ export function LiveInterviewRoom({
   );
 }
 
-function WelcomeScreen({
-  allowedModes,
-  interview,
-  onStart,
-}: {
-  allowedModes: string[];
-  interview: PublishedInterview;
-  onStart: () => void;
-}) {
-  return (
-    <section className="mx-auto flex flex-1 items-center justify-center py-10">
-      <div className="w-full max-w-xl">
-        <div className="inline-flex items-center gap-2 rounded-full bg-[#eef0e3] px-3 py-1 text-xs font-semibold uppercase tracking-[0.13em] text-olive-900">
-          <ShieldCheck aria-hidden="true" className="h-4 w-4" />
-          Private interview
-        </div>
-        <p className="mt-8 text-sm font-medium text-ink-600">
-          {interview.companyName} invites you to a first conversation
-        </p>
-        <h1 className="mt-4 text-4xl font-semibold leading-[1.08] tracking-normal text-ink-950 sm:text-5xl lg:text-6xl">
-          {interview.roleTitle}
-        </h1>
-        <p className="mt-5 text-base leading-7 text-ink-700">
-          {candidateDisclosureCopy} We listen to{" "}
-          <span className="font-display text-xl italic text-ink-950">
-            what you say
-          </span>
-          .
-        </p>
-
-        <div className="mt-7 flex flex-wrap gap-2">
-          <SoftPill icon={Mic} label={formatModes(allowedModes)} />
-          <SoftPill
-            icon={CheckCircle}
-            label={
-              interview.estimatedMinutes
-                ? `About ${interview.estimatedMinutes} minutes`
-                : "A few minutes"
-            }
-          />
-          <SoftPill icon={ShieldCheck} label="Human reviewed" />
-        </div>
-
-        <div className="mt-7 rounded-[2rem] border border-ink-100 bg-white/70 p-6">
-          <p className="text-base font-semibold text-ink-950">
-            How this interview works
-          </p>
-          <div className="mt-4 divide-y divide-ink-100">
-            <FairnessRow
-              title="Answers, not appearance"
-              body="Only the content of your answers reaches the recruiter."
-            />
-            <FairnessRow
-              title="Go at your own pace"
-              body="There is no timer on answers. Pause and think."
-            />
-            <FairnessRow
-              title="Transcribed for review"
-              body="Your words are saved as transcript evidence for recruiter review."
-            />
-          </div>
-        </div>
-
-        <Button className="mt-7 h-14 w-full text-base" onClick={onStart}>
-          Get started
-          <Mic aria-hidden="true" className="h-4 w-4" />
-        </Button>
-        <p className="mt-4 text-center text-sm text-ink-400">
-          No account needed. You can take your time on every answer.
-        </p>
-      </div>
-    </section>
-  );
-}
-
-function InterviewIntro({
-  allowedModes,
-  interview,
-}: {
-  allowedModes: string[];
-  interview: PublishedInterview;
-}) {
-  return (
-    <div className="max-w-2xl">
-      <div className="inline-flex items-center gap-2 rounded-full border border-ink-100 bg-white/70 px-3 py-1 text-xs font-semibold text-ink-700">
-        <ShieldCheck aria-hidden="true" className="h-4 w-4" />
-        Private first screen
-      </div>
-      <h1 className="mt-6 text-3xl font-semibold leading-tight tracking-normal text-ink-950 sm:text-4xl lg:text-5xl">
-        Let&apos;s get you ready
-      </h1>
-      <p className="mt-4 max-w-xl text-base leading-7 text-ink-600">
-        {interview.roleTitle} at {interview.companyName}. Answer naturally; the
-        recruiter reviews your answers, not your face, accent, tone, emotion, or
-        protected attributes.
-      </p>
-
-      <div className="mt-8 grid gap-3 sm:grid-cols-3">
-        <BriefFact label="Role" value={interview.jobTitle} />
-        <BriefFact label="Format" value={formatModes(allowedModes)} />
-        <BriefFact
-          label="Length"
-          value={
-            interview.estimatedMinutes
-              ? `About ${interview.estimatedMinutes} min`
-              : "A few minutes"
-          }
-        />
-      </div>
-    </div>
-  );
-}
-
 function CompletionPanel({
   candidateName,
   companyName,
   elapsedSeconds,
+  isPreview,
 }: {
   candidateName: string;
   companyName: string;
   elapsedSeconds: number;
+  isPreview: boolean;
 }) {
   const firstName = candidateName.trim().split(/\s+/)[0] || "there";
 
@@ -1094,8 +1069,9 @@ function CompletionPanel({
         <span className="font-display italic text-ink-950">{firstName}</span>.
       </h2>
       <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-ink-600">
-        Your interview is complete. {companyName} will review your answers and
-        follow up with the next step.
+        {isPreview
+          ? "The live test is complete. No candidate profile, recording, or recruiter notification was created."
+          : `Your interview is complete. ${companyName} will review your answers and follow up with the next step.`}
       </p>
       <div className="mt-6 rounded-3xl border border-ink-100 bg-white/70 px-4 py-3 text-left text-sm text-ink-700">
         <div className="flex items-center justify-between gap-4 border-b border-ink-100 pb-3">
@@ -1105,8 +1081,10 @@ function CompletionPanel({
           </strong>
         </div>
         <div className="flex items-center justify-between gap-4 pt-3">
-          <span>Transcript</span>
-          <strong className="font-semibold text-ink-950">Saved</strong>
+          <span>{isPreview ? "Candidate pipeline" : "Transcript"}</span>
+          <strong className="font-semibold text-ink-950">
+            {isPreview ? "Not created" : "Saved"}
+          </strong>
         </div>
       </div>
       <p className="mt-5 text-sm text-ink-400">
@@ -1147,82 +1125,10 @@ function AbandonedPanel({
   );
 }
 
-function PreflightPanel({
-  candidateEmail,
-  candidateName,
-  consentAccepted,
-  estimatedMinutes,
-  jobTitle,
-  onCandidateEmailChange,
-  onCandidateNameChange,
-  onConsentChange,
-}: {
-  candidateEmail: string;
-  candidateName: string;
-  consentAccepted: boolean;
-  estimatedMinutes: number | null;
-  jobTitle: string;
-  onCandidateEmailChange: (value: string) => void;
-  onCandidateNameChange: (value: string) => void;
-  onConsentChange: (value: boolean) => void;
-}) {
-  return (
-    <>
-      <div className="flex items-start gap-3">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-ink-900 text-white">
-          <Mail aria-hidden="true" className="h-4 w-4" />
-        </span>
-        <div>
-          <h2 className="text-xl font-semibold">Before you start</h2>
-          <p className="mt-1 text-sm leading-6 text-ink-600">
-            {jobTitle}
-            {estimatedMinutes ? ` · about ${estimatedMinutes} minutes` : ""}
-          </p>
-        </div>
-      </div>
-
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <label className="text-sm">
-          <span className="font-medium text-ink-900">Your name</span>
-          <Input
-            className="mt-1 h-11 bg-white"
-            onChange={(event) => onCandidateNameChange(event.target.value)}
-            placeholder="Your name"
-            value={candidateName}
-          />
-        </label>
-        <label className="text-sm">
-          <span className="font-medium text-ink-900">Email optional</span>
-          <Input
-            className="mt-1 h-11 bg-white"
-            onChange={(event) => onCandidateEmailChange(event.target.value)}
-            placeholder="you@example.com"
-            type="email"
-            value={candidateEmail}
-          />
-        </label>
-      </div>
-
-      <div className="mt-5 rounded-3xl border border-ink-100 bg-ink-50/70 p-4 text-sm leading-6 text-ink-600">
-        This interview is audio-first. You only need your microphone.
-      </div>
-
-      <label className="mt-5 flex cursor-pointer gap-3 rounded-3xl border border-ink-100 bg-ink-50/70 p-4 text-sm leading-6 text-ink-700">
-        <input
-          checked={consentAccepted}
-          className="mt-1 h-4 w-4 shrink-0 accent-ink-900"
-          onChange={(event) => onConsentChange(event.target.checked)}
-          type="checkbox"
-        />
-        <span>{candidateConsentCopy}</span>
-      </label>
-    </>
-  );
-}
-
 function FormFallbackPanel({
   answers,
   canSubmit,
+  description,
   error,
   isSubmitting,
   onAnswerChange,
@@ -1233,12 +1139,13 @@ function FormFallbackPanel({
 }: {
   answers: Record<string, string>;
   canSubmit: boolean;
+  description?: string;
   error: string | null;
   isSubmitting: boolean;
   onAnswerChange: (questionId: string, value: string) => void;
   onBack: () => void;
   onSubmit: () => void;
-  questions: PublishedInterview["questions"];
+  questions: CandidateInterview["questions"];
   roleTitle: string;
 }) {
   return (
@@ -1253,8 +1160,9 @@ function FormFallbackPanel({
             Answer in writing
           </h2>
           <p className="mt-2 max-w-xl text-sm leading-6 text-ink-600">
-            {roleTitle}. Use this fallback only if audio is not available on
-            your device. The recruiter still reviews your answers manually.
+            {roleTitle}.{" "}
+            {description ??
+              "Use this fallback only if audio is not available on your device. The recruiter still reviews your answers manually."}
           </p>
         </div>
         <Button className="h-11" onClick={onBack} variant="secondary">
@@ -1398,9 +1306,15 @@ function LiveInterviewStage({
 
       <div className="flex shrink-0 items-center justify-between gap-4">
         <div>
-          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-white/42">
-            Powered by HireCall
-          </p>
+          <div className="flex items-center gap-2 text-white/48">
+            <span className="text-[0.62rem] font-medium uppercase tracking-[0.14em]">
+              Powered by
+            </span>
+            <BrandMark
+              appearance="on-dark"
+              labelClassName="h-[18px] max-w-[6.5rem]"
+            />
+          </div>
           <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-white/82">
             <span className="grid h-8 w-8 place-items-center rounded-full bg-white/10">
               <Mic aria-hidden="true" className="h-4 w-4" />
@@ -1625,48 +1539,6 @@ function ConnectingInterviewState({ status }: { status: RoomStatus }) {
   );
 }
 
-function SoftPill({
-  icon: Icon,
-  label,
-}: {
-  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
-  label: string;
-}) {
-  return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-ink-200 bg-white px-3.5 py-2 text-sm font-medium text-ink-700">
-      <Icon aria-hidden={true} className="h-4 w-4 text-ink-500" />
-      {label}
-    </span>
-  );
-}
-
-function FairnessRow({ body, title }: { body: string; title: string }) {
-  return (
-    <div className="flex gap-4 py-4 first:pt-0 last:pb-0">
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#eef0e3] text-olive-900">
-        <ShieldCheck aria-hidden="true" className="h-5 w-5" />
-      </span>
-      <div>
-        <p className="text-sm font-semibold text-ink-950">{title}</p>
-        <p className="mt-1 text-sm leading-6 text-ink-500">{body}</p>
-      </div>
-    </div>
-  );
-}
-
-function BriefFact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-3xl border border-ink-100 bg-white/60 px-4 py-3">
-      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-500">
-        {label}
-      </p>
-      <p className="mt-2 text-sm font-semibold leading-5 text-ink-950">
-        {value}
-      </p>
-    </div>
-  );
-}
-
 function startButtonLabel({
   canStart,
   candidateName,
@@ -1750,22 +1622,6 @@ function InlineAlert({ message }: { message: string }) {
       </div>
     </div>
   );
-}
-
-function formatModes(modes: string[]) {
-  const labels = modes.map((mode) => {
-    if (mode === "form") {
-      return "form fallback";
-    }
-
-    if (mode === "audio") {
-      return "audio";
-    }
-
-    return mode;
-  });
-
-  return labels.length > 0 ? labels.join(", ") : "audio";
 }
 
 function statusDescription(status: RoomStatus) {

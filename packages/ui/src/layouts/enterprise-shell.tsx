@@ -178,7 +178,7 @@ function EnterpriseSidebar({
       >
         <BrandMark
           compact={collapsed}
-          labelClassName="font-title text-[15px]"
+          labelClassName="h-9 max-w-[9rem]"
           markClassName="h-[30px] w-[30px]"
         />
         {onCollapsedChange && !collapsed ? (

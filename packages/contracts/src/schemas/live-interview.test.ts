@@ -232,6 +232,44 @@ describe("liveInterviewEventSchema", () => {
     );
   });
 
+  it("accepts Python RFC 3339 offsets on finalized transcript turns", () => {
+    const result = liveInterviewWireEventSchema.safeParse({
+      event_id: "evt_candidate_turn",
+      session_id: "session_01",
+      candidate_id: "candidate_01",
+      type: "candidate_turn_finalized",
+      actor: "candidate",
+      sequence_number: 30,
+      idempotency_key: "session_01:live-openai:30",
+      occurred_at: "2026-08-04T07:45:38.832Z",
+      payload: {
+        question_id: "role-skills",
+        completion_reason: "answered",
+        transcript_turn: {
+          turn_id: "session_01:candidate:1",
+          session_id: "session_01",
+          question_id: "role-skills",
+          speaker: "candidate",
+          text: "J'ai recruté un gérant immobilier dans un marché pénurique.",
+          is_final: true,
+          started_at: "2026-08-04T07:45:38.831651+00:00",
+          ended_at: "2026-08-04T07:45:38.831651+00:00",
+        },
+      },
+      provider_metadata: {
+        provider: "openai_realtime",
+      },
+    });
+
+    expect(result.success).toBe(true);
+    if (!result.success || result.data.type !== "candidate_turn_finalized") {
+      return;
+    }
+    expect(result.data.payload.transcriptTurn.text).toContain(
+      "gérant immobilier",
+    );
+  });
+
   it("normalizes candidate media readiness from the realtime API", () => {
     const result = liveInterviewWireEventSchema.safeParse({
       event_id: "evt_media_ready",

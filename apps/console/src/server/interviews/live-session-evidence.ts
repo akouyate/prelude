@@ -143,8 +143,12 @@ export function buildCandidateSessionEvidence({
     .map((event) => parseStoredEvent(event))
     .filter((event): event is NonNullable<typeof event> => Boolean(event))
     .sort((left, right) => left.sequenceNumber - right.sequenceNumber);
-  const transcriptTurns = parsedEvents
-    .map((event) => transcriptTurnFromEvent(event))
+  // Transcript evidence is persisted data from our own realtime service. Read
+  // it from the narrow transcript payload contract so an unrelated envelope
+  // schema change cannot silently erase every candidate answer.
+  const transcriptTurns = [...events]
+    .sort((left, right) => left.sequenceNumber - right.sequenceNumber)
+    .map((event) => transcriptTurnFromStoredEvent(event))
     .filter((turn): turn is CandidateTranscriptTurn => Boolean(turn));
   const completedEvent = [...parsedEvents]
     .reverse()
@@ -270,8 +274,8 @@ function parseStoredEvent(event: StoredLiveEvent): ParsedStoredEvent | null {
   };
 }
 
-function transcriptTurnFromEvent(
-  event: ParsedStoredEvent,
+function transcriptTurnFromStoredEvent(
+  event: StoredLiveEvent,
 ): CandidateTranscriptTurn | null {
   const transcriptTurn = transcriptTurnFromPayload(event.payload);
 

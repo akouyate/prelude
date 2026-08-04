@@ -174,6 +174,29 @@ describe("live interview client", () => {
     });
   });
 
+  it("uses the isolated preview endpoint without candidate identity or resume data", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse(sessionFixture()));
+
+    await createSession({
+      candidateEmail: "recruiter@example.com",
+      candidateName: "Recruiter Preview",
+      consentAccepted: true,
+      preview: true,
+      resumeToken: "must_not_leak",
+      token: "pvtk_secret",
+      videoEnabled: false,
+    });
+
+    expect(fetch).toHaveBeenCalledWith("/api/live-interview-preview-sessions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        consentAccepted: true,
+        previewToken: "pvtk_secret",
+      }),
+    });
+  });
+
   it("cancels session preparation when connection recovery is aborted", async () => {
     const controller = new AbortController();
     vi.mocked(fetch).mockImplementationOnce((_input, init) => {

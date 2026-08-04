@@ -85,6 +85,50 @@ describe("live session evidence", () => {
     ]);
   });
 
+  it("preserves transcript evidence when a non-transcript event field drifts", () => {
+    const evidence = buildCandidateSessionEvidence({
+      events: [
+        event({
+          actor: "candidate",
+          payload: {
+            // Deliberately outside the current event enum: the transcript is
+            // still valid persisted evidence and must not disappear silently.
+            completion_reason: "answer_complete",
+            question_id: "q1",
+            transcript_turn: transcriptTurn({
+              speaker: "candidate",
+              text: "J'ai recruté un profil pénurique grâce à la cooptation.",
+              turn_id: "turn_candidate_1",
+            }),
+          },
+          sequenceNumber: 1,
+          type: "candidate_turn_finalized",
+        }),
+        event({
+          payload: {
+            completed_questions: 1,
+            completed_reason: "all_questions_completed",
+            total_questions: 1,
+          },
+          sequenceNumber: 2,
+          type: "session_completed",
+        }),
+      ],
+      productSession: productSession(),
+      questionCount: 1,
+      runtimeSession: runtimeSession({ status: "completed" }),
+    });
+
+    expect(evidence.status).toBe("completed");
+    expect(evidence.transcriptTurns).toEqual([
+      expect.objectContaining({
+        questionId: "q1",
+        speaker: "candidate",
+        text: "J'ai recruté un profil pénurique grâce à la cooptation.",
+      }),
+    ]);
+  });
+
   it("marks runtime failure from persisted terminal events", () => {
     const evidence = buildCandidateSessionEvidence({
       events: [
@@ -222,12 +266,12 @@ function transcriptTurn({
   turn_id: string;
 }) {
   return {
-    ended_at: "2026-06-20T10:00:10.000Z",
+    ended_at: "2026-06-20T10:00:10.123456+00:00",
     is_final: true,
     question_id: "q1",
     session_id: "is_123",
     speaker,
-    started_at: "2026-06-20T10:00:00.000Z",
+    started_at: "2026-06-20T10:00:00.123456+00:00",
     text,
     turn_id,
   };

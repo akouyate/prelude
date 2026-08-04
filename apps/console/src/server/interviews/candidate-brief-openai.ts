@@ -143,6 +143,7 @@ function openAISystemInstructions() {
     "Use only transcript evidence from the input. Do not invent facts.",
     "Separate facts, inferred job-related signals, risks, missing information, and recruiter next step.",
     "A spoken answer is not valid unless it is relevant, coherent, and job-related.",
+    "Do not treat a request to repeat, clarify, or reformulate an interview question as a candidate weakness or communication risk. Evaluate only the substantive answer that follows; if the question remained unclear, record an interview limitation instead.",
     buildAiCompliancePromptContext(),
     "If evidence is absent or weak, mark it as missing, unclear, partial, or risk and recommend recruiter follow-up.",
   ].join(" ");

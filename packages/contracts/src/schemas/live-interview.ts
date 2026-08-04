@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+// Realtime providers emit valid RFC 3339 timestamps using either `Z` or an
+// explicit UTC offset (for example Python's `+00:00`). Keep the wire contract
+// compatible with both representations.
+const rfc3339TimestampSchema = z.string().datetime({ offset: true });
+
 export const liveInterviewProviderSchema = z.enum([
   "openai_realtime",
   "elevenlabs",
@@ -95,8 +100,8 @@ export const liveInterviewSessionSchema = z.object({
   planId: z.string().min(1),
   status: liveInterviewSessionStatusSchema,
   livekitRoomName: z.string().min(1),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  createdAt: rfc3339TimestampSchema,
+  updatedAt: rfc3339TimestampSchema,
 });
 
 export const liveInterviewTranscriptTurnSchema = z.object({
@@ -106,8 +111,8 @@ export const liveInterviewTranscriptTurnSchema = z.object({
   speaker: liveInterviewSpeakerSchema,
   text: z.string().trim().min(1).max(12000),
   isFinal: z.boolean().default(true),
-  startedAt: z.string().datetime(),
-  endedAt: z.string().datetime().optional(),
+  startedAt: rfc3339TimestampSchema,
+  endedAt: rfc3339TimestampSchema.optional(),
   confidence: z.number().min(0).max(1).optional(),
 });
 
@@ -118,7 +123,7 @@ const liveInterviewEventBaseSchema = z.object({
   actor: liveInterviewEventActorSchema,
   sequenceNumber: z.number().int().min(1),
   idempotencyKey: z.string().min(8),
-  occurredAt: z.string().datetime(),
+  occurredAt: rfc3339TimestampSchema,
   providerMetadata: z.record(z.string(), z.unknown()).default({}),
 });
 
@@ -329,8 +334,8 @@ export const liveInterviewEventSchema = z.discriminatedUnion("type", [
     type: z.literal("wait_requested"),
     payload: z.object({
       questionId: z.string().min(1).optional(),
-      requestedAt: z.string().datetime().optional(),
-      waitUntil: z.string().datetime().optional(),
+      requestedAt: rfc3339TimestampSchema.optional(),
+      waitUntil: rfc3339TimestampSchema.optional(),
       reason: z.literal("candidate_requested_time"),
     }),
   }),
@@ -450,7 +455,7 @@ export const createLiveInterviewSessionResponseSchema = z.object({
   status: liveInterviewSessionStatusSchema,
   livekitRoomName: z.string().min(1),
   candidateLivekitToken: z.string().min(1),
-  expiresAt: z.string().datetime(),
+  expiresAt: rfc3339TimestampSchema,
 });
 
 export const liveInterviewAgentConfigSchema = z.object({
@@ -481,15 +486,15 @@ export const liveInterviewWorkerAgentConfigSchema = z.object({
     status: liveInterviewSessionStatusSchema,
     livekit_room_name: z.string().min(1),
     allowed_modalities: z.array(liveInterviewModeSchema).min(1),
-    created_at: z.string().datetime(),
-    updated_at: z.string().datetime(),
+    created_at: rfc3339TimestampSchema,
+    updated_at: rfc3339TimestampSchema,
   }),
   livekit_join: z.object({
     room_name: z.string().min(1),
     url: z.string().url().or(z.string().startsWith("wss://")),
     token: z.string().min(1),
     participant: z.string().min(1),
-    expires_at: z.string().datetime(),
+    expires_at: rfc3339TimestampSchema,
   }),
   interview_plan: z.object({
     id: z.string().min(1),
@@ -565,7 +570,7 @@ export const liveInterviewRecruiterSummarySchema = z.object({
   planId: z.string().min(1),
   roleTitle: z.string().trim().min(2).max(160),
   status: z.enum(["complete", "incomplete"]),
-  generatedAt: z.string().datetime(),
+  generatedAt: rfc3339TimestampSchema,
   summaryVersion: z.string().min(1).max(120),
   generator: z.enum(["deterministic_v1", "llm_assisted"]),
   disclaimer: z.string().trim().min(12).max(500),
