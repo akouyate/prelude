@@ -45,7 +45,6 @@ import {
   Sparks as Sparkles,
   Suitcase as Briefcase,
   Trash as Trash2,
-  Xmark as X,
 } from "iconoir-react";
 import { useRouter } from "next/navigation";
 import * as React from "react";
@@ -69,6 +68,7 @@ import {
   type PublishInterviewDraftResult,
   type SaveInterviewDraftResult,
 } from "../../server/interviews/interview-drafts";
+import { createCandidateExperiencePreview } from "../../server/interviews/candidate-experience-previews";
 import {
   InterviewBuilderAgentCard,
   InterviewBuilderBreadcrumb,
@@ -251,7 +251,7 @@ export function InterviewAgentBuilder({
     initialDraft?.draft,
   );
   const [selectedQuestionId, setSelectedQuestionId] = React.useState<string>();
-  const [isPreviewOpen, setIsPreviewOpen] = React.useState(false);
+  const [isOpeningPreview, setIsOpeningPreview] = React.useState(false);
   const [isGeneratingDraft, setIsGeneratingDraft] = React.useState(false);
   const [generationPhase, setGenerationPhase] = React.useState(0);
   const [workingQuestionId, setWorkingQuestionId] = React.useState<string>();
@@ -275,9 +275,6 @@ export function InterviewAgentBuilder({
 
   const currentStepIndex = steps.findIndex((step) => step.id === currentStep);
   const currentStepConfig = steps[currentStepIndex] ?? steps[0]!;
-  const activeQuestion =
-    draft?.questions.find((question) => question.id === selectedQuestionId) ??
-    draft?.questions[0];
   const trimmedJobTitle = jobTitle.trim();
   const trimmedJobDescription = jobDescription.trim();
 
@@ -500,6 +497,33 @@ export function InterviewAgentBuilder({
     },
     [router, saveCurrentDraft],
   );
+
+  const previewCurrentDraft = React.useCallback(async () => {
+    setIsOpeningPreview(true);
+    setSaveError(undefined);
+
+    const saved = await saveCurrentDraft();
+    if (!saved) {
+      setIsOpeningPreview(false);
+      return;
+    }
+
+    try {
+      const result = await createCandidateExperiencePreview(saved.draftId);
+      if (!result.ok) {
+        setSaveError(result.error);
+        return;
+      }
+
+      window.location.assign(result.previewUrl);
+    } catch {
+      setSaveError(
+        "The candidate preview could not be prepared. Please retry.",
+      );
+    } finally {
+      setIsOpeningPreview(false);
+    }
+  }, [saveCurrentDraft]);
 
   const toggleFocus = React.useCallback(
     (value: InterviewFocus) => {
@@ -917,6 +941,7 @@ export function InterviewAgentBuilder({
               complianceReview={complianceReview}
               draft={draft}
               isPublishing={isPublishingDraft}
+              isPreviewing={isOpeningPreview}
               isSaving={isSavingDraft}
               modes={modes}
               publishedInterview={publishedInterview}
@@ -929,7 +954,7 @@ export function InterviewAgentBuilder({
               onOverride={(justification) =>
                 void publishCurrentDraft({ justification })
               }
-              onPreview={() => setIsPreviewOpen(true)}
+              onPreview={() => void previewCurrentDraft()}
               onPublish={() => void publishCurrentDraft()}
               onSave={() => void saveCurrentDraft()}
             />
@@ -966,14 +991,6 @@ export function InterviewAgentBuilder({
           />
         </section>
       </main>
-
-      {isPreviewOpen && activeQuestion ? (
-        <CandidatePreviewDialog
-          companyName={companyName}
-          question={activeQuestion}
-          onClose={() => setIsPreviewOpen(false)}
-        />
-      ) : null}
     </>
   );
 }
@@ -1828,6 +1845,7 @@ function ShareStep({
   complianceReview,
   draft,
   isPublishing,
+  isPreviewing,
   isSaving,
   modes,
   publishedInterview,
@@ -1846,6 +1864,7 @@ function ShareStep({
   complianceReview?: ComplianceReviewPrompt;
   draft: InterviewAgentDraft;
   isPublishing: boolean;
+  isPreviewing: boolean;
   isSaving: boolean;
   modes: ResponseMode[];
   publishedInterview?: Extract<PublishInterviewDraftResult, { ok: true }>;
@@ -1964,9 +1983,15 @@ function ShareStep({
       ) : null}
 
       <div className="flex flex-wrap gap-2">
-        <Button variant="secondary" onClick={onPreview}>
+        <Button
+          disabled={isPreviewing || isSaving || isPublishing}
+          variant="secondary"
+          onClick={onPreview}
+        >
           <Eye aria-hidden="true" className="h-4 w-4" />
-          Preview candidate experience
+          {isPreviewing
+            ? "Preparing preview..."
+            : "Preview candidate experience"}
         </Button>
         <Button variant="secondary" onClick={onEditDraft}>
           Edit draft
@@ -2153,64 +2178,6 @@ function CandidateTrustPanel() {
           <p className="mt-2 text-[11.5px] font-medium text-ink-400">
             {candidateConsentCopyVersion}
           </p>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CandidatePreviewDialog({
-  companyName,
-  question,
-  onClose,
-}: {
-  companyName: string;
-  question: InterviewQuestionDraft;
-  onClose: () => void;
-}) {
-  return (
-    <div
-      aria-label="Candidate preview"
-      aria-modal="true"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/60 p-4"
-      role="dialog"
-    >
-      <div className="w-full max-w-sm rounded-2xl bg-white p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <p className="text-sm font-semibold text-ink-900">
-            Candidate preview
-          </p>
-          <button
-            aria-label="Close candidate preview"
-            className="cursor-pointer rounded-full p-2 text-ink-600 outline-none hover:bg-ink-100 focus-visible:ring-2 focus-visible:ring-[#e5e8d6]"
-            type="button"
-            onClick={onClose}
-          >
-            <X aria-hidden="true" className="h-4 w-4" />
-          </button>
-        </div>
-        <div className="rounded-[2rem] bg-ink-900 p-4 text-white">
-          <p className="text-xs font-medium text-white/60">{companyName}</p>
-          <h3 className="mt-4 text-xl font-semibold leading-snug">
-            {question.prompt}
-          </h3>
-          <p className="mt-5 text-sm leading-6 text-white/68">
-            Answer by audio or form. You can preview before sending.
-          </p>
-          <div className="mt-8 grid gap-2">
-            <button
-              className="h-11 cursor-pointer rounded-full bg-white px-4 text-sm font-semibold text-ink-900 outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-              type="button"
-            >
-              Record audio
-            </button>
-            <button
-              className="h-11 cursor-pointer rounded-full border border-white/18 px-4 text-sm font-semibold text-white outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-              type="button"
-            >
-              Write answer
-            </button>
-          </div>
         </div>
       </div>
     </div>

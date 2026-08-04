@@ -18,6 +18,7 @@ var (
 	ErrInvalidInput     = errors.New("invalid input")
 	ErrInvalidEvent     = errors.New("invalid event")
 	ErrSessionNotFound  = errors.New("session not found")
+	ErrSessionExpired   = errors.New("session expired")
 	ErrPlanNotFound     = errors.New("interview plan not found")
 	ErrEventConflict    = errors.New("event id already exists with different content")
 	ErrRepositoryFailed = errors.New("repository failed")
@@ -290,6 +291,8 @@ type CreateSessionInput struct {
 	InterviewPlanID   string
 	CandidateID       string
 	AllowedModalities []domain.Modality
+	Kind              domain.SessionKind
+	ExpiresAt         *time.Time
 }
 
 type CreateSessionOutput struct {
@@ -344,6 +347,21 @@ func (s *Service) CreateSession(ctx context.Context, input CreateSessionInput) (
 	if err != nil {
 		return CreateSessionOutput{}, err
 	}
+	kind := input.Kind
+	if kind == "" {
+		kind = domain.SessionKindCandidate
+	}
+	if kind != domain.SessionKindCandidate && kind != domain.SessionKindPreview {
+		return CreateSessionOutput{}, fmt.Errorf("%w: unsupported session kind", ErrInvalidInput)
+	}
+	if kind == domain.SessionKindPreview {
+		if !strings.HasPrefix(input.InterviewPlanID, "pv_") {
+			return CreateSessionOutput{}, fmt.Errorf("%w: preview sessions require a preview plan", ErrInvalidInput)
+		}
+		if input.ExpiresAt == nil || !input.ExpiresAt.After(s.clock.Now()) {
+			return CreateSessionOutput{}, fmt.Errorf("%w: preview session expiry is required", ErrInvalidInput)
+		}
+	}
 	sessionID := newID("is")
 	now := s.clock.Now()
 	roomName := liveKitRoomName(sessionID)
@@ -355,6 +373,8 @@ func (s *Service) CreateSession(ctx context.Context, input CreateSessionInput) (
 		Status:            domain.SessionStatusWaitingCandidate,
 		LiveKitRoomName:   roomName,
 		AllowedModalities: modalities,
+		Kind:              kind,
+		ExpiresAt:         input.ExpiresAt,
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}
@@ -396,6 +416,9 @@ func (s *Service) GetSession(ctx context.Context, sessionID string) (domain.Sess
 	session, err := s.repository.GetSession(ctx, sessionID)
 	if err != nil {
 		return domain.Session{}, err
+	}
+	if session.Kind == domain.SessionKindPreview && session.ExpiresAt != nil && !session.ExpiresAt.After(s.clock.Now()) {
+		return domain.Session{}, ErrSessionExpired
 	}
 
 	return session, nil
@@ -562,6 +585,14 @@ func (s *Service) startRecordingIfNeeded(ctx context.Context, event domain.Event
 		return
 	}
 	if event.Type != domain.EventCandidateMediaReady {
+		return
+	}
+	session, err := s.repository.GetSession(ctx, event.SessionID)
+	if err != nil {
+		slog.Warn("failed to inspect session before recording", "session_id", event.SessionID, "error", err)
+		return
+	}
+	if session.Kind == domain.SessionKindPreview {
 		return
 	}
 	if !candidateAudioReady(event.Payload) {

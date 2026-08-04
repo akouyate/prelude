@@ -23,20 +23,33 @@ export async function createSession(input: {
   signal?: AbortSignal;
   token: string;
   videoEnabled: boolean;
+  preview?: boolean;
 }) {
-  const response = await fetch("/api/live-interview-sessions", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      candidateEmail: input.candidateEmail,
-      candidateName: input.candidateName,
-      candidateToken: input.token,
-      consentAccepted: input.consentAccepted,
-      resumeToken: input.resumeToken,
-      videoEnabled: input.videoEnabled,
-    }),
-    ...(input.signal ? { signal: input.signal } : {}),
-  });
+  const response = await fetch(
+    input.preview
+      ? "/api/live-interview-preview-sessions"
+      : "/api/live-interview-sessions",
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(
+        input.preview
+          ? {
+              consentAccepted: input.consentAccepted,
+              previewToken: input.token,
+            }
+          : {
+              candidateEmail: input.candidateEmail,
+              candidateName: input.candidateName,
+              candidateToken: input.token,
+              consentAccepted: input.consentAccepted,
+              resumeToken: input.resumeToken,
+              videoEnabled: input.videoEnabled,
+            },
+      ),
+      ...(input.signal ? { signal: input.signal } : {}),
+    },
+  );
 
   if (!response.ok) {
     throw new Error(

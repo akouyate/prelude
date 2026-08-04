@@ -49,6 +49,9 @@ describe("OpenAI candidate brief synthesizer", () => {
     expect(JSON.stringify(requestBody)).toContain(
       "sensitive information was excluded",
     );
+    expect(JSON.stringify(requestBody)).toContain(
+      "Do not treat a request to repeat, clarify, or reformulate",
+    );
   });
 });
 

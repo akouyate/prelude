@@ -211,3 +211,4 @@ ALLOW_LIVE_LLM_TESTS=1 pnpm --dir apps/console exec vitest run src/server/interv
 - [`docs/sources/evaluation-matrix.md`](docs/sources/evaluation-matrix.md) — evaluation matrix sources.
 - [`docs/sources/role-draft-generation.md`](docs/sources/role-draft-generation.md) — role draft generation sources.
 - [`docs/sources/compliance-guardrails.md`](docs/sources/compliance-guardrails.md) — compliance guardrail source rationale.
+- [`docs/sources/candidate-live-preview.md`](docs/sources/candidate-live-preview.md) — real candidate-app preview isolation and retention contract.

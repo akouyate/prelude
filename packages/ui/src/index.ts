@@ -47,7 +47,10 @@ export {
 export { StatusBadge } from "./components/status-badge";
 export { Surface, type SurfaceProps } from "./components/surface";
 export { Switch, type SwitchProps } from "./components/switch";
-export { StepProgress, type StepProgressProps } from "./components/step-progress";
+export {
+  StepProgress,
+  type StepProgressProps,
+} from "./components/step-progress";
 export { Tabs } from "./components/tabs";
 export { Textarea, type TextareaProps } from "./components/textarea";
 export {
@@ -57,6 +60,14 @@ export {
 } from "./components/underline-tabs";
 export { Toast } from "./feedback/toast";
 export { CandidateShell } from "./layouts/candidate-shell";
+export {
+  CandidateInterviewIntro,
+  CandidatePreflightExperience,
+  CandidateWelcomeExperience,
+  formatCandidateModes,
+  type CandidatePreflightExperienceProps,
+  type CandidateWelcomeExperienceProps,
+} from "./layouts/candidate-interview-experience";
 export { EmptyState } from "./layouts/empty-state";
 export { EnterpriseShell } from "./layouts/enterprise-shell";
 export { PageHeader } from "./layouts/page-header";

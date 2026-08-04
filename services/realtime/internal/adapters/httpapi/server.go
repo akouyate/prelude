@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/akouyate/prelude/services/realtime/internal/application"
 	"github.com/akouyate/prelude/services/realtime/internal/domain"
@@ -111,9 +112,11 @@ func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 type createSessionRequest struct {
-	InterviewPlanID   string            `json:"interview_plan_id"`
-	CandidateID       string            `json:"candidate_id"`
-	AllowedModalities []domain.Modality `json:"allowed_modalities"`
+	InterviewPlanID   string             `json:"interview_plan_id"`
+	CandidateID       string             `json:"candidate_id"`
+	AllowedModalities []domain.Modality  `json:"allowed_modalities"`
+	SessionKind       domain.SessionKind `json:"session_kind"`
+	ExpiresAt         *time.Time         `json:"expires_at"`
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -127,6 +130,8 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		InterviewPlanID:   request.InterviewPlanID,
 		CandidateID:       request.CandidateID,
 		AllowedModalities: request.AllowedModalities,
+		Kind:              request.SessionKind,
+		ExpiresAt:         request.ExpiresAt,
 	})
 	if err != nil {
 		writeServiceError(w, err)
@@ -297,6 +302,8 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusUnprocessableEntity, "invalid_event", err.Error())
 	case errors.Is(err, application.ErrSessionNotFound):
 		writeError(w, http.StatusNotFound, "session_not_found", err.Error())
+	case errors.Is(err, application.ErrSessionExpired):
+		writeError(w, http.StatusGone, "session_expired", err.Error())
 	case errors.Is(err, application.ErrPlanNotFound):
 		writeError(w, http.StatusNotFound, "plan_not_found", err.Error())
 	case errors.Is(err, application.ErrEventConflict):

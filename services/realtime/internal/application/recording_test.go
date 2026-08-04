@@ -80,6 +80,39 @@ func newRecordingService(t *testing.T, consent, entitled bool) (*application.Ser
 	return service, repo, egress, session
 }
 
+func TestPreviewSessionNeverStartsRecording(t *testing.T) {
+	now := time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC)
+	repo := store.NewMemoryStore()
+	service := application.NewService(repo, fakeLiveKit{}, fixedClock{now: now})
+	egress := &fakeEgress{}
+	service.SetEgressGateway(egress)
+	service.SetRecordingRepository(repo)
+	service.SetRecordingConsentGate(repo)
+	expiresAt := now.Add(45 * time.Minute)
+	session, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID:   "pv_123",
+		CandidateID:       "preview_123",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio},
+		Kind:              domain.SessionKindPreview,
+		ExpiresAt:         &expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	repo.SetRecordingConsent(session.Session.ID, application.RecordingConsent{
+		Granted:           true,
+		RecordingEntitled: true,
+		CopyVersion:       "candidate-consent-v2",
+	})
+
+	ingestJoined(t, service, session.Session.ID, 1, "evt_preview_joined")
+	ingestMediaReady(t, service, session.Session.ID, 2, "evt_preview_media", true)
+
+	if egress.attempts != 0 {
+		t.Fatalf("preview audio must never be recorded, got %d egress attempts", egress.attempts)
+	}
+}
+
 func ingestJoined(t *testing.T, service *application.Service, sessionID string, sequence int, eventID string) {
 	t.Helper()
 	joined := eventInput(sessionID, sequence, eventID, domain.EventCandidateJoined)

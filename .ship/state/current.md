@@ -2,66 +2,77 @@
 
 ## Goal
 
-Ship V1 copied-job-link intake so a recruiter can paste a LinkedIn, Indeed,
-employer-career, ATS, or other public job URL and reach an editable role draft
-or an immediate manual fallback without a dead end.
+Ship a real candidate-experience preview that opens the candidate application
+and can run an isolated LiveKit interview without creating product candidate
+records or triggering billing, invitations, notifications, analysis, or audio
+recording.
 
 ## Scope
 
-- Preserve the existing SSRF-safe, robots-aware direct HTML importer.
-- Route LinkedIn, Indeed, and unusable script-only pages through a verified
-  indexed web-search adapter instead of scraping provider pages.
-- Accept search-derived fields only when citations match the submitted job URL
-  or its stable provider job identifier.
-- Preserve acquisition strategy, field source, timestamp, and verified
-  citations as recruiter-visible provenance.
-- Keep every imported field editable and require recruiter review before
-  question generation.
-- Keep CI deterministic and free of paid network calls; real-link tests remain
-  explicit opt-in smoke tests.
+- Save the recruiter draft before previewing so unsaved edits are included.
+- Create a short-lived, opaque preview snapshot using the existing Interview
+  plan contract consumed by the realtime service.
+- Open the real candidate application at `/preview/:token`.
+- Reuse the production welcome, preflight, consent, form, audio, reconnect, and
+  completion UI.
+- Provision preview LiveKit sessions without CandidateSession or invitation
+  writes and without recording entitlement.
+- Expire preview URLs and continuously purge stale snapshots and realtime evidence.
+- Keep published-candidate behavior unchanged.
 
 ## Workflow
 
-- [x] Intake and repository audit
-- [x] Provider/API and policy research
-- [x] Refine implementation ticket #133
-- [x] Add failing routing, verification, and failure tests
-- [x] Implement acquisition router and indexed-search adapter
-- [x] Extend provenance and recovery UX
-- [x] Validate real LinkedIn, Indeed, and public-link paths
-- [ ] Review, simplify, document, and merge
+- [x] Audit candidate, console, realtime, billing, and recording boundaries
+- [x] Challenge architecture and UX with specialized subagents
+- [x] Choose the smallest isolated architecture
+- [x] Add failing preview snapshot and session-isolation tests
+- [x] Implement console snapshot action and candidate redirect
+- [x] Implement candidate preview route and isolated live test
+- [x] Allow realtime to resolve temporary preview plans
+- [x] Remove the console-only fake preview and update E2E coverage
+- [x] Run review, refactor, full validation, and browser smoke tests
 
 ## Decisions
 
-- Do not use LinkedIn Apply Connect or Indeed Job Sync for copied-link intake.
-- Do not crawl LinkedIn or Indeed directly, collect provider credentials, or
-  use undocumented provider endpoints.
-- Use OpenAI Responses `web_search` only as an indexed-source adapter behind a
-  provider-neutral interface.
-- Fail closed when the result cannot be tied to the submitted source.
-- Define "handled" as either a verified editable draft or a retained-URL manual
-  fallback, not a claim that every private or expired page can be extracted.
-- Keep raw pages and complete search responses out of persistence.
+- Use the real candidate application; do not maintain a second preview UI.
+- Keep preview and live test explicit in the UI, but use the same candidate
+  surface and runtime components.
+- Use a temporary Interview snapshot rather than adding a second Redis plan
+  repository. Interview is already the canonical contract read by Go realtime.
+- Use opaque high-entropy tokens and server-side TTL checks; never encode draft
+  content in a URL.
+- Never call `prepareCandidateSession` for preview sessions.
+- Never create CandidateSession, CandidateInvitation, CandidateBrief, billing,
+  notification, calendar, or recording records for a preview.
+- A preview realtime session uses an opaque `preview_*` candidate id and remains
+  outside every product query because no CandidateSession references it.
+- Preview reconnection reuses the existing room; failed provisioning releases
+  its optimistic live-test reservation.
+- The realtime service purges expired preview sessions, transcript events, and
+  snapshots every five minutes and rejects events after session expiry.
 
 ## Validation target
 
-- LinkedIn and Indeed URLs normalize and route without a provider-blocked error.
-- Search-derived content is rejected without exact source evidence.
-- Direct public HTML import behavior and SSRF controls remain unchanged.
-- Errors are stable, actionable, and retain the submitted URL.
-- Unit, typecheck, lint, and focused browser smoke tests pass.
-- Live smoke tests cover representative LinkedIn, Indeed, and ATS URLs when
-  `ALLOW_LIVE_JOB_URL_TESTS=1`.
+- Preview opens the candidate app with the latest saved draft.
+- Expired or unknown preview tokens fail closed with a clear unavailable state.
+- Merely opening preview performs no candidate lifecycle write.
+- Microphone permission is requested only after the recruiter explicitly starts
+  the live test.
+- The real agent joins and all connection/reconnection/completion states work.
+- CandidateSession, invitation, billing, notification, analysis, and recording
+  state remain unchanged.
+- Published invitation and public-token flows retain their current behavior.
+- Console, candidate, UI, realtime unit tests, typechecks, lint, and focused
+  desktop/mobile browser smoke tests pass.
 
-## Validation result
+## Result
 
-- Mocked console suite: 371 passed, 6 skipped.
-- Live indexed-source smoke: current LinkedIn job `4436807221` and current
-  Indeed job `f066959d3108e72b` both produced an exact-source draft.
-- Live direct-source smoke: current Greenhouse job `4911620101` produced a
-  structured draft through the robots-aware HTML importer.
-- Contracts and console TypeScript checks passed.
-- Console ESLint and production build passed.
-- Browser runtime was unavailable in the active Codex session; server and
-  worker startup were checked locally, with the UI interaction smoke still to
-  be completed if the runtime becomes available before merge.
+- Candidate app: 86 tests passed; console: 382 passed, 7 skipped; UI: 6 passed;
+  core: 384 passed; contracts: 70 passed; realtime: 114 tests passed, including
+  Postgres retention coverage.
+- Candidate and console lint, TypeScript, and optimized Next.js production
+  builds pass.
+- Browser smoke passed for same-tab redirect, real welcome/setup UI, written
+  fallback completion, exit-to-draft, and a mobile viewport.
+- Real LiveKit provisioning returned a non-mock token. Product candidate and
+  invitation counts stayed unchanged and preview recording count stayed zero.

@@ -24,6 +24,7 @@ model Organization {
   notificationDeliveries NotificationDelivery[]
   candidateReviewEvents  CandidateSessionReviewEvent[]
   candidateSessions      CandidateSession[]
+  candidatePreviews      CandidateExperiencePreview[]
   scheduledCalls         CandidateScheduledCall[]
   connectedAccounts      ConnectedAccount[]
   interviewDrafts        InterviewDraft[]
@@ -49,6 +50,7 @@ model User {
   candidateSessionReviewStatusUpdates CandidateSession[]            @relation("CandidateSessionReviewStatusAuthor")
   connectedAccounts                   ConnectedAccount[]
   createdRoleIntakes                  RoleIntake[]                  @relation("RoleIntakeCreator")
+  createdCandidatePreviews            CandidateExperiencePreview[]  @relation("CandidatePreviewCreator")
   memberships                         OrganizationMembership[]
 }
 
@@ -149,9 +151,9 @@ model RoleIntake {
   job                      Job?              @relation(fields: [jobId], references: [id], onDelete: SetNull)
   events                   RoleIntakeEvent[]
 
-  @@index([organizationId, status, updatedAt])
   @@unique([organizationId, sha256])
   @@unique([organizationId, sourceIdentity])
+  @@index([organizationId, status, updatedAt])
   @@index([duplicateOfIntakeId])
   @@index([status, nextAttemptAt])
   @@index([createdByUserId, createdAt])
@@ -173,32 +175,55 @@ model RoleIntakeEvent {
 }
 
 model InterviewDraft {
-  id                   String       @id @default(cuid())
+  id                   String                       @id @default(cuid())
   organizationId       String
   jobId                String
-  status               String       @default("draft")
+  status               String                       @default("draft")
   roleTitle            String
-  roleBrief            String       @default("")
+  roleBrief            String                       @default("")
   seniority            String?
-  focus                Json         @default("[]")
-  responseModes        Json         @default("[]")
-  questions            Json         @default("[]")
-  criteria             Json         @default("[]")
-  guardrails           Json         @default("[]")
+  focus                Json                         @default("[]")
+  responseModes        Json                         @default("[]")
+  questions            Json                         @default("[]")
+  criteria             Json                         @default("[]")
+  guardrails           Json                         @default("[]")
   estimatedMinutes     Int?
   rationale            String?
   sourceAttachmentName String?
-  schemaVersion        Int          @default(1)
+  schemaVersion        Int                          @default(1)
   generatorProvider    String?
   generatorModel       String?
-  createdAt            DateTime     @default(now())
-  updatedAt            DateTime     @updatedAt
-  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  job                  Job          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
+  organization         Organization                 @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  job                  Job                          @relation(fields: [jobId], references: [id], onDelete: Cascade)
   interview            Interview?
+  candidatePreviews    CandidateExperiencePreview[]
 
   @@index([organizationId, status, updatedAt])
   @@index([jobId, status])
+}
+
+model CandidateExperiencePreview {
+  id               String         @id
+  organizationId   String
+  draftId          String
+  createdByUserId  String
+  tokenDigest      String         @unique
+  snapshot         Json
+  schemaVersion    Int            @default(1)
+  expiresAt        DateTime
+  runtimeExpiresAt DateTime?
+  liveTestCount    Int            @default(0)
+  revokedAt        DateTime?
+  createdAt        DateTime       @default(now())
+  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  draft            InterviewDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  createdBy        User           @relation("CandidatePreviewCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, createdAt])
+  @@index([expiresAt])
+  @@index([runtimeExpiresAt])
 }
 
 model Interview {
@@ -294,7 +319,7 @@ model CandidateSession {
   resumeToken             String?                       @unique
   consentedAt             DateTime?
   consentCopyVersion      String?
-  recordingEntitled      Boolean                       @default(false)
+  recordingEntitled       Boolean                       @default(false)
   status                  String                        @default("created")
   reviewStatus            String                        @default("to_review")
   reviewNote              String?
@@ -331,21 +356,21 @@ model CandidateSession {
 // low-latency product authorization in public candidate and realtime flows.
 // Payment methods, invoices, prices and raw provider payloads never live here.
 model OrganizationBillingState {
-  organizationId       String       @id
-  clerkSubscriptionId  String?
-  clerkPlanId          String?
-  planSlug             String?
-  planName             String?
-  state                String
-  subscriptionStatus   String?
-  subscriptionItemId   String?
+  organizationId         String       @id
+  clerkSubscriptionId    String?
+  clerkPlanId            String?
+  planSlug               String?
+  planName               String?
+  state                  String
+  subscriptionStatus     String?
+  subscriptionItemId     String?
   subscriptionItemStatus String?
-  isFreeTrial          Boolean      @default(false)
-  periodStart          DateTime?
-  periodEnd            DateTime?
-  sourceUpdatedAt      DateTime
-  syncedAt             DateTime     @default(now())
-  organization         Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  isFreeTrial            Boolean      @default(false)
+  periodStart            DateTime?
+  periodEnd              DateTime?
+  sourceUpdatedAt        DateTime
+  syncedAt               DateTime     @default(now())
+  organization           Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
   @@index([state, periodEnd])
 }
@@ -530,11 +555,14 @@ model LiveInterviewSession {
   status            String
   livekitRoomName   String                   @map("livekit_room_name")
   allowedModalities Json                     @map("allowed_modalities")
+  kind              String                   @default("candidate")
+  expiresAt         DateTime?                @map("expires_at")
   createdAt         DateTime                 @map("created_at")
   updatedAt         DateTime                 @map("updated_at")
   events            LiveInterviewEvent[]
   recordings        LiveInterviewRecording[]
 
+  @@index([kind, expiresAt])
   @@map("live_interview_sessions")
 }
 

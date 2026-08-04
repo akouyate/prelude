@@ -87,7 +87,9 @@ test("interview agent saves and publishes a draft", async ({ page }) => {
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Add question" }).click();
-  await page.getByLabel("Ask HireCall to add a question about").fill("mobility");
+  await page
+    .getByLabel("Ask HireCall to add a question about")
+    .fill("mobility");
   await page.getByRole("button", { name: "Add with HireCall" }).click();
   await expect(page.getByText("5 questions", { exact: true })).toBeVisible();
 
@@ -103,15 +105,13 @@ test("interview agent saves and publishes a draft", async ({ page }) => {
   await expect(page.locator("section").getByText("Draft saved")).toBeVisible();
   await expect(page.getByText("Candidate preview")).toHaveCount(0);
 
-  await page
-    .getByRole("button", { name: "Preview candidate experience" })
-    .click();
-  await expect(
-    page.getByRole("dialog", { name: "Candidate preview" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Close candidate preview" }).click();
-
   await page.getByRole("button", { name: "Publish role screen" }).click();
   await expect(page.getByText("Role screen published")).toBeVisible();
   await expect(page.getByText("hirecall.ai/interview/ci_")).toBeVisible();
+
+  await page
+    .getByRole("button", { name: "Preview candidate experience" })
+    .click();
+  await expect(page).toHaveURL(/\/preview\/pvtk_[A-Za-z0-9_-]+$/u);
+  await expect(page.getByText("Live test preview")).toBeVisible();
 });

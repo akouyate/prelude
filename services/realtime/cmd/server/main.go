@@ -35,8 +35,10 @@ func main() {
 	}
 
 	repository := application.SessionRepository(store.NewMemoryStore())
+	var postgresStore *store.PostgresStore
 	if databaseURL := os.Getenv("DATABASE_URL"); databaseURL != "" {
-		postgresStore, err := store.NewPostgresStore(context.Background(), databaseURL)
+		var err error
+		postgresStore, err = store.NewPostgresStore(context.Background(), databaseURL)
 		if err != nil {
 			slog.Error("failed to connect postgres store", "error", err)
 			os.Exit(1)
@@ -142,6 +144,9 @@ func main() {
 		handler.SetEgressWebhookParser(egressWebhookParser)
 		go runRecordingReconciler(context.Background(), service, recordingRetentionDays(os.Getenv))
 	}
+	if postgresStore != nil {
+		go runCandidatePreviewPurger(context.Background(), postgresStore)
+	}
 
 	server := &http.Server{
 		Addr:              ":" + port,
@@ -157,9 +162,32 @@ func main() {
 }
 
 const (
-	recordingReconcileInterval = 5 * time.Minute
-	recordingStaleAfter        = 10 * time.Minute
+	candidatePreviewPurgeInterval = 5 * time.Minute
+	recordingReconcileInterval    = 5 * time.Minute
+	recordingStaleAfter           = 10 * time.Minute
 )
+
+func runCandidatePreviewPurger(ctx context.Context, previewStore *store.PostgresStore) {
+	purge := func() {
+		if deleted, err := previewStore.PurgeExpiredCandidatePreviewData(ctx, time.Now().UTC()); err != nil {
+			slog.Warn("candidate preview purge failed", "error", err)
+		} else if deleted > 0 {
+			slog.Info("purged expired candidate preview data", "rows", deleted)
+		}
+	}
+
+	purge()
+	ticker := time.NewTicker(candidatePreviewPurgeInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			purge()
+		}
+	}
+}
 
 // runRecordingReconciler drives the periodic recording maintenance on one ticker:
 // it finalizes recordings whose egress_ended webhook never arrived (by polling

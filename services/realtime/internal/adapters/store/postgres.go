@@ -42,6 +42,47 @@ func (s *PostgresStore) Close() error {
 	return s.db.Close()
 }
 
+// PurgeExpiredCandidatePreviewData removes preview sessions first so their
+// transcript events cascade, then removes the corresponding immutable draft
+// snapshots. Preview audio is never recorded by the application service.
+func (s *PostgresStore) PurgeExpiredCandidatePreviewData(ctx context.Context, cutoff time.Time) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	sessionsResult, err := tx.ExecContext(ctx, `
+		delete from live_interview_sessions
+		where kind = 'preview'
+		  and expires_at is not null
+		  and expires_at <= $1
+	`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	previewsResult, err := tx.ExecContext(ctx, `
+		delete from "CandidateExperiencePreview"
+		where coalesce("runtimeExpiresAt", "expiresAt") <= $1
+	`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	sessionsDeleted, err := sessionsResult.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	previewsDeleted, err := previewsResult.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return sessionsDeleted + previewsDeleted, nil
+}
+
 func (s *PostgresStore) CreateSession(ctx context.Context, session domain.Session) error {
 	modalities, err := json.Marshal(session.AllowedModalities)
 	if err != nil {
@@ -56,10 +97,12 @@ func (s *PostgresStore) CreateSession(ctx context.Context, session domain.Sessio
 			status,
 			livekit_room_name,
 			allowed_modalities,
+			kind,
+			expires_at,
 			created_at,
 			updated_at
-		) values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8)
-	`, session.ID, session.InterviewPlanID, session.CandidateID, session.Status, session.LiveKitRoomName, string(modalities), session.CreatedAt, session.UpdatedAt)
+		) values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10)
+	`, session.ID, session.InterviewPlanID, session.CandidateID, session.Status, session.LiveKitRoomName, string(modalities), session.Kind, session.ExpiresAt, session.CreatedAt, session.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -83,6 +126,10 @@ func (s *PostgresStore) GetSession(ctx context.Context, sessionID string) (domai
 }
 
 func (s *PostgresStore) GetInterviewPlan(ctx context.Context, planID string) (application.InterviewPlan, error) {
+	if strings.HasPrefix(planID, "pv_") {
+		return s.getCandidatePreviewPlan(ctx, planID)
+	}
+
 	var plan application.InterviewPlan
 	var seniority sql.NullString
 	var roleBrief sql.NullString
@@ -110,29 +157,104 @@ func (s *PostgresStore) GetInterviewPlan(ctx context.Context, planID string) (ap
 		return application.InterviewPlan{}, err
 	}
 
-	responseModes := decodeStringArray(responseModesBytes)
+	return buildStoredInterviewPlan(storedInterviewPlan{
+		ID:            plan.ID,
+		RoleTitle:     plan.RoleTitle,
+		Seniority:     seniority.String,
+		ResponseModes: responseModesBytes,
+		Questions:     questionsBytes,
+		Guardrails:    guardrailsBytes,
+		RoleBrief:     roleBrief.String,
+	})
+}
+
+type candidatePreviewSnapshot struct {
+	Plan struct {
+		RoleTitle     string          `json:"roleTitle"`
+		RoleBrief     string          `json:"roleBrief"`
+		Seniority     *string         `json:"seniority"`
+		ResponseModes json.RawMessage `json:"responseModes"`
+		Questions     json.RawMessage `json:"questions"`
+		Guardrails    json.RawMessage `json:"guardrails"`
+	} `json:"plan"`
+}
+
+type storedInterviewPlan struct {
+	ID            string
+	RoleTitle     string
+	Seniority     string
+	ResponseModes []byte
+	Questions     []byte
+	Guardrails    []byte
+	RoleBrief     string
+}
+
+func (s *PostgresStore) getCandidatePreviewPlan(ctx context.Context, planID string) (application.InterviewPlan, error) {
+	var snapshotBytes []byte
+	err := s.db.QueryRowContext(ctx, `
+		select snapshot
+		from "CandidateExperiencePreview"
+		where id = $1
+		  and "revokedAt" is null
+		  and coalesce("runtimeExpiresAt", "expiresAt") > now()
+	`, planID).Scan(&snapshotBytes)
+	if errors.Is(err, sql.ErrNoRows) {
+		return application.InterviewPlan{}, application.ErrPlanNotFound
+	}
+	if err != nil {
+		return application.InterviewPlan{}, err
+	}
+
+	return decodeCandidatePreviewPlan(planID, snapshotBytes)
+}
+
+func decodeCandidatePreviewPlan(planID string, snapshotBytes []byte) (application.InterviewPlan, error) {
+	var snapshot candidatePreviewSnapshot
+	if err := json.Unmarshal(snapshotBytes, &snapshot); err != nil {
+		return application.InterviewPlan{}, application.ErrPlanNotFound
+	}
+	seniority := ""
+	if snapshot.Plan.Seniority != nil {
+		seniority = *snapshot.Plan.Seniority
+	}
+
+	return buildStoredInterviewPlan(storedInterviewPlan{
+		ID:            planID,
+		RoleTitle:     snapshot.Plan.RoleTitle,
+		Seniority:     seniority,
+		ResponseModes: snapshot.Plan.ResponseModes,
+		Questions:     snapshot.Plan.Questions,
+		Guardrails:    snapshot.Plan.Guardrails,
+		RoleBrief:     snapshot.Plan.RoleBrief,
+	})
+}
+
+func buildStoredInterviewPlan(stored storedInterviewPlan) (application.InterviewPlan, error) {
+	responseModes := decodeStringArray(stored.ResponseModes)
 	// Language is pinned for V1 (see plan.Language below). Thread it into question
 	// decoding so the category follow-up fallback is authored in the interview
 	// language rather than defaulting to English.
 	language := "fr"
-	questions := decodeInterviewQuestions(questionsBytes, language)
+	questions := decodeInterviewQuestions(stored.Questions, language)
 	if len(questions) == 0 {
 		return application.InterviewPlan{}, application.ErrPlanNotFound
 	}
 
-	plan.Language = language
-	plan.Questions = questions
-	plan.AllowVideo = containsString(responseModes, "video")
-	plan.AllowAudioOnly = containsString(responseModes, "audio") || len(responseModes) == 0
-	plan.MaxFollowupsPerQuestion = 1
-	plan.InterviewStyle = application.InterviewStyle{
-		Seniority:       seniority.String,
-		CompanyContext:  summarizeRoleBrief(roleBrief.String),
-		CandidateTone:   "professional, concise, and concrete",
-		RoleConstraints: decodeStringArray(guardrailsBytes),
-	}
-
-	return plan, nil
+	return application.InterviewPlan{
+		ID:                      stored.ID,
+		RoleTitle:               stored.RoleTitle,
+		Language:                language,
+		Questions:               questions,
+		AllowVideo:              containsString(responseModes, "video"),
+		AllowAudioOnly:          containsString(responseModes, "audio") || len(responseModes) == 0,
+		MaxFollowupsPerQuestion: 1,
+		InterviewStyle: application.InterviewStyle{
+			Seniority:       stored.Seniority,
+			CompanyContext:  summarizeRoleBrief(stored.RoleBrief),
+			CandidateTone:   "professional, concise, and concrete",
+			RoleConstraints: decodeStringArray(stored.Guardrails),
+		},
+	}, nil
 }
 
 func (s *PostgresStore) AppendEvent(ctx context.Context, event domain.Event) (application.AppendEventResult, error) {
@@ -149,6 +271,9 @@ func (s *PostgresStore) AppendEvent(ctx context.Context, event domain.Event) (ap
 	session, err := s.getSession(ctx, tx, event.SessionID, "for update")
 	if err != nil {
 		return application.AppendEventResult{}, err
+	}
+	if session.Kind == domain.SessionKindPreview && session.ExpiresAt != nil && !session.ExpiresAt.After(time.Now().UTC()) {
+		return application.AppendEventResult{}, application.ErrSessionExpired
 	}
 	if strings.TrimSpace(event.CandidateID) == "" {
 		event.CandidateID = session.CandidateID
@@ -236,7 +361,7 @@ type queryer interface {
 
 func (s *PostgresStore) getSession(ctx context.Context, q queryer, sessionID string, lockClause string) (domain.Session, error) {
 	query := `
-		select id, interview_plan_id, candidate_id, status, livekit_room_name, allowed_modalities, created_at, updated_at
+		select id, interview_plan_id, candidate_id, status, livekit_room_name, allowed_modalities, kind, expires_at, created_at, updated_at
 		from live_interview_sessions
 		where id = $1
 	`
@@ -254,6 +379,8 @@ func (s *PostgresStore) getSession(ctx context.Context, q queryer, sessionID str
 		&status,
 		&session.LiveKitRoomName,
 		&modalitiesBytes,
+		&session.Kind,
+		&session.ExpiresAt,
 		&session.CreatedAt,
 		&session.UpdatedAt,
 	)

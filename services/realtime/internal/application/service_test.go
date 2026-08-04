@@ -100,6 +100,61 @@ func TestServiceCreateSessionReturnsMockJoin(t *testing.T) {
 	}
 }
 
+func TestServiceCreatesOnlyExplicitExpiringPreviewSessions(t *testing.T) {
+	now := time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC)
+	service := application.NewService(store.NewMemoryStore(), fakeLiveKit{}, fixedClock{now: now})
+	expiresAt := now.Add(45 * time.Minute)
+
+	output, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID:   "pv_123",
+		CandidateID:       "preview_123",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio},
+		Kind:              domain.SessionKindPreview,
+		ExpiresAt:         &expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if output.Session.Kind != domain.SessionKindPreview || output.Session.ExpiresAt == nil {
+		t.Fatalf("expected an expiring preview session, got %+v", output.Session)
+	}
+
+	_, err = service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID:   "plan_published",
+		CandidateID:       "preview_123",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio},
+		Kind:              domain.SessionKindPreview,
+		ExpiresAt:         &expiresAt,
+	})
+	if !errors.Is(err, application.ErrInvalidInput) {
+		t.Fatalf("expected a non-preview plan to be rejected, got %v", err)
+	}
+}
+
+func TestServiceRejectsExpiredPreviewSessions(t *testing.T) {
+	now := time.Date(2026, 8, 3, 10, 0, 0, 0, time.UTC)
+	repository := store.NewMemoryStore()
+	service := application.NewService(repository, fakeLiveKit{}, fixedClock{now: now})
+	expiresAt := now.Add(time.Minute)
+
+	created, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID:   "pv_expiring",
+		CandidateID:       "preview_expiring",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio},
+		Kind:              domain.SessionKindPreview,
+		ExpiresAt:         &expiresAt,
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+
+	expiredService := application.NewService(repository, fakeLiveKit{}, fixedClock{now: expiresAt})
+	_, err = expiredService.GetSession(context.Background(), created.Session.ID)
+	if !errors.Is(err, application.ErrSessionExpired) {
+		t.Fatalf("expected expired preview to be rejected, got %v", err)
+	}
+}
+
 func eventInput(sessionID string, sequence int, eventID string, eventType domain.EventType) application.IngestEventInput {
 	return application.IngestEventInput{
 		SessionID:      sessionID,

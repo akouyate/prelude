@@ -55,3 +55,9 @@ export {
   type ComplianceFlagCode,
   type ProtectedTopicCategory,
 } from "./policies/ai";
+export {
+  candidatePreviewAccessExpiresAt,
+  candidatePreviewPolicy,
+  candidatePreviewRuntimeExpiresAt,
+  isCandidatePreviewActive,
+} from "./policies/candidate-preview";

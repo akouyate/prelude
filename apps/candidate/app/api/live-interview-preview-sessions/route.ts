@@ -1,0 +1,79 @@
+import { NextResponse } from "next/server";
+
+import {
+  prepareCandidateExperiencePreviewSession,
+  releaseCandidateExperiencePreviewReservation,
+} from "../../../src/server/candidate-experience-previews";
+import { provisionRealtimeSession } from "../../../src/server/realtime-session-provisioning";
+
+export async function POST(request: Request) {
+  const body = (await request.json().catch(() => null)) as {
+    consentAccepted?: boolean;
+    previewToken?: string;
+  } | null;
+  const previewToken = body?.previewToken?.trim();
+  if (!previewToken || previewToken.length < 16) {
+    return NextResponse.json(
+      { error: { code: "invalid_preview_token" } },
+      { status: 400 },
+    );
+  }
+
+  const prepared = await prepareCandidateExperiencePreviewSession({
+    consentAccepted: Boolean(body?.consentAccepted),
+    previewToken,
+  });
+  if (!prepared.ok) {
+    return NextResponse.json(
+      { error: { code: prepared.error } },
+      { status: prepared.status },
+    );
+  }
+
+  const provisioned = await provisionRealtimeSession({
+    allowedModalities: prepared.allowedModalities,
+    candidateId: prepared.candidateId,
+    expiresAt: prepared.expiresAt,
+    interviewPlanId: prepared.interviewPlanId,
+    kind: "preview",
+  });
+  if (!provisioned.ok) {
+    await releaseCandidateExperiencePreviewReservation(
+      prepared.reservation,
+    ).catch((error: unknown) => {
+      console.error(
+        "[candidate-preview] Failed to release realtime reservation.",
+        error,
+      );
+    });
+    return NextResponse.json(
+      {
+        error: {
+          code: provisioned.code,
+          ...(provisioned.message ? { message: provisioned.message } : {}),
+          ...(provisioned.realtimeStatus
+            ? { status: provisioned.realtimeStatus }
+            : {}),
+        },
+      },
+      { status: provisioned.status },
+    );
+  }
+
+  const { isMock, payload } = provisioned;
+  return NextResponse.json({
+    allowedModalities: payload.session.allowed_modalities,
+    livekit: {
+      expiresAt: payload.livekit_join.expires_at,
+      isMock,
+      participant: payload.livekit_join.participant,
+      roomName: payload.livekit_join.room_name,
+      token: payload.livekit_join.token,
+      url: payload.livekit_join.url,
+    },
+    productSessionId: null,
+    resumeToken: null,
+    sessionId: payload.session.id,
+    status: payload.session.status,
+  });
+}

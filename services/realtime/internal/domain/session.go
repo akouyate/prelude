@@ -20,6 +20,13 @@ const (
 
 type Modality string
 
+type SessionKind string
+
+const (
+	SessionKindCandidate SessionKind = "candidate"
+	SessionKindPreview   SessionKind = "preview"
+)
+
 const (
 	ModalityForm  Modality = "form"
 	ModalityAudio Modality = "audio"
@@ -74,6 +81,8 @@ type Session struct {
 	Status            SessionStatus `json:"status"`
 	LiveKitRoomName   string        `json:"livekit_room_name"`
 	AllowedModalities []Modality    `json:"allowed_modalities"`
+	Kind              SessionKind   `json:"kind"`
+	ExpiresAt         *time.Time    `json:"expires_at,omitempty"`
 	CreatedAt         time.Time     `json:"created_at"`
 	UpdatedAt         time.Time     `json:"updated_at"`
 	Events            []Event       `json:"events,omitempty"`

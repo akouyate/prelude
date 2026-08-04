@@ -1,5 +1,10 @@
 export { createJobInputSchema, type CreateJobInput } from "./schemas/job";
 export {
+  CANDIDATE_PREVIEW_SCHEMA_VERSION,
+  candidateExperiencePreviewSnapshotSchema,
+  type CandidateExperiencePreviewSnapshot,
+} from "./schemas/candidate-preview";
+export {
   INTERVIEW_PLAN_SCHEMA_VERSION,
   interviewFocusCanonicalSchema,
   interviewPlanCriterionSchema,
