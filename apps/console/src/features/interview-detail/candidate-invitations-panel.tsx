@@ -37,9 +37,25 @@ export function CandidateInvitationsPanel({
   const { i18n, t } = useTranslation();
   const [state, formAction, pending] = React.useActionState(
     createCandidateInvitationAction,
-    { error: null, ok: false },
+    { error: null, fieldErrors: {}, ok: false },
   );
   const canInvite = canManageRole && publicationStatus === "published";
+  // React resets an uncontrolled form once the action settles, which on a
+  // validation error would wipe the very values the recruiter was told to fix.
+  // Holding them here keeps the typed input in place across the round trip.
+  const [draft, setDraft] = React.useState({
+    candidateEmail: "",
+    candidateName: "",
+    expiresAt: "",
+  });
+  const setField = (field: keyof typeof draft) => (value: string) =>
+    setDraft((current) => ({ ...current, [field]: value }));
+
+  React.useEffect(() => {
+    if (state.ok) {
+      setDraft({ candidateEmail: "", candidateName: "", expiresAt: "" });
+    }
+  }, [state.ok]);
 
   return (
     <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]">
@@ -49,7 +65,11 @@ export function CandidateInvitationsPanel({
           title={t("interviewDetail.inviteCandidateTitle")}
         />
 
-        <form action={formAction} className="mt-5 space-y-3.5">
+        {/* The browser's own bubble would fire first and look nothing like the
+            rest of the console, so validation is answered by the server and
+            rendered under the offending field. `type="email"` stays for the
+            mobile keyboard. */}
+        <form action={formAction} className="mt-5 space-y-3.5" noValidate={true}>
           <input name="interviewId" type="hidden" value={interviewId} />
           <div className="rounded-2xl border border-ink-100 bg-[#f9f8f3] px-4 py-3">
             <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-ink-400">
@@ -68,8 +88,11 @@ export function CandidateInvitationsPanel({
                 {t("interviewDetail.inviteCandidateNameLabel")}
               </>
             }
+            error={state.fieldErrors.candidateName}
             name="candidateName"
+            onValueChange={setField("candidateName")}
             placeholder={t("interviewDetail.inviteCandidateNamePlaceholder")}
+            value={draft.candidateName}
           />
 
           <TextField
@@ -81,9 +104,12 @@ export function CandidateInvitationsPanel({
                 {t("interviewDetail.inviteCandidateEmailLabel")}
               </>
             }
+            error={state.fieldErrors.candidateEmail}
             name="candidateEmail"
+            onValueChange={setField("candidateEmail")}
             placeholder={t("interviewDetail.inviteCandidateEmailPlaceholder")}
             type="email"
+            value={draft.candidateEmail}
           />
 
           <TextField
@@ -95,8 +121,11 @@ export function CandidateInvitationsPanel({
                 {t("interviewDetail.inviteExpiresAtLabel")}
               </>
             }
+            error={state.fieldErrors.expiresAt}
             name="expiresAt"
+            onValueChange={setField("expiresAt")}
             type="date"
+            value={draft.expiresAt}
           />
 
           {state.error ? (
@@ -195,42 +224,43 @@ function InvitationRow({
     : t("interviewDetail.invitationNotOpened");
 
   return (
-    <article className="grid gap-4 px-[18px] py-4 md:grid-cols-[minmax(0,1fr)_128px_minmax(0,0.9fr)] md:items-center">
+    <article className="grid gap-x-4 gap-y-2 px-[18px] py-2.5 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <p className="truncate text-[14px] font-semibold text-ink-950">
+          <p className="truncate text-[13.5px] font-semibold text-ink-950">
             {invitation.candidateLabel}
           </p>
           <Pill tone={invitationStatusTone(invitation.status)}>
             {formatInvitationStatus(invitation.status, t)}
           </Pill>
         </div>
-        <p className="mt-1 truncate text-[12.5px] text-ink-400">
+        <p className="mt-0.5 truncate text-[12px] text-ink-400">
           {invitation.candidateEmail ??
             t("interviewDetail.invitationManualDelivery")}{" "}
           · {openedLabel}
         </p>
       </div>
 
-      <div>
-        <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-ink-400">
-          {t("interviewDetail.invitationExpires")}
-        </p>
-        <p className="mt-1 text-[13px] font-semibold text-ink-600">
+      <p className="whitespace-nowrap text-[12px] text-ink-400">
+        {t("interviewDetail.invitationExpires")}{" "}
+        <span className="font-semibold text-ink-600">
           {formatDate(invitation.expiresAt, locale)}
-        </p>
-      </div>
+        </span>
+      </p>
 
-      <div className="flex flex-wrap items-center gap-2 md:justify-end">
+      <div className="flex items-center gap-1.5 md:justify-end">
         {invitation.latestCandidateSessionHref ? (
           <a
-            className="inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-white px-3.5 text-[12.5px] font-semibold text-ink-950 transition hover:border-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+            className="inline-flex h-8 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border border-ink-200 bg-white px-3 text-[12px] font-semibold text-ink-950 transition hover:border-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
             href={invitation.latestCandidateSessionHref}
           >
             {t("interviewDetail.invitationOpenSession")}
           </a>
         ) : null}
-        <CopyCandidateLinkButton candidatePath={invitation.candidatePath}>
+        <CopyCandidateLinkButton
+          candidatePath={invitation.candidatePath}
+          className="h-8 gap-1.5 whitespace-nowrap px-3 text-[12px]"
+        >
           {t("interviewDetail.invitationCopyLink")}
         </CopyCandidateLinkButton>
         {canReissue ? (
@@ -238,11 +268,11 @@ function InvitationRow({
             <input name="interviewId" type="hidden" value={interviewId} />
             <input name="invitationId" type="hidden" value={invitation.id} />
             <Button
-              className="h-9 px-3.5 text-[12.5px]"
+              className="h-8 gap-1.5 whitespace-nowrap px-3 text-[12px]"
               type="submit"
               variant="secondary"
             >
-              <RefreshCircle aria-hidden={true} className="h-4 w-4" />
+              <RefreshCircle aria-hidden={true} className="h-3.5 w-3.5" />
               {t("interviewDetail.invitationReissue")}
             </Button>
           </form>

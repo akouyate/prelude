@@ -1,5 +1,6 @@
 import "server-only";
 
+import { cache } from "react";
 import { prisma } from "@prelude/db";
 
 import {
@@ -15,43 +16,48 @@ import {
   mockUserName,
 } from "../auth/console-auth-provider";
 
-export async function getCompletedOrganizationScope(): Promise<CompletedOrganizationScope> {
-  const authSession = await getConsoleAuthSession();
+// Deduped per request: the workspace layout guard, the nav counts, and each
+// page loader all need the scope, and every miss costs an auth read plus a
+// membership query.
+export const getCompletedOrganizationScope = cache(
+  async function getCompletedOrganizationScope(): Promise<CompletedOrganizationScope> {
+    const authSession = await getConsoleAuthSession();
 
-  if (!authSession.ok) {
-    throw new Error(authSession.error);
-  }
+    if (!authSession.ok) {
+      throw new Error(authSession.error);
+    }
 
-  if (!hasAuthenticatedClerkUser(authSession.value.userId)) {
-    throw new Error("Authenticated user is required.");
-  }
+    if (!hasAuthenticatedClerkUser(authSession.value.userId)) {
+      throw new Error("Authenticated user is required.");
+    }
 
-  if (authSession.value.source === "mock") {
-    return ensureDevelopmentOrganizationScope(authSession.value);
-  }
+    if (authSession.value.source === "mock") {
+      return ensureDevelopmentOrganizationScope(authSession.value);
+    }
 
-  const memberships = await prisma.organizationMembership.findMany({
-    include: {
-      organization: true,
-    },
-    orderBy: { createdAt: "asc" },
-    where: {
-      status: "active",
-      user: { clerkUserId: authSession.value.userId },
-    },
-  });
-  const scope = resolveCompletedOrganizationScope({
-    clerkOrganizationId: authSession.value.clerkOrganizationId,
-    clerkUserId: authSession.value.userId,
-    memberships,
-  });
+    const memberships = await prisma.organizationMembership.findMany({
+      include: {
+        organization: true,
+      },
+      orderBy: { createdAt: "asc" },
+      where: {
+        status: "active",
+        user: { clerkUserId: authSession.value.userId },
+      },
+    });
+    const scope = resolveCompletedOrganizationScope({
+      clerkOrganizationId: authSession.value.clerkOrganizationId,
+      clerkUserId: authSession.value.userId,
+      memberships,
+    });
 
-  if (!scope) {
-    throw new Error("Completed onboarding is required.");
-  }
+    if (!scope) {
+      throw new Error("Completed onboarding is required.");
+    }
 
-  return scope;
-}
+    return scope;
+  },
+);
 
 async function ensureDevelopmentOrganizationScope(
   authSession: ConsoleAuthSession,

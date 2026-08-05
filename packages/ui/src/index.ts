@@ -69,7 +69,10 @@ export {
   type CandidateWelcomeExperienceProps,
 } from "./layouts/candidate-interview-experience";
 export { EmptyState } from "./layouts/empty-state";
-export { EnterpriseShell } from "./layouts/enterprise-shell";
+export {
+  EnterpriseShell,
+  type EnterpriseNavCounts,
+} from "./layouts/enterprise-shell";
 export { PageHeader } from "./layouts/page-header";
 export { StepShell, type StepShellProps } from "./layouts/step-shell";
 export { cn } from "./lib/cn";

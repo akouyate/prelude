@@ -24,8 +24,12 @@ export type CandidateReviewUpdate = {
   actorRole: OrganizationRole;
   actorUserId: string;
   candidateSessionId: string;
-  nextNote: string;
-  nextStatus: string;
+  // Omit to keep the stored note untouched: the dashboard queue only flips the
+  // review status and must not wipe a recruiter note written on the detail page.
+  nextNote?: string;
+  // Omit to keep the stored status untouched: the note autosave only writes the
+  // note back.
+  nextStatus?: string;
   organizationId: string;
 };
 
@@ -98,8 +102,8 @@ async function updateCandidateSessionReviewWithTransaction({
   const prepared = prepareCandidateReviewUpdate({
     currentNote: target.reviewNote,
     currentStatus: target.reviewStatus,
-    nextNote: input.nextNote,
-    nextStatus: input.nextStatus,
+    nextNote: input.nextNote ?? target.reviewNote ?? "",
+    nextStatus: input.nextStatus ?? resolveReviewStatus(target.reviewStatus),
     role: input.actorRole,
   });
 

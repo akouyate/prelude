@@ -1,31 +1,10 @@
-export const roleIntakeUrlBrands = [
-  "linkedin",
-  "indeed",
-  "greenhouse",
-] as const;
+// The subset of supported sources HireCall has a brand asset for; the full list
+// is named in the `roleIntake.source.urlSupportedSources` copy. Which links are
+// actually refused is decided server-side by the intake policy, so nothing here
+// grants or denies support — showing a logo only claims one.
+export const roleIntakeUrlBrands = ["linkedin", "greenhouse"] as const;
 
 export type RoleIntakeUrlBrand = (typeof roleIntakeUrlBrands)[number];
-
-const indeedDomains = [
-  "indeed.com",
-  "indeed.co.uk",
-  "indeed.ca",
-  "indeed.com.au",
-  "indeed.co.nz",
-  "indeed.fr",
-  "indeed.de",
-  "indeed.es",
-  "indeed.it",
-  "indeed.nl",
-  "indeed.be",
-  "indeed.ch",
-  "indeed.ie",
-  "indeed.in",
-  "indeed.co.jp",
-  "indeed.com.br",
-  "indeed.com.mx",
-  "indeed.co.za",
-] as const;
 
 export function detectRoleIntakeUrlBrand(
   source: string,
@@ -37,9 +16,6 @@ export function detectRoleIntakeUrlBrand(
 
   if (matchesDomain(hostname, "linkedin.com")) {
     return "linkedin";
-  }
-  if (indeedDomains.some((domain) => matchesDomain(hostname, domain))) {
-    return "indeed";
   }
   if (matchesDomain(hostname, "greenhouse.io")) {
     return "greenhouse";

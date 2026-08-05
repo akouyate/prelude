@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 
 import {
+  roleIntakeAcquisitionStrategySchema,
+  roleIntakeFieldSourcesSchema,
   roleIntakeSummarySchema,
   type ImportedRoleDraft,
   type RoleIntakeSummary,
@@ -37,6 +39,7 @@ import {
 } from "./role-intake-storage";
 import {
   RoleIntakeUrlImportError,
+  assertRoleIntakeSourceSupported,
   createRoleIntakeUrlIdentity,
   fetchRoleIntakePublicPage,
   normalizeRoleIntakeUrl,
@@ -186,6 +189,7 @@ export async function createRoleIntakeUrl(
   let url: URL;
   try {
     url = normalizeRoleIntakeUrl(source);
+    assertRoleIntakeSourceSupported(url);
   } catch (error) {
     return {
       ok: false,
@@ -200,7 +204,7 @@ export async function createRoleIntakeUrl(
     where: { organizationId: scope.organizationId, sourceIdentity },
   });
   if (existing) {
-    return { ok: true, value: toSummary(existing) };
+    return { ok: true, value: toSummary(await restartRoleIntake(existing)) };
   }
 
   try {
@@ -238,7 +242,7 @@ export async function createRoleIntakeUrl(
         where: { organizationId: scope.organizationId, sourceIdentity },
       });
       if (duplicate) {
-        return { ok: true, value: toSummary(duplicate) };
+        return { ok: true, value: toSummary(await restartRoleIntake(duplicate)) };
       }
     }
     return {
@@ -246,6 +250,41 @@ export async function createRoleIntakeUrl(
       error: "HireCall could not prepare this public job URL. Please retry.",
     };
   }
+}
+
+/**
+ * Resubmitting a link whose intake is still usable is a duplicate, and the
+ * existing record is returned untouched. Once that intake has failed or expired,
+ * the same submission means "try again": the row is reset in place, because the
+ * unique key on (organizationId, sourceIdentity) admits only one record per
+ * posting. Without this, a retry silently replayed the stored failure.
+ */
+async function restartRoleIntake(
+  intake: RoleIntakeRecord,
+): Promise<RoleIntakeRecord> {
+  if (intake.status !== "expired" && intake.status !== "failed") {
+    return intake;
+  }
+
+  return prisma.roleIntake.update({
+    data: {
+      attemptCount: 0,
+      canonicalUrl: null,
+      expiresAt: roleIntakeExpiresAt(),
+      extractedDraft: toJson(emptyImportedRoleDraft()),
+      lastErrorCode: null,
+      lastErrorSummary: null,
+      nextAttemptAt: new Date(),
+      parserVersion: null,
+      processingLeaseExpiresAt: null,
+      processingStartedAt: null,
+      reviewedDraft: toJson(emptyImportedRoleDraft()),
+      sourceMetadata: toJson({}),
+      status: "queued",
+      warnings: toJson([]),
+    },
+    where: { id: intake.id },
+  });
 }
 
 /**
@@ -1268,39 +1307,21 @@ function asIsoDate(value: unknown): string | null {
   return new Date(value).toISOString();
 }
 
+/**
+ * Provenance is read back out of untyped metadata, so it is validated against
+ * the same schemas that define it. Re-listing the accepted values here would
+ * silently drop any source added later.
+ */
 function asFieldSources(
   value: unknown,
 ): RoleIntakeSourceProvenance["fieldSources"] {
-  type FieldSources = NonNullable<RoleIntakeSourceProvenance["fieldSources"]>;
-  const source = asRecord(value);
-  const allowed = new Set([
-    "indexed_web_search",
-    "job_posting_json_ld",
-    "main_content",
-    "heading",
-    "page_title",
-    "unavailable",
-  ]);
-  const fields = ["title", "location", "description"] as const;
-  if (
-    !fields.every(
-      (field) =>
-        typeof source[field] === "string" && allowed.has(source[field]),
-    )
-  ) {
-    return null;
-  }
-  return {
-    description: source.description as FieldSources["description"],
-    location: source.location as FieldSources["location"],
-    title: source.title as FieldSources["title"],
-  };
+  return roleIntakeFieldSourcesSchema.safeParse(value).data ?? null;
 }
 
 function asAcquisitionStrategy(
   value: unknown,
 ): RoleIntakeSourceProvenance["acquisitionStrategy"] {
-  return value === "direct_html" || value === "indexed_search" ? value : null;
+  return roleIntakeAcquisitionStrategySchema.safeParse(value).data ?? null;
 }
 
 function asCitationUrls(value: unknown): string[] {

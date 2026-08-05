@@ -4,11 +4,6 @@ import {
   DashboardActiveRoles,
   type DashboardActiveRole,
 } from "../../src/features/dashboard/dashboard-active-roles";
-import { DashboardKpiStrip } from "../../src/features/dashboard/dashboard-kpi-strip";
-import {
-  DashboardNextActionCard,
-  type DashboardNextAction,
-} from "../../src/features/dashboard/dashboard-next-action-card";
 import { DashboardPageHeader } from "../../src/features/dashboard/dashboard-page-header";
 import {
   DashboardReviewQueue,
@@ -16,6 +11,11 @@ import {
 } from "../../src/features/dashboard/dashboard-review-queue";
 import { getConsoleAuthContext } from "../../src/server/auth/console-auth";
 import { getConsoleDashboardData } from "../../src/server/dashboard/dashboard-data";
+import {
+  candidateReviewStaleAfterDays,
+  candidateWaitingDays,
+} from "../../src/domain/candidate-review-policy";
+import { updateCandidateReviewStatusAction } from "../../src/server/interviews/candidate-review-actions";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -25,8 +25,8 @@ export default async function DashboardPage() {
     getConsoleDashboardData(),
     getConsoleAuthContext(),
   ]);
-  const reviewTarget = dashboard.primaryReviewHref ?? "/roles/new";
-  const reviewRows = dashboard.reviewQueue.slice(0, 6).map(
+  const now = Date.now();
+  const reviewRows = dashboard.reviewQueue.map(
     (session): DashboardReviewQueueRow => ({
       analysisStatus: session.analysisStatus,
       candidateLabel: session.candidateLabel,
@@ -42,8 +42,17 @@ export default async function DashboardPage() {
       roleTitle: session.roleTitle,
       startedAt: session.startedAt,
       status: session.status,
+      waitingDays: candidateWaitingDays(
+        session.completedAt ?? session.startedAt,
+        now,
+      ),
     }),
   );
+  const staleCount = reviewRows.filter(
+    (row) =>
+      row.reviewStatus === "to_review" &&
+      row.waitingDays >= candidateReviewStaleAfterDays,
+  ).length;
   const activeRoles = dashboard.roles.map(
     (role): DashboardActiveRole => ({
       candidateCount: role.candidateCount,
@@ -55,76 +64,35 @@ export default async function DashboardPage() {
       title: role.title,
     }),
   );
-  const nextAction = getNextAction({
-    needsReview: dashboard.metrics.needsReview,
-    published: dashboard.metrics.published,
-    reviewTarget,
-  });
 
   return (
     <>
       <DashboardPageHeader
         needsReviewCount={dashboard.metrics.needsReview}
         organizationName={dashboard.organization.name}
+        staleAfterDays={candidateReviewStaleAfterDays}
+        staleCount={staleCount}
+        stats={{
+          activeRoles: dashboard.metrics.activeRoles,
+          completed: dashboard.metrics.completed,
+          drafts: dashboard.metrics.drafts,
+          published: dashboard.metrics.published,
+        }}
         userName={account.userName}
       />
 
-      <DashboardKpiStrip metrics={dashboard.metrics} />
+      <DashboardReviewQueue
+        guardrailCopy={recruiterLimitationCopy}
+        onStatusChange={updateCandidateReviewStatusAction}
+        rows={reviewRows}
+        staleAfterDays={candidateReviewStaleAfterDays}
+        staleCount={staleCount}
+      />
 
-      <section className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,1.62fr)_minmax(0,360px)] xl:items-start">
-        <div className="min-w-0 space-y-5">
-          <DashboardReviewQueue
-            guardrailCopy={recruiterLimitationCopy}
-            rows={reviewRows}
-          />
-          <DashboardActiveRoles roles={activeRoles} />
-        </div>
-
-        <aside className="space-y-4 xl:sticky xl:top-9">
-          <DashboardNextActionCard
-            action={nextAction}
-            metrics={dashboard.metrics}
-          />
-        </aside>
-      </section>
+      <DashboardActiveRoles
+        roles={activeRoles}
+        totalCount={dashboard.metrics.activeRoles}
+      />
     </>
   );
-}
-
-function getNextAction({
-  needsReview,
-  published,
-  reviewTarget,
-}: {
-  needsReview: number;
-  published: number;
-  reviewTarget: string;
-}): DashboardNextAction {
-  if (needsReview > 0) {
-    return {
-      description:
-        "Start with completed sessions. They already have screening signals ready for recruiter review.",
-      href: reviewTarget,
-      label: "Open review queue",
-      title: "Review candidate signals",
-    };
-  }
-
-  if (published > 0) {
-    return {
-      description:
-        "Published role screens are collecting first-screening evidence. Open the latest role to share or inspect the candidate link.",
-      href: reviewTarget,
-      label: "Open latest role",
-      title: "Invite candidates",
-    };
-  }
-
-  return {
-    description:
-      "Create the first role screen from a job brief, then publish the candidate link.",
-    href: "/roles/new",
-    label: "Create role screen",
-    title: "Prepare first role",
-  };
 }

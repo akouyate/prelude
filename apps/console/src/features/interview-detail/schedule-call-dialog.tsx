@@ -46,6 +46,7 @@ export function ScheduleCallDialog({
   canSchedule,
   connectionStatus,
   detailPath,
+  renderTrigger,
   roleTitle,
   scheduledCall,
   sessionId,
@@ -55,6 +56,12 @@ export function ScheduleCallDialog({
   canSchedule: boolean;
   connectionStatus: CalendarConnectionStatus;
   detailPath: string;
+  // Lets the floating decision bar own the call-to-action button while the
+  // dialog keeps its scheduling state.
+  renderTrigger?: (control: {
+    disabled: boolean;
+    open: () => void;
+  }) => React.ReactNode;
   roleTitle: string;
   scheduledCall: {
     conferenceJoinUrl: string | null;
@@ -75,15 +82,19 @@ export function ScheduleCallDialog({
 
   return (
     <>
-      <Button
-        className="mt-3 h-11 w-full justify-center rounded-xl"
-        disabled={!canSchedule}
-        onClick={() => setOpen(true)}
-        type="button"
-      >
-        <Calendar aria-hidden={true} className="h-4 w-4" />
-        Schedule call
-      </Button>
+      {renderTrigger ? (
+        renderTrigger({ disabled: !canSchedule, open: () => setOpen(true) })
+      ) : (
+        <Button
+          className="mt-3 h-11 w-full justify-center rounded-xl"
+          disabled={!canSchedule}
+          onClick={() => setOpen(true)}
+          type="button"
+        >
+          <Calendar aria-hidden={true} className="h-4 w-4" />
+          Schedule call
+        </Button>
+      )}
       <Dialog.Root onOpenChange={setOpen} open={open}>
         <Dialog.Portal>
           <Dialog.Backdrop className="fixed inset-0 z-50 bg-ink-950/25 backdrop-blur-[2px]" />

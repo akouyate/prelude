@@ -33,6 +33,10 @@ describe("role intake experience", () => {
     expect(classifyRoleIntakeFailure("document_corrupt", null)).toBe("replace");
     expect(classifyRoleIntakeFailure("duplicate_import", "intake_existing")).toBe("resume");
     expect(classifyRoleIntakeFailure("scanner_unavailable", null)).toBe("retry");
+    // A posting the public index cannot reach never becomes retryable.
+    expect(classifyRoleIntakeFailure("indexed_search_not_found", null)).toBe(
+      "unreachable",
+    );
   });
 
   it("validates client file metadata before preparing a private upload", () => {

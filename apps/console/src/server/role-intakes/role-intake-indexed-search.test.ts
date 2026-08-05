@@ -13,8 +13,8 @@ describe("indexed job URL source verification", () => {
       "https://www.linkedin.com/jobs/view/4430499568?trk=public_jobs",
     ],
     [
-      "https://fr.indeed.com/viewjob?jk=f066959d3108e72b",
-      "https://www.indeed.com/viewjob?jk=f066959d3108e72b&utm_source=search",
+      "https://fr.linkedin.com/jobs/view/4436807221/",
+      "https://www.linkedin.com/jobs/view/site-engineer-4436807221?trk=public_jobs",
     ],
     [
       "https://careers.example.com/jobs/123/",
@@ -32,8 +32,8 @@ describe("indexed job URL source verification", () => {
       "https://www.linkedin.com/jobs/view/9999999999/",
     ],
     [
-      "https://fr.indeed.com/viewjob?jk=f066959d3108e72b",
-      "https://fr.indeed.com/viewjob?jk=another-job",
+      "https://fr.linkedin.com/jobs/view/4436807221/",
+      "https://fr.linkedin.com/jobs/view/9999991/",
     ],
     [
       "https://careers.example.com/jobs/123",
@@ -190,7 +190,7 @@ describe("OpenAI indexed job search adapter", () => {
           {
             action: {
               type: "open_page",
-              url: "https://fr.indeed.com/viewjob?jk=f066959d3108e72b",
+              url: "https://fr.linkedin.com/jobs/view/4436807221/",
             },
             type: "web_search_call",
           },
@@ -199,7 +199,7 @@ describe("OpenAI indexed job search adapter", () => {
           description:
             "Develop and maintain Talend data integrations, document changes, and support production workflows.",
           location: "Paris, France",
-          sourceUrl: "https://fr.indeed.com/viewjob?jk=f066959d3108e72b",
+          sourceUrl: "https://fr.linkedin.com/jobs/view/4436807221/",
           title: "Développeur Talend H.F",
         }),
       }),
@@ -214,9 +214,9 @@ describe("OpenAI indexed job search adapter", () => {
     });
 
     await expect(
-      search(new URL("https://fr.indeed.com/viewjob?jk=f066959d3108e72b")),
+      search(new URL("https://fr.linkedin.com/jobs/view/4436807221/")),
     ).resolves.toMatchObject({
-      canonicalUrl: "https://fr.indeed.com/viewjob?jk=f066959d3108e72b",
+      canonicalUrl: "https://fr.linkedin.com/jobs/view/4436807221/",
     });
   });
 
@@ -282,13 +282,44 @@ describe("OpenAI indexed job search adapter", () => {
     });
 
     await expect(
-      unavailable(new URL("https://www.indeed.com/viewjob?jk=abc")),
+      unavailable(new URL("https://www.linkedin.com/jobs/view/4430499568/")),
     ).rejects.toMatchObject({
       code: "indexed_search_unavailable",
       retryable: true,
     });
     await expect(
-      malformed(new URL("https://www.indeed.com/viewjob?jk=abc")),
+      malformed(new URL("https://www.linkedin.com/jobs/view/4430499568/")),
     ).rejects.toMatchObject({ code: "indexed_search_invalid" });
+  });
+
+  it("separates a posting the index could not reach from a malformed answer", async () => {
+    // Providers that block hosted page reads still satisfy the JSON schema:
+    // a null title with a description explaining the miss.
+    const notFound = createOpenAIRoleIntakeIndexedSearch({
+      apiKey: "sk-test",
+      fetcher: vi.fn().mockResolvedValue({
+        json: async () => ({
+          output: [],
+          output_text: JSON.stringify({
+            description:
+              "The exact Indeed job posting could not be retrieved or verified.",
+            location: null,
+            sourceUrl: "https://fr.linkedin.com/jobs/view/4430499568/",
+            title: null,
+          }),
+        }),
+        ok: true,
+        status: 200,
+      }),
+      model: "gpt-5.6-luna",
+      timeoutMs: 5_000,
+    });
+
+    await expect(
+      notFound(new URL("https://fr.linkedin.com/jobs/view/4430499568/")),
+    ).rejects.toMatchObject({
+      code: "indexed_search_not_found",
+      retryable: false,
+    });
   });
 });

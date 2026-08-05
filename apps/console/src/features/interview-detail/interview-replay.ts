@@ -105,24 +105,23 @@ export function buildInterviewReplayChapters({
     });
 }
 
-export function replayOffsetMs(
-  value: string | null,
-  transcriptTurns: ReplayTurn[],
-) {
-  if (!value) {
+/**
+ * Timestamp the recording starts from. Resolve it once and pass it to
+ * `replayOffsetMs` when mapping many turns — deriving it per turn rescans and
+ * re-parses the whole transcript.
+ */
+export function replayOriginMs(transcriptTurns: ReplayTurn[]) {
+  return earliestTimestamp(transcriptTurns.map((turn) => turn.startedAt));
+}
+
+export function replayOffsetMs(value: string | null, originMs: number | null) {
+  if (value === null || originMs === null) {
     return 0;
   }
 
-  const recordingStartMs = earliestTimestamp(
-    transcriptTurns.map((turn) => turn.startedAt),
-  );
   const valueMs = timestamp(value);
 
-  if (recordingStartMs === null || valueMs === null) {
-    return 0;
-  }
-
-  return Math.max(0, valueMs - recordingStartMs);
+  return valueMs === null ? 0 : Math.max(0, valueMs - originMs);
 }
 
 export function formatReplayTime(ms: number): string {

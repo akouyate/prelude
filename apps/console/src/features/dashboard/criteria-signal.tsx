@@ -114,7 +114,7 @@ function CriteriaSignalBar({
   }
 
   if (state === "failed") {
-    return <span className="block h-full w-1/4 rounded-full bg-coral-300/70" />;
+    return <span className="block h-full w-1/4 rounded-full bg-signal-weak/70" />;
   }
 
   if (state === "not_ready") {
@@ -132,12 +132,12 @@ function buildSignalSegments(distribution: CriteriaDistribution) {
       value: distribution.Strong,
     },
     {
-      className: "block h-full bg-gold-300",
+      className: "block h-full bg-signal-medium",
       label: "Medium",
       value: distribution.Medium,
     },
     {
-      className: "block h-full bg-coral-300",
+      className: "block h-full bg-signal-weak",
       label: "Weak",
       value: distribution.Weak,
     },

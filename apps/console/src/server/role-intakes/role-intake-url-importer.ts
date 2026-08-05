@@ -1,10 +1,14 @@
-import { createHash } from "node:crypto";
 import { promises as dns } from "node:dns";
 import https from "node:https";
 
-import type { ImportedRoleDraft, RoleIntakeWarning } from "@prelude/contracts";
+import type {
+  ImportedRoleDraft,
+  RoleIntakeAcquisitionStrategy,
+  RoleIntakeWarning,
+} from "@prelude/contracts";
 
 import {
+  assertRoleIntakeSourceSupported,
   getRoleIntakeUrlAcquisitionStrategy,
   isGloballyRoutableIpAddress,
   normalizeRoleIntakeUrl,
@@ -15,11 +19,18 @@ import {
   type RoleIntakeIndexedSearch,
 } from "./role-intake-indexed-search";
 import {
+  buildMissingFieldWarnings,
   extractRoleIntakeUrlDraft,
+  MIN_ROLE_DESCRIPTION_CHARACTERS,
   type RoleIntakeUrlFieldSources,
 } from "./role-intake-url-extractor";
+import {
+  resolveRoleIntakeAtsSource,
+  type RoleIntakeAtsSource,
+} from "./role-intake-ats-api";
 
 export {
+  assertRoleIntakeSourceSupported,
   createRoleIntakeUrlIdentity,
   getRoleIntakeUrlAcquisitionStrategy,
   isGloballyRoutableIpAddress,
@@ -41,6 +52,7 @@ const MAX_RESPONSE_HEADER_BYTES = 32 * 1024;
 const REQUEST_TIMEOUT_MS = 12_000;
 const EXTRACTOR_VERSION = "static-html-v1";
 const INDEXED_SEARCH_EXTRACTOR_VERSION = "indexed-web-search-v1";
+const ATS_API_EXTRACTOR_VERSION = "ats-api-v1";
 const INDEXED_SEARCH_FALLBACK_ERRORS = new Set([
   "no_usable_text",
   "remote_unavailable",
@@ -52,10 +64,9 @@ const INDEXED_SEARCH_FALLBACK_ERRORS = new Set([
 ]);
 
 export type RoleIntakePublicPage = {
-  acquisitionStrategy: "direct_html" | "indexed_search";
+  acquisitionStrategy: RoleIntakeAcquisitionStrategy;
   canonicalUrl: string;
   citationUrls: string[];
-  contentHash: string;
   draft: ImportedRoleDraft;
   extractorVersion: string;
   fetchedAt: Date;
@@ -126,9 +137,25 @@ export async function fetchRoleIntakePublicPage(
       ? createRoleIntakeIndexedSearchFromEnv()
       : dependencies.indexedSearch;
   let url = normalizeRoleIntakeUrl(source);
+  assertRoleIntakeSourceSupported(url);
 
   if (getRoleIntakeUrlAcquisitionStrategy(url) === "indexed_search") {
     return fetchIndexedRoleIntakePublicPage(url, indexedSearch, now);
+  }
+
+  // A hosted ATS board answers with the posting itself, so it is preferred over
+  // reading the same content back out of the page. Any failure here is not
+  // terminal: the page path below still applies.
+  const atsSource = resolveRoleIntakeAtsSource(url);
+  if (atsSource) {
+    const page = await fetchAtsRoleIntakePublicPage(url, atsSource, {
+      now,
+      request,
+      resolve,
+    });
+    if (page) {
+      return page;
+    }
   }
 
   try {
@@ -165,6 +192,7 @@ export async function fetchRoleIntakePublicPage(
             "The public job page returned an invalid redirect. Start from a manual brief instead.",
           );
         }
+        assertRoleIntakeSourceSupported(url);
         if (getRoleIntakeUrlAcquisitionStrategy(url) === "indexed_search") {
           return fetchIndexedRoleIntakePublicPage(url, indexedSearch, now);
         }
@@ -208,7 +236,6 @@ export async function fetchRoleIntakePublicPage(
         acquisitionStrategy: "direct_html",
         canonicalUrl: url.toString(),
         citationUrls: [url.toString()],
-        contentHash: createHash("sha256").update(response.body).digest("hex"),
         draft: extraction.draft,
         extractorVersion: EXTRACTOR_VERSION,
         fetchedAt: now(),
@@ -234,6 +261,89 @@ export async function fetchRoleIntakePublicPage(
   );
 }
 
+/**
+ * Reads a posting from its ATS API. Returns null instead of throwing whenever
+ * the API is unavailable or answers something unusable, so a provider outage
+ * degrades to the page path rather than failing the import.
+ *
+ * No robots check runs here, unlike the page path. RFC 9309 governs crawling a
+ * site's pages, and these are documented JSON APIs meant for programmatic use;
+ * the host is one of a fixed set built into `resolveRoleIntakeAtsSource` rather
+ * than anything the recruiter supplies, so there is no crawl surface and no
+ * SSRF surface to police. Measured 2026-08-05: Greenhouse and Lever allow these
+ * paths anyway, and Ashby answers 401 for `/robots.txt`, which the page-path
+ * rule would treat as a refusal.
+ */
+async function fetchAtsRoleIntakePublicPage(
+  source: URL,
+  ats: RoleIntakeAtsSource,
+  dependencies: {
+    now: () => Date;
+    request: NonNullable<RoleIntakeUrlImporterDependencies["request"]>;
+    resolve: NonNullable<RoleIntakeUrlImporterDependencies["resolve"]>;
+  },
+): Promise<RoleIntakePublicPage | null> {
+  let response: RoleIntakeUrlResponse;
+  try {
+    response = await requestPublicUrl(ats.apiUrl, {
+      accept: "application/json",
+      maxBytes: ats.maxResponseBytes,
+      request: dependencies.request,
+      resolve: dependencies.resolve,
+    });
+  } catch {
+    return null;
+  }
+  if (
+    response.statusCode !== 200 ||
+    normaliseContentType(response.headers["content-type"]) !==
+      "application/json"
+  ) {
+    return null;
+  }
+
+  let posting: ReturnType<RoleIntakeAtsSource["mapPayload"]>;
+  try {
+    posting = ats.mapPayload(JSON.parse(response.body));
+  } catch {
+    return null;
+  }
+  if (
+    !posting ||
+    posting.draft.description.length < MIN_ROLE_DESCRIPTION_CHARACTERS
+  ) {
+    return null;
+  }
+
+  const canonicalUrl = safeNormalizeUrl(posting.canonicalUrl) ?? source;
+  return {
+    acquisitionStrategy: "ats_api",
+    canonicalUrl: canonicalUrl.toString(),
+    citationUrls: [...new Set([canonicalUrl.toString(), source.toString()])],
+    draft: posting.draft,
+    extractorVersion: `${ATS_API_EXTRACTOR_VERSION}:${ats.platform}`,
+    fetchedAt: dependencies.now(),
+    fieldSources: {
+      description: "ats_public_api",
+      location: posting.draft.location ? "ats_public_api" : "unavailable",
+      title: posting.draft.title ? "ats_public_api" : "unavailable",
+    },
+    sourceHost: canonicalUrl.hostname,
+    warnings: buildMissingFieldWarnings(posting.draft),
+  };
+}
+
+function safeNormalizeUrl(value: string | null): URL | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    return normalizeRoleIntakeUrl(value);
+  } catch {
+    return null;
+  }
+}
+
 async function fetchIndexedRoleIntakePublicPage(
   source: URL,
   indexedSearch: RoleIntakeIndexedSearch | null,
@@ -248,11 +358,8 @@ async function fetchIndexedRoleIntakePublicPage(
   const result = await indexedSearch(source);
   const canonicalUrl = normalizeRoleIntakeUrl(result.canonicalUrl);
   const citationUrls = result.citations.flatMap((value) => {
-    try {
-      return [normalizeRoleIntakeUrl(value).toString()];
-    } catch {
-      return [];
-    }
+    const citation = safeNormalizeUrl(value);
+    return citation ? [citation.toString()] : [];
   });
   const fieldSources: RoleIntakeUrlFieldSources = {
     description: "indexed_web_search",
@@ -264,9 +371,6 @@ async function fetchIndexedRoleIntakePublicPage(
     acquisitionStrategy: "indexed_search",
     canonicalUrl: canonicalUrl.toString(),
     citationUrls: [...new Set(citationUrls)],
-    contentHash: createHash("sha256")
-      .update(JSON.stringify(result.draft))
-      .digest("hex"),
     draft: result.draft,
     extractorVersion: INDEXED_SEARCH_EXTRACTOR_VERSION,
     fetchedAt: now(),
@@ -326,6 +430,7 @@ async function requestPublicUrl(
   url: URL,
   dependencies: {
     accept: string;
+    maxBytes?: number;
     request: NonNullable<RoleIntakeUrlImporterDependencies["request"]>;
     resolve: NonNullable<RoleIntakeUrlImporterDependencies["resolve"]>;
   },
@@ -351,7 +456,7 @@ async function requestPublicUrl(
         "accept-encoding": "identity",
         "user-agent": IMPORTER_USER_AGENT,
       },
-      maxBytes: MAX_RESPONSE_BYTES,
+      maxBytes: dependencies.maxBytes ?? MAX_RESPONSE_BYTES,
       url: url.toString(),
     });
   } catch (error) {

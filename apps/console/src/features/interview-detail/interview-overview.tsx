@@ -1,15 +1,17 @@
 import Link from "next/link";
-import { ArrowLeft, EditPencil } from "iconoir-react";
+import { ArrowLeft, EditPencil, Eye } from "iconoir-react";
 import type { TFunction } from "i18next";
-import { StatusBadge } from "@prelude/ui";
-import type { CandidateScreenListItem } from "../candidate-screens";
+import type { CandidateQueueRow } from "../candidate-screens";
 
+import { candidateWaitingDays } from "../../domain/candidate-review-policy";
 import { canManageRoles } from "../../domain/organization-permissions";
 import { getServerT } from "../../libs/i18n-server";
+import { updateCandidateReviewStatusAction } from "../../server/interviews/candidate-review-actions";
 import { getCompletedOrganizationScope } from "../../server/organizations/organization-scope";
 import { getAuthenticatedUserLocale } from "../../server/users/user-locale";
 import type { getInterviewDetail } from "../../server/interviews/interview-loaders";
 import { CopyCandidateLinkButton } from "./copy-candidate-link-button";
+import { RoleActionsMenu } from "./role-actions-menu";
 import {
   InterviewOverviewTabs,
   type InterviewOverviewConfigItem,
@@ -46,6 +48,7 @@ export async function InterviewOverview({
     t,
   );
   const candidateLinkLabel = `hirecall.ai${interview.candidatePath}`;
+  const now = Date.now();
   const candidates = interview.candidateSessions.map((session) => ({
     analysisStatus: session.analysisStatus,
     candidateLabel: session.candidateLabel,
@@ -61,7 +64,11 @@ export async function InterviewOverview({
     roleTitle: interview.roleTitle,
     startedAt: session.startedAt,
     status: session.status,
-  })) satisfies CandidateScreenListItem[];
+    waitingDays: candidateWaitingDays(
+      session.completedAt ?? session.startedAt,
+      now,
+    ),
+  })) satisfies CandidateQueueRow[];
   const invitations = interview.candidateInvitations;
   const questions = interview.questions.map((question, index) => ({
     id: question.id,
@@ -75,25 +82,45 @@ export async function InterviewOverview({
     id: criterion.id,
     label: criterion.label,
   })) satisfies InterviewOverviewCriterion[];
+  const completionRate =
+    sessionStats.started > 0
+      ? Math.round((sessionStats.completed / sessionStats.started) * 100)
+      : 0;
   const stats = [
     {
-      label: t("interviewDetail.statCandidates"),
-      value: String(interview.candidateSessions.length),
+      label: t("interviewDetail.statCompletionRate"),
+      note: t("interviewDetail.statCompletionRateNote", {
+        completed: sessionStats.completed,
+        started: sessionStats.started,
+      }),
+      value: `${completionRate}%`,
     },
     {
-      label: t("interviewDetail.statNeedReview"),
-      tone: sessionStats.needsReview > 0 ? "danger" : "default",
-      value: String(sessionStats.needsReview),
+      label: t("interviewDetail.statDropOff"),
+      note:
+        sessionStats.abandoned > 0
+          ? t("interviewDetail.statDropOffNote")
+          : t("interviewDetail.statDropOffNoneNote"),
+      tone: sessionStats.abandoned > 0 ? "danger" : "default",
+      value: String(sessionStats.abandoned),
     },
     {
-      label: t("interviewDetail.statQuestions"),
-      value: String(interview.questions.length),
-    },
-    {
-      label: t("interviewDetail.statAvgLength"),
+      label: t("interviewDetail.statPlannedLength"),
+      note: t("interviewDetail.statPlannedLengthNote", {
+        count: interview.questions.length,
+      }),
       value: t("interviewDetail.statAvgLengthValue", {
         minutes: estimatedMinutes,
       }),
+    },
+    {
+      label: t("interviewDetail.statNeedReview"),
+      note:
+        sessionStats.needsReview > 0
+          ? t("interviewDetail.statNeedReviewNote")
+          : t("interviewDetail.statNeedReviewNoneNote"),
+      tone: sessionStats.needsReview > 0 ? "danger" : "default",
+      value: String(sessionStats.needsReview),
     },
   ] satisfies InterviewOverviewStat[];
   const config = [
@@ -124,8 +151,10 @@ export async function InterviewOverview({
     ? `/roles/new?draftId=${interview.draftId}`
     : `/roles/new?jobId=${interview.jobId}`;
 
+  const isPaused = interview.status === "paused";
+
   return (
-    <main className="mx-auto max-w-[920px] pb-16">
+    <main className="pb-16">
       <Link
         className="inline-flex cursor-pointer items-center gap-[7px] rounded-full text-[13px] font-semibold text-[#777166] transition hover:text-ink-950"
         href="/roles"
@@ -137,9 +166,18 @@ export async function InterviewOverview({
       <header className="mt-4 flex flex-wrap items-end justify-between gap-6">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge tone={statusTone(interview.status)}>
+            <span
+              className={`inline-flex items-center gap-[7px] rounded-full px-[11px] py-1 text-[11.5px] font-semibold ${
+                isPaused
+                  ? "bg-ink-100 text-ink-600"
+                  : "bg-[#eef0e3] text-olive-900"
+              }`}
+            >
+              <span
+                className={`block h-1.5 w-1.5 rounded-full ${isPaused ? "bg-ink-400" : "bg-olive-700"}`}
+              />
               {formatStatus(interview.status, t)}
-            </StatusBadge>
+            </span>
             {source ? (
               <a
                 className="inline-flex h-6 cursor-pointer items-center gap-[7px] rounded-full border border-[#e7e2d8] bg-[#f4f2ea] py-0 pl-1.5 pr-2.5 text-[11.5px] font-semibold text-[#5b574f] transition hover:border-[#cbc4b6]"
@@ -176,18 +214,34 @@ export async function InterviewOverview({
           </p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2.5">
+        <div className="flex shrink-0 flex-wrap items-center gap-2.5">
           <CopyCandidateLinkButton candidatePath={interview.candidatePath}>
             {candidateLinkLabel}
           </CopyCandidateLinkButton>
+          <a
+            className="inline-flex h-[42px] cursor-pointer items-center gap-2 rounded-full border border-ink-200 bg-white px-4 text-[13px] font-semibold text-ink-950 transition hover:border-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+            href={interview.candidatePath}
+            rel="noreferrer"
+            target="_blank"
+          >
+            <Eye aria-hidden={true} className="h-4 w-4" />
+            {t("interviewDetail.previewAsCandidate")}
+          </a>
           {canManageRole ? (
-            <Link
-              className="inline-flex h-[42px] cursor-pointer items-center justify-center gap-2 rounded-full bg-[#171715] px-[18px] text-[13px] font-semibold text-white transition hover:bg-[#2a2925] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-              href={editHref}
-            >
-              <EditPencil aria-hidden={true} className="h-4 w-4" />
-              {t("interviewDetail.editButton")}
-            </Link>
+            <>
+              <Link
+                className="inline-flex h-[42px] cursor-pointer items-center justify-center gap-2 rounded-full bg-[#171715] px-[18px] text-[13px] font-semibold text-white transition hover:bg-[#2a2925] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+                href={editHref}
+              >
+                <EditPencil aria-hidden={true} className="h-4 w-4" />
+                {t("interviewDetail.editButton")}
+              </Link>
+              <RoleActionsMenu
+                interviewId={interview.id}
+                publicationStatus={interview.status}
+                roleTitle={interview.roleTitle}
+              />
+            </>
           ) : null}
         </div>
       </header>
@@ -201,6 +255,7 @@ export async function InterviewOverview({
         guardrails={interview.guardrails}
         interviewId={interview.id}
         invitations={invitations}
+        onStatusChange={updateCandidateReviewStatusAction}
         publicationStatus={interview.status}
         questions={questions}
         roleBrief={interview.roleBrief}
@@ -243,6 +298,10 @@ function getSessionStats(
   ).length;
 
   return {
+    abandoned: sessions.filter(
+      (session) =>
+        session.status === "abandoned" || session.status === "expired",
+    ).length,
     completed: completedSessions.length,
     needsReview: completedSessions.filter(
       (session) => session.reviewStatus === "to_review",

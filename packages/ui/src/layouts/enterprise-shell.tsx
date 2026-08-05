@@ -1,35 +1,123 @@
 import * as React from "react";
-import {
-  Community,
-  NavArrowLeft,
-  NavArrowRight,
-  NavArrowDown,
-  Settings,
-  Suitcase,
-  ViewGrid,
-} from "iconoir-react";
+import { NavArrowDown } from "iconoir-react";
 
 import { BrandMark } from "../components/brand-mark";
-import { IconButton } from "../components/icon-button";
 import { cn } from "../lib/cn";
 
+// The nav glyphs are inlined rather than pulled from iconoir so the sidebar
+// matches the console design system stroke-for-stroke.
+function NavGlyph({
+  className,
+  path,
+}: {
+  className?: string;
+  path: React.ReactNode;
+}) {
+  return (
+    <svg
+      aria-hidden={true}
+      className={cn("h-[18px] w-[18px] shrink-0", className)}
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={1.6}
+      viewBox="0 0 24 24"
+    >
+      {path}
+    </svg>
+  );
+}
+
+const navGlyphs = {
+  candidates: (
+    <>
+      <circle cx="9.6" cy="8.1" r="3.6" />
+      <path d="M3.4 19.6c0-3.42 2.78-5.9 6.2-5.9s6.2 2.48 6.2 5.9" />
+      <path d="M16.4 5.3a3.4 3.4 0 0 1 0 5.6" />
+      <path d="M18.2 19.6c0-1.95-.42-3.5-1.2-4.66" />
+    </>
+  ),
+  dashboard: (
+    <>
+      <rect height="18" rx="4.5" width="18" x="3" y="3" />
+      <path d="M3 9.5h18" />
+      <path d="M9.75 21V9.5" />
+    </>
+  ),
+  roles: (
+    <>
+      <rect height="13.5" rx="3.5" width="19" x="2.5" y="6.75" />
+      <path d="M9 6.75V5.6A2.1 2.1 0 0 1 11.1 3.5h1.8A2.1 2.1 0 0 1 15 5.6v1.15" />
+      <path d="M2.5 12.4h19" />
+    </>
+  ),
+  settings: (
+    <>
+      <path d="M3.5 7.4h8.2" />
+      <path d="M17 7.4h3.5" />
+      <path d="M3.5 16.6h3.2" />
+      <path d="M12 16.6h8.5" />
+      <circle cx="14.3" cy="7.4" r="2.35" />
+      <circle cx="9.3" cy="16.6" r="2.35" />
+    </>
+  ),
+} as const;
+
+type NavKey = keyof typeof navGlyphs;
+
 type ShellNavItem = {
-  badge?: string;
+  badgeTone?: "neutral" | "olive";
+  count?: number;
   href: string;
-  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+  key: NavKey;
   label: string;
   matchHref?: string;
 };
 
-const primaryNavItems: ShellNavItem[] = [
-  { label: "Dashboard", href: "/", icon: ViewGrid },
-  { label: "Roles", href: "/roles", icon: Suitcase },
-  { label: "Candidates", href: "/candidates", icon: Community },
-];
+export type EnterpriseNavCounts = {
+  candidates?: number;
+  roles?: number;
+};
 
-const secondaryNavItems: ShellNavItem[] = [
-  { label: "Settings", href: "/settings", icon: Settings },
-];
+const settingsNavItem: ShellNavItem = {
+  href: "/settings",
+  key: "settings",
+  label: "Settings",
+};
+
+type ShellNavGroup = {
+  items: ShellNavItem[];
+  label: string;
+};
+
+function buildNavGroups(counts: EnterpriseNavCounts): ShellNavGroup[] {
+  return [
+    {
+      items: [{ href: "/", key: "dashboard", label: "Dashboard" }],
+      label: "Overview",
+    },
+    {
+      items: [
+        {
+          badgeTone: "neutral",
+          count: counts.roles,
+          href: "/roles",
+          key: "roles",
+          label: "Roles",
+        },
+        {
+          badgeTone: "olive",
+          count: counts.candidates,
+          href: "/candidates",
+          key: "candidates",
+          label: "Candidates",
+        },
+      ],
+      label: "Hiring",
+    },
+  ];
+}
 
 type EnterpriseAccount = {
   organizationName: string;
@@ -45,6 +133,7 @@ export type EnterpriseShellProps = {
   children: React.ReactNode;
   className?: string;
   collapsed?: boolean;
+  navCounts?: EnterpriseNavCounts;
   onCollapsedChange?: (collapsed: boolean) => void;
 };
 
@@ -55,43 +144,35 @@ export function EnterpriseShell({
   children,
   className,
   collapsed = false,
+  navCounts = {},
   onCollapsedChange,
 }: EnterpriseShellProps) {
   const organizationName = account?.organizationName ?? "Recruiter console";
   const userName = account?.userName ?? "HireCall user";
-  const userEmail = account?.userEmail ?? "workspace";
 
   return (
-    <div
-      className={cn(
-        "min-h-screen bg-[#F9F8F3] text-ink-900",
-        className,
-      )}
-    >
+    <div className={cn("min-h-screen bg-[#F9F8F3] text-ink-900", className)}>
       <div className="min-h-screen w-full">
         <EnterpriseSidebar
-          account={account}
           accountActions={accountActions}
           activePath={activePath}
           collapsed={collapsed}
+          navCounts={navCounts}
           onCollapsedChange={onCollapsedChange}
           organizationName={organizationName}
-          userEmail={userEmail}
           userName={userName}
         />
         <div
           className={cn(
-            "min-w-0 transition-[padding] duration-200 lg:pl-64",
-            collapsed && "lg:pl-[74px]",
+            "min-w-0 transition-[padding] duration-200 max-[900px]:pb-[calc(78px+env(safe-area-inset-bottom))] min-[901px]:pl-[250px]",
+            collapsed && "min-[901px]:pl-[68px]",
           )}
         >
-          <MobileWorkspaceHeader
-            activePath={activePath}
-            organizationName={organizationName}
-          />
+          <MobileWorkspaceHeader organizationName={organizationName} />
           <main className="px-[clamp(16px,3vw,40px)] py-[clamp(20px,3vw,38px)] pb-16">
             <div className="mx-auto w-full max-w-[1180px]">{children}</div>
           </main>
+          <MobileWorkspaceNav activePath={activePath} />
         </div>
       </div>
     </div>
@@ -99,199 +180,202 @@ export function EnterpriseShell({
 }
 
 function MobileWorkspaceHeader({
-  activePath,
   organizationName,
 }: {
-  activePath: string;
   organizationName: string;
 }) {
   return (
-    <header className="sticky top-0 z-30 border-b border-ink-100 bg-[#fbfaf7]/86 px-4 py-3 backdrop-blur-xl lg:hidden">
-      <div className="flex items-center justify-between gap-3">
-        <BrandMark />
-        <div className="flex items-center gap-2">
-          <span className="hidden max-w-[9rem] truncate text-right text-xs font-medium text-ink-500 sm:block">
-            {organizationName}
-          </span>
-        </div>
-      </div>
-      <nav
-        aria-label="Workspace"
-        className="mt-3 flex gap-1 overflow-x-auto pb-1"
-      >
-        {primaryNavItems.slice(0, 3).map((item) => (
-          <a
-            aria-current={
-              isActivePath(activePath, item.matchHref ?? item.href)
-                ? "page"
-                : undefined
-            }
-            className={cn(
-              "inline-flex h-9 shrink-0 items-center gap-2 rounded-full px-3 text-sm font-medium transition-colors",
-              isActivePath(activePath, item.matchHref ?? item.href)
-                ? "bg-[#eef0e3] text-olive-900"
-                : "text-ink-600 hover:bg-white/70 hover:text-ink-950",
-            )}
-            href={item.href}
-            key={item.label}
-          >
-            <item.icon aria-hidden={true} className="h-4 w-4" />
-            {item.label}
-          </a>
-        ))}
-      </nav>
+    <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-[#e7e2d8] bg-[#faf8f3]/97 px-4 py-[11px] backdrop-blur-[14px] min-[901px]:hidden">
+      <BrandMark appearance="color" labelClassName="h-[26px] max-w-none" />
+      <span className="max-w-[9rem] truncate text-right text-xs font-medium text-[#8a8178]">
+        {organizationName}
+      </span>
     </header>
   );
 }
 
+function MobileWorkspaceNav({ activePath }: { activePath: string }) {
+  const items = [
+    ...buildNavGroups({}).flatMap((group) => group.items),
+    settingsNavItem,
+  ];
+
+  return (
+    <nav
+      aria-label="Workspace"
+      className="fixed inset-x-0 bottom-0 z-[55] flex items-stretch gap-1 border-t border-[#e7e2d8] bg-[#faf8f3]/97 px-2 pb-[calc(6px+env(safe-area-inset-bottom))] pt-1.5 backdrop-blur-[14px] min-[901px]:hidden"
+    >
+      {items.map((item) => {
+        const active = isActivePath(activePath, item.matchHref ?? item.href);
+
+        return (
+          <a
+            aria-current={active ? "page" : undefined}
+            className={cn(
+              "flex min-h-[50px] flex-1 flex-col items-center justify-center gap-1 rounded-[14px] border font-title text-[10.5px] font-semibold tracking-[-0.005em]",
+              active
+                ? "border-[#e7e2d8] bg-white text-ink-900"
+                : "border-transparent text-[#8a8178]",
+            )}
+            href={item.href}
+            key={item.key}
+          >
+            <NavGlyph className="h-[19px] w-[19px]" path={navGlyphs[item.key]} />
+            {item.label}
+          </a>
+        );
+      })}
+    </nav>
+  );
+}
+
 function EnterpriseSidebar({
-  account,
   accountActions,
   activePath,
   collapsed,
+  navCounts,
   onCollapsedChange,
   organizationName,
-  userEmail,
   userName,
 }: {
-  account?: EnterpriseAccount;
   accountActions?: React.ReactNode;
   activePath: string;
   collapsed: boolean;
+  navCounts: EnterpriseNavCounts;
   onCollapsedChange?: (collapsed: boolean) => void;
   organizationName: string;
-  userEmail: string;
   userName: string;
 }) {
   return (
     <aside
       className={cn(
-        "fixed inset-y-0 left-0 z-40 hidden h-dvh shrink-0 flex-col border-r border-ink-100 bg-[#fbfaf7]/76 backdrop-blur-xl transition-[width,padding] duration-200 lg:flex",
-        collapsed ? "w-[74px] px-3 py-[18px]" : "w-64 px-4 py-[18px]",
+        "fixed inset-y-0 left-0 z-40 hidden h-dvh shrink-0 flex-col border-r border-[#e7e2d8] bg-[#faf8f3] pb-3.5 pt-4 transition-[width,padding] duration-200 min-[901px]:flex",
+        collapsed ? "w-[68px] px-2.5" : "w-[250px] px-3",
       )}
     >
       <div
         className={cn(
-          "flex items-center gap-3 px-1",
+          "flex h-[34px] items-center gap-2.5 px-0.5",
           collapsed ? "justify-center" : "justify-between",
         )}
       >
         <BrandMark
+          appearance="color"
           compact={collapsed}
-          labelClassName="h-9 max-w-[9rem]"
-          markClassName="h-[30px] w-[30px]"
+          labelClassName="h-[26px] max-w-none"
+          markClassName="h-[26px] w-[26px]"
         />
         {onCollapsedChange && !collapsed ? (
-          <SidebarToggleButton
-            collapsed={collapsed}
-            onCollapsedChange={onCollapsedChange}
-          />
+          <button
+            aria-label="Collapse sidebar"
+            className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-full text-ink-400 transition hover:bg-ink-900/5 hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+            onClick={() => onCollapsedChange(true)}
+            title="Collapse sidebar"
+            type="button"
+          >
+            <ChevronPair direction="left" />
+          </button>
         ) : null}
       </div>
 
       {collapsed && onCollapsedChange ? (
-        <SidebarToggleButton
-          collapsed={collapsed}
-          onCollapsedChange={onCollapsedChange}
-        />
+        <button
+          aria-label="Expand sidebar"
+          className="mt-3.5 grid h-[34px] w-full place-items-center rounded-full border border-[#e7e2d8] bg-white text-ink-400 transition hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+          onClick={() => onCollapsedChange(false)}
+          title="Expand sidebar"
+          type="button"
+        >
+          <ChevronPair direction="right" />
+        </button>
       ) : null}
 
-      <WorkspaceSwitcher
-        collapsed={collapsed}
-        organizationName={organizationName}
-      />
+      {buildNavGroups(navCounts).map((group, index) => (
+        <div className={index === 0 ? "mt-[22px]" : "mt-5"} key={group.label}>
+          <p
+            className={cn(
+              "mb-1.5 px-[13px] font-title text-[10px] font-semibold uppercase tracking-[0.1em] text-ink-400",
+              collapsed && "hidden",
+            )}
+          >
+            {group.label}
+          </p>
+          <nav aria-label={group.label} className="flex flex-col gap-0.5">
+            {group.items.map((item) => (
+              <SidebarNavItem
+                active={isActivePath(activePath, item.matchHref ?? item.href)}
+                collapsed={collapsed}
+                item={item}
+                key={item.key}
+              />
+            ))}
+          </nav>
+        </div>
+      ))}
 
-      <nav aria-label="Workspace" className="mt-5 flex flex-col gap-1">
-        {primaryNavItems.map((item) => (
-          <SidebarNavItem
-            active={isActivePath(activePath, item.matchHref ?? item.href)}
-            collapsed={collapsed}
-            item={item}
-            key={item.label}
-          />
-        ))}
-      </nav>
-
-      <div className="mt-auto border-t border-ink-100 pt-4">
-        <nav aria-label="Account" className="flex flex-col gap-1">
-          {secondaryNavItems.map((item) => (
-            <SidebarNavItem
-              active={isActivePath(activePath, item.matchHref ?? item.href)}
-              collapsed={collapsed}
-              item={item}
-              key={item.label}
-            />
-          ))}
-        </nav>
-        <AccountSummary
-          account={account}
+      <div className="mt-auto flex flex-col gap-0.5 border-t border-[#f0ece1] pt-2.5">
+        <SidebarNavItem
+          active={isActivePath(activePath, settingsNavItem.href)}
           collapsed={collapsed}
-          userEmail={userEmail}
-          userName={userName}
+          item={settingsNavItem}
         />
+        <a
+          className={cn(
+            "flex h-11 items-center gap-2.5 rounded-full px-2.5 transition hover:bg-ink-900/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
+            collapsed && "justify-center px-0",
+          )}
+          href="/settings"
+          title={userName}
+        >
+          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-[#eef0e3] font-title text-[11.5px] font-semibold text-olive-900">
+            {initialsFor(userName)}
+          </span>
+          <span
+            className={cn("flex min-w-0 flex-1 flex-col", collapsed && "hidden")}
+          >
+            <span className="truncate font-title text-[13px] font-semibold text-ink-900">
+              {userName}
+            </span>
+            <span className="truncate text-[11px] text-ink-400">
+              {organizationName}
+            </span>
+          </span>
+          <NavArrowDown
+            aria-hidden={true}
+            className={cn(
+              "h-[13px] w-[13px] shrink-0 text-[#bdb6a8]",
+              collapsed && "hidden",
+            )}
+          />
+        </a>
         {accountActions ? (
-          <div className="mt-2 flex justify-end px-2">{accountActions}</div>
+          <div className={cn("mt-1 flex justify-end px-2", collapsed && "px-0")}>
+            {accountActions}
+          </div>
         ) : null}
       </div>
     </aside>
   );
 }
 
-function SidebarToggleButton({
-  collapsed,
-  onCollapsedChange,
-}: {
-  collapsed: boolean;
-  onCollapsedChange: (collapsed: boolean) => void;
-}) {
-  const Icon = collapsed ? NavArrowRight : NavArrowLeft;
-
+function ChevronPair({ direction }: { direction: "left" | "right" }) {
   return (
-    <IconButton
-      aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-      className={cn(
-        collapsed
-          ? "mt-[18px] h-9 w-full rounded-[11px] border-ink-100 bg-white/60 hover:border-ink-200 hover:bg-white/80"
-          : "h-7 w-7 rounded-lg",
-      )}
-      onClick={() => onCollapsedChange(!collapsed)}
-      size="sm"
-      variant={collapsed ? "secondary" : "ghost"}
+    <svg
+      aria-hidden={true}
+      className="h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeWidth={1.9}
+      viewBox="0 0 24 24"
     >
-      <Icon aria-hidden={true} className="h-[17px] w-[17px]" />
-    </IconButton>
-  );
-}
-
-function WorkspaceSwitcher({
-  collapsed,
-  organizationName,
-}: {
-  collapsed: boolean;
-  organizationName: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "mt-[18px] flex h-12 items-center gap-2.5 rounded-[14px] border border-ink-100 bg-white/62 px-[11px] text-left transition hover:border-ink-200 hover:bg-white",
-        collapsed && "justify-center px-0",
+      {direction === "left" ? (
+        <path d="M11 6l-6 6 6 6M19 6l-6 6 6 6" />
+      ) : (
+        <path d="M13 6l6 6-6 6M5 6l6 6-6 6" />
       )}
-      title={organizationName}
-    >
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-xl bg-olive-800 text-xs font-semibold text-white">
-        {initialsFor(organizationName)}
-      </span>
-      <div className={cn("min-w-0 flex-1", collapsed && "hidden")}>
-        <p className="truncate text-sm font-semibold text-ink-950">
-          {organizationName}
-        </p>
-        <p className="text-xs text-ink-400">Pro workspace</p>
-      </div>
-      <NavArrowDown
-        aria-hidden={true}
-        className={cn("h-4 w-4 text-ink-400", collapsed && "hidden")}
-      />
-    </div>
+    </svg>
   );
 }
 
@@ -308,67 +392,38 @@ function SidebarNavItem({
     <a
       aria-current={active ? "page" : undefined}
       className={cn(
-        "group inline-flex h-10 cursor-pointer items-center gap-[11px] rounded-[11px] px-[11px] text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
+        "flex h-[34px] items-center gap-2.5 rounded-full border px-2.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
         collapsed && "justify-center px-0",
         active
-          ? "border border-[#e2e6d3] bg-[#eef0e3] font-semibold text-olive-900"
-          : "font-medium text-ink-600 hover:bg-white/68 hover:text-ink-950",
+          ? "border-[#e7e2d8] bg-white text-ink-900"
+          : "border-transparent text-ink-700 hover:bg-ink-900/5 hover:text-ink-900",
       )}
       href={item.href}
-      title={collapsed ? item.label : undefined}
+      title={item.label}
     >
-      <item.icon aria-hidden={true} className="h-[18px] w-[18px] shrink-0" />
-      <span className={cn("min-w-0 flex-1 truncate", collapsed && "hidden")}>
+      <NavGlyph path={navGlyphs[item.key]} />
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate font-title text-[15px] tracking-[-0.005em]",
+          active ? "font-semibold" : "font-medium",
+          collapsed && "hidden",
+        )}
+      >
         {item.label}
       </span>
-      {item.badge && !collapsed ? (
-        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-semibold text-ink-500">
-          {item.badge}
+      {item.count && item.count > 0 && !collapsed ? (
+        <span
+          className={cn(
+            "flex h-[19px] min-w-[20px] shrink-0 items-center justify-center rounded-full px-1.5 font-title text-[11px] font-semibold",
+            item.badgeTone === "olive"
+              ? "bg-[#eef0e3] text-olive-900"
+              : "bg-[#f1efe8] text-[#6f6a5f]",
+          )}
+        >
+          {item.count}
         </span>
       ) : null}
     </a>
-  );
-}
-
-function AccountSummary({
-  account,
-  collapsed,
-  userEmail,
-  userName,
-}: {
-  account?: EnterpriseAccount;
-  collapsed: boolean;
-  userEmail: string;
-  userName: string;
-}) {
-  return (
-    <div className="mt-3">
-      <a
-        aria-label="Open workspace settings"
-        className={cn(
-          "flex h-[50px] cursor-pointer items-center gap-2.5 rounded-xl px-[11px] text-left transition hover:bg-white/68 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
-          collapsed && "justify-center",
-        )}
-        href="/settings"
-        title={collapsed ? userName : undefined}
-      >
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-ink-100 bg-white/72 text-xs font-semibold text-olive-900">
-          {initialsFor(userName)}
-        </span>
-        <div className={cn("min-w-0 flex-1", collapsed && "hidden")}>
-          <p className="truncate text-sm font-semibold text-ink-950">
-            {userName}
-          </p>
-        <p className="truncate text-xs text-ink-400">
-            {account ? formatRole(account.role) : userEmail}
-          </p>
-        </div>
-        <NavArrowRight
-          aria-hidden={true}
-          className={cn("h-4 w-4 text-ink-300", collapsed && "hidden")}
-        />
-      </a>
-    </div>
   );
 }
 
@@ -394,8 +449,4 @@ function initialsFor(value: string) {
     .join("");
 
   return initials || "P";
-}
-
-function formatRole(role: string) {
-  return role.replace(/_/g, " ");
 }

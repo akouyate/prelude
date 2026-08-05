@@ -1,14 +1,16 @@
 import type { ImportedRoleDraft } from "@prelude/contracts";
 
 import {
+  MIN_ROLE_DESCRIPTION_CHARACTERS,
+  toImportedRoleDraft,
+} from "./role-intake-url-extractor";
+import {
   getRoleIntakeIndexedSearchDomain,
   normalizeRoleIntakeUrl,
   RoleIntakeUrlImportError,
 } from "./role-intake-url-policy";
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
-const MIN_DESCRIPTION_CHARACTERS = 40;
-const MAX_DESCRIPTION_CHARACTERS = 100_000;
 const MAX_SOURCE_COUNT = 20;
 
 export const defaultRoleIntakeIndexedSearchModel = "gpt-5.6-luna";
@@ -67,10 +69,10 @@ export function createRoleIntakeIndexedSearchFromEnv(
 }
 
 /**
- * LinkedIn and Indeed prohibit a HireCall crawler from treating their public
- * pages as an import API. This adapter uses OpenAI's hosted, cited web index
- * and accepts a result only when the consulted source matches the submitted
- * job. See docs/sources/role-intake.md.
+ * LinkedIn prohibits a HireCall crawler from treating its public pages as an
+ * import API. This adapter uses OpenAI's hosted, cited web index and accepts a
+ * result only when the consulted source matches the submitted job by its exact
+ * job ID. See docs/sources/role-intake.md.
  */
 export function createOpenAIRoleIntakeIndexedSearch({
   apiKey,
@@ -163,14 +165,7 @@ export function createOpenAIRoleIntakeIndexedSearch({
       return {
         canonicalUrl: citedSource.toString(),
         citations: deduplicate(citations),
-        draft: {
-          description: extracted.description.slice(
-            0,
-            MAX_DESCRIPTION_CHARACTERS,
-          ),
-          location: extracted.location?.slice(0, 160) ?? null,
-          title: extracted.title?.slice(0, 160) ?? null,
-        },
+        draft: toImportedRoleDraft(extracted),
       };
     } catch (error) {
       if (error instanceof RoleIntakeUrlImportError) {
@@ -200,12 +195,8 @@ export function isVerifiedRoleIntakeSource(
     if (!submittedProvider || submittedProvider !== candidateProvider) {
       return false;
     }
-    if (submittedProvider === "linkedin.com") {
-      const submittedId = linkedinJobId(submitted);
-      return Boolean(submittedId && submittedId === linkedinJobId(candidate));
-    }
-    const submittedId = indeedJobId(submitted);
-    return Boolean(submittedId && submittedId === indeedJobId(candidate));
+    const submittedId = linkedinJobId(submitted);
+    return Boolean(submittedId && submittedId === linkedinJobId(candidate));
   }
 
   return comparableUrl(submitted) === comparableUrl(candidate);
@@ -217,33 +208,58 @@ function parseIndexedJobBrief(payload: unknown): {
   sourceUrl: string;
   title: string | null;
 } {
+  let parsed: unknown;
+
   try {
-    const parsed = JSON.parse(extractOutputText(payload)) as unknown;
-    if (!isRecord(parsed)) {
-      throw new Error("Expected an object.");
-    }
-    const description = asString(parsed.description);
-    const sourceUrl = asString(parsed.sourceUrl);
-    const title = asNullableString(parsed.title);
-    const location = asNullableString(parsed.location);
-    if (
-      !description ||
-      description.length < MIN_DESCRIPTION_CHARACTERS ||
-      !title ||
-      !sourceUrl
-    ) {
-      throw new Error("Missing required indexed job fields.");
-    }
-    const parsedSource = new URL(sourceUrl);
-    if (parsedSource.protocol !== "https:") {
-      throw new Error("Indexed source must use HTTPS.");
-    }
-    return { description, location, sourceUrl, title };
+    parsed = JSON.parse(extractOutputText(payload)) as unknown;
   } catch {
+    throw indexedSearchInvalid();
+  }
+
+  if (!isRecord(parsed)) {
+    throw indexedSearchInvalid();
+  }
+
+  const description = asString(parsed.description);
+  const sourceUrl = asString(parsed.sourceUrl);
+  const title = asNullableString(parsed.title);
+  const location = asNullableString(parsed.location);
+
+  // The schema forces a well-formed answer even when the search found nothing:
+  // a posting absent from the public index comes back with a null title and a
+  // description explaining the miss. Retrying that URL can never succeed, so it
+  // is reported apart from a malformed payload.
+  if (!title) {
     throw new RoleIntakeUrlImportError(
-      "indexed_search_invalid",
-      "HireCall found the source but could not prepare a reliable job brief. Continue manually with the same link.",
+      "indexed_search_not_found",
+      "HireCall could not reach this job posting. The site blocks automated reads and the posting is not in the public index.",
     );
+  }
+
+  if (
+    !description ||
+    description.length < MIN_ROLE_DESCRIPTION_CHARACTERS ||
+    !sourceUrl ||
+    !isHttpsUrl(sourceUrl)
+  ) {
+    throw indexedSearchInvalid();
+  }
+
+  return { description, location, sourceUrl, title };
+}
+
+function indexedSearchInvalid() {
+  return new RoleIntakeUrlImportError(
+    "indexed_search_invalid",
+    "HireCall found the source but could not prepare a reliable job brief. Continue manually with the same link.",
+  );
+}
+
+function isHttpsUrl(value: string) {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
   }
 }
 
@@ -340,22 +356,13 @@ function createWebSearchTool(source: URL):
 }
 
 function getSearchHint(source: URL): string {
-  const provider = getRoleIntakeIndexedSearchDomain(source);
-  if (provider === "linkedin.com") {
-    return `LinkedIn job ID ${linkedinJobId(source) ?? "unknown"} ${source.toString()}`;
-  }
-  if (provider === "indeed.com") {
-    return `Indeed job key ${indeedJobId(source) ?? "unknown"} ${source.toString()}`;
-  }
-  return source.toString();
+  return getRoleIntakeIndexedSearchDomain(source) === "linkedin.com"
+    ? `LinkedIn job ID ${linkedinJobId(source) ?? "unknown"} ${source.toString()}`
+    : source.toString();
 }
 
 function linkedinJobId(url: URL): string | null {
   return url.pathname.match(/(?:^|[-/])(\d{7,})(?:\/)?$/)?.[1] ?? null;
-}
-
-function indeedJobId(url: URL): string | null {
-  return url.searchParams.get("jk") ?? url.searchParams.get("vjk");
 }
 
 function comparableUrl(value: URL): string {
@@ -415,7 +422,7 @@ async function defaultFetcher(
 const indexedJobBriefJsonSchema = {
   additionalProperties: false,
   properties: {
-    description: { minLength: MIN_DESCRIPTION_CHARACTERS, type: "string" },
+    description: { minLength: MIN_ROLE_DESCRIPTION_CHARACTERS, type: "string" },
     location: {
       anyOf: [{ type: "string" }, { type: "null" }],
     },
