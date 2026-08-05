@@ -456,7 +456,9 @@
       "statNeedReviewNote": "Waiting on a recruiter",
       "statNeedReviewNoneNote": "Queue is clear",
       "criterionUnassigned": "Unassigned question",
-      "criterionNoQuestion": "No question is mapped to this criterion yet."
+      "criterionNoQuestion": "No question is mapped to this criterion yet.",
+      "roleBriefExpand": "Show the full brief",
+      "roleBriefCollapse": "Collapse the brief"
     },
     "candidates": {
       "headerEyebrow": "{{organizationName}} · Candidate screens",

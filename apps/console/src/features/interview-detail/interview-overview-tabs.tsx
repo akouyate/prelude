@@ -185,6 +185,49 @@ export function InterviewOverviewTabs({
   );
 }
 
+// A pasted or imported job posting runs to several thousand characters, which
+// would push the criteria and script below the fold on every visit. Collapsing
+// it keeps the setup tab scannable while the full text stays one click away.
+const COLLAPSED_ROLE_BRIEF_LINES = 8;
+
+function RoleBrief({ text }: { text: string }) {
+  const { t } = useTranslation();
+  const [expanded, setExpanded] = React.useState(false);
+  const isLong =
+    text.length > 480 || text.split("\n").length > COLLAPSED_ROLE_BRIEF_LINES;
+
+  return (
+    <section>
+      <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-[#a29b8d]">
+        {t("interviewDetail.roleBriefLabel")}
+      </p>
+      <p
+        className={cn(
+          // The source keeps its paragraphs and bullet lines; collapsing them
+          // into one block is what made this unreadable.
+          "mt-[9px] max-w-[62ch] whitespace-pre-line text-[15px] leading-[1.6] text-[#5b574f]",
+          isLong && !expanded && "line-clamp-8",
+        )}
+      >
+        {text || t("interviewDetail.roleBriefEmpty")}
+      </p>
+      {isLong ? (
+        <button
+          className="mt-2.5 cursor-pointer text-[13px] font-semibold text-ink-950 underline decoration-[#ddd8cc] underline-offset-4 transition hover:decoration-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+          onClick={() => setExpanded((value) => !value)}
+          type="button"
+        >
+          {t(
+            expanded
+              ? "interviewDetail.roleBriefCollapse"
+              : "interviewDetail.roleBriefExpand",
+          )}
+        </button>
+      ) : null}
+    </section>
+  );
+}
+
 function SetupPanel({
   criteria,
   questions,
@@ -252,14 +295,7 @@ function SetupPanel({
         </section>
       ) : null}
 
-      <section>
-        <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-[#a29b8d]">
-          {t("interviewDetail.roleBriefLabel")}
-        </p>
-        <p className="mt-[9px] max-w-[62ch] text-[15px] leading-[1.6] text-[#5b574f]">
-          {roleBrief || t("interviewDetail.roleBriefEmpty")}
-        </p>
-      </section>
+      <RoleBrief text={roleBrief} />
 
       <section>
         <InterviewSectionTitle

@@ -456,7 +456,9 @@
       "statNeedReviewNote": "En attente d'un recruteur",
       "statNeedReviewNoneNote": "File vide",
       "criterionUnassigned": "Question non rattachée",
-      "criterionNoQuestion": "Aucune question n'est encore associée à ce critère."
+      "criterionNoQuestion": "Aucune question n'est encore associée à ce critère.",
+      "roleBriefExpand": "Afficher tout le brief",
+      "roleBriefCollapse": "Réduire le brief"
     },
     "candidates": {
       "headerEyebrow": "{{organizationName}} · Entretiens candidats",
