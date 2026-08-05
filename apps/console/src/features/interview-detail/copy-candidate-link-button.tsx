@@ -8,9 +8,11 @@ import { Button, cn } from "@prelude/ui";
 export function CopyCandidateLinkButton({
   candidatePath,
   children,
+  className,
 }: {
   candidatePath: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = React.useState(false);
@@ -27,6 +29,7 @@ export function CopyCandidateLinkButton({
       className={cn(
         "h-[42px] max-w-[280px] gap-[9px] px-3.5 text-[13px] font-semibold",
         copied && "border-[#cdd9b6] bg-[#eef0e3] text-olive-950",
+        className,
       )}
       onClick={handleCopy}
       type="button"

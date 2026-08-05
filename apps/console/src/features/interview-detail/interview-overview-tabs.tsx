@@ -1,17 +1,16 @@
 "use client";
 
 import * as React from "react";
-import { Check, Link as LinkIcon, Pause, WarningTriangle } from "iconoir-react";
+import { Check, Link as LinkIcon, WarningTriangle } from "iconoir-react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { UnderlineTabs, cn } from "@prelude/ui";
 import type { CandidateInvitationSummary } from "../../server/interviews/candidate-invitations";
 
-import { updateInterviewPublicationStatusAction } from "../../server/interviews/interview-actions";
 import {
-  CandidateScreensTable,
+  CandidateQueueTable,
   isCandidateScreenInProgress,
-  type CandidateScreenListItem,
+  type CandidateQueueRow,
 } from "../candidate-screens";
 import { CandidateInvitationsPanel } from "./candidate-invitations-panel";
 import { CopyCandidateLinkButton } from "./copy-candidate-link-button";
@@ -23,12 +22,7 @@ type ReviewFilter =
   | "in_progress"
   | "to_call"
   | "to_review";
-type OverviewTab =
-  | "candidates"
-  | "invitations"
-  | "overview"
-  | "questions"
-  | "settings";
+type OverviewTab = "candidates" | "settings" | "setup";
 
 export type InterviewOverviewQuestion = {
   id: string;
@@ -55,6 +49,7 @@ export type InterviewOverviewSource = {
 
 export type InterviewOverviewStat = {
   label: string;
+  note: string;
   tone?: "danger" | "default";
   value: string;
 };
@@ -66,13 +61,14 @@ export type InterviewOverviewConfigItem = {
 
 export type InterviewOverviewTabsProps = {
   candidatePath: string;
-  candidates: CandidateScreenListItem[];
+  candidates: CandidateQueueRow[];
   canManageRole: boolean;
   config: InterviewOverviewConfigItem[];
   criteria: InterviewOverviewCriterion[];
   guardrails: string[];
   interviewId: string;
   invitations: CandidateInvitationSummary[];
+  onStatusChange: (formData: FormData) => Promise<void>;
   publicationStatus: string;
   questions: InterviewOverviewQuestion[];
   roleBrief: string;
@@ -119,6 +115,7 @@ export function InterviewOverviewTabs({
   guardrails,
   interviewId,
   invitations,
+  onStatusChange,
   publicationStatus,
   questions,
   roleBrief,
@@ -128,7 +125,7 @@ export function InterviewOverviewTabs({
   summaryLine,
 }: InterviewOverviewTabsProps) {
   const { t } = useTranslation();
-  const [tab, setTab] = React.useState<OverviewTab>("overview");
+  const [tab, setTab] = React.useState<OverviewTab>("setup");
   const needsReviewCount = React.useMemo(
     () =>
       candidates.filter(
@@ -145,70 +142,58 @@ export function InterviewOverviewTabs({
         ariaLabel={t("interviewDetail.tabsAria")}
         onValueChange={setTab}
         options={[
-          { label: t("interviewDetail.tabOverview"), value: "overview" },
+          { label: t("interviewDetail.tabSetup"), value: "setup" },
           {
             count: needsReviewCount > 0 ? needsReviewCount : undefined,
             label: t("interviewDetail.tabCandidates"),
             value: "candidates",
-          },
-          {
-            count: invitations.length > 0 ? invitations.length : undefined,
-            label: t("interviewDetail.tabInvitations"),
-            value: "invitations",
-          },
-          {
-            count: questions.length,
-            label: t("interviewDetail.tabQuestions"),
-            value: "questions",
           },
           { label: t("interviewDetail.tabSettings"), value: "settings" },
         ]}
         value={tab}
       />
 
-      {tab === "overview" ? (
-        <OverviewPanel
+      {tab === "setup" ? (
+        <SetupPanel
           criteria={criteria}
+          questions={questions}
           roleBrief={roleBrief}
           source={source}
           stats={stats}
         />
       ) : null}
       {tab === "candidates" ? (
-        <CandidatesPanel candidates={candidates} summaryLine={summaryLine} />
-      ) : null}
-      {tab === "invitations" ? (
-        <CandidateInvitationsPanel
+        <CandidatesPanel
+          candidates={candidates}
           canManageRole={canManageRole}
           interviewId={interviewId}
           invitations={invitations}
+          onStatusChange={onStatusChange}
           publicationStatus={publicationStatus}
           roleTitle={roleTitle}
+          summaryLine={summaryLine}
         />
       ) : null}
-      {tab === "questions" ? <QuestionsPanel questions={questions} /> : null}
       {tab === "settings" ? (
         <SettingsPanel
-          canManageRole={canManageRole}
           candidatePath={candidatePath}
           config={config}
           guardrails={guardrails}
-          interviewId={interviewId}
-          publicationStatus={publicationStatus}
-          roleTitle={roleTitle}
         />
       ) : null}
     </section>
   );
 }
 
-function OverviewPanel({
+function SetupPanel({
   criteria,
+  questions,
   roleBrief,
   source,
   stats,
 }: {
   criteria: InterviewOverviewCriterion[];
+  questions: InterviewOverviewQuestion[];
   roleBrief: string;
   source: InterviewOverviewSource | null;
   stats: InterviewOverviewStat[];
@@ -225,13 +210,16 @@ function OverviewPanel({
           >
             <p
               className={cn(
-                "text-[26px] font-semibold leading-none tracking-[-0.02em]",
+                "text-[26px] font-semibold leading-none tracking-[-0.02em] tabular-nums",
                 stat.tone === "danger" ? "text-[#9c3b25]" : "text-ink-950",
               )}
             >
               {stat.value}
             </p>
-            <p className="mt-[5px] text-xs text-[#8a8178]">{stat.label}</p>
+            <p className="mt-[5px] text-xs font-semibold text-ink-700">
+              {stat.label}
+            </p>
+            <p className="mt-[3px] text-xs text-[#8a8178]">{stat.note}</p>
           </div>
         ))}
       </section>
@@ -278,19 +266,43 @@ function OverviewPanel({
           description={t("interviewDetail.criteriaDescription")}
           title={t("interviewDetail.criteriaTitle")}
         />
-        <div className="mt-3.5 grid gap-2 md:grid-cols-2">
-          {criteria.length > 0 ? (
-            criteria.map((criterion) => (
+        <div className="mt-3.5 flex flex-col gap-2.5">
+          {criteria.length > 0 || questions.length > 0 ? (
+            pairCriteriaWithQuestions(criteria, questions).map((pair) => (
               <article
-                className="rounded-[13px] border border-[#e7e2d8] bg-white px-[15px] py-[13px]"
-                key={criterion.id}
+                className="grid gap-5 rounded-2xl border border-[#e7e2d8] bg-white px-[18px] py-4 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]"
+                key={pair.key}
               >
-                <p className="text-[13.5px] font-semibold text-ink-950">
-                  {criterion.label}
-                </p>
-                <p className="mt-1 text-[12.5px] leading-[1.45] text-[#787367]">
-                  {criterion.description}
-                </p>
+                <div className="min-w-0">
+                  <p className="flex items-center gap-[9px] text-sm font-semibold text-ink-950">
+                    <span className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-full bg-[#eef0e3] text-[11px] font-bold text-olive-900">
+                      {pair.numberLabel}
+                    </span>
+                    {pair.criterion?.label ??
+                      t("interviewDetail.criterionUnassigned")}
+                  </p>
+                  {pair.criterion ? (
+                    <p className="mt-[7px] text-[12.5px] leading-[1.5] text-[#787367]">
+                      {pair.criterion.description}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="min-w-0 lg:border-l lg:border-[#f0ece1] lg:pl-5">
+                  {pair.question ? (
+                    <>
+                      <p className="text-[14.5px] font-medium leading-[1.5] text-ink-800">
+                        {pair.question.prompt}
+                      </p>
+                      <p className="mt-[7px] text-xs text-[#a29b8d]">
+                        {pair.question.sourceLabel}
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-[13px] text-[#a29b8d]">
+                      {t("interviewDetail.criterionNoQuestion")}
+                    </p>
+                  )}
+                </div>
               </article>
             ))
           ) : (
@@ -304,9 +316,21 @@ function OverviewPanel({
 
 function CandidatesPanel({
   candidates,
+  canManageRole,
+  interviewId,
+  invitations,
+  onStatusChange,
+  publicationStatus,
+  roleTitle,
   summaryLine,
 }: {
-  candidates: CandidateScreenListItem[];
+  candidates: CandidateQueueRow[];
+  canManageRole: boolean;
+  interviewId: string;
+  invitations: CandidateInvitationSummary[];
+  onStatusChange: (formData: FormData) => Promise<void>;
+  publicationStatus: string;
+  roleTitle: string;
   summaryLine: string;
 }) {
   const { t } = useTranslation();
@@ -317,95 +341,61 @@ function CandidatesPanel({
   );
 
   return (
-    <div className="mt-[22px]">
-      <p className="mb-3.5 text-[13.5px] leading-6 text-[#777166]">
-        {summaryLine}
-      </p>
+    <div className="mt-[22px] flex flex-col gap-[18px]">
+      <CandidateInvitationsPanel
+        canManageRole={canManageRole}
+        interviewId={interviewId}
+        invitations={invitations}
+        publicationStatus={publicationStatus}
+        roleTitle={roleTitle}
+      />
 
-      <div className="mb-4 flex flex-wrap gap-2">
-        {filterValues.map((value) => {
-          const active = value === filter;
-          const count = candidates.filter((candidate) =>
-            matchesFilter(candidate, value),
-          ).length;
+      <div>
+        <p className="mb-3.5 text-[13.5px] leading-6 text-[#777166]">
+          {summaryLine}
+        </p>
 
-          return (
-            <button
-              className={cn(
-                "inline-flex h-8 cursor-pointer items-center gap-[7px] rounded-full border px-[13px] text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
-                active
-                  ? "border-[#e2e6d3] bg-[#eef0e3] text-olive-950"
-                  : "border-[#e7e2d8] bg-white text-[#5b574f] hover:border-[#cbc4b6] hover:text-ink-950",
-              )}
-              key={value}
-              onClick={() => setFilter(value)}
-              type="button"
-            >
-              {filterLabel(value, t)}
-              <span
+        <div className="mb-4 flex flex-wrap gap-2">
+          {filterValues.map((value) => {
+            const active = value === filter;
+            const count = candidates.filter((candidate) =>
+              matchesFilter(candidate, value),
+            ).length;
+
+            return (
+              <button
                 className={cn(
-                  "text-[11.5px] font-bold",
-                  active ? "text-olive-900" : "text-[#a29b8d]",
+                  "inline-flex h-8 cursor-pointer items-center gap-[7px] rounded-full border px-[13px] text-[13px] font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
+                  active
+                    ? "border-[#e2e6d3] bg-[#eef0e3] text-olive-950"
+                    : "border-[#e7e2d8] bg-white text-[#5b574f] hover:border-[#cbc4b6] hover:text-ink-950",
                 )}
+                key={value}
+                onClick={() => setFilter(value)}
+                type="button"
               >
-                {count}
-              </span>
-            </button>
-          );
-        })}
-      </div>
+                {filterLabel(value, t)}
+                <span
+                  className={cn(
+                    "text-[11.5px] font-bold",
+                    active ? "text-olive-900" : "text-[#a29b8d]",
+                  )}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
 
-      <CandidateScreensTable
-        candidates={visibleCandidates}
-        className="mt-0 rounded-[18px] border-[#e7e2d8] bg-white"
-        emptyDescription={t("interviewDetail.candidatesEmptyDescription")}
-        emptyTitle={t("interviewDetail.candidatesEmptyTitle")}
-      />
-    </div>
-  );
-}
-
-function QuestionsPanel({
-  questions,
-}: {
-  questions: InterviewOverviewQuestion[];
-}) {
-  const { t } = useTranslation();
-
-  return (
-    <div className="mt-6">
-      <InterviewSectionTitle
-        description={t("interviewDetail.scriptDescription")}
-        title={t("interviewDetail.scriptTitle")}
-      />
-      <div className="mt-4 flex flex-col gap-2.5">
-        {questions.length > 0 ? (
-          questions.map((question) => (
-            <article
-              className="flex gap-[15px] rounded-2xl border border-[#e7e2d8] bg-white px-[18px] py-4"
-              key={question.id}
-            >
-              <span className="grid h-[30px] w-[30px] shrink-0 place-items-center rounded-full bg-[#eef0e3] text-[11.5px] font-bold text-olive-900">
-                {question.numberLabel}
-              </span>
-              <span className="min-w-0 flex-1">
-                <p className="text-[15px] font-semibold leading-[1.45] text-ink-950">
-                  {question.prompt}
-                </p>
-                <p className="mt-1.5 text-[12.5px] leading-[1.5] text-[#8a8178]">
-                  <span className="font-semibold text-[#6f6a5f]">
-                    {t("interviewDetail.signalLabel")}
-                  </span>
-                  {question.signal}
-                  <span className="text-[#c0b9aa]"> · </span>
-                  {question.sourceLabel}
-                </p>
-              </span>
-            </article>
-          ))
-        ) : (
-          <EmptyInlineState text={t("interviewDetail.questionsEmpty")} />
-        )}
+        <div className="overflow-hidden rounded-[18px] border border-[#e7e2d8] bg-white">
+          <CandidateQueueTable
+            emptyNote={t("interviewDetail.candidatesEmptyDescription")}
+            emptyTitle={t("interviewDetail.candidatesEmptyTitle")}
+            onStatusChange={onStatusChange}
+            rows={visibleCandidates}
+          />
+        </div>
       </div>
     </div>
   );
@@ -413,24 +403,14 @@ function QuestionsPanel({
 
 function SettingsPanel({
   candidatePath,
-  canManageRole,
   config,
   guardrails,
-  interviewId,
-  publicationStatus,
-  roleTitle,
 }: {
   candidatePath: string;
-  canManageRole: boolean;
   config: InterviewOverviewConfigItem[];
   guardrails: string[];
-  interviewId: string;
-  publicationStatus: string;
-  roleTitle: string;
 }) {
   const { t } = useTranslation();
-  const isPaused = publicationStatus === "paused";
-  const nextStatus = isPaused ? "published" : "paused";
 
   return (
     <div className="mt-6 flex flex-col gap-[30px]">
@@ -494,58 +474,6 @@ function SettingsPanel({
         </div>
       </section>
 
-      {canManageRole ? (
-        <section
-          className={cn(
-            "flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-[18px] py-4",
-            isPaused
-              ? "border-[#dfe7ca] bg-[#f7f9ef]"
-              : "border-[#efdcd5] bg-[#fdf6f3]",
-          )}
-        >
-        <div className="min-w-0">
-          <p
-            className={cn(
-              "text-sm font-semibold",
-              isPaused ? "text-olive-900" : "text-[#7a2d1c]",
-            )}
-          >
-            {isPaused
-              ? t("interviewDetail.resumeRoleTitle")
-              : t("interviewDetail.pauseRoleTitle")}
-          </p>
-          <p
-            className={cn(
-              "mt-1 text-[12.5px] leading-[1.45]",
-              isPaused ? "text-olive-800" : "text-[#9c6453]",
-            )}
-          >
-            {isPaused
-              ? t("interviewDetail.resumeRoleBody", { roleTitle })
-              : t("interviewDetail.pauseRoleBody", { roleTitle })}
-          </p>
-        </div>
-        <form action={updateInterviewPublicationStatusAction}>
-          <input name="interviewId" type="hidden" value={interviewId} />
-          <input name="nextStatus" type="hidden" value={nextStatus} />
-          <button
-            className={cn(
-              "inline-flex h-[38px] cursor-pointer items-center gap-2 rounded-full border bg-white px-4 text-[13px] font-semibold transition focus-visible:outline-none focus-visible:ring-2",
-              isPaused
-                ? "border-[#d4ddbd] text-olive-900 hover:border-olive-800 focus-visible:ring-olive-300"
-                : "border-[#e0b5a8] text-[#9a3417] hover:border-[#9a3417] focus-visible:ring-coral-100",
-            )}
-            type="submit"
-          >
-            <Pause aria-hidden={true} className="h-4 w-4" />
-            {isPaused
-              ? t("interviewDetail.resumeRoleButton")
-              : t("interviewDetail.pauseRoleButton")}
-          </button>
-        </form>
-        </section>
-      ) : null}
-
       <section className="flex gap-2.5 rounded-2xl border border-[#e7e2d8] bg-[#f7f7ef] px-4 py-3 text-sm leading-6 text-[#5b574f]">
         <WarningTriangle
           aria-hidden={true}
@@ -565,10 +493,7 @@ function EmptyInlineState({ text }: { text: string }) {
   );
 }
 
-function matchesFilter(
-  candidate: CandidateScreenListItem,
-  filter: ReviewFilter,
-) {
+function matchesFilter(candidate: CandidateQueueRow, filter: ReviewFilter) {
   if (filter === "all") {
     return true;
   }
@@ -581,4 +506,20 @@ function matchesFilter(
     candidate.reviewStatus === filter &&
     !isCandidateScreenInProgress(candidate.status)
   );
+}
+
+// The generator emits one question per criterion; pairing by position keeps the
+// setup view readable when the two lists drift out of sync.
+function pairCriteriaWithQuestions(
+  criteria: InterviewOverviewCriterion[],
+  questions: InterviewOverviewQuestion[],
+) {
+  const length = Math.max(criteria.length, questions.length);
+
+  return Array.from({ length }, (_unused, index) => ({
+    criterion: criteria[index] ?? null,
+    key: criteria[index]?.id ?? questions[index]?.id ?? String(index),
+    numberLabel: String(index + 1).padStart(2, "0"),
+    question: questions[index] ?? null,
+  }));
 }

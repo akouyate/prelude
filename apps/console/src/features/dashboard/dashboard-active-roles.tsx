@@ -25,36 +25,44 @@ export type DashboardActiveRole = {
 
 export async function DashboardActiveRoles({
   roles,
+  totalCount,
 }: {
   roles: DashboardActiveRole[];
+  totalCount: number;
 }) {
   const t = getServerT(await getAuthenticatedUserLocale());
+  const visibleRoles = roles.slice(0, 4);
 
   return (
     <section
-      className="rounded-[24px] border border-ink-100 bg-white/74 p-4 backdrop-blur"
+      className="mt-5 rounded-[24px] border border-ink-100 bg-white/74 p-[18px] backdrop-blur"
       id="interviews"
     >
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h2 className="text-base font-semibold text-ink-950">
             {t("dashboard.activeRolesTitle")}
           </h2>
           <p className="mt-1 text-sm text-ink-500">
-            {t("dashboard.activeRolesSubtitle")}
+            {visibleRoles.length > 0
+              ? `${t("dashboard.activeRolesRecent", {
+                  count: visibleRoles.length,
+                  total: totalCount,
+                })} ${t("dashboard.activeRolesSubtitle")}`
+              : t("dashboard.activeRolesSubtitle")}
           </p>
         </div>
         <Link
           className="shrink-0 cursor-pointer text-[12.5px] font-medium text-ink-500 transition hover:text-ink-950"
           href="/roles"
         >
-          {t("dashboard.viewAll")}
+          {t("dashboard.viewAllCount", { count: totalCount })}
         </Link>
       </div>
 
-      {roles.length > 0 ? (
-        <div className="mt-4 grid gap-2 sm:grid-cols-2">
-          {roles.slice(0, 4).map((role) => (
+      {visibleRoles.length > 0 ? (
+        <div className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(240px,1fr))] gap-2">
+          {visibleRoles.map((role) => (
             <Link
               className="group flex cursor-pointer items-center justify-between gap-3 rounded-2xl border border-ink-100 bg-white/60 px-3.5 py-3 transition hover:border-ink-200 hover:bg-white"
               href={role.href}

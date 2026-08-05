@@ -4,6 +4,7 @@ import {
   buildInterviewReplayChapters,
   formatReplayTime,
   replayOffsetMs,
+  replayOriginMs,
 } from "./interview-replay";
 
 const questions = [
@@ -119,10 +120,11 @@ describe("buildInterviewReplayChapters", () => {
 
 describe("replay time helpers", () => {
   it("formats offsets and rejects invalid timestamps", () => {
-    const turns = [turn("i1", "q1", "interviewer", 5, 8)];
+    const originMs = replayOriginMs([turn("i1", "q1", "interviewer", 5, 8)]);
 
-    expect(replayOffsetMs("2026-07-29T10:00:12.000Z", turns)).toBe(7_000);
-    expect(replayOffsetMs("invalid", turns)).toBe(0);
+    expect(replayOffsetMs("2026-07-29T10:00:12.000Z", originMs)).toBe(7_000);
+    expect(replayOffsetMs("invalid", originMs)).toBe(0);
+    expect(replayOffsetMs("2026-07-29T10:00:12.000Z", null)).toBe(0);
     expect(formatReplayTime(3_725_000)).toBe("1:02:05");
   });
 });

@@ -195,42 +195,43 @@ function InvitationRow({
     : t("interviewDetail.invitationNotOpened");
 
   return (
-    <article className="grid gap-4 px-[18px] py-4 md:grid-cols-[minmax(0,1fr)_128px_minmax(0,0.9fr)] md:items-center">
+    <article className="grid gap-x-4 gap-y-2 px-[18px] py-2.5 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center">
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <p className="truncate text-[14px] font-semibold text-ink-950">
+          <p className="truncate text-[13.5px] font-semibold text-ink-950">
             {invitation.candidateLabel}
           </p>
           <Pill tone={invitationStatusTone(invitation.status)}>
             {formatInvitationStatus(invitation.status, t)}
           </Pill>
         </div>
-        <p className="mt-1 truncate text-[12.5px] text-ink-400">
+        <p className="mt-0.5 truncate text-[12px] text-ink-400">
           {invitation.candidateEmail ??
             t("interviewDetail.invitationManualDelivery")}{" "}
           · {openedLabel}
         </p>
       </div>
 
-      <div>
-        <p className="text-[11px] font-bold uppercase tracking-[0.1em] text-ink-400">
-          {t("interviewDetail.invitationExpires")}
-        </p>
-        <p className="mt-1 text-[13px] font-semibold text-ink-600">
+      <p className="whitespace-nowrap text-[12px] text-ink-400">
+        {t("interviewDetail.invitationExpires")}{" "}
+        <span className="font-semibold text-ink-600">
           {formatDate(invitation.expiresAt, locale)}
-        </p>
-      </div>
+        </span>
+      </p>
 
-      <div className="flex flex-wrap items-center gap-2 md:justify-end">
+      <div className="flex items-center gap-1.5 md:justify-end">
         {invitation.latestCandidateSessionHref ? (
           <a
-            className="inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-white px-3.5 text-[12.5px] font-semibold text-ink-950 transition hover:border-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+            className="inline-flex h-8 cursor-pointer items-center justify-center whitespace-nowrap rounded-full border border-ink-200 bg-white px-3 text-[12px] font-semibold text-ink-950 transition hover:border-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
             href={invitation.latestCandidateSessionHref}
           >
             {t("interviewDetail.invitationOpenSession")}
           </a>
         ) : null}
-        <CopyCandidateLinkButton candidatePath={invitation.candidatePath}>
+        <CopyCandidateLinkButton
+          candidatePath={invitation.candidatePath}
+          className="h-8 gap-1.5 whitespace-nowrap px-3 text-[12px]"
+        >
           {t("interviewDetail.invitationCopyLink")}
         </CopyCandidateLinkButton>
         {canReissue ? (
@@ -238,11 +239,11 @@ function InvitationRow({
             <input name="interviewId" type="hidden" value={interviewId} />
             <input name="invitationId" type="hidden" value={invitation.id} />
             <Button
-              className="h-9 px-3.5 text-[12.5px]"
+              className="h-8 gap-1.5 whitespace-nowrap px-3 text-[12px]"
               type="submit"
               variant="secondary"
             >
-              <RefreshCircle aria-hidden={true} className="h-4 w-4" />
+              <RefreshCircle aria-hidden={true} className="h-3.5 w-3.5" />
               {t("interviewDetail.invitationReissue")}
             </Button>
           </form>

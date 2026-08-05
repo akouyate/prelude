@@ -1,17 +1,30 @@
 import Link from "next/link";
-import { FilterList, Plus } from "iconoir-react";
+import { Download, Plus } from "iconoir-react";
 import type { TFunction } from "i18next";
 
 import { getServerT } from "../../libs/i18n-server";
 import { getAuthenticatedUserLocale } from "../../server/users/user-locale";
 
+export type DashboardHeaderStats = {
+  activeRoles: number;
+  completed: number;
+  drafts: number;
+  published: number;
+};
+
 export async function DashboardPageHeader({
   needsReviewCount,
   organizationName,
+  staleAfterDays,
+  staleCount,
+  stats,
   userName,
 }: {
   needsReviewCount: number;
   organizationName: string;
+  staleAfterDays: number;
+  staleCount: number;
+  stats: DashboardHeaderStats;
   userName: string;
 }) {
   const locale = await getAuthenticatedUserLocale();
@@ -30,8 +43,26 @@ export async function DashboardPageHeader({
             {firstNameFor(userName, t)}
           </span>
         </h1>
-        <p className="mt-2.5 max-w-[42rem] text-[15px] leading-[1.55] text-ink-600">
-          {t("dashboard.headerSummary", { count: needsReviewCount })}
+        <p className="mt-2.5 max-w-[44rem] text-[15px] leading-[1.55] text-ink-600">
+          {needsReviewCount === 0
+            ? t("dashboard.headerSummaryClear")
+            : staleCount > 0
+              ? t("dashboard.headerSummaryOverdue", {
+                  count: needsReviewCount,
+                  days: staleAfterDays,
+                  stale: staleCount,
+                })
+              : t("dashboard.headerSummary", { count: needsReviewCount })}
+        </p>
+        <p className="mt-2 text-[13px] text-ink-400">
+          {[
+            t("dashboard.statLiveScreens", { count: stats.published }),
+            t("dashboard.statCompletedSessions", { count: stats.completed }),
+            t("dashboard.statActiveRoles", {
+              count: stats.activeRoles,
+              drafts: stats.drafts,
+            }),
+          ].join(" · ")}
         </p>
       </div>
 
@@ -40,8 +71,8 @@ export async function DashboardPageHeader({
           className="inline-flex h-[38px] cursor-pointer items-center justify-center gap-2 rounded-full border border-ink-200 bg-white px-4 text-[13px] font-semibold text-ink-900 transition hover:border-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
           type="button"
         >
-          <FilterList aria-hidden={true} className="h-4 w-4" />
-          {t("dashboard.export")}
+          <Download aria-hidden={true} className="h-4 w-4" />
+          {t("dashboard.exportQueue")}
         </button>
         <Link
           className="inline-flex h-[38px] cursor-pointer items-center justify-center gap-2 rounded-full bg-ink-900 px-[17px] text-[13px] font-semibold text-white transition hover:bg-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"

@@ -87,3 +87,25 @@ function normalizeCandidateReviewNote(value: string) {
     .join("\n")
     .trim();
 }
+
+// A completed screen waiting this long without a recruiter decision is called
+// out as overdue, in the queue tiles, the row marker, and the header summary.
+export const candidateReviewStaleAfterDays = 3;
+
+/**
+ * Whole days a screen has been waiting on a recruiter, from the moment it was
+ * interviewed. `now` is passed in so callers render a value the server computed
+ * rather than deriving "now" during a client render.
+ */
+export function candidateWaitingDays(
+  interviewedAt: string | null,
+  now: number,
+) {
+  if (!interviewedAt) {
+    return 0;
+  }
+
+  const elapsed = now - new Date(interviewedAt).getTime();
+
+  return Math.max(Math.floor(elapsed / 86_400_000), 0);
+}

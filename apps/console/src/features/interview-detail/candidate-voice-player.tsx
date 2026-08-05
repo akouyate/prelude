@@ -1,7 +1,7 @@
 "use client";
 
-import { PauseSolid, PlaySolid } from "iconoir-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { PauseSolid, PlaySolid, Undo } from "iconoir-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   formatReplayTime,
@@ -11,6 +11,59 @@ import {
   type ReplayRequest,
   useInterviewReplay,
 } from "./interview-replay-controller";
+
+const playbackSpeeds = [0.75, 1, 1.25, 1.5, 2];
+
+function nextPlaybackSpeed(speed: number) {
+  const index = playbackSpeeds.indexOf(speed);
+
+  return playbackSpeeds[(index + 1) % playbackSpeeds.length] ?? 1;
+}
+
+const waveformBarCount = 96;
+const skipBackMs = 15_000;
+
+// The waveform is a decorative speech envelope, not a real amplitude read of the
+// recording: phrases of 6-14 bars with short pauses between them. It is derived
+// from a fixed seed so a given interview always draws the same shape.
+function buildWaveform() {
+  const bars: number[] = [];
+  let seed = 20_260_804;
+  const random = () => {
+    seed = (seed * 1_103_515_245 + 12_345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+
+  while (bars.length < waveformBarCount) {
+    const phraseLength = 6 + Math.floor(random() * 9);
+    const loudness = 0.42 + random() * 0.58;
+
+    for (
+      let index = 0;
+      index < phraseLength && bars.length < waveformBarCount;
+      index += 1
+    ) {
+      const arc = Math.sin((index / phraseLength) * Math.PI);
+      const syllable =
+        0.62 + 0.38 * Math.abs(Math.sin(index * 1.9 + loudness * 4));
+      bars.push(Math.max(0.1, loudness * (0.35 + 0.65 * arc) * syllable));
+    }
+
+    const pause = 1 + Math.floor(random() * 3);
+    for (
+      let index = 0;
+      index < pause && bars.length < waveformBarCount;
+      index += 1
+    ) {
+      bars.push(0.07 + random() * 0.05);
+    }
+  }
+
+  return bars;
+}
+
+// Deterministic and argument-free: build it once for the module, not per mount.
+const waveform = buildWaveform();
 
 // Structural match of the server CandidateRecording (kept local so this client
 // component pulls in no server-only code).
@@ -59,8 +112,11 @@ function VoicePlayer({
   durationMs: number;
   url: string;
 }) {
-  const { playFullInterview, playRange, registerPlayer } = useInterviewReplay();
+  const { openTranscript, publishPlayback, registerPlayer, registerToggle } =
+    useInterviewReplay();
   const audioRef = useRef<HTMLAudioElement>(null);
+  const waveformRef = useRef<HTMLDivElement>(null);
+  const [speed, setSpeed] = useState<number>(1);
   const segmentEndRef = useRef<number | null>(null);
   const totalMsRef = useRef(durationMs);
   const [activeRequest, setActiveRequest] = useState<ReplayRequest | null>(
@@ -155,7 +211,7 @@ function VoicePlayer({
     return () => registerPlayer(null);
   }, [playRequest, registerPlayer]);
 
-  const togglePlayback = async () => {
+  const togglePlayback = useCallback(async () => {
     const audio = audioRef.current;
     if (!audio) {
       return;
@@ -183,7 +239,12 @@ function VoicePlayer({
     } else {
       audio.pause();
     }
-  };
+  }, [activeRequest]);
+
+  useEffect(() => {
+    registerToggle(() => void togglePlayback());
+    return () => registerToggle(null);
+  }, [registerToggle, togglePlayback]);
 
   const seekTo = (nextElapsedMs: number) => {
     const audio = audioRef.current;
@@ -198,18 +259,36 @@ function VoicePlayer({
   };
 
   const progress = totalMs > 0 ? Math.min(100, (elapsedMs / totalMs) * 100) : 0;
-  const currentChapter = useMemo(
-    () =>
-      chapters.find(
-        (chapter) => elapsedMs >= chapter.startMs && elapsedMs < chapter.endMs,
-      ) ?? null,
-    [chapters, elapsedMs],
-  );
+  const playedRatio = progress / 100;
+
+  useEffect(() => {
+    publishPlayback({ elapsedMs, isPlaying, totalMs });
+  }, [elapsedMs, isPlaying, publishPlayback, totalMs]);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.playbackRate = speed;
+    }
+  }, [speed]);
+
+  const seekFromPointer = (clientX: number) => {
+    const bounds = waveformRef.current?.getBoundingClientRect();
+
+    if (!bounds || bounds.width === 0) {
+      return;
+    }
+
+    const fraction = Math.min(
+      1,
+      Math.max(0, (clientX - bounds.left) / bounds.width),
+    );
+    seekTo(fraction * totalMs);
+  };
 
   return (
     <section
       aria-label="Interview recording"
-      className="sticky top-[58px] z-[15] scroll-mt-[58px] rounded-[16px] border border-[#e7e2d8] bg-white px-[18px] py-[13px]"
+      className="sticky top-3 z-[15] mt-[26px] scroll-mt-3 rounded-[999px] border border-[#eae6dc] bg-white/95 py-[7px] pl-[7px] pr-[15px] backdrop-blur max-[680px]:rounded-[18px] max-[680px]:px-3.5 max-[680px]:py-2.5"
     >
       <audio
         onEnded={() => {
@@ -237,125 +316,112 @@ function VoicePlayer({
         ref={audioRef}
         src={url}
       />
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3 max-[680px]:flex-wrap max-[680px]:gap-y-2">
         <button
           aria-describedby={
             playbackError ? "recording-playback-error" : undefined
           }
           aria-label={isPlaying ? "Pause recording" : "Play recording"}
-          className="grid h-[46px] w-[46px] shrink-0 cursor-pointer place-items-center rounded-full border-0 text-white transition hover:bg-[#2a2925] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+          className="grid h-[34px] w-[34px] shrink-0 cursor-pointer place-items-center rounded-full bg-ink-900 text-white transition hover:bg-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
           onClick={() => void togglePlayback()}
-          style={{ backgroundColor: "#171612" }}
           type="button"
         >
           {isPlaying ? (
-            <PauseSolid aria-hidden={true} className="h-[19px] w-[19px]" />
+            <PauseSolid aria-hidden={true} className="h-[13px] w-[13px]" />
           ) : (
-            <PlaySolid aria-hidden={true} className="h-[19px] w-[19px]" />
+            <PlaySolid
+              aria-hidden={true}
+              className="ml-0.5 h-[15px] w-[15px]"
+            />
           )}
         </button>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-[13px] font-semibold text-ink-950">
-                Voice interview
-              </p>
-              <p className="mt-0.5 truncate text-[11.5px] text-[#8a8178]">
-                {activeRequest?.label ??
-                  currentChapter?.label ??
-                  "Full interview"}
-              </p>
-            </div>
-            <p className="font-mono text-xs tabular-nums text-[#8a8178]">
-              {formatReplayTime(elapsedMs)} / {formatReplayTime(totalMs)}
-            </p>
-          </div>
-          <div className="relative mt-2 flex h-[32px] w-full items-center">
-            <span className="h-[6px] w-full overflow-hidden rounded-full bg-[#ece8de]">
-              <span
-                className="block h-full rounded-full bg-olive-700"
-                style={{ width: `${progress}%` }}
-              />
-            </span>
-            {chapters.slice(1).map((chapter) => (
-              <span
-                aria-hidden={true}
-                className="pointer-events-none absolute top-1/2 h-[14px] w-px -translate-y-1/2 bg-white"
-                key={chapter.id}
-                style={{
-                  left: `${totalMs > 0 ? (chapter.startMs / totalMs) * 100 : 0}%`,
-                }}
-              />
-            ))}
-            <span
-              className="pointer-events-none absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full"
-              style={{
-                backgroundColor: "#171612",
-                left: `calc(${progress}% - 6px)`,
-              }}
-            />
-            <input
-              aria-label="Seek recording"
-              className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-              max={Math.max(totalMs, 1)}
-              min={0}
-              onChange={(event) => seekTo(Number(event.currentTarget.value))}
-              step={250}
-              type="range"
-              value={Math.min(elapsedMs, Math.max(totalMs, 1))}
-            />
-          </div>
-          {chapters.length > 0 ? (
-            <div
-              aria-label="Interview chapters"
-              className="mt-1 flex gap-1.5 overflow-x-auto pb-1"
-            >
-              <button
-                className={`h-7 shrink-0 cursor-pointer rounded-full border px-2.5 text-[11px] font-semibold transition ${
-                  activeRequest?.id === "full-interview" || !activeRequest
-                    ? "border-ink-950 bg-ink-950 text-white"
-                    : "border-[#e2ddd2] bg-white text-[#5b574f] hover:border-ink-950"
-                }`}
-                onClick={playFullInterview}
-                type="button"
-              >
-                Full
-              </button>
-              {chapters.map((chapter) => {
-                const active = activeRequest?.id === chapter.id;
+        <button
+          aria-label="Back 15 seconds"
+          className="grid h-7 w-7 shrink-0 cursor-pointer place-items-center rounded-full text-ink-400 transition hover:bg-[#f1efe8] hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+          onClick={() => seekTo(elapsedMs - skipBackMs)}
+          title="Back 15 seconds"
+          type="button"
+        >
+          <Undo aria-hidden={true} className="h-[15px] w-[15px]" />
+        </button>
 
-                return (
-                  <button
-                    aria-label={`Play question ${chapter.questionNumber}: ${chapter.label}`}
-                    className={`h-7 shrink-0 cursor-pointer rounded-full border px-2.5 text-[11px] font-semibold transition ${
-                      active
-                        ? "border-olive-800 bg-[#eef0e3] text-olive-950"
-                        : "border-[#e2ddd2] bg-white text-[#5b574f] hover:border-ink-950"
-                    }`}
-                    key={chapter.id}
-                    onClick={() =>
-                      playRange({
-                        endMs: chapter.endMs,
-                        id: chapter.id,
-                        label: chapter.label,
-                        startMs: chapter.startMs,
-                      })
-                    }
-                    title={chapter.label}
-                    type="button"
-                  >
-                    Q{chapter.questionNumber} ·{" "}
-                    {formatReplayTime(chapter.startMs)}
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
+        <div
+          aria-label="Seek recording"
+          className="relative flex h-[26px] min-w-0 flex-1 cursor-pointer items-center justify-between gap-px max-[680px]:order-first max-[680px]:basis-full"
+          onClick={(event) => seekFromPointer(event.clientX)}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft") {
+              event.preventDefault();
+              seekTo(elapsedMs - 5_000);
+            }
+
+            if (event.key === "ArrowRight") {
+              event.preventDefault();
+              seekTo(elapsedMs + 5_000);
+            }
+          }}
+          ref={waveformRef}
+          role="slider"
+          aria-valuemax={Math.round(totalMs / 1000)}
+          aria-valuemin={0}
+          aria-valuenow={Math.round(elapsedMs / 1000)}
+          tabIndex={0}
+        >
+          {waveform.map((value, index) => (
+            <span
+              className={`pointer-events-none min-w-px flex-1 rounded-[1px] ${
+                (index + 0.5) / waveform.length <= playedRatio
+                  ? "bg-[#8a8178]"
+                  : "bg-[#e4e0d4]"
+              }`}
+              key={index}
+              style={{ height: `${Math.max(3, Math.round(value * 22))}px` }}
+            />
+          ))}
+          {chapters.map((chapter) => (
+            <span
+              className="pointer-events-none absolute -bottom-1 -ml-[1.5px] h-[3px] w-[3px] rounded-full bg-[#cbc4b6]"
+              key={chapter.id}
+              style={{
+                left: `${totalMs > 0 ? (chapter.startMs / totalMs) * 100 : 0}%`,
+              }}
+              title={`${chapter.label} · ${formatReplayTime(chapter.startMs)}`}
+            />
+          ))}
+          <span
+            className="pointer-events-none absolute -bottom-px -ml-[0.75px] -top-px w-[1.5px] rounded-sm bg-ink-900"
+            style={{ left: `${progress}%` }}
+          />
         </div>
+
+        <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-ink-400">
+          {formatReplayTime(elapsedMs)}{" "}
+          <span className="text-[#d6d1c4]">/</span> {formatReplayTime(totalMs)}
+        </span>
+        <button
+          className={`grid h-[26px] min-w-[42px] shrink-0 cursor-pointer place-items-center rounded-full border px-[9px] font-mono text-[11px] font-medium leading-none tabular-nums transition hover:border-ink-900 hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300 ${
+            speed === 1
+              ? "border-[#eae6dc] text-ink-400"
+              : "border-[#cbc4b6] text-ink-700"
+          }`}
+          onClick={() => setSpeed(nextPlaybackSpeed(speed))}
+          title="Playback speed"
+          type="button"
+        >
+          {speed}×
+        </button>
+        <span className="h-[18px] w-px shrink-0 bg-[#eae6dc]" />
+        <button
+          className="shrink-0 cursor-pointer text-xs font-semibold text-ink-400 transition hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+          onClick={openTranscript}
+          type="button"
+        >
+          Transcript
+        </button>
       </div>
       {playbackError ? (
         <p
-          className="mt-2 pl-[62px] text-xs leading-5 text-red-700"
+          className="mt-2 px-3 text-xs leading-5 text-coral-800"
           id="recording-playback-error"
           role="alert"
         >
@@ -383,8 +449,8 @@ function VoicePlayerPlaceholder({
             : "No audio recording for this interview.";
 
   return (
-    <section className="sticky top-[58px] z-[15] flex scroll-mt-[58px] items-center gap-3 rounded-[16px] border border-dashed border-[#e0dacc] bg-white/70 px-[18px] py-[13px]">
-      <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full bg-[#f0ece2] text-[#a29b8d]">
+    <section className="mt-[26px] flex items-center gap-3 rounded-[999px] border border-dashed border-[#e0dacc] bg-white/70 py-[7px] pl-[7px] pr-[15px] max-[680px]:rounded-[18px] max-[680px]:px-3.5">
+      <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full bg-[#f0ece2] text-ink-400">
         <PlaySolid aria-hidden={true} className="h-4 w-4" />
       </span>
       <p className="text-[13px] text-[#7c766b]">{message}</p>
