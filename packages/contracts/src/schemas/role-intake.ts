@@ -19,10 +19,34 @@ export const roleIntakeStatusSchema = z.enum([
   "deleted",
 ]);
 
+/**
+ * Every acquisition path clamps a draft to these limits before persisting it, so
+ * they are named here rather than repeated as literals next to each extractor.
+ */
+export const roleIntakeDraftLimits = {
+  description: 500_000,
+  location: 160,
+  title: 160,
+} as const;
+
 export const importedRoleDraftSchema = z.object({
-  description: z.string().trim().max(500_000).default(""),
-  location: z.string().trim().max(160).nullable().default(null),
-  title: z.string().trim().max(160).nullable().default(null),
+  description: z
+    .string()
+    .trim()
+    .max(roleIntakeDraftLimits.description)
+    .default(""),
+  location: z
+    .string()
+    .trim()
+    .max(roleIntakeDraftLimits.location)
+    .nullable()
+    .default(null),
+  title: z
+    .string()
+    .trim()
+    .max(roleIntakeDraftLimits.title)
+    .nullable()
+    .default(null),
 });
 
 export const roleIntakeWarningSchema = z.object({
@@ -31,6 +55,7 @@ export const roleIntakeWarningSchema = z.object({
 });
 
 export const roleIntakeFieldSourceSchema = z.enum([
+  "ats_public_api",
   "indexed_web_search",
   "job_posting_json_ld",
   "main_content",
@@ -39,9 +64,20 @@ export const roleIntakeFieldSourceSchema = z.enum([
   "unavailable",
 ]);
 
+export const roleIntakeAcquisitionStrategySchema = z.enum([
+  "ats_api",
+  "direct_html",
+  "indexed_search",
+]);
+
+export const roleIntakeFieldSourcesSchema = z.object({
+  description: roleIntakeFieldSourceSchema,
+  location: roleIntakeFieldSourceSchema,
+  title: roleIntakeFieldSourceSchema,
+});
+
 export const roleIntakeSourceProvenanceSchema = z.object({
-  acquisitionStrategy: z
-    .enum(["direct_html", "indexed_search"])
+  acquisitionStrategy: roleIntakeAcquisitionStrategySchema
     .nullable()
     .default(null),
   canonicalUrl: z.string().url().max(2_048).nullable().default(null),
@@ -49,14 +85,7 @@ export const roleIntakeSourceProvenanceSchema = z.object({
   displayName: z.string().trim().min(1).max(255),
   extractorVersion: z.string().trim().min(1).max(80).nullable().default(null),
   fetchedAt: z.string().datetime().nullable().default(null),
-  fieldSources: z
-    .object({
-      description: roleIntakeFieldSourceSchema,
-      location: roleIntakeFieldSourceSchema,
-      title: roleIntakeFieldSourceSchema,
-    })
-    .nullable()
-    .default(null),
+  fieldSources: roleIntakeFieldSourcesSchema.nullable().default(null),
   submittedUrl: z.string().url().max(2_048).nullable().default(null),
 });
 
@@ -80,6 +109,9 @@ export type ImportedRoleDraft = z.infer<typeof importedRoleDraftSchema>;
 export type RoleIntakeSourceKind = z.infer<typeof roleIntakeSourceKindSchema>;
 export type RoleIntakeSourceRetention = z.infer<
   typeof roleIntakeSourceRetentionSchema
+>;
+export type RoleIntakeAcquisitionStrategy = z.infer<
+  typeof roleIntakeAcquisitionStrategySchema
 >;
 export type RoleIntakeStatus = z.infer<typeof roleIntakeStatusSchema>;
 export type RoleIntakeSummary = z.infer<typeof roleIntakeSummarySchema>;

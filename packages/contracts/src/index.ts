@@ -65,7 +65,10 @@ export {
 } from "./schemas/onboarding";
 export {
   importedRoleDraftSchema,
+  roleIntakeAcquisitionStrategySchema,
+  roleIntakeDraftLimits,
   roleIntakeFieldSourceSchema,
+  roleIntakeFieldSourcesSchema,
   roleIntakeSourceKindSchema,
   roleIntakeSourceRetentionSchema,
   roleIntakeSourceProvenanceSchema,
@@ -73,6 +76,7 @@ export {
   roleIntakeSummarySchema,
   roleIntakeWarningSchema,
   type ImportedRoleDraft,
+  type RoleIntakeAcquisitionStrategy,
   type RoleIntakeFieldSource,
   type RoleIntakeSourceKind,
   type RoleIntakeSourceRetention,

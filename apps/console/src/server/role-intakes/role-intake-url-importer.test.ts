@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  assertRoleIntakeSourceSupported,
   createRoleIntakeUrlIdentity,
   RoleIntakeUrlImportError,
   extractRoleIntakeUrlDraft,
@@ -20,17 +21,45 @@ describe("role intake public URL policy", () => {
     ).toBe("https://careers.example.com/jobs/123?jobId=123");
   });
 
+  it("removes provider tracking from a LinkedIn job URL", () => {
+    expect(
+      normalizeRoleIntakeUrl(
+        "https://www.linkedin.com/jobs/view/4436807221/?trk=public_jobs&trackingId=abc",
+      ).toString(),
+    ).toBe("https://www.linkedin.com/jobs/view/4436807221/");
+  });
+
+  // These sources were measured as permanently unreadable, so a recruiter is
+  // told at paste time instead of after the import has failed.
   it.each([
-    [
-      "https://www.linkedin.com/jobs/view/4436807221/?trk=public_jobs&trackingId=abc",
-      "https://www.linkedin.com/jobs/view/4436807221/",
-    ],
-    [
-      "https://fr.indeed.com/viewjob?vjk=f066959d3108e72b&from=serp",
-      "https://fr.indeed.com/viewjob?jk=f066959d3108e72b",
-    ],
-  ])("removes provider tracking from %s", (source, expected) => {
-    expect(normalizeRoleIntakeUrl(source).toString()).toBe(expected);
+    "https://fr.indeed.com/viewjob?jk=f066959d3108e72b",
+    "https://www.indeed.com/viewjob?jk=abc",
+    "https://indeed.co.uk/viewjob?jk=abc",
+    "https://www.welcometothejungle.com/fr/companies/sii/jobs/pmo-f-h_rennes",
+  ])("refuses an unsupported source before any work starts: %s", (value) => {
+    expect(() =>
+      assertRoleIntakeSourceSupported(normalizeRoleIntakeUrl(value)),
+    ).toThrow(expect.objectContaining({ code: "source_unsupported" }));
+  });
+
+  it.each([
+    "https://notindeed.com/jobs/1",
+    "https://indeed.example.com/jobs/1",
+    "https://careers.example.com/indeed.com/jobs/1",
+  ])("does not mistake a lookalike host for an unsupported source: %s", (value) => {
+    expect(() =>
+      assertRoleIntakeSourceSupported(normalizeRoleIntakeUrl(value)),
+    ).not.toThrow();
+  });
+
+  // Canonicalisation is also used on citations read back from storage, so it
+  // must stay free of the product rule about which sources are offered.
+  it("keeps normalisation free of the unsupported-source rule", () => {
+    expect(
+      normalizeRoleIntakeUrl(
+        "https://fr.indeed.com/viewjob?jk=f066959d3108e72b",
+      ).hostname,
+    ).toBe("fr.indeed.com");
   });
 
   it.each([
@@ -48,7 +77,6 @@ describe("role intake public URL policy", () => {
 
   it.each([
     ["https://www.linkedin.com/jobs/view/4430499568/", "indexed_search"],
-    ["https://fr.indeed.com/viewjob?jk=public-job-id", "indexed_search"],
     ["https://careers.example.com/jobs/123", "direct_html"],
   ] as const)("routes %s through %s", (value, strategy) => {
     const url = normalizeRoleIntakeUrl(value);
@@ -60,10 +88,6 @@ describe("role intake public URL policy", () => {
     [
       "https://www.linkedin.com/jobs/view/4436807221/",
       "https://fr.linkedin.com/jobs/view/site-engineer-4436807221?trk=public_jobs",
-    ],
-    [
-      "https://fr.indeed.com/viewjob?jk=f066959d3108e72b",
-      "https://www.indeed.com/viewjob?vjk=f066959d3108e72b&utm_source=search",
     ],
   ])("deduplicates provider aliases for %s", (first, second) => {
     expect(
@@ -325,6 +349,42 @@ describe("role intake static HTML extraction", () => {
       expect.arrayContaining([
         expect.objectContaining({ code: "location_unavailable" }),
       ]),
+    );
+  });
+
+  // `@type` is a schema.org term, so the bare and fully qualified spellings name
+  // the same thing and a site may nest the posting anywhere in its graph.
+  it("reads a JobPosting that is fully qualified and nested", () => {
+    const result = extractRoleIntakeUrlDraft(`
+      <html><head><title>Acme</title>
+      <script type="application/ld+json">{
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "mainEntity": {
+          "@type": "https://schema.org/JobPosting",
+          "title": "Data Engineer",
+          "description": "Build and operate the ingestion pipelines behind our analytics product.",
+          "jobLocation": { "address": { "addressLocality": "Nantes", "addressCountry": "FR" } }
+        }
+      }</script></head><body><p>Loading…</p></body></html>
+    `);
+
+    expect(result.draft.title).toBe("Data Engineer");
+    expect(result.draft.location).toBe("Nantes, FR");
+    expect(result.fieldSources.description).toBe("job_posting_json_ld");
+  });
+
+  it("decodes a JobPosting description whose markup arrives escaped", () => {
+    const result = extractRoleIntakeUrlDraft(`
+      <html><head><script type="application/ld+json">{
+        "@type": "JobPosting",
+        "title": "Support Engineer",
+        "description": "&lt;p&gt;Answer customer escalations and keep our runbooks current.&lt;/p&gt;"
+      }</script></head><body></body></html>
+    `);
+
+    expect(result.draft.description).toBe(
+      "Answer customer escalations and keep our runbooks current.",
     );
   });
 

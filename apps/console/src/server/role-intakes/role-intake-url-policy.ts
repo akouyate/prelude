@@ -4,7 +4,40 @@ import net from "node:net";
 const MAX_URL_LENGTH = 2_048;
 const MAX_QUERY_LENGTH = 512;
 
-const indexedSearchProviders = ["indeed.com", "linkedin.com"] as const;
+const indexedSearchProviders = ["linkedin.com"] as const;
+
+/**
+ * HireCall offers only what it can actually deliver, so a source measured as
+ * permanently unreadable is refused the moment it is pasted rather than after a
+ * round of work. Indeed answers 403 and disallows the path in robots.txt for
+ * every named crawler; Welcome to the Jungle refuses any identified server-side
+ * client. See docs/sources/integration-providers.md for the measurements.
+ */
+const unsupportedSources: ReadonlyArray<{ name: string; pattern: RegExp }> = [
+  { name: "Indeed", pattern: /(^|\.)indeed\.[a-z]{2,3}(\.[a-z]{2,3})?$/ },
+  {
+    name: "Welcome to the Jungle",
+    pattern: /(^|\.)welcometothejungle\.com$/,
+  },
+];
+
+/**
+ * Admission control, kept out of `normalizeRoleIntakeUrl` on purpose: that
+ * function is also used to canonicalise URLs read back from storage and to
+ * compare citations, and neither should inherit a product rule about which
+ * sources HireCall offers.
+ */
+export function assertRoleIntakeSourceSupported(url: URL): void {
+  const unsupported = unsupportedSources.find((source) =>
+    source.pattern.test(url.hostname),
+  );
+  if (unsupported) {
+    throw new RoleIntakeUrlImportError(
+      "source_unsupported",
+      `${unsupported.name} does not allow HireCall to read its job pages. Upload the job description or enter it manually instead.`,
+    );
+  }
+}
 const sensitiveQueryParameterNames = new Set([
   "access_token",
   "api_key",
@@ -32,6 +65,7 @@ export class RoleIntakeUrlImportError extends Error {
     readonly code:
       | "invalid_url"
       | "indexed_search_invalid"
+      | "indexed_search_not_found"
       | "indexed_search_unavailable"
       | "indexed_search_unverified"
       | "no_usable_text"
@@ -42,6 +76,7 @@ export class RoleIntakeUrlImportError extends Error {
       | "robots_disallowed"
       | "robots_unavailable"
       | "source_not_public"
+      | "source_unsupported"
       | "unsupported_content",
     message: string,
     readonly retryable = false,
@@ -121,32 +156,25 @@ export function normalizeRoleIntakeUrl(value: string): URL {
     }
   }
 
-  const indexedProvider = getRoleIntakeIndexedSearchDomain(url);
-  if (indexedProvider === "linkedin.com") {
+  if (getRoleIntakeIndexedSearchDomain(url)) {
     url.search = "";
-  } else if (indexedProvider === "indeed.com") {
-    const jobKey = url.searchParams.get("jk") ?? url.searchParams.get("vjk");
-    url.search = "";
-    if (jobKey) {
-      url.searchParams.set("jk", jobKey);
-    }
   }
 
   return url;
 }
 
+/**
+ * Two links to the same posting must collapse to one intake. A LinkedIn job id
+ * survives the slug and tracking noise around it, so it identifies the posting
+ * better than the URL does.
+ */
 export function createRoleIntakeUrlIdentity(url: URL): string {
   const provider = getRoleIntakeIndexedSearchDomain(url);
-  const providerIdentity =
+  const jobId =
     provider === "linkedin.com"
       ? url.pathname.match(/(?:^|[-/])(\d{7,})(?:\/)?$/)?.[1]
-      : provider === "indeed.com"
-        ? (url.searchParams.get("jk") ?? url.searchParams.get("vjk"))
-        : null;
-  const identitySource =
-    provider && providerIdentity
-      ? `${provider}:${providerIdentity}`
-      : url.toString();
+      : null;
+  const identitySource = jobId ? `${provider}:${jobId}` : url.toString();
 
   return createHash("sha256").update(identitySource).digest("hex");
 }

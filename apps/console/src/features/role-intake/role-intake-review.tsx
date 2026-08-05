@@ -280,6 +280,7 @@ function formatFieldSource(
   t: ReturnType<typeof useTranslation>["t"],
 ): string {
   return {
+    ats_public_api: t("roleIntake.review.fieldSources.atsPublicApi"),
     heading: t("roleIntake.review.fieldSources.heading"),
     indexed_web_search: t("roleIntake.review.fieldSources.indexedSearch"),
     job_posting_json_ld: t("roleIntake.review.fieldSources.jobPostingData"),

@@ -5,7 +5,12 @@ import type {
 import { ROLE_INTAKE_MAX_BYTES } from "../../domain/role-intake-policy";
 
 export type RoleIntakeProgressStep = "source" | "processing" | "review";
-export type RoleIntakeFailureAction = "manual" | "replace" | "resume" | "retry";
+export type RoleIntakeFailureAction =
+  | "manual"
+  | "replace"
+  | "resume"
+  | "retry"
+  | "unreachable";
 export type RoleIntakeFileIssue = "empty" | "too_large" | "unsupported";
 export type RoleIntakeReviewField = "title" | "description";
 export type RoleIntakeReviewDraft = {
@@ -51,6 +56,14 @@ export function classifyRoleIntakeFailure(
 ): RoleIntakeFailureAction {
   if (duplicateOfIntakeId) {
     return "resume";
+  }
+  // The posting could not be reached at all, so retrying the same link can
+  // never succeed — say so instead of offering a retry.
+  if (
+    failureCode === "indexed_search_not_found" ||
+    failureCode === "source_unsupported"
+  ) {
+    return "unreachable";
   }
   if (failureCode === "no_usable_text") {
     return "manual";

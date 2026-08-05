@@ -1,11 +1,17 @@
 import { parseDocument } from "htmlparser2";
 
-import type { ImportedRoleDraft, RoleIntakeWarning } from "@prelude/contracts";
+import {
+  roleIntakeDraftLimits,
+  type ImportedRoleDraft,
+  type RoleIntakeFieldSource,
+  type RoleIntakeWarning,
+} from "@prelude/contracts";
 
 import { RoleIntakeUrlImportError } from "./role-intake-url-policy";
 
-const MIN_ROLE_DESCRIPTION_CHARACTERS = 40;
-const MAX_EXTRACTED_DESCRIPTION_CHARACTERS = 100_000;
+export const MIN_ROLE_DESCRIPTION_CHARACTERS = 40;
+export const MAX_EXTRACTED_DESCRIPTION_CHARACTERS = 100_000;
+const MAX_STRUCTURED_JSON_DEPTH = 12;
 const ignoredHtmlElements = new Set([
   "audio",
   "base",
@@ -25,13 +31,9 @@ const ignoredHtmlElements = new Set([
 ]);
 const boilerplateHtmlElements = new Set(["aside", "footer", "header", "nav"]);
 
-export type RoleIntakeFieldSource =
-  | "indexed_web_search"
-  | "job_posting_json_ld"
-  | "main_content"
-  | "heading"
-  | "page_title"
-  | "unavailable";
+// The persisted contract owns the field-source vocabulary; re-exporting it keeps
+// every extraction path naming provenance the same way the summary does.
+export type { RoleIntakeFieldSource };
 
 export type RoleIntakeUrlFieldSources = {
   description: RoleIntakeFieldSource;
@@ -67,12 +69,7 @@ export function extractRoleIntakeUrlDraft(html: string): {
     nodeText(findFirstElement(nodes, ["title"])),
   );
   const structuredDescription = structured?.description
-    ? normalizeVisibleText(
-        parseDocument(structured.description) as unknown as HtmlNode,
-        {
-          excludeBoilerplate: false,
-        },
-      )
+    ? extractRoleIntakeHtmlText(structured.description)
     : "";
   const description = firstUsefulText(structuredDescription, visibleContent);
   if (
@@ -98,21 +95,7 @@ export function extractRoleIntakeUrlDraft(html: string): {
           ? "page_title"
           : "unavailable",
   };
-  const warnings: RoleIntakeWarning[] = [];
-  if (!title) {
-    warnings.push({
-      code: "title_unavailable",
-      message:
-        "HireCall could not identify a role title. Add one before continuing.",
-    });
-  }
-  if (!location) {
-    warnings.push({
-      code: "location_unavailable",
-      message:
-        "HireCall could not identify a location. Add one if it matters for this role.",
-    });
-  }
+  const warnings = buildMissingFieldWarnings({ location, title });
   if (!structuredDescription) {
     warnings.push({
       code: "description_extracted_from_page",
@@ -122,14 +105,68 @@ export function extractRoleIntakeUrlDraft(html: string): {
   }
 
   return {
-    draft: {
-      description: description.slice(0, MAX_EXTRACTED_DESCRIPTION_CHARACTERS),
-      location: location?.slice(0, 160) ?? null,
-      title: title?.slice(0, 160) ?? null,
-    },
+    draft: toImportedRoleDraft({ description, location, title }),
     fieldSources,
     warnings,
   };
+}
+
+/**
+ * Clamps a draft to what the contract will persist. Every acquisition path goes
+ * through here so extraction and storage cannot disagree on the limits.
+ */
+export function toImportedRoleDraft(input: {
+  description: string;
+  location: string | null;
+  title: string | null;
+}): ImportedRoleDraft {
+  return {
+    description: input.description.slice(
+      0,
+      MAX_EXTRACTED_DESCRIPTION_CHARACTERS,
+    ),
+    location: input.location?.slice(0, roleIntakeDraftLimits.location) ?? null,
+    title: input.title?.slice(0, roleIntakeDraftLimits.title) ?? null,
+  };
+}
+
+/**
+ * A missing title or location is a review prompt, not a failure: every source
+ * leaves the draft editable, so the recruiter is told which field to supply.
+ */
+export function buildMissingFieldWarnings(draft: {
+  location: string | null;
+  title: string | null;
+}): RoleIntakeWarning[] {
+  const warnings: RoleIntakeWarning[] = [];
+  if (!draft.title) {
+    warnings.push({
+      code: "title_unavailable",
+      message:
+        "HireCall could not identify a role title. Add one before continuing.",
+    });
+  }
+  if (!draft.location) {
+    warnings.push({
+      code: "location_unavailable",
+      message:
+        "HireCall could not identify a location. Add one if it matters for this role.",
+    });
+  }
+  return warnings;
+}
+
+/**
+ * Reads a description carried inside a JSON payload or a JSON-LD field. Sources
+ * disagree on encoding: Greenhouse escapes its markup (`&lt;p&gt;`) while Lever
+ * and Ashby return it raw. Decoding once when the value carries no real tag
+ * reduces both to the same input, so a single normaliser handles either.
+ */
+export function extractRoleIntakeHtmlText(value: string): string {
+  const markup = containsHtmlTag(value) ? value : decodeHtmlEntities(value);
+  return normalizeVisibleText(parseDocument(markup) as unknown as HtmlNode, {
+    excludeBoilerplate: false,
+  });
 }
 
 type HtmlNode = {
@@ -139,6 +176,16 @@ type HtmlNode = {
   name?: string;
   type?: string;
 };
+
+function containsHtmlTag(value: string): boolean {
+  return /<[a-z][a-z0-9-]*(\s|\/|>)/i.test(value);
+}
+
+function decodeHtmlEntities(value: string): string {
+  return rawNodeText(
+    parseDocument(value, { decodeEntities: true }) as unknown as HtmlNode,
+  );
+}
 
 function collectHtmlNodes(root: HtmlNode): HtmlNode[] {
   const nodes: HtmlNode[] = [];
@@ -223,7 +270,7 @@ function extractJobPosting(nodes: HtmlNode[]): {
       continue;
     }
     try {
-      for (const candidate of flattenStructuredJson(JSON.parse(content))) {
+      for (const candidate of walkStructuredJson(JSON.parse(content))) {
         if (!isJobPosting(candidate)) {
           continue;
         }
@@ -240,22 +287,44 @@ function extractJobPosting(nodes: HtmlNode[]): {
   return null;
 }
 
-function flattenStructuredJson(value: unknown): Record<string, unknown>[] {
-  if (Array.isArray(value)) {
-    return value.flatMap(flattenStructuredJson);
+/**
+ * A JobPosting can sit anywhere in a document's structured data: at the root, in
+ * an `@graph`, or nested under `mainEntity` or a breadcrumb entry. Walking every
+ * branch rather than a fixed set of keys keeps the reader independent of how a
+ * given site chose to nest it. Yielding lets the caller stop at the first match
+ * instead of materialising the whole graph; the depth bound keeps a deeply
+ * nested payload from recursing without limit.
+ */
+function* walkStructuredJson(
+  value: unknown,
+  depth = 0,
+): Generator<Record<string, unknown>> {
+  if (depth > MAX_STRUCTURED_JSON_DEPTH || !value || typeof value !== "object") {
+    return;
   }
-  if (!value || typeof value !== "object") {
-    return [];
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      yield* walkStructuredJson(entry, depth + 1);
+    }
+    return;
   }
   const record = value as Record<string, unknown>;
-  return [record, ...flattenStructuredJson(record["@graph"])];
+  yield record;
+  for (const entry of Object.values(record)) {
+    yield* walkStructuredJson(entry, depth + 1);
+  }
 }
 
+/**
+ * `@type` is a schema.org term that may appear bare or fully qualified, so
+ * `JobPosting` and `https://schema.org/JobPosting` denote the same thing.
+ */
 function isJobPosting(value: Record<string, unknown>): boolean {
   const type = value["@type"];
   return (Array.isArray(type) ? type : [type]).some(
     (candidate) =>
-      typeof candidate === "string" && candidate.toLowerCase() === "jobposting",
+      typeof candidate === "string" &&
+      candidate.toLowerCase().replace(/^.*[/:#]/, "") === "jobposting",
   );
 }
 

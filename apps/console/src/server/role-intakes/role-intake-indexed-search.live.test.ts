@@ -21,7 +21,6 @@ describe.runIf(liveEnabled)("live indexed job URL intake", () => {
 
   it.each([
     ["LinkedIn", "https://www.linkedin.com/jobs/view/4436807221/"],
-    ["Indeed", "https://fr.indeed.com/viewjob?jk=f066959d3108e72b"],
   ])(
     "extracts a current %s job with exact source evidence",
     async (_, value) => {
