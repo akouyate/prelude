@@ -6,10 +6,16 @@ import {
   createCandidateInvitationForInterview,
   reissueCandidateInvitation,
 } from "./candidate-invitations";
+import {
+  hasCandidateInvitationErrors,
+  validateCandidateInvitation,
+  type CandidateInvitationFieldErrors,
+} from "../../domain/candidate-invitation-policy";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
 export type CandidateInvitationActionState = {
   error: string | null;
+  fieldErrors: CandidateInvitationFieldErrors;
   ok: boolean;
 };
 
@@ -20,28 +26,39 @@ export async function createCandidateInvitationAction(
   const interviewId = String(formData.get("interviewId") ?? "").trim();
 
   if (!interviewId) {
-    return { error: "Missing role screen.", ok: false };
+    return { error: "Missing role screen.", fieldErrors: {}, ok: false };
+  }
+
+  const candidateEmail = String(formData.get("candidateEmail") ?? "");
+  const candidateName = String(formData.get("candidateName") ?? "");
+  const expiresAt = String(formData.get("expiresAt") ?? "");
+  const fieldErrors = validateCandidateInvitation(
+    { candidateEmail, candidateName, expiresAt },
+    new Date(),
+  );
+  if (hasCandidateInvitationErrors(fieldErrors)) {
+    return { error: null, fieldErrors, ok: false };
   }
 
   const scope = await getCompletedOrganizationScope();
   const result = await createCandidateInvitationForInterview({
     actorRole: scope.role,
-    candidateEmail: String(formData.get("candidateEmail") ?? ""),
-    candidateName: String(formData.get("candidateName") ?? ""),
-    expiresAt: parseExpiryDate(String(formData.get("expiresAt") ?? "")),
+    candidateEmail,
+    candidateName,
+    expiresAt: parseExpiryDate(expiresAt),
     interviewId,
     organizationId: scope.organizationId,
   });
 
   if (!result.ok) {
-    return { error: result.error, ok: false };
+    return { error: result.error, fieldErrors: {}, ok: false };
   }
 
   revalidatePath("/");
   revalidatePath("/roles");
   revalidatePath(`/roles/${interviewId}`);
 
-  return { error: null, ok: true };
+  return { error: null, fieldErrors: {}, ok: true };
 }
 
 export async function reissueCandidateInvitationAction(formData: FormData) {

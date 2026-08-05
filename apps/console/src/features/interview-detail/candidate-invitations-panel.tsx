@@ -37,9 +37,25 @@ export function CandidateInvitationsPanel({
   const { i18n, t } = useTranslation();
   const [state, formAction, pending] = React.useActionState(
     createCandidateInvitationAction,
-    { error: null, ok: false },
+    { error: null, fieldErrors: {}, ok: false },
   );
   const canInvite = canManageRole && publicationStatus === "published";
+  // React resets an uncontrolled form once the action settles, which on a
+  // validation error would wipe the very values the recruiter was told to fix.
+  // Holding them here keeps the typed input in place across the round trip.
+  const [draft, setDraft] = React.useState({
+    candidateEmail: "",
+    candidateName: "",
+    expiresAt: "",
+  });
+  const setField = (field: keyof typeof draft) => (value: string) =>
+    setDraft((current) => ({ ...current, [field]: value }));
+
+  React.useEffect(() => {
+    if (state.ok) {
+      setDraft({ candidateEmail: "", candidateName: "", expiresAt: "" });
+    }
+  }, [state.ok]);
 
   return (
     <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]">
@@ -49,7 +65,11 @@ export function CandidateInvitationsPanel({
           title={t("interviewDetail.inviteCandidateTitle")}
         />
 
-        <form action={formAction} className="mt-5 space-y-3.5">
+        {/* The browser's own bubble would fire first and look nothing like the
+            rest of the console, so validation is answered by the server and
+            rendered under the offending field. `type="email"` stays for the
+            mobile keyboard. */}
+        <form action={formAction} className="mt-5 space-y-3.5" noValidate={true}>
           <input name="interviewId" type="hidden" value={interviewId} />
           <div className="rounded-2xl border border-ink-100 bg-[#f9f8f3] px-4 py-3">
             <p className="text-[11px] font-bold uppercase tracking-[0.13em] text-ink-400">
@@ -68,8 +88,11 @@ export function CandidateInvitationsPanel({
                 {t("interviewDetail.inviteCandidateNameLabel")}
               </>
             }
+            error={state.fieldErrors.candidateName}
             name="candidateName"
+            onValueChange={setField("candidateName")}
             placeholder={t("interviewDetail.inviteCandidateNamePlaceholder")}
+            value={draft.candidateName}
           />
 
           <TextField
@@ -81,9 +104,12 @@ export function CandidateInvitationsPanel({
                 {t("interviewDetail.inviteCandidateEmailLabel")}
               </>
             }
+            error={state.fieldErrors.candidateEmail}
             name="candidateEmail"
+            onValueChange={setField("candidateEmail")}
             placeholder={t("interviewDetail.inviteCandidateEmailPlaceholder")}
             type="email"
+            value={draft.candidateEmail}
           />
 
           <TextField
@@ -95,8 +121,11 @@ export function CandidateInvitationsPanel({
                 {t("interviewDetail.inviteExpiresAtLabel")}
               </>
             }
+            error={state.fieldErrors.expiresAt}
             name="expiresAt"
+            onValueChange={setField("expiresAt")}
             type="date"
+            value={draft.expiresAt}
           />
 
           {state.error ? (
