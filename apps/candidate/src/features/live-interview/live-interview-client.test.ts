@@ -391,6 +391,43 @@ describe("live interview client", () => {
     expect(onDisconnected).toHaveBeenCalledWith({ intentional: true });
   });
 
+  it("publishes the recruiter preview skip on the candidate control topic", async () => {
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(jsonResponse({ ok: true }))
+      .mockResolvedValueOnce(jsonResponse({ ok: true }));
+
+    const room = await connectRoom({
+      session: sessionFixture({
+        livekit: {
+          ...sessionFixture().livekit,
+          isMock: false,
+        },
+      }),
+      stream: mediaStreamFixture({ audio: true, video: false }),
+      onAudioPlaybackBlocked: vi.fn(),
+      onAudioPlaybackReady: vi.fn(),
+      onInterviewerJoined: vi.fn(),
+      onInterviewerReady: vi.fn(),
+      onDisconnected: vi.fn(),
+      onReconnecting: vi.fn(),
+      onRoomConnected: vi.fn(),
+    });
+
+    await room.sendControl("skip_question");
+
+    const publishData = livekitMock.room?.localParticipant.publishData;
+    expect(publishData).toHaveBeenCalledWith(expect.any(Uint8Array), {
+      reliable: true,
+      topic: "prelude.candidate.control.v1",
+    });
+    // The worker is the authority on the current question, so the message
+    // carries nothing but its type.
+    const [encodedPayload] = publishData?.mock.calls.at(-1) ?? [];
+    expect(
+      JSON.parse(new TextDecoder().decode(encodedPayload as Uint8Array)),
+    ).toEqual({ type: "skip_question" });
+  });
+
   it("pushes realtime transcript turns received from LiveKit data packets", async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(jsonResponse({ ok: true }))

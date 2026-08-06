@@ -24,6 +24,12 @@ export const liveInterviewSessionStatusSchema = z.enum([
   "expired",
 ]);
 
+// Server-side authority on who is behind the microphone. The Go control plane
+// derives it from the provisioning route (a recruiter preview requires a `pv_`
+// plan plus an expiry), never from the browser, so the live worker can gate
+// recruiter-only controls on a value a candidate cannot forge.
+export const liveInterviewSessionKindSchema = z.enum(["candidate", "preview"]);
+
 export const liveInterviewSpeakerSchema = z.enum([
   "candidate",
   "interviewer",
@@ -486,6 +492,7 @@ export const liveInterviewWorkerAgentConfigSchema = z.object({
     status: liveInterviewSessionStatusSchema,
     livekit_room_name: z.string().min(1),
     allowed_modalities: z.array(liveInterviewModeSchema).min(1),
+    kind: liveInterviewSessionKindSchema.default("candidate"),
     created_at: rfc3339TimestampSchema,
     updated_at: rfc3339TimestampSchema,
   }),
@@ -631,6 +638,9 @@ export type LiveInterviewProvider = z.infer<typeof liveInterviewProviderSchema>;
 export type LiveInterviewMode = z.infer<typeof liveInterviewModeSchema>;
 export type LiveInterviewSessionStatus = z.infer<
   typeof liveInterviewSessionStatusSchema
+>;
+export type LiveInterviewSessionKind = z.infer<
+  typeof liveInterviewSessionKindSchema
 >;
 export type LiveInterviewPlan = z.infer<typeof liveInterviewPlanSchema>;
 export type LiveInterviewSession = z.infer<typeof liveInterviewSessionSchema>;

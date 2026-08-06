@@ -60,7 +60,7 @@ export type LiveSessionState = {
 export type ConnectedRoom = {
   disconnect: () => void;
   sendControl: (
-    type: "candidate_presence_confirmed" | "repeat_question",
+    type: "candidate_presence_confirmed" | "repeat_question" | "skip_question",
   ) => Promise<void>;
   startAudio: () => Promise<void>;
 };

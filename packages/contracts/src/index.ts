@@ -35,6 +35,7 @@ export {
   liveInterviewQuestionSchema,
   liveInterviewRecruiterSummarySchema,
   liveInterviewRecruiterSummaryWireSchema,
+  liveInterviewSessionKindSchema,
   liveInterviewSessionSchema,
   liveInterviewSessionStatusSchema,
   liveInterviewSpeakerSchema,
@@ -50,6 +51,7 @@ export {
   type LiveInterviewProvider,
   type LiveInterviewRecruiterSummary,
   type LiveInterviewSession,
+  type LiveInterviewSessionKind,
   type LiveInterviewSessionStatus,
   type LiveInterviewTranscriptTurn,
 } from "./schemas/live-interview";

@@ -715,6 +715,41 @@ describe("liveInterviewWorkerAgentConfigSchema", () => {
       );
     }
   });
+
+  it("defaults the session kind to candidate so recruiter-only controls stay locked", () => {
+    const result = liveInterviewWorkerAgentConfigSchema.safeParse(
+      validWorkerConfig("motivation"),
+    );
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.session.kind).toBe("candidate");
+    }
+  });
+
+  it("threads the recruiter preview session kind through to the agent", () => {
+    const config = validWorkerConfig("motivation");
+    const result = liveInterviewWorkerAgentConfigSchema.safeParse({
+      ...config,
+      session: { ...config.session, kind: "preview" },
+    });
+
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.session.kind).toBe("preview");
+    }
+  });
+
+  it("rejects a session kind outside the Go SessionKind enum", () => {
+    const config = validWorkerConfig("motivation");
+
+    expect(
+      liveInterviewWorkerAgentConfigSchema.safeParse({
+        ...config,
+        session: { ...config.session, kind: "recruiter" },
+      }).success,
+    ).toBe(false);
+  });
 });
 
 describe("liveInterviewSessionSchema", () => {
