@@ -787,6 +787,119 @@ async def test_live_orchestration_controller_completes_three_question_flow() -> 
     assert session.spoken[-1]["allow_interruptions"] is False
 
 
+def _preview_skip_plan() -> InterviewPlan:
+    return InterviewPlan(
+        id="preview-skip-plan",
+        role_title="Operations Manager",
+        language="fr-FR",
+        questions=[
+            InterviewQuestion(
+                id="q1",
+                prompt="Qu'est-ce qui vous attire dans ce poste ?",
+            ),
+            InterviewQuestion(
+                id="q2",
+                prompt="Parlez-moi d'une priorisation difficile.",
+            ),
+        ],
+    )
+
+
+@pytest.mark.asyncio
+async def test_preview_control_skip_completes_the_question_and_moves_on() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-preview",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    controller = LiveInterviewOrchestrationController(
+        plan=_preview_skip_plan(),
+        emitter=emitter,
+        session=FakeLiveSession(),
+        session_kind="preview",
+    )
+    await controller.start()
+    events.clear()
+
+    await controller.skip_current_question_from_control()
+
+    evaluated = next(
+        event for event in events if event.type == EventType.ANSWER_EVALUATED
+    )
+    assert evaluated.payload["question_id"] == "q1"
+    assert evaluated.payload["classification"] == "skipped"
+    assert evaluated.payload["policy_action"] == "mark_skipped"
+    assert evaluated.payload["reason_codes"] == ["recruiter_preview_control_skip"]
+    assert evaluated.payload["turn_ids"] == [
+        "session-preview:preview-control-skip:q1"
+    ]
+
+    completed = next(
+        event for event in events if event.type == EventType.QUESTION_COMPLETED
+    )
+    assert completed.payload["question_id"] == "q1"
+    assert completed.payload["completion_reason"] == "skipped"
+
+    asked = [event for event in events if event.type == EventType.QUESTION_ASKED]
+    assert [event.payload["question_id"] for event in asked] == ["q2"]
+    assert controller.current_question_id == "q2"
+
+
+@pytest.mark.asyncio
+async def test_candidate_session_ignores_the_preview_skip_control() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-candidate",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    controller = LiveInterviewOrchestrationController(
+        plan=_preview_skip_plan(),
+        emitter=emitter,
+        session=FakeLiveSession(),
+    )
+    await controller.start()
+    events.clear()
+
+    await controller.skip_current_question_from_control()
+
+    assert events == []
+    assert controller.current_question_id == "q1"
+
+
+@pytest.mark.asyncio
+async def test_preview_control_skip_on_the_last_question_closes_the_session() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-preview",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    controller = LiveInterviewOrchestrationController(
+        plan=_preview_skip_plan(),
+        emitter=emitter,
+        session=FakeLiveSession(),
+        session_kind="preview",
+    )
+    await controller.start()
+    await controller.skip_current_question_from_control()
+    events.clear()
+
+    await controller.skip_current_question_from_control()
+
+    event_types = [event.type for event in events]
+    assert event_types.count(EventType.QUESTION_ASKED) == 0
+    assert events[-2].type == EventType.SESSION_CLOSING
+    assert events[-1].type == EventType.SESSION_COMPLETED
+    assert events[-1].payload["completed_reason"] == "all_questions_completed"
+    assert events[-1].payload["completed_questions"] == 2
+    assert controller.is_terminal is True
+
+
 @pytest.mark.asyncio
 async def test_final_answer_resume_cancels_closing_and_merges_the_continuation() -> None:
     events: list[InterviewEvent] = []

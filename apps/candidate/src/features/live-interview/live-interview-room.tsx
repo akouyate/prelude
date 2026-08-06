@@ -19,6 +19,7 @@ import {
   MicIcon,
   PencilIcon,
   RestartIcon,
+  SkipForwardIcon,
   TranscriptIcon,
 } from "@prelude/ui";
 
@@ -628,6 +629,13 @@ export function LiveInterviewRoom({
     void roomRef.current?.sendControl("repeat_question");
   }, []);
 
+  // Publishing this is not what makes it work: the worker only honours it on a
+  // preview session, from the kind it holds server-side.
+  const skipCurrentQuestion = React.useCallback(() => {
+    setInactivityNotice(null);
+    void roomRef.current?.sendControl("skip_question");
+  }, []);
+
   const continueInWriting = React.useCallback(() => {
     const currentSession = sessionRef.current;
     if (currentSession) {
@@ -973,6 +981,7 @@ export function LiveInterviewRoom({
         onConfirmPresence={confirmCandidatePresence}
         onContinueInWriting={continueInWriting}
         onRepeatQuestion={repeatCurrentQuestion}
+        onSkipQuestion={skipCurrentQuestion}
         status={status}
       />
     );
@@ -1331,7 +1340,7 @@ function StatusPill({ status }: { status: RoomStatus }) {
   );
 }
 
-function LiveInterviewStage({
+export function LiveInterviewStage({
   activeText,
   activeTurnId,
   elapsedSeconds,
@@ -1347,6 +1356,7 @@ function LiveInterviewStage({
   onEnableAudio,
   onEndInterview,
   onRepeatQuestion,
+  onSkipQuestion,
   status,
 }: {
   activeText: string | null;
@@ -1364,6 +1374,7 @@ function LiveInterviewStage({
   onEnableAudio: () => void;
   onEndInterview: () => void;
   onRepeatQuestion: () => void;
+  onSkipQuestion: () => void;
   status: RoomStatus;
 }) {
   const hasInterviewerLine = activeText !== null;
@@ -1382,6 +1393,13 @@ function LiveInterviewStage({
     status === "interviewer_speaking" || status === "closing";
   const isCandidateTurn =
     status === "listening" || status === "candidate_speaking";
+  const canSkip =
+    isPreview && !isConnectingOnly && status !== "interviewer_joining";
+  // The control channel carries no acknowledgement, so the button stays inert
+  // outside the states where the worker has a current question to move on from
+  // — a greyed control is honest, one that silently does nothing is not.
+  const canSendSkip =
+    isCandidateTurn || status === "interviewer_speaking" || status === "processing";
 
   return (
     <section className="fixed inset-0 z-50 flex h-[100svh] flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_-12%,#0E4438_0%,#0A2A22_34%,#08150F_100%)] px-[clamp(1.125rem,5vw,2.75rem)] pb-[calc(env(safe-area-inset-bottom)+clamp(1rem,3vh,1.625rem))] pt-[calc(env(safe-area-inset-top)+clamp(1rem,3vh,1.625rem))] font-sans text-[#F4F3EF] supports-[height:100dvh]:h-[100dvh]">
@@ -1549,7 +1567,29 @@ function LiveInterviewStage({
         >
           <VoiceLevelMeter isActive={isRoomActive} stream={localStream} />
         </div>
+        {canSkip ? (
+          <>
+            <span className="h-[22px] w-px bg-[rgba(244,243,239,0.12)]" />
+            <Button
+              className={`h-10 gap-2 whitespace-nowrap rounded-full border border-[rgba(244,243,239,0.16)] bg-[rgba(244,243,239,0.06)] px-4 font-title text-[13.5px] font-medium text-[#F4F3EF] hover:border-[rgba(244,243,239,0.32)] hover:bg-[rgba(244,243,239,0.14)] ${stageFocusRingClass}`}
+              data-cc-btn="flat"
+              disabled={!canSendSkip}
+              onClick={onSkipQuestion}
+              title="Preview only — moves the interviewer on without you speaking"
+              variant="secondary"
+            >
+              <SkipForwardIcon className="h-[15px] w-[15px]" />
+              Skip question
+            </Button>
+          </>
+        ) : null}
       </div>
+
+      {canSkip ? (
+        <p className="relative mt-2.5 shrink-0 self-end font-mono text-[9.5px] uppercase tracking-[0.12em] text-[rgba(244,243,239,0.34)]">
+          Skip is preview only · candidates never see it
+        </p>
+      ) : null}
     </section>
   );
 }

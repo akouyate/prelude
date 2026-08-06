@@ -121,6 +121,18 @@ export function HangUpIcon({ strokeWidth = 1.9, ...props }: CandidateIconProps) 
   );
 }
 
+export function SkipForwardIcon({
+  strokeWidth = 1.9,
+  ...props
+}: CandidateIconProps) {
+  return (
+    <CandidateIcon strokeWidth={strokeWidth} {...props}>
+      <path d="m5 5 9 7-9 7z" />
+      <path d="M19 5v14" />
+    </CandidateIcon>
+  );
+}
+
 export function RestartIcon({
   strokeWidth = 1.9,
   ...props
