@@ -97,14 +97,22 @@ export function WorkspaceSettings({ data }: { data: WorkspaceSettingsData }) {
         </h1>
       </div>
 
-      <div className="flex flex-col gap-7">
+      {/*
+        The nav is a rail beside the pane from 900px up, and a horizontal
+        scroller above it below that. Re-keying the pane on the section replays
+        its entrance, so switching sections reads as a change of place.
+      */}
+      <div className="grid items-start gap-7 min-[900px]:grid-cols-[236px_minmax(0,1fr)]">
         <SettingsSectionNav
           authProvider={data.authProvider}
           onSectionChange={handleSectionChange}
           section={section}
         />
 
-        <div className="min-w-0">
+        <div
+          className="min-w-0 motion-safe:animate-[cc-paneIn_.35s_ease_both]"
+          key={section}
+        >
           <SettingsSectionContent data={data} section={section} />
         </div>
       </div>
