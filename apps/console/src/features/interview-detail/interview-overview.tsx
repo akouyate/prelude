@@ -1,16 +1,18 @@
 import Link from "next/link";
-import { ArrowLeft, EditPencil, Eye } from "iconoir-react";
+import { ArrowLeft, EditPencil } from "iconoir-react";
 import type { TFunction } from "i18next";
 import type { CandidateQueueRow } from "../candidate-screens";
 
 import { candidateWaitingDays } from "../../domain/candidate-review-policy";
 import { canManageRoles } from "../../domain/organization-permissions";
+import { candidateLinkLabel as formatCandidateLinkLabel } from "../../libs/candidate-app-url";
 import { getServerT } from "../../libs/i18n-server";
 import { updateCandidateReviewStatusAction } from "../../server/interviews/candidate-review-actions";
 import { getCompletedOrganizationScope } from "../../server/organizations/organization-scope";
 import { getAuthenticatedUserLocale } from "../../server/users/user-locale";
 import type { getInterviewDetail } from "../../server/interviews/interview-loaders";
 import { CopyCandidateLinkButton } from "./copy-candidate-link-button";
+import { PreviewAsCandidateButton } from "./preview-as-candidate-button";
 import { RoleActionsMenu } from "./role-actions-menu";
 import {
   InterviewOverviewTabs,
@@ -47,7 +49,7 @@ export async function InterviewOverview({
     },
     t,
   );
-  const candidateLinkLabel = `hirecall.ai${interview.candidatePath}`;
+  const candidateLinkLabel = formatCandidateLinkLabel(interview.candidatePath);
   const now = Date.now();
   const candidates = interview.candidateSessions.map((session) => ({
     analysisStatus: session.analysisStatus,
@@ -218,15 +220,9 @@ export async function InterviewOverview({
           <CopyCandidateLinkButton candidatePath={interview.candidatePath}>
             {candidateLinkLabel}
           </CopyCandidateLinkButton>
-          <a
-            className="inline-flex h-[42px] cursor-pointer items-center gap-2 rounded-full border border-ink-200 bg-white px-4 text-[13px] font-semibold text-ink-950 transition hover:border-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-            href={interview.candidatePath}
-            rel="noreferrer"
-            target="_blank"
-          >
-            <Eye aria-hidden={true} className="h-4 w-4" />
-            {t("interviewDetail.previewAsCandidate")}
-          </a>
+          {interview.draftId ? (
+            <PreviewAsCandidateButton draftId={interview.draftId} />
+          ) : null}
           {canManageRole ? (
             <>
               <Link

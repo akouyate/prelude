@@ -445,6 +445,8 @@
       "tabSetup": "Setup",
       "moreRoleActions": "More role actions",
       "previewAsCandidate": "Preview as candidate",
+      "previewAsCandidateOpening": "Opening preview…",
+      "previewAsCandidateError": "The candidate preview could not be prepared. Please retry.",
       "statCompletionRate": "Completion rate",
       "statCompletionRateNote": "{{completed}} of {{started}} started",
       "statDropOff": "Drop-off",

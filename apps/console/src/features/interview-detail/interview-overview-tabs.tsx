@@ -12,6 +12,7 @@ import {
   isCandidateScreenInProgress,
   type CandidateQueueRow,
 } from "../candidate-screens";
+import { candidateLinkLabel } from "../../libs/candidate-app-url";
 import { CandidateInvitationsPanel } from "./candidate-invitations-panel";
 import { CopyCandidateLinkButton } from "./copy-candidate-link-button";
 import { InterviewSectionTitle } from "./interview-section-title";
@@ -478,7 +479,7 @@ function SettingsPanel({
             {t("interviewDetail.candidateLinkTitle")}
           </p>
           <p className="mt-1 truncate text-[12.5px] text-[#8a8178]">
-            {candidatePath}
+            {candidateLinkLabel(candidatePath)}
           </p>
         </div>
         <CopyCandidateLinkButton candidatePath={candidatePath}>

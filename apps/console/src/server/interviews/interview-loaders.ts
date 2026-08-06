@@ -395,7 +395,7 @@ export async function getInterviewDetail(
   return null;
 }
 
-function candidatePathForInterview(interview: {
+export function candidatePathForInterview(interview: {
   candidateInvitations?: Array<{
     candidateEmail: string | null;
     candidateName: string | null;
@@ -406,29 +406,25 @@ function candidatePathForInterview(interview: {
   publicToken: string;
 }) {
   const now = new Date();
+  // Only a still-usable invitation may back the shareable link. A completed,
+  // expired or superseded token is refused by the candidate app, so falling
+  // back to one would hand the recruiter a dead link; the interview's public
+  // token always opens a fresh attempt.
+  const isOpen = (candidateInvitation: {
+    expiresAt: Date;
+    status: string;
+  }) =>
+    candidateInvitation.expiresAt > now &&
+    !["completed", "expired", "superseded"].includes(
+      candidateInvitation.status,
+    );
   const invitation =
     interview.candidateInvitations?.find(
       (candidateInvitation) =>
         !candidateInvitation.candidateEmail &&
         !candidateInvitation.candidateName &&
-        candidateInvitation.expiresAt > now &&
-        !["completed", "expired", "superseded"].includes(
-          candidateInvitation.status,
-        ),
-    ) ??
-    interview.candidateInvitations?.find(
-      (candidateInvitation) =>
-        candidateInvitation.expiresAt > now &&
-        !["completed", "expired", "superseded"].includes(
-          candidateInvitation.status,
-        ),
-    ) ??
-    interview.candidateInvitations?.find(
-      (candidateInvitation) =>
-        !candidateInvitation.candidateEmail &&
-        !candidateInvitation.candidateName,
-    ) ??
-    interview.candidateInvitations?.[0];
+        isOpen(candidateInvitation),
+    ) ?? interview.candidateInvitations?.find(isOpen);
 
   return `/interview/${invitation?.token ?? interview.publicToken}`;
 }
