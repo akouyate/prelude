@@ -1,27 +1,36 @@
 import type { Metadata } from "next";
-import { Geist, Instrument_Serif, Plus_Jakarta_Sans } from "next/font/google";
+import { EB_Garamond, Figtree, Geist, Geist_Mono } from "next/font/google";
 
 import { QueryProvider } from "../src/providers/query-provider";
 import "./globals.css";
 
-const geistSans = Geist({
+const bodySans = Geist({
   display: "swap",
   subsets: ["latin"],
-  variable: "--font-sans",
+  variable: "--font-geist",
+  weight: ["300", "400", "500"],
 });
 
-const instrumentSerif = Instrument_Serif({
+const titleSans = Figtree({
   display: "swap",
   subsets: ["latin"],
+  variable: "--font-figtree",
+  weight: ["400", "500", "600", "700"],
+});
+
+const displaySerif = EB_Garamond({
+  display: "swap",
   style: ["normal", "italic"],
-  variable: "--font-display",
-  weight: "400",
+  subsets: ["latin"],
+  variable: "--font-eb-garamond",
+  weight: ["400", "500"],
 });
 
-const titleSans = Plus_Jakarta_Sans({
+const microMono = Geist_Mono({
   display: "swap",
   subsets: ["latin"],
-  variable: "--font-title-sans",
+  variable: "--font-geist-mono",
+  weight: ["400", "500"],
 });
 
 export const metadata: Metadata = {
@@ -43,7 +52,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${titleSans.variable} ${instrumentSerif.variable}`}
+        className={`${bodySans.variable} ${titleSans.variable} ${displaySerif.variable} ${microMono.variable}`}
       >
         <QueryProvider>{children}</QueryProvider>
       </body>

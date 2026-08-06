@@ -62,16 +62,16 @@ export function VoiceLevelMeter({
   }, [isActive, stream]);
 
   return (
-    <div aria-hidden="true" className="flex h-7 items-end gap-1 px-3">
+    <div aria-hidden="true" className="flex h-[26px] items-end gap-1 px-2.5">
       {[0, 1, 2, 3, 4].map((bar) => (
         <span
-          className="w-1 rounded-full bg-olive-200 opacity-45 transition-[height,opacity] duration-75"
+          className="h-full w-1 origin-bottom rounded-[99px] bg-spruce-400 transition-transform duration-75"
           data-voice-level-bar="true"
           key={bar}
           ref={(element) => {
             barRefs.current[bar] = element;
           }}
-          style={{ height: "4px" }}
+          style={{ transform: "scaleY(0.28)" }}
         />
       ))}
     </div>
@@ -113,6 +113,11 @@ function voiceLevel(timeDomainData: Uint8Array) {
   return Math.min(1, Math.sqrt(sum / timeDomainData.length) * 5.2);
 }
 
+// Bars are full-height and scaled from the bottom, between the design's resting
+// 0.28 and 1. Brightness is owned by the meter's container (dimmed unless it is
+// the candidate's turn), so the bars themselves stay at full opacity.
+const restingBarScale = 0.28;
+
 function setVoiceBars(bars: Array<HTMLSpanElement | null>, level: number) {
   const shapedLevel = Math.pow(level, 0.72);
   const barMultipliers = [0.45, 0.75, 1, 0.82, 0.55];
@@ -122,8 +127,8 @@ function setVoiceBars(bars: Array<HTMLSpanElement | null>, level: number) {
       return;
     }
 
-    const nextHeight = 4 + shapedLevel * 22 * (barMultipliers[index] ?? 1);
-    bar.style.height = `${Math.round(nextHeight)}px`;
-    bar.style.opacity = `${0.45 + shapedLevel * 0.55}`;
+    const peak = shapedLevel * (barMultipliers[index] ?? 1);
+    const scale = restingBarScale + peak * (1 - restingBarScale);
+    bar.style.transform = `scaleY(${scale.toFixed(3)})`;
   });
 }
