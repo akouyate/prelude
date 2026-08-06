@@ -1,6 +1,20 @@
 export { Badge } from "./components/badge";
 export { BrandMark } from "./components/brand-mark";
 export { Button, type ButtonProps } from "./components/button";
+export {
+  AlertIcon,
+  ArrowLeftIcon,
+  CheckIcon,
+  ClockIcon,
+  HangUpIcon,
+  MailIcon,
+  MicIcon,
+  PencilIcon,
+  RestartIcon,
+  ShieldCheckIcon,
+  TranscriptIcon,
+  type CandidateIconProps,
+} from "./components/candidate-icons";
 export { Card } from "./components/card";
 export { ChoiceTile, type ChoiceTileProps } from "./components/choice-tile";
 export { Dialog } from "./components/dialog";
@@ -59,7 +73,12 @@ export {
   type UnderlineTabsProps,
 } from "./components/underline-tabs";
 export { Toast } from "./feedback/toast";
-export { CandidateShell } from "./layouts/candidate-shell";
+export {
+  CandidateMonoPill,
+  CandidateScreenHeader,
+  CandidateShell,
+  CandidateWordmark,
+} from "./layouts/candidate-shell";
 export {
   CandidateInterviewIntro,
   CandidatePreflightExperience,

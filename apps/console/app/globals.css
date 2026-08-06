@@ -77,6 +77,19 @@ h3 {
   font-family: var(--font-title-sans), ui-sans-serif, system-ui, sans-serif;
 }
 
+/* Settings panes enter when the section changes, so the rail reads as navigation. */
+@keyframes cc-paneIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 :where(a[href], button:not(:disabled), summary, label[for], [role="button"]) {
   cursor: pointer;
 }

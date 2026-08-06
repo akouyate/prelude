@@ -3,20 +3,24 @@
 import * as React from "react";
 import { candidateConsentCopy, candidateDisclosureCopy } from "@prelude/core";
 import {
+  AlertIcon,
+  ArrowLeftIcon,
   BrandMark,
   Button,
   CandidateInterviewIntro,
+  CandidateMonoPill,
   CandidatePreflightExperience,
+  CandidateScreenHeader,
   CandidateWelcomeExperience,
+  CandidateWordmark,
+  CheckIcon,
+  ClockIcon,
+  HangUpIcon,
+  MicIcon,
+  PencilIcon,
+  RestartIcon,
+  TranscriptIcon,
 } from "@prelude/ui";
-import {
-  CheckCircle,
-  EditPencil,
-  Microphone as Mic,
-  PhoneXmark as PhoneOff,
-  Refresh as RefreshCcw,
-  WarningTriangle as AlertTriangle,
-} from "iconoir-react";
 
 import type { PublicInterviewContext } from "../../server/public-interviews";
 import {
@@ -64,6 +68,16 @@ const previewDisclosureCopy =
   "You are viewing the real candidate experience in recruiter preview mode. Nothing is added to your candidate pipeline. You can continue to run a live test with the interviewer.";
 const previewConsentCopy =
   "I understand that this is a recruiter live test. My microphone audio is transmitted to the AI interviewer for this session, but it is not recorded, retained, evaluated as a candidate, or added to the candidate pipeline.";
+
+// Shared button shapes for the light screens. The pill, the Figtree label and
+// the sheen (data-cc-btn, see globals.css) are the candidate signature.
+const primaryActionClass =
+  "gap-2.5 rounded-full font-title font-medium hover:bg-spruce-800";
+const quietActionClass =
+  "gap-2.5 rounded-full border border-ink-300 bg-paper-sunken font-title font-medium text-ink-950 hover:border-ink-900 hover:bg-paper-sunken";
+// On the dark stage the shared focus ring (tuned for paper) disappears, so
+// buttons there take the pale live-stage highlight instead.
+const stageFocusRingClass = "focus-visible:ring-spruce-300";
 
 const statusCopy: Record<RoomStatus, string> = {
   ready: "Ready",
@@ -158,7 +172,8 @@ export function LiveInterviewRoom({
   );
 
   // The candidate sees one foreground line: the interviewer's live caption while
-  // it streams, then the latest finalized question.
+  // it streams, then the latest finalized question — with the line before it
+  // held faded above so the thread of the conversation stays visible.
   const interviewerView = React.useMemo(
     () =>
       selectInterviewerView({
@@ -591,6 +606,12 @@ export function LiveInterviewRoom({
     setStep("setup");
   }, []);
 
+  const backToWelcome = React.useCallback(() => {
+    setError(null);
+    setStatus("ready");
+    setStep("welcome");
+  }, []);
+
   const openFormFallback = React.useCallback(() => {
     setError(null);
     setStatus("ready");
@@ -860,77 +881,77 @@ export function LiveInterviewRoom({
 
   if (status === "ready" && step === "welcome") {
     return (
-      <CandidateWelcomeExperience
-        companyName={interview.companyName}
-        disclosureCopy={
-          context.kind === "preview"
-            ? previewDisclosureCopy
-            : candidateDisclosureCopy
-        }
-        evidenceNotice={
-          context.kind === "preview"
-            ? {
-                body: "A temporary transcript powers this live test and never enters the candidate pipeline.",
-                title: "Temporary live-test transcript",
-              }
-            : undefined
-        }
-        estimatedMinutes={interview.estimatedMinutes}
-        jobTitle={interview.jobTitle}
-        onStart={() => setStep("setup")}
-        responseModes={allowedModes}
-        roleTitle={interview.roleTitle}
-      />
+      <>
+        <CandidateScreenHeader
+          left={<CandidateWordmark className="h-[23px]" />}
+          right={<CandidateMonoPill>Candidate interview</CandidateMonoPill>}
+        />
+        <CandidateWelcomeExperience
+          companyName={interview.companyName}
+          disclosureCopy={
+            context.kind === "preview"
+              ? previewDisclosureCopy
+              : candidateDisclosureCopy
+          }
+          evidenceNotice={
+            context.kind === "preview"
+              ? {
+                  body: "A temporary transcript powers this live test and never enters the candidate pipeline.",
+                  title: "Temporary live-test transcript",
+                }
+              : undefined
+          }
+          estimatedMinutes={interview.estimatedMinutes}
+          jobTitle={interview.jobTitle}
+          onStart={() => setStep("setup")}
+          responseModes={allowedModes}
+          roleTitle={interview.roleTitle}
+        />
+      </>
     );
   }
 
   if (status === "completed") {
     return (
-      <section className="mx-auto flex flex-1 items-center justify-center py-10">
-        <CompletionPanel
-          candidateName={candidateName}
-          companyName={interview.companyName}
-          elapsedSeconds={elapsedSeconds}
-          isPreview={context.kind === "preview"}
-        />
-      </section>
+      <CompletionPanel
+        candidateName={candidateName}
+        companyName={interview.companyName}
+        elapsedSeconds={elapsedSeconds}
+        isPreview={context.kind === "preview"}
+      />
     );
   }
 
   if (status === "abandoned") {
     return (
-      <section className="mx-auto flex flex-1 items-center justify-center py-10">
-        <AbandonedPanel
-          companyName={interview.companyName}
-          onRetry={retryAfterAbandon}
-        />
-      </section>
+      <AbandonedPanel
+        companyName={interview.companyName}
+        onRetry={retryAfterAbandon}
+      />
     );
   }
 
   if (step === "form") {
     return (
-      <section className="mx-auto flex w-full max-w-3xl flex-1 items-center py-8">
-        <FormFallbackPanel
-          answers={formAnswers}
-          canSubmit={canStart && !isSubmittingForm}
-          description={
-            context.kind === "preview"
-              ? "Use this fallback to test the complete written experience. These answers stay outside the candidate pipeline."
-              : undefined
-          }
-          error={error}
-          isSubmitting={isSubmittingForm}
-          onAnswerChange={updateFormAnswer}
-          onBack={() => {
-            setError(null);
-            setStep("setup");
-          }}
-          onSubmit={submitWrittenAnswers}
-          questions={formQuestions}
-          roleTitle={interview.roleTitle}
-        />
-      </section>
+      <FormFallbackPanel
+        answers={formAnswers}
+        canSubmit={canStart && !isSubmittingForm}
+        description={
+          context.kind === "preview"
+            ? "Use this fallback to test the complete written experience. These answers stay outside the candidate pipeline."
+            : undefined
+        }
+        error={error}
+        isSubmitting={isSubmittingForm}
+        onAnswerChange={updateFormAnswer}
+        onBack={() => {
+          setError(null);
+          setStep("setup");
+        }}
+        onSubmit={submitWrittenAnswers}
+        questions={formQuestions}
+        roleTitle={interview.roleTitle}
+      />
     );
   }
 
@@ -943,6 +964,7 @@ export function LiveInterviewRoom({
         isAudioPlaybackBlocked={isAudioPlaybackBlocked}
         inactivityNotice={inactivityNotice}
         isFormFallbackAvailable={isFormFallbackAvailable}
+        isPreview={context.kind === "preview"}
         isRoomActive={isRoomActive}
         isStreaming={interviewerView.isStreaming}
         localStream={localStream}
@@ -957,92 +979,102 @@ export function LiveInterviewRoom({
   }
 
   return (
-    <section className="grid flex-1 items-center gap-8 py-8 lg:grid-cols-[minmax(0,1fr)_minmax(360px,430px)] lg:py-12">
-      <CandidateInterviewIntro
-        companyName={interview.companyName}
-        description={
-          context.kind === "preview"
-            ? "This is the same setup candidates see. Your test answers stay outside the candidate pipeline."
-            : undefined
+    <>
+      <CandidateScreenHeader
+        left={
+          <button
+            className="inline-flex items-center gap-2 py-1.5 font-title text-[14.5px] font-medium text-ink-700 transition-colors hover:text-spruce-600"
+            onClick={backToWelcome}
+            type="button"
+          >
+            <ArrowLeftIcon className="h-4 w-4" />
+            Back
+          </button>
         }
-        estimatedMinutes={interview.estimatedMinutes}
-        jobTitle={interview.jobTitle}
-        responseModes={allowedModes}
-        roleTitle={interview.roleTitle}
+        right={<CandidateWordmark />}
       />
-      <div className="rounded-[2rem] border border-ink-100 bg-white/82 p-5 text-ink-900 backdrop-blur">
-        <CandidatePreflightExperience
-          candidateEmail={candidateEmail}
-          candidateName={candidateName}
-          consentAccepted={hasAcceptedConsent}
-          consentCopy={
-            context.kind === "preview"
-              ? previewConsentCopy
-              : candidateConsentCopy
-          }
-          estimatedMinutes={interview.estimatedMinutes}
-          jobTitle={interview.jobTitle}
-          onCandidateEmailChange={setCandidateEmail}
-          onCandidateNameChange={setCandidateName}
-          onConsentChange={setHasAcceptedConsent}
-        />
+      <div className="flex flex-1 items-center justify-center px-[clamp(1.125rem,5vw,2.75rem)] pb-16 pt-2">
+        <div className="grid w-full max-w-[1120px] grid-cols-1 items-center gap-[clamp(1.75rem,4vw,3.5rem)] motion-safe:animate-[cc-in_.5s_cubic-bezier(.2,.7,.2,1)_both] min-[1000px]:grid-cols-[minmax(0,1fr)_minmax(380px,430px)]">
+          <CandidateInterviewIntro
+            companyName={interview.companyName}
+            description={
+              context.kind === "preview"
+                ? "This is the same setup candidates see. Your test answers stay outside the candidate pipeline."
+                : undefined
+            }
+            estimatedMinutes={interview.estimatedMinutes}
+            jobTitle={interview.jobTitle}
+            responseModes={allowedModes}
+            roleTitle={interview.roleTitle}
+          />
+          <div className="rounded-[32px] border border-ink-200 bg-white p-[clamp(1.25rem,3vw,1.625rem)]">
+            <CandidatePreflightExperience
+              candidateEmail={candidateEmail}
+              candidateName={candidateName}
+              consentAccepted={hasAcceptedConsent}
+              consentCopy={
+                context.kind === "preview"
+                  ? previewConsentCopy
+                  : candidateConsentCopy
+              }
+              estimatedMinutes={interview.estimatedMinutes}
+              jobTitle={interview.jobTitle}
+              onCandidateEmailChange={setCandidateEmail}
+              onCandidateNameChange={setCandidateName}
+              onConsentChange={setHasAcceptedConsent}
+            />
 
-        {error ? <InlineAlert message={error} /> : null}
+            {error ? <InlineAlert message={error} /> : null}
 
-        {isAudioPlaybackBlocked ? (
-          <div className="mt-4 rounded-3xl border border-gold-200 bg-gold-50 p-4 text-sm text-ink-900">
-            <p className="font-semibold">Audio paused by your browser</p>
-            <p className="mt-1 leading-6 text-ink-600">
-              Tap once to hear the interviewer on this device.
-            </p>
+            {isAudioPlaybackBlocked ? (
+              <div className="mt-4 rounded-[18px] border border-clay-300 bg-clay-50 p-4">
+                <p className="font-title text-[14.5px] font-semibold tracking-[-0.008em] text-ink-950">
+                  Audio paused by your browser
+                </p>
+                <p className="mt-1 text-[13.5px] leading-[1.55] text-ink-700">
+                  Tap once to hear the interviewer on this device.
+                </p>
+                <Button
+                  className={`mt-3 h-11 text-[14.5px] ${quietActionClass} w-full`}
+                  data-cc-btn="light"
+                  onClick={enableAudio}
+                  variant="secondary"
+                >
+                  <MicIcon className="h-4 w-4" />
+                  Enable audio
+                </Button>
+              </div>
+            ) : null}
+
             <Button
-              className="mt-3 h-11 w-full"
-              onClick={enableAudio}
-              variant="secondary"
-            >
-              <Mic aria-hidden="true" className="h-4 w-4" />
-              Enable audio
-            </Button>
-          </div>
-        ) : null}
-
-        <div className="mt-5">
-          {isRoomActive ? (
-            <Button className="h-12 w-full" onClick={endInterview}>
-              <PhoneOff aria-hidden="true" className="h-4 w-4" />
-              End interview
-            </Button>
-          ) : (
-            <Button
-              className="h-12 w-full"
+              className={`mt-5 h-[50px] w-full text-[15px] ${primaryActionClass}`}
+              data-cc-btn=""
               disabled={isBusy || !canStart}
               onClick={startInterview}
             >
               {isBusy ? (
-                <RefreshCcw
-                  aria-hidden="true"
-                  className="h-4 w-4 animate-spin"
-                />
+                <RestartIcon className="h-4 w-4 motion-safe:animate-spin" />
               ) : (
-                <Mic aria-hidden="true" className="h-4 w-4" />
+                <MicIcon className="h-4 w-4" />
               )}
               {primaryStartLabel}
             </Button>
-          )}
-          {isFormFallbackAvailable ? (
-            <Button
-              className="mt-3 h-12 w-full"
-              disabled={isBusy || !canStart}
-              onClick={openFormFallback}
-              variant="secondary"
-            >
-              <EditPencil aria-hidden="true" className="h-4 w-4" />
-              Use written fallback
-            </Button>
-          ) : null}
+            {isFormFallbackAvailable ? (
+              <Button
+                className={`mt-2.5 h-[50px] w-full text-[15px] ${quietActionClass}`}
+                data-cc-btn="light"
+                disabled={isBusy || !canStart}
+                onClick={openFormFallback}
+                variant="secondary"
+              >
+                <PencilIcon className="h-4 w-4" />
+                Use written fallback
+              </Button>
+            ) : null}
+          </div>
         </div>
       </div>
-    </section>
+    </>
   );
 }
 
@@ -1060,36 +1092,65 @@ function CompletionPanel({
   const firstName = candidateName.trim().split(/\s+/)[0] || "there";
 
   return (
-    <div className="rounded-[2rem] border border-ink-100 bg-white/82 p-6 text-center text-ink-900 backdrop-blur">
-      <span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-meadow-100 text-meadow-700">
-        <CheckCircle aria-hidden="true" className="h-8 w-8" />
-      </span>
-      <h2 className="mt-5 text-2xl font-semibold leading-tight sm:text-3xl">
-        Thank you,{" "}
-        <span className="font-display italic text-ink-950">{firstName}</span>.
-      </h2>
-      <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-ink-600">
-        {isPreview
-          ? "The live test is complete. No candidate profile, recording, or recruiter notification was created."
-          : `Your interview is complete. ${companyName} will review your answers and follow up with the next step.`}
-      </p>
-      <div className="mt-6 rounded-3xl border border-ink-100 bg-white/70 px-4 py-3 text-left text-sm text-ink-700">
-        <div className="flex items-center justify-between gap-4 border-b border-ink-100 pb-3">
-          <span>Duration</span>
-          <strong className="font-semibold text-ink-950">
-            {formatDuration(elapsedSeconds)}
-          </strong>
-        </div>
-        <div className="flex items-center justify-between gap-4 pt-3">
-          <span>{isPreview ? "Candidate pipeline" : "Transcript"}</span>
-          <strong className="font-semibold text-ink-950">
-            {isPreview ? "Not created" : "Saved"}
-          </strong>
+    <>
+      <CandidateScreenHeader left={<CandidateWordmark />} />
+      <div className="flex flex-1 items-center justify-center px-[clamp(1.125rem,5vw,2.75rem)] pb-[4.5rem] pt-6">
+        <div className="w-full max-w-[560px] text-center motion-safe:animate-[cc-in_.55s_cubic-bezier(.2,.7,.2,1)_both]">
+          <span className="mb-[26px] inline-grid h-[68px] w-[68px] place-items-center rounded-full bg-spruce-50 text-spruce-800">
+            <CheckIcon className="h-[30px] w-[30px]" strokeWidth={1.8} />
+          </span>
+          <h1 className="mb-4 font-display text-[clamp(36px,6vw,54px)] font-normal leading-[1.04] tracking-[-0.02em] text-ink-950">
+            Thank you, <span className="italic">{firstName}</span>.
+          </h1>
+          <p className="mx-auto max-w-[32rem] text-pretty text-[17px] leading-[1.62] text-ink-700">
+            {isPreview
+              ? "The live test is complete. No candidate profile, recording, or recruiter notification was created."
+              : `Your interview is complete. ${companyName} will review your answers and follow up with the next step if there's a match.`}
+          </p>
+
+          <div className="mt-8 inline-flex w-full min-w-0 flex-col rounded-[24px] border border-ink-200 bg-white px-6 py-1 text-left sm:w-auto sm:min-w-[300px]">
+            <CompletionRow icon={ClockIcon}>
+              Duration
+              <strong className="ml-[5px] font-mono text-[13px] font-normal text-ink-950">
+                {formatDuration(elapsedSeconds)}
+              </strong>
+            </CompletionRow>
+            <CompletionRow icon={TranscriptIcon} isLast={!isPreview}>
+              {isPreview
+                ? "Temporary live-test transcript, never stored"
+                : "Transcript saved for recruiter review"}
+            </CompletionRow>
+            {isPreview ? (
+              <CompletionRow icon={CheckIcon} isLast>
+                No candidate profile created
+              </CompletionRow>
+            ) : null}
+          </div>
+
+          <p className="mt-7 font-mono text-[10.5px] uppercase tracking-[0.08em] text-ink-500">
+            You can close this window
+          </p>
         </div>
       </div>
-      <p className="mt-5 text-sm text-ink-400">
-        You can close this window. There is nothing more to do.
-      </p>
+    </>
+  );
+}
+
+function CompletionRow({
+  children,
+  icon: Icon,
+  isLast = false,
+}: {
+  children: React.ReactNode;
+  icon: React.ComponentType<{ className?: string }>;
+  isLast?: boolean;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-[13px] py-[15px] ${isLast ? "" : "border-b border-ink-100"}`}
+    >
+      <Icon className="h-[17px] w-[17px] shrink-0 text-spruce-600" />
+      <span className="text-[14px] text-ink-700">{children}</span>
     </div>
   );
 }
@@ -1102,26 +1163,35 @@ function AbandonedPanel({
   onRetry: () => void;
 }) {
   return (
-    <div className="rounded-[2rem] border border-ink-100 bg-white/82 p-6 text-center text-ink-900 backdrop-blur">
-      <span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-ink-100 text-ink-700">
-        <PhoneOff aria-hidden="true" className="h-8 w-8" />
-      </span>
-      <h2 className="mt-5 text-2xl font-semibold leading-tight sm:text-3xl">
-        Interview ended
-      </h2>
-      <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-ink-600">
-        We stopped this attempt and did not mark it as complete. If that was
-        accidental, you can start a new attempt for {companyName}.
-      </p>
-      <Button className="mt-6 h-12 w-full" onClick={onRetry}>
-        <RefreshCcw aria-hidden="true" className="h-4 w-4" />
-        Start a new attempt
-      </Button>
-      <p className="mt-4 text-sm text-ink-400">
-        You can also close this window and use the latest link from the
-        recruiter.
-      </p>
-    </div>
+    <>
+      <CandidateScreenHeader left={<CandidateWordmark />} />
+      <div className="flex flex-1 items-center justify-center px-[clamp(1.125rem,5vw,2.75rem)] pb-[4.5rem] pt-6">
+        <div className="w-full max-w-[480px] text-center motion-safe:animate-[cc-in_.5s_cubic-bezier(.2,.7,.2,1)_both]">
+          <span className="mb-6 inline-grid h-16 w-16 place-items-center rounded-full bg-paper-muted text-ink-700">
+            <HangUpIcon className="h-7 w-7" strokeWidth={1.8} />
+          </span>
+          <h1 className="mb-3.5 font-display text-[clamp(32px,5vw,44px)] font-normal leading-[1.05] tracking-[-0.02em] text-ink-950">
+            Interview ended
+          </h1>
+          <p className="mx-auto max-w-[28rem] text-pretty text-[16px] leading-[1.62] text-ink-700">
+            We stopped this attempt and did not mark it as complete. If that was
+            accidental, you can start a new attempt for {companyName}.
+          </p>
+          <Button
+            className={`mt-7 h-[52px] w-full text-[15.5px] ${primaryActionClass}`}
+            data-cc-btn=""
+            onClick={onRetry}
+          >
+            <RestartIcon className="h-4 w-4" />
+            Start a new attempt
+          </Button>
+          <p className="mt-4 text-[13.5px] text-ink-500">
+            You can also close this window and use the latest link from the
+            recruiter.
+          </p>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -1148,74 +1218,80 @@ function FormFallbackPanel({
   questions: CandidateInterview["questions"];
   roleTitle: string;
 }) {
+  const isComplete = questions.every(
+    (question) => (answers[question.id] ?? "").trim().length > 1,
+  );
+
   return (
-    <div className="w-full rounded-[2rem] border border-ink-100 bg-white/82 p-5 text-ink-900 backdrop-blur sm:p-7">
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full bg-[#eef0e3] px-3 py-1 text-xs font-semibold uppercase tracking-[0.13em] text-olive-900">
-            <EditPencil aria-hidden="true" className="h-4 w-4" />
-            Written fallback
-          </div>
-          <h2 className="mt-5 text-2xl font-semibold leading-tight sm:text-3xl">
+    <>
+      <CandidateScreenHeader
+        left={<CandidateWordmark />}
+        right={<CandidateMonoPill tone="tint">Written fallback</CandidateMonoPill>}
+      />
+      <div className="flex flex-1 items-start justify-center px-[clamp(1.125rem,5vw,2.75rem)] pb-16 pt-2">
+        <div className="w-full max-w-[720px] motion-safe:animate-[cc-in_.5s_cubic-bezier(.2,.7,.2,1)_both]">
+          <h1 className="font-display text-[clamp(32px,5vw,46px)] font-normal leading-[1.05] tracking-[-0.02em] text-ink-950">
             Answer in writing
-          </h2>
-          <p className="mt-2 max-w-xl text-sm leading-6 text-ink-600">
+          </h1>
+          <p className="mt-4 max-w-[40rem] text-pretty text-[16px] leading-[1.62] text-ink-700">
             {roleTitle}.{" "}
             {description ??
               "Use this fallback only if audio is not available on your device. The recruiter still reviews your answers manually."}
           </p>
+
+          <div className="mt-[26px] flex flex-col gap-3">
+            {questions.map((question, index) => (
+              <label
+                className="block rounded-[24px] border border-ink-200 bg-white p-[clamp(1rem,2.4vw,1.375rem)]"
+                key={question.id}
+              >
+                <span className="block font-mono text-[9.5px] uppercase tracking-[0.14em] text-ink-500">
+                  Question {index + 1}
+                </span>
+                <span className="mt-2.5 block font-display text-[22px] leading-[1.3] tracking-[-0.01em] text-ink-950">
+                  {question.prompt}
+                </span>
+                <textarea
+                  aria-label={`Answer question ${index + 1}: ${question.prompt}`}
+                  className="mt-3.5 min-h-[120px] w-full resize-y rounded-[18px] border border-ink-300 bg-paper-sunken px-[15px] py-[13px] text-[14.5px] leading-[1.6] text-ink-950 outline-none transition placeholder:text-ink-500 focus:border-ink-900 focus:bg-white focus:ring-1 focus:ring-ink-900"
+                  onChange={(event) =>
+                    onAnswerChange(question.id, event.target.value)
+                  }
+                  placeholder="Write your answer..."
+                  value={answers[question.id] ?? ""}
+                />
+              </label>
+            ))}
+          </div>
+
+          {error ? <InlineAlert message={error} /> : null}
+
+          <div className="mt-[22px] flex flex-wrap justify-end gap-2.5">
+            <Button
+              className={`h-[50px] px-5 text-[15px] ${quietActionClass}`}
+              data-cc-btn="light"
+              onClick={onBack}
+              variant="secondary"
+            >
+              Back to audio
+            </Button>
+            <Button
+              className={`h-[50px] px-6 text-[15px] ${primaryActionClass}`}
+              data-cc-btn=""
+              disabled={!canSubmit || !isComplete}
+              onClick={onSubmit}
+            >
+              {isSubmitting ? (
+                <RestartIcon className="h-4 w-4 motion-safe:animate-spin" />
+              ) : (
+                <CheckIcon className="h-4 w-4" />
+              )}
+              {isComplete ? "Submit answers" : "Answer each question"}
+            </Button>
+          </div>
         </div>
-        <Button className="h-11" onClick={onBack} variant="secondary">
-          Back to audio
-        </Button>
       </div>
-
-      <div className="mt-6 space-y-4">
-        {questions.map((question, index) => (
-          <label
-            className="block rounded-3xl border border-ink-100 bg-ink-50/60 p-4"
-            key={question.id}
-          >
-            <span className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-500">
-              Question {index + 1}
-            </span>
-            <span className="mt-2 block text-base font-semibold leading-6 text-ink-950">
-              {question.prompt}
-            </span>
-            {question.signal ? (
-              <span className="mt-1 block text-sm leading-6 text-ink-500">
-                {question.signal}
-              </span>
-            ) : null}
-            <textarea
-              aria-label={`Answer question ${index + 1}`}
-              className="mt-4 min-h-32 w-full resize-y rounded-3xl border border-ink-100 bg-white px-4 py-3 text-sm leading-6 text-ink-900 outline-none transition focus:border-ink-300"
-              onChange={(event) =>
-                onAnswerChange(question.id, event.target.value)
-              }
-              placeholder="Write your answer..."
-              value={answers[question.id] ?? ""}
-            />
-          </label>
-        ))}
-      </div>
-
-      {error ? <InlineAlert message={error} /> : null}
-
-      <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-        <Button className="h-12" onClick={onBack} variant="secondary">
-          Back
-        </Button>
-        <Button className="h-12" disabled={!canSubmit} onClick={onSubmit}>
-          {isSubmitting ? (
-            <RefreshCcw aria-hidden="true" className="h-4 w-4 animate-spin" />
-          ) : (
-            <CheckCircle aria-hidden="true" className="h-4 w-4" />
-          )}
-          Submit answers
-        </Button>
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -1227,27 +1303,29 @@ function UnavailableInterview({
   title?: string;
 }) {
   return (
-    <section className="flex flex-1 flex-col justify-center py-10">
-      <div className="max-w-lg rounded-[2rem] border border-ink-100 bg-white/82 p-6 text-ink-900 backdrop-blur">
-        <AlertTriangle aria-hidden="true" className="h-6 w-6 text-coral-800" />
-        <h1 className="mt-4 text-3xl font-semibold">{title}</h1>
-        <p className="mt-3 text-sm leading-6 text-ink-600">{message}</p>
+    <>
+      <CandidateScreenHeader left={<CandidateWordmark />} />
+      <div className="flex flex-1 items-center justify-center px-[clamp(1.125rem,5vw,2.75rem)] pb-[4.5rem] pt-6">
+        <div className="w-full max-w-[480px] text-center motion-safe:animate-[cc-in_.5s_cubic-bezier(.2,.7,.2,1)_both]">
+          <span className="mb-6 inline-grid h-[60px] w-[60px] place-items-center rounded-full bg-clay-50 text-clay-600">
+            <AlertIcon className="h-[27px] w-[27px]" />
+          </span>
+          <h1 className="mb-3.5 font-display text-[clamp(30px,5vw,42px)] font-normal leading-[1.06] tracking-[-0.02em] text-ink-950">
+            {title}
+          </h1>
+          <p className="mx-auto max-w-[26rem] text-pretty text-[16px] leading-[1.62] text-ink-700">
+            {message}
+          </p>
+        </div>
       </div>
-    </section>
+    </>
   );
 }
 
 function StatusPill({ status }: { status: RoomStatus }) {
-  const isLive = status === "connected";
-  const isWorking = status === "processing" || status === "reconnecting";
-  const Icon = isLive ? CheckCircle : isWorking ? RefreshCcw : Mic;
-
   return (
-    <span className="inline-flex items-center gap-1.5 rounded-full bg-[#eef0e3] px-2.5 py-1 text-xs font-semibold text-olive-900">
-      <Icon
-        aria-hidden="true"
-        className={`h-3.5 w-3.5${isWorking ? " motion-safe:animate-spin" : ""}`}
-      />
+    <span className="inline-flex h-[29px] shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-[rgba(63,208,165,0.14)] px-3 font-mono text-[10px] uppercase tracking-[0.09em] text-spruce-300">
+      <span className="h-1.5 w-1.5 rounded-full bg-spruce-400 motion-safe:animate-[cc-livedot_1.9s_ease-in-out_infinite]" />
       {statusCopy[status]}
     </span>
   );
@@ -1260,6 +1338,7 @@ function LiveInterviewStage({
   isAudioPlaybackBlocked,
   inactivityNotice,
   isFormFallbackAvailable,
+  isPreview,
   isRoomActive,
   isStreaming,
   localStream,
@@ -1276,6 +1355,7 @@ function LiveInterviewStage({
   isAudioPlaybackBlocked: boolean;
   inactivityNotice: CandidateInactivityNotice | null;
   isFormFallbackAvailable: boolean;
+  isPreview: boolean;
   isRoomActive: boolean;
   isStreaming: boolean;
   localStream: MediaStream | null;
@@ -1286,125 +1366,162 @@ function LiveInterviewStage({
   onRepeatQuestion: () => void;
   status: RoomStatus;
 }) {
+  const hasInterviewerLine = activeText !== null;
   const activeDisplayText = activeText ?? statusDescription(status);
   const activeWords = React.useMemo(
     () => splitTranscriptWords(activeDisplayText),
     [activeDisplayText],
   );
-  const activeSizeClass = activeTextSizeClass(activeDisplayText);
   const isConnectingOnly =
     status === "preparing" ||
     status === "permission_required" ||
     status === "connecting";
+  // The aura breathes with the voice and the meter brightens on the candidate's
+  // turn, so the room reads as alive without any extra chrome.
+  const isInterviewerSpeaking =
+    status === "interviewer_speaking" || status === "closing";
+  const isCandidateTurn =
+    status === "listening" || status === "candidate_speaking";
 
   return (
-    <section className="fixed inset-0 z-50 flex h-[100svh] flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_-10%,#3c421f_0%,#1d1c16_38%,#131210_100%)] px-5 pb-[calc(env(safe-area-inset-bottom)+1rem)] pt-[calc(env(safe-area-inset-top)+1rem)] text-white supports-[height:100dvh]:h-[100dvh] sm:px-8">
-      <div className="pointer-events-none absolute left-1/2 top-[30%] h-[120vh] w-[150vw] -translate-x-1/2 opacity-70">
-        <div className="absolute left-1/2 top-1/2 h-full w-full -translate-x-1/2 -translate-y-1/2 bg-[radial-gradient(closest-side,oklch(0.7_0.17_121.25_/_0.34),oklch(0.55_0.13_121.25_/_0.13)_45%,transparent_72%)] blur-3xl motion-safe:animate-[cc-aura_4.4s_ease-in-out_infinite]" />
+    <section className="fixed inset-0 z-50 flex h-[100svh] flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_-12%,#0E4438_0%,#0A2A22_34%,#08150F_100%)] px-[clamp(1.125rem,5vw,2.75rem)] pb-[calc(env(safe-area-inset-bottom)+clamp(1rem,3vh,1.625rem))] pt-[calc(env(safe-area-inset-top)+clamp(1rem,3vh,1.625rem))] font-sans text-[#F4F3EF] supports-[height:100dvh]:h-[100dvh]">
+      <div
+        className="pointer-events-none absolute left-1/2 top-[22%] h-[min(760px,90vh)] w-[min(1180px,150vw)] -translate-x-1/2 transition-opacity duration-[900ms]"
+        style={{ opacity: isInterviewerSpeaking ? 1 : 0.3 }}
+      >
+        <div className="absolute inset-0 bg-[radial-gradient(closest-side,rgba(30,180,142,0.34),rgba(15,107,87,0.15)_46%,transparent_74%)] motion-safe:animate-[cc-aura_4.6s_ease-in-out_infinite]" />
       </div>
       <div className="pointer-events-none absolute inset-0 opacity-45 [background-image:url('data:image/svg+xml;utf8,<svg_xmlns=%22http://www.w3.org/2000/svg%22_width=%22160%22_height=%22160%22><filter_id=%22n%22><feTurbulence_type=%22fractalNoise%22_baseFrequency=%220.8%22_numOctaves=%222%22/></filter><rect_width=%22100%25%22_height=%22100%25%22_filter=%22url(%23n)%22_opacity=%220.04%22/></svg>')]" />
 
-      <div className="flex shrink-0 items-center justify-between gap-4">
+      <div className="relative flex shrink-0 items-start justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 text-white/48">
-            <span className="text-[0.62rem] font-medium uppercase tracking-[0.14em]">
+          <div className="flex items-center gap-[9px]">
+            <span className="font-mono text-[9.5px] uppercase tracking-[0.14em] text-[rgba(244,243,239,0.48)]">
               Powered by
             </span>
             <BrandMark
               appearance="on-dark"
-              labelClassName="h-[18px] max-w-[6.5rem]"
+              className="opacity-80"
+              labelClassName="h-[15px] w-auto max-w-none"
             />
           </div>
-          <div className="mt-2 flex items-center gap-2 text-sm font-semibold text-white/82">
-            <span className="grid h-8 w-8 place-items-center rounded-full bg-white/10">
-              <Mic aria-hidden="true" className="h-4 w-4" />
+          <div className="mt-2.5 flex flex-wrap items-center gap-2.5">
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-[rgba(244,243,239,0.1)]">
+              <MicIcon className="h-[15px] w-[15px]" />
             </span>
-            Live interview
+            <span className="font-title text-[14.5px] font-semibold tracking-[-0.008em] text-[rgba(244,243,239,0.82)]">
+              Live interview
+            </span>
+            {/*
+              The stage covers the whole viewport, including the recruiter
+              preview toolbar. Without this, a recruiter running a live test has
+              no way to tell it apart from a real candidate session.
+            */}
+            {isPreview ? (
+              <span className="inline-flex h-[26px] shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-[rgba(244,243,239,0.1)] px-[11px] font-mono text-[9.5px] uppercase tracking-[0.12em] text-[rgba(244,243,239,0.72)]">
+                Recruiter live test · not recorded
+              </span>
+            ) : null}
           </div>
         </div>
         <StatusPill status={status} />
       </div>
 
-      <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden py-4 sm:py-10">
-        <div className="m-auto w-full max-w-4xl">
+      <div className="relative flex min-h-0 flex-1 items-center justify-center py-[clamp(1.25rem,4vh,3rem)]">
+        <div className="w-full max-w-[840px]">
           {isConnectingOnly ? (
             <ConnectingInterviewState status={status} />
           ) : (
-            <div
-              aria-atomic="true"
-              aria-busy={isStreaming}
-              aria-live="polite"
-              className="mx-auto flex min-h-[min(46svh,24rem)] max-h-[58svh] max-w-3xl flex-col items-start justify-center overflow-y-auto text-left sm:min-h-[min(48svh,30rem)]"
-              key={activeTurnId ?? status}
-            >
-              <div className="mb-5 inline-flex items-center gap-2 sm:mb-7">
-                <span className="h-2 w-2 rounded-full bg-olive-200 motion-safe:animate-[cc-livedot_1.6s_ease-in-out_infinite]" />
-                <span className="text-xs font-semibold uppercase tracking-[0.18em] text-olive-200">
-                  Interviewer
-                </span>
-              </div>
+            <div className="mx-auto max-h-[62svh] w-full max-w-[780px] overflow-y-auto">
+              {/*
+                The "Interviewer" attribution only appears over words the
+                interviewer actually said. Before the first line lands we still
+                show where the session is, but unattributed.
+              */}
+              {hasInterviewerLine ? (
+                <div className="mb-[clamp(18px,2.6vh,28px)] inline-flex items-center gap-[9px]">
+                  <span className="h-[7px] w-[7px] rounded-full bg-spruce-300 motion-safe:animate-[cc-livedot_1.6s_ease-in-out_infinite]" />
+                  <span className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-spruce-300">
+                    Interviewer
+                  </span>
+                </div>
+              ) : null}
 
-              <div className="w-full">
+              <div
+                aria-busy={isStreaming}
+                aria-live="polite"
+                className="flex flex-col gap-3.5"
+              >
                 <p
-                  className={`font-semibold leading-[1.2] tracking-normal text-[#fef9f2] ${activeSizeClass}`}
+                  className="text-pretty font-display font-normal leading-[1.18] tracking-[-0.016em] text-[#F4F3EF]"
+                  key={activeTurnId ?? status}
+                  style={{ fontSize: activeTextSize(activeDisplayText) }}
                 >
                   {activeWords.map((word, index) => {
-                    // Each word mounts exactly when its delta arrives, so the
-                    // entrance animation tracks the voice. Keying by turn+index
+                    // The reveal replays for every new line: keying by turn+index
                     // (not by text) keeps a growing word stable in place while a
-                    // new question re-keys and replays the reveal. The last word
-                    // while streaming is the one being spoken — gently lit.
-                    const isLiveWord =
-                      isStreaming && index === activeWords.length - 1;
-
+                    // new question re-keys and remounts. While the caption
+                    // streams, each word mounts as its delta arrives, so the
+                    // animation already tracks the voice and needs no delay; a
+                    // line that lands complete is staggered by hand at the
+                    // design's word cadence. cc-word-reveal also lights the word
+                    // as it is spoken, then settles it into the reading colour.
                     return (
                       <span
-                        className={`mr-[0.24em] inline-block${
-                          isStreaming
-                            ? " motion-safe:animate-[cc-wordIn_.18s_cubic-bezier(.2,.7,.2,1)_both]"
-                            : ""
-                        }${isLiveWord ? " text-[oklch(0.9_0.14_121.3)]" : ""}`}
+                        className="cc-word-reveal mr-[0.24em] inline-block"
                         key={`${activeTurnId ?? "status"}:${index}`}
+                        style={
+                          isStreaming
+                            ? undefined
+                            : { animationDelay: revealDelay(index) }
+                        }
                       >
                         {word}
                       </span>
                     );
                   })}
                   {isStreaming ? (
-                    <span className="inline-block h-[0.92em] w-[3px] translate-y-[0.08em] bg-olive-200 motion-safe:animate-[cc-blink_1s_step-end_infinite]" />
+                    <span className="inline-block h-[0.9em] w-[3px] translate-y-[0.08em] bg-spruce-300 motion-safe:animate-[cc-blink_1s_step-end_infinite]" />
                   ) : null}
                 </p>
               </div>
 
-              <p className="mt-7 max-w-xl text-sm leading-6 text-white/50 sm:text-base">
-                You can ask to repeat the question, take a moment to think, or
-                answer naturally. The interviewer will wait while you finish.
-              </p>
-
-              {inactivityNotice ? (
-                <CandidateInactivityAlert
-                  isFormFallbackAvailable={isFormFallbackAvailable}
-                  notice={inactivityNotice}
-                  onConfirmPresence={onConfirmPresence}
-                  onContinueInWriting={onContinueInWriting}
-                  onRepeatQuestion={onRepeatQuestion}
-                />
+              {hasInterviewerLine ? (
+                <p className="mt-[clamp(22px,3vh,32px)] max-w-[34rem] text-[15px] leading-[1.62] text-[rgba(244,243,239,0.5)]">
+                  You can ask to repeat the question, take a moment to think, or
+                  answer naturally. The interviewer will wait while you finish.
+                </p>
               ) : null}
             </div>
           )}
 
+          {inactivityNotice && !isConnectingOnly ? (
+            <div className="mx-auto w-full max-w-[780px]">
+              <CandidateInactivityAlert
+                isFormFallbackAvailable={isFormFallbackAvailable}
+                notice={inactivityNotice}
+                onConfirmPresence={onConfirmPresence}
+                onContinueInWriting={onContinueInWriting}
+                onRepeatQuestion={onRepeatQuestion}
+              />
+            </div>
+          ) : null}
+
           {isAudioPlaybackBlocked ? (
-            <div className="mx-auto mt-6 max-w-sm rounded-3xl border border-gold-200/30 bg-white/8 p-4 text-sm text-white">
-              <p className="font-semibold">Audio paused by your browser</p>
-              <p className="mt-1 leading-6 text-white/58">
+            <div className="mx-auto mt-6 max-w-sm rounded-[24px] border border-[rgba(244,243,239,0.14)] bg-[rgba(28,52,44,0.72)] p-4">
+              <p className="font-title text-[15px] font-semibold tracking-[-0.008em]">
+                Audio paused by your browser
+              </p>
+              <p className="mt-[5px] text-[13.5px] leading-[1.5] text-[rgba(244,243,239,0.6)]">
                 Tap once to hear the interviewer on this device.
               </p>
               <Button
-                className="mt-3 h-11 w-full bg-white text-ink-950 hover:bg-ink-100"
+                className={`mt-4 h-[38px] w-full gap-2 rounded-full bg-[#F4F3EF] px-4 font-title text-[13.5px] font-medium text-ink-950 hover:bg-white ${stageFocusRingClass}`}
+                data-cc-btn="flat"
                 onClick={onEnableAudio}
                 variant="secondary"
               >
-                <Mic aria-hidden="true" className="h-4 w-4" />
+                <MicIcon className="h-[15px] w-[15px]" />
                 Enable audio
               </Button>
             </div>
@@ -1412,20 +1529,26 @@ function LiveInterviewStage({
         </div>
       </div>
 
-      <div className="ml-auto flex w-full shrink-0 items-center justify-between gap-3 rounded-full border border-white/10 bg-ink-950/70 p-2 text-white backdrop-blur sm:w-auto">
+      <div className="relative ml-auto flex w-full shrink-0 items-center justify-between gap-2.5 rounded-full border border-[rgba(244,243,239,0.1)] bg-[rgba(6,17,12,0.88)] p-2 sm:w-auto">
         <Button
-          className="h-10 bg-coral-500/20 px-4 text-coral-100 hover:bg-coral-500/30"
+          className={`h-10 gap-2 rounded-full bg-[rgba(224,138,106,0.18)] px-4 font-title text-[13.5px] font-medium text-[#F6C3AB] hover:bg-[rgba(224,138,106,0.28)] ${stageFocusRingClass}`}
+          data-cc-btn="flat"
           onClick={onEndInterview}
         >
-          <PhoneOff aria-hidden="true" className="h-4 w-4" />
+          <HangUpIcon className="h-[15px] w-[15px]" />
           Quit
         </Button>
-        <span className="h-6 w-px bg-white/10" />
-        <span className="px-3 text-sm font-semibold tabular-nums">
+        <span className="h-[22px] w-px bg-[rgba(244,243,239,0.12)]" />
+        <span className="px-2 font-mono text-[13px] tabular-nums text-[#F4F3EF]">
           {formatDuration(elapsedSeconds)}
         </span>
-        <span className="h-6 w-px bg-white/10" />
-        <VoiceLevelMeter isActive={isRoomActive} stream={localStream} />
+        <span className="h-[22px] w-px bg-[rgba(244,243,239,0.12)]" />
+        <div
+          className="transition-opacity duration-500"
+          style={{ opacity: isCandidateTurn ? 1 : 0.5 }}
+        >
+          <VoiceLevelMeter isActive={isRoomActive} stream={localStream} />
+        </div>
       </div>
     </section>
   );
@@ -1464,50 +1587,53 @@ function CandidateInactivityAlert({
   return (
     <div
       aria-live="assertive"
-      className="mt-6 w-full rounded-3xl border border-white/14 bg-white/10 p-4 backdrop-blur sm:p-5"
+      className="mt-[26px] w-full rounded-[24px] border border-[rgba(244,243,239,0.14)] bg-[rgba(28,52,44,0.72)] p-[clamp(1rem,2vw,1.25rem)]"
       role="alert"
     >
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="font-semibold text-white">
+          <p className="font-title text-[15px] font-semibold tracking-[-0.008em] text-[#F4F3EF]">
             {isWarning ? "Are you still with us?" : "We are waiting for you"}
           </p>
-          <p className="mt-1 text-sm leading-5 text-white/60">
+          <p className="mt-[5px] text-[13.5px] leading-[1.5] text-[rgba(244,243,239,0.6)]">
             {isWarning
               ? "Confirm that you are here to keep this attempt open."
               : "You can continue speaking whenever you are ready."}
           </p>
         </div>
         {isWarning && remainingSeconds !== null ? (
-          <span className="rounded-full bg-white px-3 py-1 text-sm font-semibold tabular-nums text-ink-950">
+          <span className="inline-flex h-7 shrink-0 items-center rounded-full bg-[#F4F3EF] px-3 font-mono text-[12.5px] tabular-nums text-ink-950">
             {remainingSeconds}s
           </span>
         ) : null}
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         <Button
-          className="h-10 bg-white px-4 text-ink-950 hover:bg-ink-100"
+          className={`h-[38px] gap-2 rounded-full bg-[#F4F3EF] px-[15px] font-title text-[13.5px] font-medium text-ink-950 hover:bg-white ${stageFocusRingClass}`}
+          data-cc-btn="flat"
           onClick={onConfirmPresence}
           variant="secondary"
         >
-          <CheckCircle aria-hidden="true" className="h-4 w-4" />
+          <CheckIcon className="h-[15px] w-[15px]" />
           I&apos;m here
         </Button>
         <Button
-          className="h-10 border border-white/20 bg-transparent px-4 text-white hover:bg-white/10"
+          className={`h-[38px] gap-2 rounded-full border border-[rgba(244,243,239,0.2)] bg-transparent px-[15px] font-title text-[13.5px] font-medium text-[#F4F3EF] hover:border-[rgba(244,243,239,0.2)] hover:bg-[rgba(244,243,239,0.1)] ${stageFocusRingClass}`}
+          data-cc-btn="flat"
           onClick={onRepeatQuestion}
           variant="secondary"
         >
-          <RefreshCcw aria-hidden="true" className="h-4 w-4" />
+          <RestartIcon className="h-[15px] w-[15px]" />
           Repeat question
         </Button>
         {isFormFallbackAvailable ? (
           <Button
-            className="h-10 border border-white/20 bg-transparent px-4 text-white hover:bg-white/10"
+            className={`h-[38px] gap-2 rounded-full border border-[rgba(244,243,239,0.2)] bg-transparent px-[15px] font-title text-[13.5px] font-medium text-[#F4F3EF] hover:border-[rgba(244,243,239,0.2)] hover:bg-[rgba(244,243,239,0.1)] ${stageFocusRingClass}`}
+            data-cc-btn="flat"
             onClick={onContinueInWriting}
             variant="secondary"
           >
-            <EditPencil aria-hidden="true" className="h-4 w-4" />
+            <PencilIcon className="h-[15px] w-[15px]" />
             Continue in writing
           </Button>
         ) : null}
@@ -1518,21 +1644,21 @@ function CandidateInactivityAlert({
 
 function ConnectingInterviewState({ status }: { status: RoomStatus }) {
   return (
-    <div className="mx-auto max-w-2xl text-center">
-      <div className="relative mx-auto grid h-28 w-28 place-items-center sm:h-36 sm:w-36">
-        <span className="absolute inset-0 rounded-full border border-olive-300/40 motion-safe:animate-[cc-ring_2.4s_ease-out_infinite]" />
-        <span className="absolute inset-0 rounded-full border border-olive-300/30 motion-safe:animate-[cc-ring_2.4s_ease-out_infinite_1.2s]" />
-        <span className="grid h-16 w-16 place-items-center rounded-full bg-[radial-gradient(circle_at_35%_30%,oklch(0.826_0.199_121.3),oklch(0.507_0.122_121.25))]">
-          <Mic aria-hidden="true" className="h-7 w-7 text-ink-950" />
+    <div className="text-center">
+      <div className="relative mx-auto grid h-[clamp(104px,14vw,140px)] w-[clamp(104px,14vw,140px)] place-items-center">
+        <span className="absolute inset-0 rounded-full border border-[rgba(63,208,165,0.4)] motion-safe:animate-[cc-ring_2.4s_ease-out_infinite]" />
+        <span className="absolute inset-0 rounded-full border border-[rgba(63,208,165,0.3)] motion-safe:animate-[cc-ring_2.4s_ease-out_1.2s_infinite]" />
+        <span className="grid h-[62px] w-[62px] place-items-center rounded-full bg-[radial-gradient(circle_at_35%_30%,#7FE3BE,#0F6B57)] text-spruce-950 motion-safe:animate-[cc-breathe_2.6s_ease-in-out_infinite]">
+          <MicIcon className="h-[26px] w-[26px]" />
         </span>
       </div>
-      <p className="mt-8 text-xs font-semibold uppercase tracking-[0.18em] text-olive-200">
+      <p className="mt-[30px] font-mono text-[10.5px] uppercase tracking-[0.16em] text-spruce-300">
         Connecting
       </p>
-      <h2 className="mx-auto mt-4 max-w-2xl text-2xl font-semibold leading-tight tracking-normal sm:text-4xl">
+      <h2 className="mx-auto mt-4 max-w-[26ch] text-balance font-display text-[clamp(26px,4vw,40px)] font-normal leading-[1.14] tracking-[-0.016em]">
         {statusDescription(status)}
       </h2>
-      <p className="mx-auto mt-4 max-w-lg text-sm leading-6 text-white/58 sm:text-base">
+      <p className="mx-auto mt-4 max-w-[30rem] text-[15px] leading-[1.6] text-[rgba(244,243,239,0.58)]">
         One moment while we set up your private room.
       </p>
     </div>
@@ -1611,14 +1737,15 @@ function inactivitySecondsRemaining(expiresAt: string | null) {
 
 function InlineAlert({ message }: { message: string }) {
   return (
-    <div className="mt-4 flex gap-2 rounded-3xl bg-coral-50 p-4 text-sm text-ink-900">
-      <AlertTriangle
-        aria-hidden="true"
-        className="mt-0.5 h-4 w-4 shrink-0 text-coral-800"
-      />
+    <div className="mt-4 flex gap-3 rounded-[18px] border border-clay-300 bg-clay-50 p-4">
+      <AlertIcon className="mt-0.5 h-4 w-4 shrink-0 text-clay-600" />
       <div>
-        <p className="font-semibold">Needs attention</p>
-        <p className="mt-1 leading-6">{message}</p>
+        <p className="font-title text-[14.5px] font-semibold tracking-[-0.008em] text-ink-950">
+          Needs attention
+        </p>
+        <p className="mt-1 text-[13.5px] leading-[1.55] text-ink-700">
+          {message}
+        </p>
       </div>
     </div>
   );
@@ -1679,13 +1806,24 @@ function splitTranscriptWords(text: string) {
 // theatrical, long statements (the closing especially) shrink so they fit the
 // viewport rather than overflowing off the bottom. The scroll container is the
 // safety net for anything still taller than the screen.
-function activeTextSizeClass(text: string): string {
+// A line that arrives already complete (polling fallback, or a reconnect
+// replaying a finalized turn) has no voice to pace it, so the reveal is
+// staggered by hand at the interviewer's speaking cadence and capped so a long
+// closing statement does not keep its tail hidden.
+const revealWordStepMs = 115;
+const revealMaxSteps = 28;
+
+function revealDelay(index: number) {
+  return `${Math.min(index, revealMaxSteps) * revealWordStepMs}ms`;
+}
+
+function activeTextSize(text: string): string {
   const length = text.trim().length;
   if (length > 220) {
-    return "text-xl sm:text-2xl lg:text-3xl";
+    return "clamp(20px,2.4vw,30px)";
   }
   if (length > 120) {
-    return "text-2xl sm:text-3xl lg:text-4xl";
+    return "clamp(24px,3vw,38px)";
   }
-  return "text-3xl sm:text-5xl lg:text-6xl";
+  return "clamp(28px,4.2vw,52px)";
 }

@@ -21,6 +21,8 @@ import {
   cn,
 } from "@prelude/ui";
 
+import { candidateAppUrl } from "../../libs/candidate-app-url";
+
 export type RoleScreenState =
   | "candidate_started"
   | "completed"
@@ -85,8 +87,7 @@ export function RolesList({
       return;
     }
 
-    const origin = typeof window === "undefined" ? "" : window.location.origin;
-    await navigator.clipboard?.writeText(`${origin}${role.candidatePath}`);
+    await navigator.clipboard?.writeText(candidateAppUrl(role.candidatePath));
     setCopiedId(role.id);
     window.setTimeout(() => setCopiedId(null), 1600);
   }, []);

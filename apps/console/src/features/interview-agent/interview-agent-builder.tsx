@@ -55,6 +55,10 @@ import {
   interviewPlanPolicy,
 } from "../../domain/interview-plan-policy";
 import {
+  candidateAppUrl,
+  candidateLinkLabel as formatCandidateLinkLabel,
+} from "../../libs/candidate-app-url";
+import {
   addInterviewQuestionAction,
   generateInterviewDraftAction,
   refineInterviewQuestionAction,
@@ -1783,7 +1787,7 @@ function EvaluationStep({
 // #6: copy the candidate link + a zero-backend "invite by email" (mailto) right
 // from the builder's publish step, so the recruiter can share immediately after
 // publishing without leaving the flow. The copy target matches the existing
-// CopyCandidateLinkButton (origin + candidatePath).
+// CopyCandidateLinkButton (candidate app origin + candidatePath).
 function CandidateLinkActions({
   candidatePath,
   roleTitle,
@@ -1792,14 +1796,9 @@ function CandidateLinkActions({
   roleTitle: string;
 }) {
   const { t } = useTranslation();
-  const [origin, setOrigin] = React.useState("");
   const [copied, setCopied] = React.useState(false);
 
-  React.useEffect(() => {
-    setOrigin(window.location.origin);
-  }, []);
-
-  const candidateUrl = origin ? `${origin}${candidatePath}` : "";
+  const candidateUrl = candidateAppUrl(candidatePath);
 
   const copyLink = React.useCallback(async () => {
     if (!candidateUrl) {
@@ -1881,7 +1880,7 @@ function ShareStep({
 }) {
   const { t } = useTranslation();
   const candidateLink = publishedInterview
-    ? `hirecall.ai${publishedInterview.candidatePath}`
+    ? formatCandidateLinkLabel(publishedInterview.candidatePath)
     : "Publish to create the candidate link";
   const publicationIssues = getInterviewPlanPublicationIssues(
     {

@@ -445,6 +445,8 @@
       "tabSetup": "Configuration",
       "moreRoleActions": "Autres actions sur le poste",
       "previewAsCandidate": "Aperçu candidat",
+      "previewAsCandidateOpening": "Ouverture de l'aperçu…",
+      "previewAsCandidateError": "L'aperçu candidat n'a pas pu être préparé. Réessayez.",
       "statCompletionRate": "Taux de complétion",
       "statCompletionRateNote": "{{completed}} sur {{started}} démarrés",
       "statDropOff": "Abandons",

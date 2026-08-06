@@ -5,7 +5,10 @@ import hireCallAppIconColor from "../assets/hirecall-app-icon-color.svg";
 import hireCallAppIconIvory from "../assets/hirecall-app-icon-ivory.svg";
 import hireCallWordmark from "../assets/hirecall-wordmark-black.svg";
 import hireCallWordmarkColor from "../assets/hirecall-wordmark-color.svg";
-import hireCallWordmarkWhite from "../assets/hirecall-wordmark-white.svg";
+// The reverse wordmark is the brand's dark-surface lockup: white type keeping
+// the green spark. The all-white variant flattens the spark and reads as a
+// different mark, so it is not what "on-dark" should show.
+import hireCallWordmarkReverse from "../assets/hirecall-wordmark-reverse.svg";
 import { cn } from "../lib/cn";
 
 type BrandMarkProps = React.HTMLAttributes<HTMLDivElement> & {
@@ -24,7 +27,7 @@ const hireCallAppIconColorSource = assetSource(hireCallAppIconColor);
 const hireCallAppIconIvorySource = assetSource(hireCallAppIconIvory);
 const hireCallWordmarkSource = assetSource(hireCallWordmark);
 const hireCallWordmarkColorSource = assetSource(hireCallWordmarkColor);
-const hireCallWordmarkWhiteSource = assetSource(hireCallWordmarkWhite);
+const hireCallWordmarkReverseSource = assetSource(hireCallWordmarkReverse);
 
 const markSourceByAppearance = {
   color: hireCallAppIconColorSource,
@@ -34,7 +37,7 @@ const markSourceByAppearance = {
 
 const wordmarkSourceByAppearance = {
   color: hireCallWordmarkColorSource,
-  "on-dark": hireCallWordmarkWhiteSource,
+  "on-dark": hireCallWordmarkReverseSource,
   "on-light": hireCallWordmarkSource,
 } as const;
 

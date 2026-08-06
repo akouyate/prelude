@@ -1,15 +1,18 @@
 "use client";
 
 import * as React from "react";
-import {
-  CheckCircle,
-  Mail,
-  Microphone as Mic,
-  ShieldCheck,
-} from "iconoir-react";
 
 import { Button } from "../components/button";
-import { Input } from "../components/input";
+import {
+  CheckIcon,
+  ClockIcon,
+  MailIcon,
+  MicIcon,
+  ShieldCheckIcon,
+  TranscriptIcon,
+  type CandidateIconProps,
+} from "../components/candidate-icons";
+import { CandidateMonoPill } from "./candidate-shell";
 
 type CandidateExperienceMode = string;
 
@@ -44,71 +47,83 @@ export function CandidateWelcomeExperience({
   roleTitle,
 }: CandidateWelcomeExperienceProps) {
   return (
-    <section className="mx-auto flex flex-1 items-center justify-center py-10">
-      <div className="w-full max-w-xl">
-        <div className="inline-flex items-center gap-2 rounded-full bg-[#eef0e3] px-3 py-1 text-xs font-semibold uppercase tracking-[0.13em] text-olive-900">
-          <ShieldCheck aria-hidden="true" className="h-4 w-4" />
+    <div className="flex flex-1 items-center justify-center px-[clamp(1.125rem,6vw,2.75rem)] pb-[5.75rem] pt-2">
+      <div className="flex w-full max-w-[580px] flex-col motion-safe:animate-[cc-in_.55s_cubic-bezier(.2,.7,.2,1)_both]">
+        <CandidateMonoPill className="self-start" tone="tint">
+          <ShieldCheckIcon className="h-[13px] w-[13px]" strokeWidth={1.9} />
           Private interview
-        </div>
-        <p className="mt-8 text-sm font-medium text-ink-600">
+        </CandidateMonoPill>
+
+        <p className="mt-6 text-[14.5px] text-ink-700">
           {companyName} invites you to a first conversation
         </p>
-        <h1 className="mt-4 text-4xl font-semibold leading-[1.08] tracking-normal text-ink-950 sm:text-5xl lg:text-6xl">
+        <h1 className="mt-3.5 text-balance font-display text-[clamp(40px,8.4vw,68px)] font-normal leading-[1] tracking-[-0.022em] text-ink-950">
           {roleTitle}
         </h1>
-        <p className="mt-5 text-base leading-7 text-ink-700">
+        <p className="mt-5 max-w-[34rem] text-pretty text-[17px] leading-[1.62] text-ink-700">
           {disclosureCopy} We listen to{" "}
-          <span className="font-display text-xl italic text-ink-950">
+          <span className="font-display text-[21px] italic text-ink-950">
             what you say
           </span>
           .
         </p>
 
-        <div className="mt-7 flex flex-wrap gap-2">
+        <div className="mt-[26px] flex flex-wrap gap-2">
           <CandidateSoftPill
-            icon={Mic}
+            icon={MicIcon}
             label={formatCandidateModes(responseModes)}
           />
           <CandidateSoftPill
-            icon={CheckCircle}
+            icon={ClockIcon}
             label={
               estimatedMinutes
                 ? `About ${estimatedMinutes} minutes`
                 : "A few minutes"
             }
           />
-          <CandidateSoftPill icon={ShieldCheck} label="Human reviewed" />
+          <CandidateSoftPill icon={ShieldCheckIcon} label="Human reviewed" />
         </div>
 
-        <div className="mt-7 rounded-[2rem] border border-ink-100 bg-white/70 p-6">
-          <p className="text-base font-semibold text-ink-950">
+        <div className="mt-[30px] rounded-[28px] border border-ink-200 bg-white px-[clamp(1.25rem,4vw,2rem)] py-[30px] motion-safe:animate-[cc-in_.6s_cubic-bezier(.2,.7,.2,1)_.1s_both]">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-600">
             How this interview works
           </p>
-          <div className="mt-4 divide-y divide-ink-100">
+          <h2 className="mt-3 font-display text-[27px] font-normal leading-[1.2] tracking-[-0.014em] text-ink-950">
+            Fair, calm, and transparent.
+          </h2>
+          <div className="mt-[22px] flex flex-col">
             <CandidateFairnessRow
               body="Only the content of your answers reaches the recruiter."
+              icon={ShieldCheckIcon}
               title="Answers, not appearance"
             />
             <CandidateFairnessRow
               body="There is no timer on answers. Pause and think."
+              icon={ClockIcon}
               title="Go at your own pace"
             />
             <CandidateFairnessRow
               body={evidenceNotice.body}
+              icon={TranscriptIcon}
+              isLast
               title={evidenceNotice.title}
             />
           </div>
         </div>
 
-        <Button className="mt-7 h-14 w-full text-base" onClick={onStart}>
+        <Button
+          className="mt-7 h-[54px] w-full gap-2.5 px-[26px] font-title text-[15.5px] font-medium hover:bg-spruce-800"
+          data-cc-btn=""
+          onClick={onStart}
+        >
           Get started
-          <Mic aria-hidden="true" className="h-4 w-4" />
+          <MicIcon className="h-4 w-4" strokeWidth={1.8} />
         </Button>
-        <p className="mt-4 text-center text-sm text-ink-400">
-          No account needed. You can take your time on every answer.
+        <p className="mt-3.5 text-center font-mono text-[10.5px] tracking-[0.06em] text-ink-500">
+          No account needed · Take your time on every answer
         </p>
       </div>
-    </section>
+    </div>
   );
 }
 
@@ -121,15 +136,18 @@ export function CandidateInterviewIntro({
   roleTitle,
 }: CandidateExperienceDetails) {
   return (
-    <div className="max-w-2xl">
-      <div className="inline-flex items-center gap-2 rounded-full border border-ink-100 bg-white/70 px-3 py-1 text-xs font-semibold text-ink-700">
-        <ShieldCheck aria-hidden="true" className="h-4 w-4" />
+    <div className="max-w-[34rem]">
+      <CandidateMonoPill>
+        <ShieldCheckIcon
+          className="h-[13px] w-[13px] text-spruce-600"
+          strokeWidth={1.9}
+        />
         Private first screen
-      </div>
-      <h1 className="mt-6 text-3xl font-semibold leading-tight tracking-normal text-ink-950 sm:text-4xl lg:text-5xl">
+      </CandidateMonoPill>
+      <h1 className="mt-6 font-display text-[clamp(34px,5.4vw,52px)] font-normal leading-[1.04] tracking-[-0.02em] text-ink-950">
         Let&apos;s get you ready
       </h1>
-      <p className="mt-4 max-w-xl text-base leading-7 text-ink-600">
+      <p className="mt-[18px] max-w-[32rem] text-pretty text-[16.5px] leading-[1.62] text-ink-700">
         {description ?? (
           <>
             {roleTitle} at {companyName}. Answer naturally; the recruiter
@@ -139,7 +157,7 @@ export function CandidateInterviewIntro({
         )}
       </p>
 
-      <div className="mt-8 grid gap-3 sm:grid-cols-3">
+      <div className="mt-8 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
         <CandidateBriefFact label="Role" value={jobTitle} />
         <CandidateBriefFact
           label="Format"
@@ -181,33 +199,37 @@ export function CandidatePreflightExperience({
 }: CandidatePreflightExperienceProps) {
   return (
     <>
-      <div className="flex items-start gap-3">
-        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-ink-900 text-white">
-          <Mail aria-hidden="true" className="h-4 w-4" />
+      <div className="flex items-start gap-[13px]">
+        <span className="grid h-[42px] w-[42px] shrink-0 place-items-center rounded-full bg-ink-900 text-white">
+          <MailIcon className="h-[18px] w-[18px]" />
         </span>
         <div>
-          <h2 className="text-xl font-semibold">Before you start</h2>
-          <p className="mt-1 text-sm leading-6 text-ink-600">
+          <h2 className="font-display text-[26px] font-normal leading-[1.15] tracking-[-0.014em] text-ink-950">
+            Before you start
+          </h2>
+          <p className="mt-[5px] text-[13.5px] leading-[1.55] text-ink-600">
             {jobTitle}
             {estimatedMinutes ? ` · about ${estimatedMinutes} minutes` : ""}
           </p>
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <label className="text-sm">
-          <span className="font-medium text-ink-900">Your name</span>
-          <Input
-            className="mt-1 h-11 bg-white"
+      <div className="mt-[22px] grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label className="block">
+          <span className="mb-[7px] block font-title text-[12.5px] font-semibold tracking-[-0.006em] text-ink-950">
+            Your name
+          </span>
+          <CandidateTextInput
             onChange={(event) => onCandidateNameChange(event.target.value)}
             placeholder="Your name"
             value={candidateName}
           />
         </label>
-        <label className="text-sm">
-          <span className="font-medium text-ink-900">Email optional</span>
-          <Input
-            className="mt-1 h-11 bg-white"
+        <label className="block">
+          <span className="mb-[7px] block font-title text-[12.5px] font-semibold tracking-[-0.006em] text-ink-950">
+            Email <span className="font-normal text-ink-500">optional</span>
+          </span>
+          <CandidateTextInput
             onChange={(event) => onCandidateEmailChange(event.target.value)}
             placeholder="you@example.com"
             type="email"
@@ -216,20 +238,45 @@ export function CandidatePreflightExperience({
         </label>
       </div>
 
-      <div className="mt-5 rounded-3xl border border-ink-100 bg-ink-50/70 p-4 text-sm leading-6 text-ink-600">
-        This interview is audio-first. You only need your microphone.
+      <div className="mt-4 flex items-center gap-3 rounded-[18px] border border-ink-100 bg-paper-inset px-4 py-3.5">
+        <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full bg-spruce-50 text-spruce-800">
+          <MicIcon className="h-4 w-4" strokeWidth={1.8} />
+        </span>
+        <p className="text-[13.5px] leading-[1.55] text-ink-700">
+          This interview is audio-first. You only need your microphone.
+        </p>
       </div>
 
-      <label className="mt-5 flex cursor-pointer gap-3 rounded-3xl border border-ink-100 bg-ink-50/70 p-4 text-sm leading-6 text-ink-700">
-        <input
-          checked={consentAccepted}
-          className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-ink-900"
-          onChange={(event) => onConsentChange(event.target.checked)}
-          type="checkbox"
-        />
-        <span>{consentCopy}</span>
+      <label className="mt-3 flex cursor-pointer items-start gap-3 rounded-[18px] border border-ink-100 bg-paper-inset px-4 py-[15px]">
+        <span className="relative mt-0.5 grid shrink-0 place-items-center">
+          <input
+            checked={consentAccepted}
+            className="peer h-[19px] w-[19px] cursor-pointer appearance-none rounded-[6px] border-[1.5px] border-ink-400 bg-white outline-none transition-colors checked:border-spruce-800 checked:bg-spruce-800 focus-visible:ring-2 focus-visible:ring-spruce-600 focus-visible:ring-offset-2"
+            onChange={(event) => onConsentChange(event.target.checked)}
+            type="checkbox"
+          />
+          <CheckIcon
+            className="pointer-events-none absolute h-[11px] w-[11px] text-white opacity-0 transition-opacity peer-checked:opacity-100"
+            strokeWidth={3}
+          />
+        </span>
+        <span className="text-[13px] leading-[1.6] text-ink-700">
+          {consentCopy}
+        </span>
       </label>
     </>
+  );
+}
+
+function CandidateTextInput({
+  className,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement>) {
+  return (
+    <input
+      className={`h-[46px] w-full rounded-[13px] border border-ink-300 bg-paper-sunken px-3.5 text-[14.5px] text-ink-950 outline-none transition placeholder:text-ink-500 focus:border-ink-900 focus:bg-white focus:ring-1 focus:ring-ink-900 ${className ?? ""}`}
+      {...props}
+    />
   );
 }
 
@@ -237,12 +284,12 @@ function CandidateSoftPill({
   icon: Icon,
   label,
 }: {
-  icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+  icon: React.ComponentType<CandidateIconProps>;
   label: string;
 }) {
   return (
-    <span className="inline-flex items-center gap-2 rounded-full border border-ink-200 bg-white px-3.5 py-2 text-sm font-medium text-ink-700">
-      <Icon aria-hidden={true} className="h-4 w-4 text-ink-500" />
+    <span className="inline-flex h-9 items-center gap-2 rounded-full border border-ink-200 bg-white px-3.5 text-[13.5px] text-ink-700">
+      <Icon className="h-3.5 w-3.5 text-spruce-600" />
       {label}
     </span>
   );
@@ -250,19 +297,27 @@ function CandidateSoftPill({
 
 function CandidateFairnessRow({
   body,
+  icon: Icon,
+  isLast = false,
   title,
 }: {
   body: string;
+  icon: React.ComponentType<CandidateIconProps>;
+  isLast?: boolean;
   title: string;
 }) {
   return (
-    <div className="flex gap-4 py-4 first:pt-0 last:pb-0">
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl bg-[#eef0e3] text-olive-900">
-        <ShieldCheck aria-hidden="true" className="h-5 w-5" />
+    <div
+      className={`flex gap-[15px] border-t border-ink-100 pt-4 ${isLast ? "" : "pb-4"}`}
+    >
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-spruce-50 text-spruce-800">
+        <Icon className="h-[17px] w-[17px]" />
       </span>
       <div>
-        <p className="text-sm font-semibold text-ink-950">{title}</p>
-        <p className="mt-1 text-sm leading-6 text-ink-500">{body}</p>
+        <p className="mb-[3px] font-title text-[14.5px] font-semibold tracking-[-0.008em] text-ink-950">
+          {title}
+        </p>
+        <p className="text-[13.5px] leading-[1.55] text-ink-600">{body}</p>
       </div>
     </div>
   );
@@ -276,11 +331,11 @@ function CandidateBriefFact({
   value: string;
 }) {
   return (
-    <div className="rounded-3xl border border-ink-100 bg-white/60 px-4 py-3">
-      <p className="text-xs font-semibold uppercase tracking-[0.14em] text-ink-500">
+    <div className="rounded-[20px] border border-ink-200 bg-white px-4 py-[15px]">
+      <p className="font-mono text-[9.5px] uppercase tracking-[0.12em] text-ink-500">
         {label}
       </p>
-      <p className="mt-2 text-sm font-semibold leading-5 text-ink-950">
+      <p className="mt-[9px] font-title text-[14px] font-semibold leading-[1.35] tracking-[-0.008em] text-ink-950">
         {value}
       </p>
     </div>

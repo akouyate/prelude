@@ -5,6 +5,8 @@ import { Check, Copy } from "iconoir-react";
 import { useTranslation } from "react-i18next";
 import { Button, cn } from "@prelude/ui";
 
+import { candidateAppUrl } from "../../libs/candidate-app-url";
+
 export function CopyCandidateLinkButton({
   candidatePath,
   children,
@@ -18,8 +20,7 @@ export function CopyCandidateLinkButton({
   const [copied, setCopied] = React.useState(false);
 
   const handleCopy = React.useCallback(async () => {
-    const origin = typeof window === "undefined" ? "" : window.location.origin;
-    await navigator.clipboard?.writeText(`${origin}${candidatePath}`);
+    await navigator.clipboard?.writeText(candidateAppUrl(candidatePath));
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
   }, [candidatePath]);

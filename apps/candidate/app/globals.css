@@ -1,60 +1,183 @@
 @import "tailwindcss";
 @source "../../../packages/ui/src/**/*.{ts,tsx}";
 
+/*
+ * Candidate experience palette. The candidate micro-app owns its own theme:
+ * the console keeps the olive/ink ramps in apps/console/app/globals.css, so
+ * redefining the token values here restyles the shared @prelude/ui primitives
+ * for candidates only.
+ */
 @theme {
-  --color-ink-50: #f6f3ec;
-  --color-ink-100: #ece8de;
-  --color-ink-200: #ddd8cc;
-  --color-ink-300: #c8c1b2;
-  --color-ink-400: #a29b8d;
-  --color-ink-500: #777166;
-  --color-ink-600: #5b574f;
-  --color-ink-700: #45423c;
+  /* Paper — the calm, warm ground of every light screen. */
+  --color-paper: #f4f3ef;
+  --color-paper-sunken: #fcfcfa;
+  --color-paper-inset: #fbfbf8;
+  --color-paper-muted: #efede6;
+
+  /* Ink — hairline to headline. */
+  --color-ink-50: #fbfbf8;
+  --color-ink-100: #eeece6;
+  --color-ink-200: #e9e7e1;
+  --color-ink-300: #e4e1d9;
+  --color-ink-400: #c4bead;
+  --color-ink-500: #a29b8a;
+  --color-ink-600: #7a7770;
+  --color-ink-700: #5c5952;
   --color-ink-800: #2a2925;
-  --color-ink-900: #171715;
-  --color-ink-950: #10100f;
-  --color-olive-50: oklch(0.946 0.178 121.33);
-  --color-olive-100: oklch(0.911 0.219 121.34);
-  --color-olive-200: oklch(0.826 0.199 121.3);
-  --color-olive-300: oklch(0.748 0.18 121.09);
-  --color-olive-400: oklch(0.664 0.16 121.25);
-  --color-olive-500: oklch(0.587 0.141 121.25);
-  --color-olive-600: oklch(0.507 0.122 121.25);
-  --color-olive-700: oklch(0.417 0.101 121.45);
-  --color-olive-800: oklch(0.323 0.077 120.92);
-  --color-olive-900: oklch(0.228 0.055 120.74);
-  --color-olive-950: oklch(0.175 0.042 120.69);
-  --color-meadow-100: #d8f3e3;
-  --color-meadow-500: #2f9f67;
-  --color-meadow-600: #217e50;
-  --color-meadow-700: #1d6442;
-  --color-coral-50: #fff4f0;
-  --color-coral-100: #ffe3d8;
-  --color-coral-500: #dc4e2e;
-  --color-coral-800: #762a1d;
-  --color-gold-50: #fff8df;
-  --color-gold-100: #ffedb8;
-  --color-gold-200: #ffe39a;
-  --color-gold-800: #5e3e14;
-  --font-title: var(--font-title-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-display: Georgia, ui-serif, serif;
+  --color-ink-900: #12120f;
+  --color-ink-950: #12120f;
+
+  /* Spruce — the interview accent, from live-stage highlight to deep tint. */
+  --color-spruce-50: #eef8f2;
+  --color-spruce-100: #d3f0e3;
+  --color-spruce-200: #9debcc;
+  --color-spruce-300: #7fe3be;
+  --color-spruce-400: #3fd0a5;
+  --color-spruce-500: #17a87e;
+  --color-spruce-600: #0f6b57;
+  --color-spruce-700: #0b5e4b;
+  --color-spruce-800: #094136;
+  --color-spruce-900: #0a2a22;
+  --color-spruce-950: #08150f;
+
+  /*
+   * Shared @prelude/ui primitives (Button focus ring, Pill, ghost surfaces)
+   * are written against olive-*. Aliasing the used steps onto spruce keeps
+   * them on-palette inside the candidate app without touching the console.
+   * olive-300 is the focus ring: it has to clear 3:1 against paper, so it maps
+   * to the deep spruce rather than the pale live-stage highlight. Buttons on
+   * the dark stage opt back into spruce-300 locally.
+   */
+  --color-olive-200: #9debcc;
+  --color-olive-300: #0f6b57;
+  --color-olive-900: #094136;
+
+  /* Clay — the only alert family in the candidate palette. */
+  --color-clay-50: #fbede7;
+  --color-clay-300: #f6c3ab;
+  --color-clay-600: #b4432a;
+
+  --color-coral-50: #fbede7;
+  --color-coral-100: #f6c3ab;
+  --color-coral-500: #b4432a;
+  --color-coral-800: #b4432a;
+
   --shadow-soft: none;
 }
 
-:root {
-  color-scheme: light;
+/*
+ * The next/font families are declared as CSS variables on <body>, so the theme
+ * has to be `inline`: Tailwind then writes the var() reference straight into
+ * each utility and it resolves on the element that uses it. A plain @theme
+ * would try to resolve it on :root, where the font variables do not exist yet.
+ */
+@theme inline {
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-title: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-eb-garamond), ui-serif, Georgia, serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 }
 
-body {
-  margin: 0;
-  background: #f6f3ec;
-  font-family: var(--font-sans), Inter, ui-sans-serif, system-ui, sans-serif;
+/* Base element styles stay in @layer base so per-screen utilities win. */
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-paper);
+    color: var(--color-ink-900);
+    font-family: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizelegibility;
+  }
+
+  /* Headings default to the title sans; screens opt into Garamond. */
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+  }
 }
 
-h1,
-h2,
-h3 {
-  font-family: var(--font-title-sans), ui-sans-serif, system-ui, sans-serif;
+/*
+ * Buttons carry a single sheen that sweeps on hover and a 2px lift. Applied by
+ * attribute so the shared Button primitive stays untouched: data-cc-btn="" is
+ * the dark treatment, data-cc-btn="light" the one for pale surfaces.
+ */
+[data-cc-btn] {
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform 0.3s cubic-bezier(0.2, 0.7, 0.2, 1),
+    background-color 0.3s ease,
+    color 0.3s ease,
+    border-color 0.3s ease;
+}
+
+[data-cc-btn]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    100deg,
+    transparent 22%,
+    rgb(255 255 255 / 24%) 48%,
+    transparent 74%
+  );
+  transform: translateX(-125%);
+  transition: transform 0.66s cubic-bezier(0.22, 0.75, 0.2, 1);
+  pointer-events: none;
+}
+
+[data-cc-btn="light"]::after {
+  background: linear-gradient(
+    100deg,
+    transparent 22%,
+    rgb(18 18 15 / 9%) 48%,
+    transparent 74%
+  );
+}
+
+/* The live stage keeps the lift but drops the sheen: the room is quiet. */
+[data-cc-btn="flat"]::after {
+  content: none;
+}
+
+[data-cc-btn]:hover::after {
+  transform: translateX(125%);
+}
+
+[data-cc-btn]:hover:not(:disabled) {
+  transform: translateY(-2px);
+}
+
+[data-cc-btn]:active:not(:disabled) {
+  transform: translateY(0) scale(0.986);
+  transition-duration: 0.09s;
+}
+
+[data-cc-btn]:disabled {
+  transform: none;
+  opacity: 0.42;
+}
+
+[data-cc-btn]:disabled::after {
+  transform: translateX(-125%);
+}
+
+@keyframes cc-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes cc-ring {
@@ -69,14 +192,14 @@ h3 {
   }
 }
 
-@keyframes cc-wave {
+@keyframes cc-breathe {
   0%,
   100% {
-    transform: scaleY(0.28);
+    transform: scale(1);
   }
 
   50% {
-    transform: scaleY(1);
+    transform: scale(1.05);
   }
 }
 
@@ -119,28 +242,29 @@ h3 {
   }
 }
 
-@keyframes cc-histIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
+/* A word is lit as it is spoken, then settles into the reading colour. */
+@keyframes cc-lit {
+  0%,
+  55% {
+    color: #9debcc;
   }
 
-  to {
-    opacity: 1;
-    transform: translateY(0);
+  100% {
+    color: #f4f3ef;
   }
 }
+
 
 @keyframes cc-aura {
   0%,
   100% {
     opacity: 0.72;
-    transform: translate(-50%, -50%) scale(0.9);
+    transform: scale(0.94);
   }
 
   50% {
     opacity: 1;
-    transform: translate(-50%, -50%) scale(1.08);
+    transform: scale(1.06);
   }
 }
 
@@ -150,4 +274,24 @@ h3 {
 
 :where(button:disabled, [aria-disabled="true"]) {
   cursor: not-allowed;
+}
+
+/*
+ * Each word of the interviewer's line mounts when its transcription delta
+ * arrives, so it enters and lights up exactly on the voice, then settles into
+ * the reading colour.
+ */
+@media (prefers-reduced-motion: no-preference) {
+  .cc-word-reveal {
+    animation:
+      cc-wordIn 0.3s cubic-bezier(0.2, 0.7, 0.2, 1) both,
+      cc-lit 0.8s linear both;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-cc-btn]:hover:not(:disabled),
+  [data-cc-btn]:active:not(:disabled) {
+    transform: none;
+  }
 }
