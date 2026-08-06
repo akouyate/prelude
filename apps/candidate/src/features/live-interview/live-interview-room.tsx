@@ -19,6 +19,7 @@ import {
   MicIcon,
   PencilIcon,
   RestartIcon,
+  SkipForwardIcon,
   TranscriptIcon,
 } from "@prelude/ui";
 
@@ -628,8 +629,8 @@ export function LiveInterviewRoom({
     void roomRef.current?.sendControl("repeat_question");
   }, []);
 
-  // Recruiter preview only: the worker decides whether it honours this, from the
-  // session kind it holds server-side. The browser never carries that authority.
+  // Publishing this is not what makes it work: the worker only honours it on a
+  // preview session, from the kind it holds server-side.
   const skipCurrentQuestion = React.useCallback(() => {
     setInactivityNotice(null);
     void roomRef.current?.sendControl("skip_question");
@@ -1392,18 +1393,13 @@ export function LiveInterviewStage({
     status === "interviewer_speaking" || status === "closing";
   const isCandidateTurn =
     status === "listening" || status === "candidate_speaking";
-  // Skipping is a recruiter affordance, never a candidate one, and it only
-  // makes sense once the interviewer is actually in the room.
   const canSkip =
     isPreview && !isConnectingOnly && status !== "interviewer_joining";
   // The control channel carries no acknowledgement, so the button stays inert
   // outside the states where the worker has a current question to move on from
   // — a greyed control is honest, one that silently does nothing is not.
   const canSendSkip =
-    status === "interviewer_speaking" ||
-    status === "candidate_speaking" ||
-    status === "processing" ||
-    status === "listening";
+    isCandidateTurn || status === "interviewer_speaking" || status === "processing";
 
   return (
     <section className="fixed inset-0 z-50 flex h-[100svh] flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_-12%,#0E4438_0%,#0A2A22_34%,#08150F_100%)] px-[clamp(1.125rem,5vw,2.75rem)] pb-[calc(env(safe-area-inset-bottom)+clamp(1rem,3vh,1.625rem))] pt-[calc(env(safe-area-inset-top)+clamp(1rem,3vh,1.625rem))] font-sans text-[#F4F3EF] supports-[height:100dvh]:h-[100dvh]">
@@ -1595,26 +1591,6 @@ export function LiveInterviewStage({
         </p>
       ) : null}
     </section>
-  );
-}
-
-// The candidate icon set in @prelude/ui has no skip glyph, and the recruiter
-// preview control is the only place that needs one.
-function SkipForwardIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      aria-hidden="true"
-      className={className}
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={1.9}
-      viewBox="0 0 24 24"
-    >
-      <path d="m5 5 9 7-9 7z" />
-      <path d="M19 5v14" />
-    </svg>
   );
 }
 

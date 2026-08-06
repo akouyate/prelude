@@ -12,6 +12,7 @@ export {
   PencilIcon,
   RestartIcon,
   ShieldCheckIcon,
+  SkipForwardIcon,
   TranscriptIcon,
   type CandidateIconProps,
 } from "./components/candidate-icons";

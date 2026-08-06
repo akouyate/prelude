@@ -1807,9 +1807,11 @@ class LiveInterviewOrchestrationController:
         # speaking. The refusal lives here rather than in the data-channel
         # dispatcher so there is a single, unit-testable point of truth: hiding
         # the button would not stop a candidate from publishing the payload.
+        # It is checked before the lock so a candidate spamming the topic cannot
+        # serialise noise against the turn loop; the kind never changes.
+        if self._session_kind != "preview":
+            return
         async with self._lock:
-            if self._session_kind != "preview":
-                return
             if (
                 self._terminal
                 or not self._candidate_connected

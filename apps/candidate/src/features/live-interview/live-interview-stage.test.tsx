@@ -37,13 +37,22 @@ function renderStage({
   );
 }
 
+// `disabled` has to be read off the skip button itself: asserting on the whole
+// document would pass or fail on any other disabled control on the stage.
+function skipButton(markup: string) {
+  const label = markup.indexOf("Skip question");
+  if (label === -1) throw new Error("no skip control in the rendered stage");
+  const opening = markup.lastIndexOf("<button", label);
+  return markup.slice(opening, markup.indexOf("</button>", label));
+}
+
 describe("live interview stage", () => {
   it("offers the skip control to a recruiter preview once the room is live", () => {
     const markup = renderStage({ isPreview: true, status: "listening" });
 
     expect(markup).toContain("Skip question");
     expect(markup).toContain("Skip is preview only · candidates never see it");
-    expect(markup).not.toContain('disabled=""');
+    expect(skipButton(markup)).not.toContain('disabled=""');
   });
 
   it("never shows the skip control to a candidate", () => {
@@ -75,6 +84,6 @@ describe("live interview stage", () => {
     const markup = renderStage({ isPreview: true, status: "agent_joined" });
 
     expect(markup).toContain("Skip question");
-    expect(markup).toContain('disabled=""');
+    expect(skipButton(markup)).toContain('disabled=""');
   });
 });
