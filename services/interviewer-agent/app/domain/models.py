@@ -135,6 +135,11 @@ class AgentSession(BaseModel):
     status: str
     livekit_room_name: str
     allowed_modalities: list[str] = Field(default_factory=list)
+    # Mirrors the Go control plane's SessionKind. It is the only trustworthy
+    # signal that the person in the room is a recruiter testing their own
+    # interview, so recruiter-only controls gate on it. Defaults to the safe
+    # value: an agent config without the field is treated as a real candidate.
+    kind: str = "candidate"
     created_at: datetime
     updated_at: datetime
 

@@ -58,6 +58,9 @@ FINAL_ANSWER_GRACE_SECONDS = 3.0
 MAX_TURN_BOUNDARY_WAIT_SECONDS = 60.0
 PRELUDE_TRANSCRIPT_TOPIC = "prelude.transcript.v1"
 PRELUDE_CANDIDATE_CONTROL_TOPIC = "prelude.candidate.control.v1"
+# Stamped on answer_evaluated so the append-only event store keeps a recruiter
+# preview skip distinguishable from a candidate who said "je passe".
+PREVIEW_CONTROL_SKIP_REASON_CODE = "recruiter_preview_control_skip"
 
 INITIAL_GREETING_RE = re.compile(
     r"^\s*(bonjour|bonsoir|hello|hi|good morning|good afternoon|good evening)"
@@ -1486,10 +1489,15 @@ class LiveInterviewOrchestrationController:
         legacy_interruption_filter: bool = False,
         candidate_wait_seconds: float = CANDIDATE_WAIT_SECONDS,
         final_answer_grace_seconds: float = FINAL_ANSWER_GRACE_SECONDS,
+        session_kind: str = "candidate",
     ) -> None:
         self._plan = plan
         self._emitter = emitter
         self._session = session
+        # Comes from the Go agent config, never from the room: a candidate can
+        # publish any control payload they like, but only a preview session can
+        # act on the recruiter-only ones.
+        self._session_kind = session_kind
         self._transcript_publisher = transcript_publisher
         self._orchestrator = InterviewOrchestrator(plan)
         self._answer_inference = answer_inference or HeuristicAnswerInferenceProvider()
@@ -1793,6 +1801,40 @@ class LiveInterviewOrchestrationController:
                 instructions=response.instructions,
                 extra_payload={"reason": "candidate_control_repeat"},
             )
+
+    async def skip_current_question_from_control(self) -> None:
+        # Recruiters testing their own interview need to move on without
+        # speaking. The refusal lives here rather than in the data-channel
+        # dispatcher so there is a single, unit-testable point of truth: hiding
+        # the button would not stop a candidate from publishing the payload.
+        # It is checked before the lock so a candidate spamming the topic cannot
+        # serialise noise against the turn loop; the kind never changes.
+        if self._session_kind != "preview":
+            return
+        async with self._lock:
+            if (
+                self._terminal
+                or not self._candidate_connected
+                or self._orchestrator.current_question_id is None
+            ):
+                return
+            self._cancel_candidate_wait()
+            question_id = self._orchestrator.current_question_id
+            decision = self._orchestrator.evaluate_answer(
+                classification=AnswerClassification.SKIPPED,
+                # There is no candidate turn behind this skip, but the event
+                # store requires at least one turn id; mint a traceable one.
+                turn_ids=[
+                    f"{self._emitter._session_id}:preview-control-skip:{question_id}"
+                ],
+                reason_codes=[PREVIEW_CONTROL_SKIP_REASON_CODE],
+            )
+            await self._emitter.emit(
+                EventType.ANSWER_EVALUATED,
+                decision.answer_evaluation.to_payload(),
+                actor=EventActor.SYSTEM,
+            )
+            await self._execute_decision_command(decision.commands[0])
 
     async def close_for_inactivity(
         self,
@@ -2678,6 +2720,7 @@ class OpenAILiveKitWorker:
                 final_answer_grace_seconds=(
                     self._worker_config.final_answer_grace_seconds
                 ),
+                session_kind=self._agent_config.session.kind,
             )
             inactivity_policy = CandidateInactivityPolicy(
                 user_away_after_seconds=(
@@ -2755,6 +2798,11 @@ class OpenAILiveKitWorker:
                     inactivity_coordinator.confirm_presence()
                     bridge.schedule(
                         controller.repeat_current_question_from_control()
+                    )
+                elif control_type == "skip_question":
+                    inactivity_coordinator.confirm_presence()
+                    bridge.schedule(
+                        controller.skip_current_question_from_control()
                     )
 
             async def on_candidate_absence_timeout() -> None:
