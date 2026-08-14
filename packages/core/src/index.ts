@@ -19,6 +19,14 @@ export {
   type CandidateStartPolicy,
 } from "./domain/candidate-lifecycle";
 export {
+  availableInLot,
+  compareLotsForConsumption,
+  computeWalletTotals,
+  isLotEligible,
+  selectLotForReservation,
+  type CreditLotSnapshot,
+} from "./domain/credit-lots";
+export {
   generateDeterministicInterviewDraft,
   resolveTargetInterviewQuestionCount,
   type InterviewAgentDraft,
