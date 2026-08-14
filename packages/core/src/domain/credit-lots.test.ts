@@ -32,6 +32,9 @@ describe("credit lot policy", () => {
 
   it("rejects expired, frozen and exhausted lots even when status lags", () => {
     expect(isLotEligible(lot({ expiresAt: new Date("2026-08-14T11:59:59Z") }), now)).toBe(false);
+    // Exact-equality boundary: expiresAt === now must be treated as already
+    // expired (strict `>`), not eligible-until-and-including now.
+    expect(isLotEligible(lot({ expiresAt: now }), now)).toBe(false);
     expect(isLotEligible(lot({ status: "frozen" }), now)).toBe(false);
     expect(isLotEligible(lot({ creditsConsumed: 100 }), now)).toBe(false);
     expect(isLotEligible(lot({}), now)).toBe(true);
@@ -43,6 +46,20 @@ describe("credit lot policy", () => {
     const free = lot({ id: "a", kind: "free", expiresAt: new Date("2027-06-01T00:00:00Z") });
     const sorted = [paidLater, paidSooner, free].sort(compareLotsForConsumption);
     expect(sorted.map((entry) => entry.id)).toEqual(["a", "c", "b"]);
+  });
+
+  it("breaks a kind/expiresAt tie by the older grantedAt", () => {
+    const newerGrant = lot({ id: "e", grantedAt: new Date("2026-06-01T00:00:00Z") });
+    const olderGrant = lot({ id: "d", grantedAt: new Date("2025-01-01T00:00:00Z") });
+    const sorted = [newerGrant, olderGrant].sort(compareLotsForConsumption);
+    expect(sorted.map((entry) => entry.id)).toEqual(["d", "e"]);
+  });
+
+  it("breaks a kind/expiresAt/grantedAt tie by the lexicographically smaller id", () => {
+    const idHigh = lot({ id: "z" });
+    const idLow = lot({ id: "a" });
+    const sorted = [idHigh, idLow].sort(compareLotsForConsumption);
+    expect(sorted.map((entry) => entry.id)).toEqual(["a", "z"]);
   });
 
   it("selects the first eligible lot and returns null when none qualifies", () => {
