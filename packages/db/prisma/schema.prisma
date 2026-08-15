@@ -479,16 +479,28 @@ model CreditPack {
 // Local archive of every received Stripe event: Stripe retains events 30
 // days; reconciliation and dispute forensics need longer. Dedupe hygiene
 // only — the anti-double-credit guarantee is CreditLot's unique Stripe ids.
-// attemptCount/lastError track replay: Stripe replays events, and the
-// upsert never silently overwrites a prior needs_admin/failed status with
+// attemptCount/firstError/lastError track replay: Stripe replays events, and
+// the upsert never silently overwrites a prior needs_admin/failed status with
 // processed — transitions are explicit (amendment 8).
+//
+// The two error columns are deliberately NOT redundant, and the distinction is
+// what makes the history survive a retry:
+//   firstError — the error of the FIRST failed attempt. Written once, never
+//                overwritten, never cleared. This is the forensic record: the
+//                original cause is what explains a failure, and a retry that
+//                fails differently (or succeeds) must not be able to erase it.
+//   lastError  — the error of the MOST RECENT failed attempt. Overwritten on
+//                each new failure and cleared when a replay finally settles
+//                `processed`. This is the operational view: what is wrong now.
+// So a row that recovered keeps firstError (what went wrong) with lastError
+// null (nothing wrong now), and every clear is logged.
 model StripeWebhookEvent {
   id            String    @id @default(cuid())
   stripeEventId String    @unique
   type          String
   payload       Json
   status        String    @default("received") // received | processed | ignored | failed | needs_admin
-  error         String?
+  firstError    String?
   attemptCount  Int       @default(1)
   lastError     String?
   receivedAt    DateTime  @default(now())

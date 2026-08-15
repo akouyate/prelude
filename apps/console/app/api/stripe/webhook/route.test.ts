@@ -121,6 +121,60 @@ describe("POST /api/stripe/webhook", () => {
     expect(dispatch).not.toHaveBeenCalled();
   });
 
+  it("rejects a genuine signature whose timestamp is outside the tolerance", async () => {
+    // A captured-and-replayed delivery. The HMAC is authentic; only the clock
+    // says no. Stripe's default tolerance is 300s.
+    const stale = stripe.webhooks.generateTestHeaderString({
+      payload,
+      secret: WEBHOOK_SECRET,
+      timestamp: Math.floor(Date.now() / 1000) - 3600,
+    });
+
+    const response = await POST(post(payload, stale));
+
+    expect(response.status).toBe(400);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `StripeSignatureVerificationError` carries the rejected `payload` and
+   * `header` as OWN PROPERTIES, so `console.error(msg, err)` writes the entire
+   * unverified request body into the logs. This endpoint is unauthenticated:
+   * that makes it a log-injection sink anyone on the internet can write to, and
+   * a genuine-but-stale replay would spill real customer PII in plaintext.
+   */
+  it("never logs the unverified request body", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    const secretish = JSON.stringify({
+      id: "evt_1",
+      type: "checkout.session.completed",
+      data: {
+        object: {
+          id: "cs_1",
+          customer_details: { email: "candidate@example.com", name: "Jane Candidate" },
+        },
+      },
+    });
+
+    const response = await POST(post(secretish, sign(payload)));
+    expect(response.status).toBe(400);
+
+    // Serialise exactly the way a JSON log pipeline does — own properties
+    // included — which is what makes a logged Error object leak.
+    const logged = errorLog.mock.calls
+      .flat()
+      .map((arg) =>
+        arg instanceof Error ? JSON.stringify(arg, Object.getOwnPropertyNames(arg)) : String(arg),
+      )
+      .join(" ");
+
+    expect(logged).not.toContain("candidate@example.com");
+    expect(logged).not.toContain("Jane Candidate");
+    expect(logged).not.toContain("cs_1");
+    // Still reports the failure — the fix is to log less, not to go silent.
+    expect(logged).toContain("signature verification failed");
+  });
+
   it("answers 500 when the dispatcher throws, so Stripe retries", async () => {
     dispatch.mockRejectedValue(new Error("database unreachable"));
 

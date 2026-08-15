@@ -45,6 +45,11 @@ export type StripeWebhookDeps = {
  *
  * Throwing is meaningful: the route turns it into a 500 and Stripe retries.
  * Every non-throwing path is a decision we are willing to be final about.
+ *
+ * Failure history is kept in two columns with different jobs (see the schema
+ * comment): `firstError` is written once on the first failure and never
+ * overwritten — the forensic record — while `lastError` tracks the most recent
+ * failure and is cleared when a replay finally settles, with the clear logged.
  */
 export async function handleStripeWebhookEvent(
   db: PrismaClient,
@@ -72,22 +77,65 @@ export async function handleStripeWebhookEvent(
   try {
     computed = await dispatch(db, event, { fulfill, handleRefund, handleDispute, now });
   } catch (error) {
-    await db.stripeWebhookEvent.update({
-      where: { stripeEventId: event.id },
-      data: {
-        status: settleStatus(priorStatus, "failed", event),
-        lastError: describeError(error),
-      },
-    });
-    // Rethrow: the route's 500 is how we ask Stripe to try again. Swallowing
-    // here would answer 200 for a payment nothing was done about.
+    const message = describeError(error);
+    try {
+      await db.stripeWebhookEvent.update({
+        where: { stripeEventId: event.id },
+        data: {
+          status: settleStatus(priorStatus, "failed", event),
+          lastError: message,
+          // Written once, on the FIRST failure, and never overwritten: the
+          // original cause is what explains a failure, and a later attempt
+          // failing differently must not be able to erase it.
+          ...(archived.firstError === null ? { firstError: message } : {}),
+        },
+      });
+    } catch (archiveError) {
+      // Double fault: the handler failed AND we could not record it. Log this
+      // separately — it is a different, worse problem than the handler failure,
+      // and it must not be mistaken for one.
+      console.error("[stripe-webhook] could not archive the handler failure", {
+        stripeEventId: event.id,
+        type: event.type,
+        handlerError: message,
+        // Our own infrastructure error, not attacker-controlled — the stack is
+        // the useful part here, unlike the verification error in the route.
+        archiveError,
+      });
+    }
+    // Rethrow the ORIGINAL handler error, never the archive error: the route's
+    // 500 is how we ask Stripe to try again, and the caller must see the reason
+    // the event failed, not the reason we failed to write it down.
     throw error;
   }
 
   const status = settleStatus(priorStatus, computed, event);
+  // `settleStatus` refused this attempt's decision — the row keeps a status
+  // this attempt did not produce.
+  const parked = status !== computed;
+
+  if (archived.lastError !== null) {
+    // Symmetric with the parking refusal below: every erasure of failure
+    // history is visible. `firstError` survives, so the forensic record does
+    // not depend on anyone having read this line.
+    console.warn("[stripe-webhook] clearing the recorded failure after a settled replay", {
+      stripeEventId: event.id,
+      type: event.type,
+      clearedError: archived.lastError,
+      status,
+    });
+  }
+
   await db.stripeWebhookEvent.update({
     where: { stripeEventId: event.id },
-    data: { status, lastError: null, processedAt: now },
+    data: {
+      status,
+      lastError: null,
+      // `processedAt` means "this attempt ran to a decision that stuck". On a
+      // refused transition it did not: stamping a parked row would tell the
+      // admin queue amendment 8 exists for that the event has been dealt with.
+      ...(parked ? {} : { processedAt: now }),
+    },
   });
   return { status };
 }

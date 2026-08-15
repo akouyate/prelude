@@ -41,7 +41,17 @@ export async function POST(request: NextRequest) {
     // Covers an unset secret, an absent or malformed header, a forged body and a
     // replayed-too-late timestamp alike. None of them may reach the ledger, and
     // none of them is worth a retry.
-    console.error("[stripe-webhook] signature verification failed", error);
+    //
+    // MESSAGE ONLY — never the error object. `StripeSignatureVerificationError`
+    // carries the rejected `payload` and `header` as own properties, so logging
+    // the error itself writes the entire unverified request body into our logs.
+    // On an unauthenticated endpoint that is a log-injection sink anyone on the
+    // internet can write to, and a genuine-but-stale replay would spill real
+    // `customer_details` in plaintext. The message alone names the failure.
+    console.error(
+      "[stripe-webhook] signature verification failed",
+      error instanceof Error ? error.message : String(error),
+    );
     return new Response("Webhook verification failed", { status: 400 });
   }
 

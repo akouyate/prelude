@@ -1,10 +1,15 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { PrismaClient } from "@prelude/db";
 import type Stripe from "stripe";
 
 import type { CreditCheckoutFulfilment } from "./stripe-fulfilment";
 import { handleStripeWebhookEvent } from "./stripe-webhook";
+
+// Without this, `vi.spyOn(console, …)` in a later test returns the spy a
+// previous test already installed — call history and all — and assertions on
+// call counts silently measure the wrong thing.
+afterEach(() => vi.restoreAllMocks());
 
 const now = new Date("2026-08-15T09:00:00.000Z");
 
@@ -14,6 +19,7 @@ type ArchiveRow = {
   payload: unknown;
   status: string;
   attemptCount: number;
+  firstError: string | null;
   lastError: string | null;
   receivedAt: Date;
   processedAt: Date | null;
@@ -63,6 +69,7 @@ function fakeArchive(seed: ArchiveRow[] = []) {
       const created = {
         status: "received",
         attemptCount: 1,
+        firstError: null,
         lastError: null,
         receivedAt: now,
         processedAt: null,
@@ -340,6 +347,7 @@ describe("handleStripeWebhookEvent — status transitions", () => {
       payload: {},
       status,
       attemptCount: 1,
+      firstError: status === "failed" ? "stripe is down" : null,
       lastError: status === "failed" ? "stripe is down" : null,
       receivedAt: now,
       processedAt: null,
@@ -403,6 +411,183 @@ describe("handleStripeWebhookEvent — status transitions", () => {
 
     expect(result).toEqual({ status: "needs_admin" });
     expect(archive.rows.get("evt_1")?.status).toBe("needs_admin");
+  });
+
+  // The two rows the table left implicit. Both were only ever covered by an
+  // attemptCount assertion, which would still pass if the status drifted.
+  it("keeps a processed row processed across a replay", async () => {
+    const archive = fakeArchive([parked("processed")]);
+
+    const result = await handleStripeWebhookEvent(
+      archive.db,
+      checkoutEvent("checkout.session.completed"),
+      { fulfill: fulfilling({ outcome: "already_granted" }), now },
+    );
+
+    expect(result).toEqual({ status: "processed" });
+    expect(archive.rows.get("evt_1")?.status).toBe("processed");
+    expect(archive.rows.get("evt_1")?.attemptCount).toBe(2);
+  });
+
+  it("keeps an ignored row ignored across a replay", async () => {
+    const archive = fakeArchive([{ ...parked("ignored"), type: "payment_intent.succeeded" }]);
+
+    const result = await handleStripeWebhookEvent(
+      archive.db,
+      otherEvent("payment_intent.succeeded"),
+      { fulfill: fulfilling({ outcome: "granted", lotId: "lot_1" }), now },
+    );
+
+    expect(result).toEqual({ status: "ignored" });
+    expect(archive.rows.get("evt_1")?.status).toBe("ignored");
+    expect(archive.rows.get("evt_1")?.attemptCount).toBe(2);
+  });
+
+  it("does not stamp processedAt on a replay whose transition was refused", async () => {
+    const archive = fakeArchive([parked("needs_admin")]);
+
+    await handleStripeWebhookEvent(archive.db, checkoutEvent("checkout.session.completed"), {
+      fulfill: fulfilling({ outcome: "granted", lotId: "lot_1" }),
+      now,
+    });
+
+    // The row still says needs_admin. A processedAt beside it would tell the
+    // admin queue this event has been dealt with, which is the opposite of why
+    // it is parked.
+    expect(archive.rows.get("evt_1")?.status).toBe("needs_admin");
+    expect(archive.rows.get("evt_1")?.processedAt).toBeNull();
+  });
+
+  it("does stamp processedAt when the attempt's own decision is needs_admin", async () => {
+    const archive = fakeArchive();
+
+    await handleStripeWebhookEvent(archive.db, checkoutEvent("checkout.session.completed"), {
+      fulfill: fulfilling({ outcome: "amount_mismatch" }),
+      now,
+    });
+
+    // This attempt ran to a decision and that decision stuck — the distinction
+    // that makes processedAt mean something.
+    expect(archive.rows.get("evt_1")?.status).toBe("needs_admin");
+    expect(archive.rows.get("evt_1")?.processedAt).toEqual(now);
+  });
+});
+
+/**
+ * The two error columns. `firstError` is the forensic record — what went wrong
+ * originally — and survives everything. `lastError` is the operational view —
+ * what is wrong now — and is cleared, loudly, when a replay settles.
+ */
+describe("handleStripeWebhookEvent — failure history", () => {
+  it("writes both columns on the first failure", async () => {
+    const archive = fakeArchive();
+    const fulfill = vi.fn(async () => {
+      throw new Error("stripe timed out");
+    });
+
+    await expect(
+      handleStripeWebhookEvent(archive.db, checkoutEvent("checkout.session.completed"), {
+        fulfill,
+        now,
+      }),
+    ).rejects.toThrow("stripe timed out");
+
+    const row = archive.rows.get("evt_1");
+    expect(row?.firstError).toBe("stripe timed out");
+    expect(row?.lastError).toBe("stripe timed out");
+  });
+
+  it("leaves firstError alone when a later attempt fails differently", async () => {
+    const archive = fakeArchive();
+    const event = checkoutEvent("checkout.session.completed");
+    const fulfill = vi
+      .fn<() => Promise<never>>()
+      .mockRejectedValueOnce(new Error("stripe timed out"))
+      .mockRejectedValueOnce(new Error("database unreachable"));
+
+    await expect(
+      handleStripeWebhookEvent(archive.db, event, { fulfill, now }),
+    ).rejects.toThrow("stripe timed out");
+    await expect(
+      handleStripeWebhookEvent(archive.db, event, { fulfill, now }),
+    ).rejects.toThrow("database unreachable");
+
+    const row = archive.rows.get("evt_1");
+    // The original cause is what explains the failure; the second attempt's
+    // error would otherwise bury it.
+    expect(row?.firstError).toBe("stripe timed out");
+    expect(row?.lastError).toBe("database unreachable");
+    expect(row?.attemptCount).toBe(2);
+  });
+
+  it("clears lastError on a settled replay, logs the clear, and keeps firstError", async () => {
+    const archive = fakeArchive();
+    const event = checkoutEvent("checkout.session.completed");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const fulfill = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("stripe timed out"))
+      .mockResolvedValueOnce({ outcome: "granted", lotId: "lot_1" });
+
+    await expect(
+      handleStripeWebhookEvent(archive.db, event, { fulfill, now }),
+    ).rejects.toThrow("stripe timed out");
+    const result = await handleStripeWebhookEvent(archive.db, event, { fulfill, now });
+
+    expect(result).toEqual({ status: "processed" });
+    const row = archive.rows.get("evt_1");
+    expect(row?.lastError).toBeNull();
+    // The failure still happened, and the row still says so.
+    expect(row?.firstError).toBe("stripe timed out");
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![1]).toMatchObject({
+      stripeEventId: "evt_1",
+      clearedError: "stripe timed out",
+      status: "processed",
+    });
+  });
+
+  it("does not log a clear when there was no failure to clear", async () => {
+    const archive = fakeArchive();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await handleStripeWebhookEvent(archive.db, checkoutEvent("checkout.session.completed"), {
+      fulfill: fulfilling({ outcome: "granted", lotId: "lot_1" }),
+      now,
+    });
+
+    // Otherwise every ordinary purchase would log a line about nothing.
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleStripeWebhookEvent — double fault", () => {
+  it("propagates the HANDLER error when archiving that failure also fails", async () => {
+    const archive = fakeArchive();
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    // The archive write rejects only for the failure path: the archive-first
+    // upsert still succeeds, so this is precisely the double-fault case.
+    archive.update.mockRejectedValue(new Error("archive write rejected"));
+    const fulfill = vi.fn(async () => {
+      throw new Error("stripe timed out");
+    });
+
+    // The caller must learn why the event failed, not why we failed to write it
+    // down — the archive error would send an on-call engineer to the wrong system.
+    await expect(
+      handleStripeWebhookEvent(archive.db, checkoutEvent("checkout.session.completed"), {
+        fulfill,
+        now,
+      }),
+    ).rejects.toThrow("stripe timed out");
+
+    // ...and the archive failure is still surfaced, separately.
+    const logged = error.mock.calls.find((call) =>
+      String(call[0]).includes("could not archive the handler failure"),
+    );
+    expect(logged).toBeDefined();
+    expect(logged![1]).toMatchObject({ stripeEventId: "evt_1", handlerError: "stripe timed out" });
   });
 });
 
