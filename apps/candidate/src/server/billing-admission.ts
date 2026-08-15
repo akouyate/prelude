@@ -1,16 +1,23 @@
 import {
   evaluateWorkspaceEntitlement,
+  isCreditBillingEnabled,
   resolveBillingUsagePeriod,
+  reserveCreditForSession,
+  type WorkspaceBilling,
 } from "@prelude/billing";
 import { getWorkspaceBilling } from "@prelude/billing/server";
 import { prisma, type Prisma, type PrismaClient } from "@prelude/db";
 
 type CandidateSessionCreateData = Prisma.CandidateSessionUncheckedCreateInput;
-type BillingAdmissionDatabase = Pick<PrismaClient, "$transaction">;
+type BillingAdmissionDatabase = Pick<
+  PrismaClient,
+  "$transaction" | "candidateSession"
+>;
 
 type BillingAdmissionDependencies = {
   database: BillingAdmissionDatabase;
   loadBilling: typeof getWorkspaceBilling;
+  reserveCredit: typeof reserveCreditForSession;
 };
 
 type CreateEntitledCandidateSessionInput = {
@@ -22,6 +29,7 @@ type CreateEntitledCandidateSessionInput = {
 const defaultDependencies: BillingAdmissionDependencies = {
   database: prisma,
   loadBilling: getWorkspaceBilling,
+  reserveCredit: reserveCreditForSession,
 };
 
 export async function createEntitledCandidateSession(
@@ -32,6 +40,11 @@ export async function createEntitledCandidateSession(
     organizationId: input.organizationId,
     now: input.now,
   });
+
+  if (isCreditBillingEnabled()) {
+    return createCreditBackedCandidateSession(input, dependencies, billing);
+  }
+
   const period = resolveBillingUsagePeriod(billing, input.now);
 
   return runSerializable(async () =>
@@ -83,6 +96,60 @@ export async function createEntitledCandidateSession(
       { isolationLevel: "Serializable" },
     ),
   );
+}
+
+/**
+ * Prepaid-credit admission path (`CREDIT_BILLING_ENABLED=1`). `reserveCredit`
+ * (Task 4) opens its own per-organization wallet transaction, so it cannot run
+ * inside the transaction that creates the session — see Task 6 brief's Step 3
+ * resolution. The session is therefore created first, outside any transaction,
+ * and the reservation is taken against the id it was given.
+ */
+async function createCreditBackedCandidateSession(
+  input: CreateEntitledCandidateSessionInput,
+  dependencies: BillingAdmissionDependencies,
+  billing: WorkspaceBilling,
+) {
+  const recordingDecision = evaluateWorkspaceEntitlement({
+    billing,
+    feature: "recording",
+    usage: 0,
+  });
+
+  const session = await dependencies.database.candidateSession.create({
+    data: {
+      ...input.data,
+      recordingEntitled: recordingDecision.allowed,
+    },
+  });
+
+  const reservation = await dependencies.reserveCredit(
+    dependencies.database as PrismaClient,
+    {
+      organizationId: input.organizationId,
+      candidateSessionId: session.id,
+      now: input.now,
+    },
+  );
+
+  if (reservation.ok) {
+    return { ok: true as const, session };
+  }
+
+  // Compensating delete rather than a wrapping transaction: `reserveCredit`
+  // already committed (or refused) on its own, so there is nothing left to roll
+  // back atomically. A crash between the create above and this delete leaves an
+  // orphaned session with no reservation; settlement (Task 7) treats a missing
+  // reservation as a `no_reservation` no-op, and no credit was ever taken for
+  // it, so the tradeoff is a stray session row, never a leaked credit.
+  await dependencies.database.candidateSession.delete({
+    where: { id: session.id },
+  });
+
+  return {
+    error: "candidate_interview_limit_reached" as const,
+    ok: false as const,
+  };
 }
 
 async function runSerializable<T>(operation: () => Promise<T>): Promise<T> {

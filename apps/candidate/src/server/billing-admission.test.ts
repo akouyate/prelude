@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   normalizeBillingSubscription,
@@ -7,6 +7,10 @@ import {
 } from "@prelude/billing";
 
 import { createEntitledCandidateSession } from "./billing-admission";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const now = new Date("2026-07-24T12:00:00.000Z");
 
@@ -99,6 +103,60 @@ describe("createEntitledCandidateSession", () => {
     expect(database.$transaction).toHaveBeenCalledTimes(2);
     expect(database.candidateSession.create).not.toHaveBeenCalled();
   });
+
+  it("reserves a credit instead of counting usage when credit billing is enabled", async () => {
+    vi.stubEnv("CREDIT_BILLING_ENABLED", "1");
+    const reserve = vi.fn().mockResolvedValue({ ok: true, reservationId: "res_1" });
+    const database = fakeDatabase(0);
+    const result = await createEntitledCandidateSession(sessionInput(), {
+      ...dependencies(database, paidBilling()),
+      reserveCredit: reserve,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      session: { recordingEntitled: true },
+    });
+    expect(reserve).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: "org_1",
+      candidateSessionId: expect.any(String),
+      now,
+    });
+    expect(database.candidateSession.count).not.toHaveBeenCalled();
+  });
+
+  it("refuses admission with the existing limit code and compensates the created session when the wallet is empty", async () => {
+    vi.stubEnv("CREDIT_BILLING_ENABLED", "1");
+    const reserve = vi.fn().mockResolvedValue({ ok: false, error: "no_credits_available" });
+    const database = fakeDatabase(0);
+    const result = await createEntitledCandidateSession(sessionInput(), {
+      ...dependencies(database, paidBilling()),
+      reserveCredit: reserve,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "candidate_interview_limit_reached",
+    });
+    expect(database.candidateSession.create).toHaveBeenCalledTimes(1);
+    expect(database.candidateSession.delete).toHaveBeenCalledWith({
+      where: { id: "candidate_session_1" },
+    });
+  });
+
+  it("keeps the legacy count-based path byte-for-byte when the flag is off", async () => {
+    vi.stubEnv("CREDIT_BILLING_ENABLED", "");
+    const reserve = vi.fn();
+    const database = fakeDatabase(0);
+    const result = await createEntitledCandidateSession(sessionInput(), {
+      ...dependencies(database, paidBilling()),
+      reserveCredit: reserve,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(reserve).not.toHaveBeenCalled();
+    expect(database.candidateSession.delete).not.toHaveBeenCalled();
+  });
 });
 
 function sessionInput() {
@@ -153,6 +211,7 @@ function dependencies(
   return {
     database: database as never,
     loadBilling: vi.fn(async () => billing),
+    reserveCredit: vi.fn(),
   };
 }
 
@@ -163,6 +222,7 @@ function fakeDatabase(usage: number) {
       id: "candidate_session_1",
       ...data,
     })),
+    delete: vi.fn(async () => ({})),
   };
 
   return {

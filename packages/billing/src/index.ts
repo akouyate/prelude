@@ -17,6 +17,7 @@ export {
   type WorkspacePlanKey,
   type WorkspacePlanEntitlements,
 } from "./billing-policy";
+export { isCreditBillingEnabled } from "./credit-billing-flag";
 export {
   captureReservationForSession,
   ensureWallet,
