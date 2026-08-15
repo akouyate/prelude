@@ -24,6 +24,10 @@ import { Prisma, type PrismaClient } from "@prelude/db";
 
 export const FIRST_FIVE_CREDITS = 5;
 export const FIRST_FIVE_EXPIRY_DAYS = 30;
+// Bought credits live 12 months. Long enough that a pack survives a hiring pause,
+// short enough that the liability on the balance sheet stays bounded — and it is
+// the figure the pricing page, the Stripe invoice line and the wallet all quote.
+export const PAID_CREDIT_EXPIRY_DAYS = 365;
 // An interview lasts ~8 minutes, so a live hold has no legitimate reason to run
 // long: a candidate who never joins (a "ghost") must not pin a slice of a small
 // wallet for half a day. A resume renews the hold (see the `held` branch in
@@ -96,6 +100,35 @@ export class CreditReservationOrganizationMismatchError extends Error {
     this.reservationId = reservationId;
   }
 }
+
+/**
+ * Everything the ledger needs to turn one settled Stripe payment into credits.
+ *
+ * The money figures are the ones the *payment* carried — the caller derives them
+ * from the Checkout session, never from the current catalogue price, so a lot
+ * always records what the customer was actually charged even after a price
+ * rotation. `currency` likewise: a USD purchase is stored as USD.
+ *
+ * `stripeCheckoutSessionId` is optional because Checkout is one way to be paid,
+ * not the definition of being paid: a payment intent charged against a stored
+ * mandate carries no session.
+ */
+export type GrantPurchasedCreditLotInput = {
+  organizationId: string;
+  packId: string;
+  creditsGranted: number;
+  unitAmountCents: number;
+  currency: string;
+  stripePaymentIntentId: string;
+  stripeCheckoutSessionId?: string;
+  stripeInvoiceId?: string;
+  stripeEventId?: string;
+  now: Date;
+};
+
+export type GrantPurchasedCreditLotResult =
+  | { outcome: "granted"; lotId: string }
+  | { outcome: "already_granted" };
 
 export type ReserveCreditResult =
   | { ok: true; reservationId: string }
@@ -287,12 +320,19 @@ async function loadLots(
  * `organizationId @unique` on the wallet is what makes the grant race-safe: the lot
  * is only ever written together with the wallet row, so the loser of a concurrent
  * create hits P2002, re-reads and returns the winner's wallet.
+ *
+ * `firstFiveExpiryDays` exists for the one caller that changes what the free grant
+ * means: a purchase. An organization whose first billing touch is a payment gets
+ * its free credits on the paid lot's 12-month clock instead of 30 days, so a
+ * paying customer's balance never quietly shrinks at J+31. Because this function
+ * no-ops on an existing wallet, that alignment can only ever apply to a wallet the
+ * purchase itself created — a wallet opened by an admission keeps its 30 days.
  */
 export async function ensureWallet(
   db: PrismaClient,
-  input: { organizationId: string; now: Date },
+  input: { organizationId: string; now: Date; firstFiveExpiryDays?: number },
 ): Promise<{ walletId: string }> {
-  const { organizationId, now } = input;
+  const { organizationId, now, firstFiveExpiryDays = FIRST_FIVE_EXPIRY_DAYS } = input;
 
   const existing = await db.creditWallet.findUnique({ where: { organizationId } });
   if (existing) {
@@ -326,7 +366,7 @@ export async function ensureWallet(
           creditsGranted: FIRST_FIVE_CREDITS,
           status: "active",
           grantedAt: now,
-          expiresAt: new Date(now.getTime() + FIRST_FIVE_EXPIRY_DAYS * DAY_MS),
+          expiresAt: new Date(now.getTime() + firstFiveExpiryDays * DAY_MS),
         },
       });
       await tx.creditLedgerEntry.create({
@@ -348,6 +388,108 @@ export async function ensureWallet(
       return { walletId: wallet.id };
     }
     throw error;
+  }
+}
+
+/**
+ * Turns one settled Stripe payment into one paid lot. The only way credits are
+ * bought, and the counterpart of `ensureWallet`'s free grant.
+ *
+ * Idempotence is the whole design: Stripe redelivers events, retries failed
+ * deliveries for days, and reports a single purchase under more than one event
+ * type. The guarantee is therefore not "the caller deduplicates" but
+ * `CreditLot.stripePaymentIntentId @unique` — the database refuses the second lot
+ * for a payment, whoever asks and however often.
+ *
+ * That refusal is read narrowly on purpose. A unique violation is only proof of a
+ * duplicate grant if the payment this call carries is now on a lot, so the catch
+ * re-reads by payment intent: found means the credits exist and the caller may
+ * answer Stripe 200; absent means some *other* constraint fired and the payment
+ * was never credited — rethrowing is what keeps Stripe retrying instead of
+ * marking an ungranted payment as handled.
+ *
+ * Concurrent deliveries serialise on the wallet lock, so the loser's whole
+ * transaction (lot + entry + counter) rolls back together and no partial grant can
+ * survive it.
+ */
+export async function grantPurchasedCreditLot(
+  db: PrismaClient,
+  input: GrantPurchasedCreditLotInput,
+): Promise<GrantPurchasedCreditLotResult> {
+  const {
+    organizationId,
+    packId,
+    creditsGranted,
+    unitAmountCents,
+    currency,
+    stripePaymentIntentId,
+    stripeCheckoutSessionId,
+    stripeInvoiceId,
+    stripeEventId,
+    now,
+  } = input;
+
+  // Outside the transaction, like every other entry point: it takes the lock
+  // itself. Buying is a legitimate first billing touch, so this is also where a
+  // purchase-created wallet gets its aligned First Five (see `ensureWallet`).
+  await ensureWallet(db, {
+    organizationId,
+    now,
+    firstFiveExpiryDays: PAID_CREDIT_EXPIRY_DAYS,
+  });
+
+  try {
+    return await runInWalletTransaction(db, organizationId, async (tx) => {
+      const lot = await tx.creditLot.create({
+        data: {
+          organizationId,
+          kind: "paid",
+          source: "pack_purchase",
+          packId,
+          creditsGranted,
+          unitAmountCents,
+          // Stripe reports currencies lower-cased; the column is upper-case, and
+          // nothing here converts an amount — the lot records the purchase as it
+          // was paid, and reporting converts at read time.
+          currency: currency.toUpperCase(),
+          status: "active",
+          grantedAt: now,
+          expiresAt: new Date(now.getTime() + PAID_CREDIT_EXPIRY_DAYS * DAY_MS),
+          stripePaymentIntentId,
+          // Explicit nulls: these columns are unique, and Postgres allows many
+          // NULLs but only one of any placeholder value — a `""` here would make
+          // the second session-less purchase collide with the first.
+          stripeCheckoutSessionId: stripeCheckoutSessionId ?? null,
+          stripeInvoiceId: stripeInvoiceId ?? null,
+        },
+      });
+      await tx.creditLedgerEntry.create({
+        data: {
+          organizationId,
+          lotId: lot.id,
+          type: "pack_purchase",
+          delta: creditsGranted,
+          stripeEventId: stripeEventId ?? null,
+          actorKind: "stripe_webhook",
+          reason: packId,
+        },
+      });
+      await tx.creditWallet.update({
+        where: { organizationId },
+        data: { availableCredits: { increment: creditsGranted } },
+      });
+
+      return { outcome: "granted" as const, lotId: lot.id };
+    });
+  } catch (error) {
+    if (!isUniqueViolation(error)) {
+      throw error;
+    }
+    const granted = await db.creditLot.findUnique({ where: { stripePaymentIntentId } });
+    if (!granted) {
+      throw error;
+    }
+    return { outcome: "already_granted" as const };
   }
 }
 

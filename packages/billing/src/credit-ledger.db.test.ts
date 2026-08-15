@@ -6,7 +6,10 @@ import {
   ensureWallet,
   expireDueLots,
   FIRST_FIVE_CREDITS,
+  FIRST_FIVE_EXPIRY_DAYS,
+  grantPurchasedCreditLot,
   MissingCreditWalletError,
+  PAID_CREDIT_EXPIRY_DAYS,
   reconcileWallet,
   releaseExpiredReservations,
   releaseReservationForSession,
@@ -518,6 +521,244 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
     expect(await db.creditLot.count({ where: { organizationId } })).toBe(1);
     expect(await db.creditLedgerEntry.count({ where: { organizationId } })).toBe(1);
     expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+  });
+
+  // The other direction of the money path: credits arriving. Stripe redelivers,
+  // retries and sends the same fact under several event types, so "one payment
+  // buys one lot" has to hold against repetition rather than assume its absence.
+  describe("grantPurchasedCreditLot", () => {
+    // A purchase is allowed to be an organization's *first* billing touch, which
+    // `grantedOrganization` (it calls `ensureWallet`) would hide.
+    async function organizationWithoutWallet(label: string): Promise<string> {
+      const organization = await db.organization.create({
+        data: { name: `ledger-${label}-${Date.now()}-${Math.random()}` },
+      });
+      return organization.id;
+    }
+
+    it("grants a paid lot with its own 12-month expiry and a pack_purchase entry", async () => {
+      const organizationId = await organizationWithoutWallet("buy");
+      const stripeEventId = `evt_test_${organizationId}`;
+      const granted = await grantPurchasedCreditLot(db, {
+        organizationId,
+        packId: "hiring_100",
+        creditsGranted: 100,
+        unitAmountCents: 34900,
+        currency: "EUR",
+        stripePaymentIntentId: `pi_test_${organizationId}`,
+        stripeCheckoutSessionId: `cs_test_${organizationId}`,
+        stripeEventId,
+        now,
+      });
+
+      const lot = await db.creditLot.findFirstOrThrow({
+        where: { organizationId, source: "pack_purchase" },
+      });
+      expect(granted).toEqual({ outcome: "granted", lotId: lot.id });
+      expect(lot).toMatchObject({
+        kind: "paid",
+        status: "active",
+        packId: "hiring_100",
+        creditsGranted: 100,
+        unitAmountCents: 34900,
+        currency: "EUR",
+      });
+      expect(lot.grantedAt.getTime()).toBe(now.getTime());
+      // Paid credits carry their own clock: 12 months, not the free grant's 30 days.
+      expect(lot.expiresAt.getTime()).toBe(now.getTime() + PAID_CREDIT_EXPIRY_DAYS * DAY_MS);
+
+      const entry = await db.creditLedgerEntry.findFirstOrThrow({
+        where: { organizationId, type: "pack_purchase" },
+      });
+      expect(entry).toMatchObject({ lotId: lot.id, delta: 100, stripeEventId });
+
+      // Buying before any admission also materialises the wallet and First Five —
+      // and, because this wallet is created *by* the purchase, the free lot aligns
+      // on the paid lot's 12 months instead of dying at J+30 under a paying
+      // customer (plan amendment 19).
+      const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+      expect(wallet.availableCredits).toBe(100 + FIRST_FIVE_CREDITS);
+      const freeLot = await db.creditLot.findFirstOrThrow({
+        where: { organizationId, source: "first_five" },
+      });
+      expect(freeLot.expiresAt.getTime()).toBe(now.getTime() + PAID_CREDIT_EXPIRY_DAYS * DAY_MS);
+      expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
+
+    it("keeps the 30-day First Five clock when the wallet predates the purchase", async () => {
+      // The mirror case of the alignment above: this organization met billing at
+      // its first admission, so its free grant has been ticking since then and a
+      // later purchase must not silently extend it.
+      const organizationId = await grantedOrganization();
+      const granted = await grantPurchasedCreditLot(db, {
+        organizationId,
+        packId: "starter_25",
+        creditsGranted: 25,
+        unitAmountCents: 9900,
+        currency: "EUR",
+        stripePaymentIntentId: `pi_existing_${organizationId}`,
+        stripeCheckoutSessionId: `cs_existing_${organizationId}`,
+        now,
+      });
+      expect(granted.outcome).toBe("granted");
+
+      const freeLot = await db.creditLot.findFirstOrThrow({
+        where: { organizationId, source: "first_five" },
+      });
+      expect(freeLot.expiresAt.getTime()).toBe(now.getTime() + FIRST_FIVE_EXPIRY_DAYS * DAY_MS);
+      const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+      expect(wallet.availableCredits).toBe(25 + FIRST_FIVE_CREDITS);
+      expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
+
+    it("is idempotent on the payment intent: the same payment delivered twice grants once", async () => {
+      const organizationId = await organizationWithoutWallet("dup");
+      const stripePaymentIntentId = `pi_dup_${organizationId}`;
+      const input = {
+        organizationId,
+        packId: "starter_25",
+        creditsGranted: 25,
+        unitAmountCents: 9900,
+        currency: "EUR",
+        stripePaymentIntentId,
+        stripeCheckoutSessionId: `cs_dup_${organizationId}`,
+        now,
+      };
+      const first = await grantPurchasedCreditLot(db, input);
+      const second = await grantPurchasedCreditLot(db, input);
+      expect([first.outcome, second.outcome]).toEqual(["granted", "already_granted"]);
+
+      // Redelivery is rarely polite enough to wait for the first call to return:
+      // two workers handed the same event at once serialise on the wallet lock and
+      // the loser rolls back whole, so it reports the fact instead of a second lot.
+      const racedIntent = `pi_dup_race_${organizationId}`;
+      const racedInput = {
+        ...input,
+        stripePaymentIntentId: racedIntent,
+        stripeCheckoutSessionId: `cs_dup_race_${organizationId}`,
+      };
+      const raced = await Promise.all([
+        grantPurchasedCreditLot(db, racedInput),
+        grantPurchasedCreditLot(db, racedInput),
+      ]);
+      expect(raced.map((result) => result.outcome).sort()).toEqual([
+        "already_granted",
+        "granted",
+      ]);
+
+      expect(await db.creditLot.count({ where: { stripePaymentIntentId } })).toBe(1);
+      expect(await db.creditLot.count({ where: { stripePaymentIntentId: racedIntent } })).toBe(1);
+      // Four deliveries, two payments, two credited lines.
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "pack_purchase" } }),
+      ).toBe(2);
+      const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+      expect(wallet.availableCredits).toBe(25 + 25 + FIRST_FIVE_CREDITS);
+      expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
+
+    it("rethrows a unique violation that is not this payment's", async () => {
+      const organizationId = await organizationWithoutWallet("collision");
+      const shared = {
+        organizationId,
+        packId: "starter_25",
+        creditsGranted: 25,
+        unitAmountCents: 9900,
+        currency: "EUR",
+        stripeCheckoutSessionId: `cs_shared_${organizationId}`,
+        now,
+      };
+      expect(
+        (
+          await grantPurchasedCreditLot(db, {
+            ...shared,
+            stripePaymentIntentId: `pi_collide_a_${organizationId}`,
+          })
+        ).outcome,
+      ).toBe("granted");
+
+      // Same checkout session, a *different* payment intent. The unique violation
+      // this raises says nothing about the payment being credited, and reporting
+      // `already_granted` would answer Stripe 200 — ending the retries on a payment
+      // no lot backs. It must surface.
+      await expect(
+        grantPurchasedCreditLot(db, {
+          ...shared,
+          stripePaymentIntentId: `pi_collide_b_${organizationId}`,
+        }),
+      ).rejects.toMatchObject({ code: "P2002" });
+
+      expect(
+        await db.creditLot.count({ where: { organizationId, source: "pack_purchase" } }),
+      ).toBe(1);
+      const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+      expect(wallet.availableCredits).toBe(25 + FIRST_FIVE_CREDITS);
+      expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
+
+    it("records the currency that was actually paid instead of defaulting to EUR", async () => {
+      const organizationId = await organizationWithoutWallet("usd");
+      const paid = {
+        organizationId,
+        packId: "hiring_100",
+        creditsGranted: 100,
+        unitAmountCents: 34900, // $349.00 — cents of the currency below, never converted
+        now,
+      };
+      await grantPurchasedCreditLot(db, {
+        ...paid,
+        currency: "USD",
+        stripePaymentIntentId: `pi_usd_${organizationId}`,
+        stripeCheckoutSessionId: `cs_usd_${organizationId}`,
+      });
+      // Stripe reports `session.currency` lower-cased; the column is upper-case.
+      await grantPurchasedCreditLot(db, {
+        ...paid,
+        currency: "usd",
+        stripePaymentIntentId: `pi_usd_lower_${organizationId}`,
+        stripeCheckoutSessionId: `cs_usd_lower_${organizationId}`,
+      });
+
+      const lots = await db.creditLot.findMany({
+        where: { organizationId, source: "pack_purchase" },
+      });
+      expect(lots.map((lot) => lot.currency)).toEqual(["USD", "USD"]);
+      expect(lots.map((lot) => lot.unitAmountCents)).toEqual([34900, 34900]);
+      expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
+
+    it("grants a payment that carries no checkout session", async () => {
+      // The Phase 3 shape (a payment intent charged against a stored mandate) has
+      // no Checkout session at all. Two of them must coexist, which they only do
+      // if the column is left NULL rather than filled with a placeholder — every
+      // Stripe id on the lot sits under a unique index.
+      const organizationId = await organizationWithoutWallet("no-session");
+      const paid = {
+        organizationId,
+        packId: "starter_25",
+        creditsGranted: 25,
+        unitAmountCents: 9900,
+        currency: "EUR",
+        now,
+      };
+      const first = await grantPurchasedCreditLot(db, {
+        ...paid,
+        stripePaymentIntentId: `pi_nosession_a_${organizationId}`,
+      });
+      const second = await grantPurchasedCreditLot(db, {
+        ...paid,
+        stripePaymentIntentId: `pi_nosession_b_${organizationId}`,
+      });
+      expect([first.outcome, second.outcome]).toEqual(["granted", "granted"]);
+
+      const lots = await db.creditLot.findMany({
+        where: { organizationId, source: "pack_purchase" },
+      });
+      expect(lots.map((lot) => lot.stripeCheckoutSessionId)).toEqual([null, null]);
+      const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+      expect(wallet.availableCredits).toBe(25 + 25 + FIRST_FIVE_CREDITS);
+      expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
   });
 
   // The tests above establish what the ledger does when it is asked one thing at a
