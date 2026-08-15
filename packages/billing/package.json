@@ -15,10 +15,12 @@
   },
   "dependencies": {
     "@clerk/backend": "3.8.2",
+    "@prelude/core": "workspace:*",
     "@prelude/db": "workspace:*"
   },
   "devDependencies": {
     "@prelude/config": "workspace:*",
+    "@prisma/client": "^6.19.3",
     "@types/node": "^20.19.5",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"

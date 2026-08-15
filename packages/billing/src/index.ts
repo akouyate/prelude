@@ -17,3 +17,19 @@ export {
   type WorkspacePlanKey,
   type WorkspacePlanEntitlements,
 } from "./billing-policy";
+export {
+  captureReservationForSession,
+  ensureWallet,
+  expireDueLots,
+  reconcileWallet,
+  releaseExpiredReservations,
+  releaseReservationForSession,
+  reserveCreditForSession,
+  FIRST_FIVE_CREDITS,
+  FIRST_FIVE_EXPIRY_DAYS,
+  RESERVATION_TTL_HOURS,
+  type CaptureReservationResult,
+  type ReleaseReservationResult,
+  type ReserveCreditResult,
+  type WalletReconciliation,
+} from "./credit-ledger";
