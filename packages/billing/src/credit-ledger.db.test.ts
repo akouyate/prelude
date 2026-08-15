@@ -166,7 +166,7 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
     const candidateSessionId = `ttl_${organizationId}`;
     await reserveCreditForSession(db, { organizationId, candidateSessionId, now });
 
-    const afterTtl = new Date(now.getTime() + 13 * 60 * 60 * 1000);
+    const afterTtl = new Date(now.getTime() + (RESERVATION_TTL_HOURS + 1) * HOUR_MS);
     expect(await releaseExpiredReservations(db, { organizationId, now: afterTtl })).toEqual({
       releasedCount: 1,
     });
@@ -413,7 +413,8 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
 
   it("renews a resumed hold that has already outlived its TTL", async () => {
     // The composed flow the `held` short-circuit used to lose: admitted at T0, the
-    // candidate comes back at T0+13h. Everything here is produced by the clock and
+    // candidate comes back at T0 + (TTL + 1h) — past the hold's TTL. Everything
+    // here is produced by the clock and
     // the ordinary reserve path — the reservation row is never touched by hand, so
     // the state under test is exactly the one production reaches. Without the
     // renewal the interview runs on a hold the organization's next admission sweeps

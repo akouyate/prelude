@@ -24,7 +24,12 @@ import { Prisma, type PrismaClient } from "@prelude/db";
 
 export const FIRST_FIVE_CREDITS = 5;
 export const FIRST_FIVE_EXPIRY_DAYS = 30;
-export const RESERVATION_TTL_HOURS = 12;
+// An interview lasts ~8 minutes, so a live hold has no legitimate reason to run
+// long: a candidate who never joins (a "ghost") must not pin a slice of a small
+// wallet for half a day. A resume renews the hold (see the `held` branch in
+// `reserveCreditForSession`), so a slow returner is unaffected by shrinking this
+// — only an abandoned session gives its credit back sooner.
+export const RESERVATION_TTL_HOURS = 1;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
