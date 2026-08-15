@@ -19,8 +19,10 @@ type CreditSettlementDependencies = {
 
 export type SettleCandidateSessionCreditInput = {
   // Every call site passes the terminal status it just wrote, so the ledger's
-  // append-only release reason reads back as the status that caused it.
-  kind: "abandoned" | "completed" | "failed" | "superseded";
+  // append-only release reason reads back as the status that caused it. Only
+  // `completed` runs the billable-threshold evaluation; every other kind flows
+  // straight through as a release reason.
+  kind: "abandoned" | "completed" | "expired" | "failed" | "superseded";
   now: Date;
   sessionId: string;
 };
