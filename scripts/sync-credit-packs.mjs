@@ -4,8 +4,11 @@
 // ensures each pack has a Stripe Product and an active Price with
 // tax_behavior=exclusive (immutable once set) and a USD currency_options
 // mirror (amendment 22). A price change is a NEW Price: pass
-// PACK_PRICE_OVERRIDES='{"hiring_100":34900}' to rotate the EUR amount; the
-// old Price is deactivated, past lots keep the amount they were bought at.
+// PACK_PRICE_OVERRIDES='{"hiring_100":{"eur":39900,"usd":39900}}' to rotate
+// — both currencies must be given together (amendment 22: the script
+// "creates/rotates Prices with both options"; a EUR-only override would
+// mint a mispriced pair, silently leaving USD stale). The old Price is
+// deactivated, past lots keep the amount they were bought at.
 //
 // The local price cache (unitAmountCents / unitAmountCentsUsd) follows
 // Stripe, never leads it (amendment 2): those columns are only written
@@ -71,13 +74,49 @@ const PACKS = [
 const stripeKey = process.env.STRIPE_SECRET_KEY || "";
 const overridesRaw = process.env.PACK_PRICE_OVERRIDES;
 
+// Amendment 22: a rotation always carries both currencies. The old flat
+// `{"packId": <eurCents>}` shape left USD silently pinned to the static
+// mirror while EUR moved, minting a mispriced pair — refuse it outright
+// and name the new shape rather than guess a USD amount.
+function validateOverrides(rawOverrides) {
+  const validated = {};
+  for (const [packId, value] of Object.entries(rawOverrides)) {
+    if (typeof value === "number") {
+      fail(
+        `PACK_PRICE_OVERRIDES["${packId}"] uses the old flat-number format ` +
+          `(${value}, EUR-only). Both currencies must rotate together — use ` +
+          `the new shape: {"${packId}":{"eur":<cents>,"usd":<cents>}}.`,
+      );
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      fail(
+        `PACK_PRICE_OVERRIDES["${packId}"] must be an object with both ` +
+          `currencies: {"${packId}":{"eur":<cents>,"usd":<cents>}}. Got: ` +
+          `${JSON.stringify(value)}.`,
+      );
+    }
+    const missingLegs = ["eur", "usd"].filter((leg) => !Number.isInteger(value[leg]));
+    if (missingLegs.length > 0) {
+      fail(
+        `PACK_PRICE_OVERRIDES["${packId}"] is missing the ${missingLegs.join(" and ")} ` +
+          `leg. Both currencies must be provided together: ` +
+          `{"${packId}":{"eur":<cents>,"usd":<cents>}}.`,
+      );
+    }
+    validated[packId] = { eur: value.eur, usd: value.usd };
+  }
+  return validated;
+}
+
 let overrides = {};
 if (overridesRaw) {
+  let parsedOverrides;
   try {
-    overrides = JSON.parse(overridesRaw);
+    parsedOverrides = JSON.parse(overridesRaw);
   } catch (error) {
     fail(`PACK_PRICE_OVERRIDES is not valid JSON: ${error.message}`);
   }
+  overrides = validateOverrides(parsedOverrides);
 }
 const hasOverrides = Object.keys(overrides).length > 0;
 
@@ -202,8 +241,8 @@ async function ensureStripeProductAndPrice(pack, cachedProductId, amountEurCents
 
 async function syncPack(prisma, pack) {
   const existing = await prisma.creditPack.findUnique({ where: { id: pack.id } });
-  const desiredEurCents = overrides[pack.id] ?? pack.unitAmountCents;
-  const desiredUsdCents = pack.unitAmountCentsUsd;
+  const desiredEurCents = overrides[pack.id]?.eur ?? pack.unitAmountCents;
+  const desiredUsdCents = overrides[pack.id]?.usd ?? pack.unitAmountCentsUsd;
 
   if (!stripeKey) {
     // Local-only mode never touches Stripe and never writes a price amount
@@ -280,10 +319,18 @@ function fail(message) {
 
 async function main() {
   const prisma = new PrismaClient();
+  let synced = 0;
   try {
     for (const pack of PACKS) {
-      await syncPack(prisma, pack);
+      try {
+        await syncPack(prisma, pack);
+        synced += 1;
+      } catch (error) {
+        console.error(`synced ${synced}/${PACKS.length} packs — failed on ${pack.id}`);
+        throw error;
+      }
     }
+    console.log(`synced ${synced}/${PACKS.length} packs`);
   } finally {
     await prisma.$disconnect();
   }
