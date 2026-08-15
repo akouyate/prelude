@@ -9,10 +9,15 @@ import { getWorkspaceBilling } from "@prelude/billing/server";
 import { prisma, type Prisma, type PrismaClient } from "@prelude/db";
 
 type CandidateSessionCreateData = Prisma.CandidateSessionUncheckedCreateInput;
-type BillingAdmissionDatabase = Pick<
-  PrismaClient,
-  "$transaction" | "candidateSession"
->;
+// The full client, not a narrower `Pick`: `reserveCredit` (Task 4's
+// `reserveCreditForSession`) is frozen at `db: PrismaClient`, and under
+// TypeScript's contravariant function-parameter checking no `Pick` — however
+// wide — is assignable where a full `PrismaClient` is required, so a narrower
+// alias here would only reintroduce a cast at the `reserveCredit` call below.
+// In practice this admission module touches `candidateSession` directly and,
+// via `reserveCredit`, `creditWallet` / `creditLot` / `creditReservation` /
+// `creditLedgerEntry` — never anything else on the client.
+type BillingAdmissionDatabase = PrismaClient;
 
 type BillingAdmissionDependencies = {
   database: BillingAdmissionDatabase;
@@ -123,33 +128,68 @@ async function createCreditBackedCandidateSession(
     },
   });
 
-  const reservation = await dependencies.reserveCredit(
-    dependencies.database as PrismaClient,
-    {
+  let reservation;
+  try {
+    reservation = await dependencies.reserveCredit(dependencies.database, {
       organizationId: input.organizationId,
       candidateSessionId: session.id,
       now: input.now,
-    },
-  );
+    });
+  } catch (error) {
+    // reserveCredit can throw (P2028 retry exhaustion, a ledger integrity
+    // error) without ever reaching an ok/no_credits_available decision.
+    // Best-effort compensate exactly as a refusal does below, then let the
+    // original error surface — swallowing it here would hide a real failure
+    // behind a fabricated admission outcome.
+    await deleteOrphanedSession(dependencies, session.id);
+    throw error;
+  }
 
   if (reservation.ok) {
     return { ok: true as const, session };
   }
 
-  // Compensating delete rather than a wrapping transaction: `reserveCredit`
-  // already committed (or refused) on its own, so there is nothing left to roll
-  // back atomically. A crash between the create above and this delete leaves an
-  // orphaned session with no reservation; settlement (Task 7) treats a missing
-  // reservation as a `no_reservation` no-op, and no credit was ever taken for
-  // it, so the tradeoff is a stray session row, never a leaked credit.
-  await dependencies.database.candidateSession.delete({
-    where: { id: session.id },
-  });
+  // `reserveCredit` already committed its refusal on its own (no wrapping
+  // transaction is possible here — see the function doc above), so there is
+  // nothing left to roll back atomically; this is a best-effort compensating
+  // delete, not a guarantee.
+  await deleteOrphanedSession(dependencies, session.id);
 
   return {
     error: "candidate_interview_limit_reached" as const,
     ok: false as const,
   };
+}
+
+/**
+ * Best-effort cleanup for a session created without a live credit
+ * reservation (refused, or `reserveCredit` threw). The failure mode if this
+ * delete itself fails is not merely "a stray row": the session was created
+ * with `status: "starting"`, and the candidate's next request against it
+ * resolves to `resolveCandidateStartPolicy`'s `resume_same_attempt`, whose
+ * branch in `public-interviews.ts` updates the existing row directly and
+ * never calls back into `createEntitledCandidateSession` — so the interview
+ * would run to completion without ever being charged. Logging and swallowing
+ * here (rather than surfacing a 500 for a refusal that already succeeded) is
+ * deliberate: the immediate backstop is Task 7's settlement treating a
+ * missing reservation as a `no_reservation` no-op, and closing the
+ * resume-branch charge gap itself is Task 7 follow-up, not this admission
+ * path.
+ */
+async function deleteOrphanedSession(
+  dependencies: BillingAdmissionDependencies,
+  sessionId: string,
+): Promise<void> {
+  try {
+    await dependencies.database.candidateSession.delete({
+      where: { id: sessionId },
+    });
+  } catch (error) {
+    console.error(
+      "[billing-admission] failed to delete orphaned candidate session after a credit reservation failure",
+      { sessionId, error },
+    );
+  }
 }
 
 async function runSerializable<T>(operation: () => Promise<T>): Promise<T> {

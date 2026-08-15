@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   normalizeBillingSubscription,
@@ -7,6 +7,16 @@ import {
 } from "@prelude/billing";
 
 import { createEntitledCandidateSession } from "./billing-admission";
+
+beforeEach(() => {
+  // Flag-off is the deterministic default for every test in this file; the
+  // credit-billing tests below opt in explicitly. Without this, a stray
+  // `CREDIT_BILLING_ENABLED=1` in the ambient environment (e.g. the plan's
+  // own smoke step) would silently flip the five legacy tests onto the
+  // credit branch, where they'd fail on the `dependencies()` helper's bare
+  // `vi.fn()` `reserveCredit` default.
+  vi.stubEnv("CREDIT_BILLING_ENABLED", "");
+});
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -123,6 +133,7 @@ describe("createEntitledCandidateSession", () => {
       now,
     });
     expect(database.candidateSession.count).not.toHaveBeenCalled();
+    expect(database.$transaction).not.toHaveBeenCalled();
   });
 
   it("refuses admission with the existing limit code and compensates the created session when the wallet is empty", async () => {
@@ -142,6 +153,45 @@ describe("createEntitledCandidateSession", () => {
     expect(database.candidateSession.delete).toHaveBeenCalledWith({
       where: { id: "candidate_session_1" },
     });
+    expect(database.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("still refuses cleanly when the compensating delete itself fails", async () => {
+    vi.stubEnv("CREDIT_BILLING_ENABLED", "1");
+    const reserve = vi.fn().mockResolvedValue({ ok: false, error: "no_credits_available" });
+    const database = fakeDatabase(0);
+    database.candidateSession.delete.mockRejectedValueOnce(new Error("db unavailable"));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const result = await createEntitledCandidateSession(sessionInput(), {
+      ...dependencies(database, paidBilling()),
+      reserveCredit: reserve,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "candidate_interview_limit_reached",
+    });
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("compensates and rethrows when reserveCredit itself throws", async () => {
+    vi.stubEnv("CREDIT_BILLING_ENABLED", "1");
+    const reserveError = new Error("connection lost");
+    const reserve = vi.fn().mockRejectedValue(reserveError);
+    const database = fakeDatabase(0);
+
+    await expect(
+      createEntitledCandidateSession(sessionInput(), {
+        ...dependencies(database, paidBilling()),
+        reserveCredit: reserve,
+      }),
+    ).rejects.toThrow(reserveError);
+
+    expect(database.candidateSession.delete).toHaveBeenCalledWith({
+      where: { id: "candidate_session_1" },
+    });
   });
 
   it("keeps the legacy count-based path byte-for-byte when the flag is off", async () => {
@@ -156,6 +206,7 @@ describe("createEntitledCandidateSession", () => {
     expect(result).toMatchObject({ ok: true });
     expect(reserve).not.toHaveBeenCalled();
     expect(database.candidateSession.delete).not.toHaveBeenCalled();
+    expect(database.candidateSession.count).toHaveBeenCalled();
   });
 });
 
