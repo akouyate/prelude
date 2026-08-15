@@ -44,6 +44,12 @@ export {
   type WalletReconciliation,
 } from "./credit-ledger";
 export {
+  fulfillCreditCheckout,
+  fulfillPaidPaymentIntent,
+  type CreditCheckoutFulfilment,
+  type StripeFulfilmentClient,
+} from "./stripe-fulfilment";
+export {
   createCreditCheckoutSession,
   ensureStripeCustomer,
   MissingCheckoutSessionUrlError,
