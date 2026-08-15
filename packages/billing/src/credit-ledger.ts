@@ -29,6 +29,49 @@ export const RESERVATION_TTL_HOURS = 12;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 
+/**
+ * Interactive-transaction budget. The per-organization `FOR UPDATE` lock means a
+ * caller can genuinely queue behind another credit operation, so both bounds are
+ * explicit rather than left to Prisma's 2s/5s defaults: `MAX_WAIT` is how long we
+ * are willing to wait for a connection from the pool, `TIMEOUT` is how long the
+ * whole locked section may run before Postgres rolls it back.
+ */
+const TRANSACTION_MAX_WAIT_MS = 5_000;
+const TRANSACTION_TIMEOUT_MS = 15_000;
+const TRANSACTION_OPTIONS = {
+  maxWait: TRANSACTION_MAX_WAIT_MS,
+  timeout: TRANSACTION_TIMEOUT_MS,
+} as const;
+
+/**
+ * Serialising on a row lock trades write conflicts for lock waits, so P2028
+ * (transaction expired / not started in time) is the failure mode this design
+ * introduces. It is transient by nature — the holder commits and the queue drains —
+ * so it gets a small jittered retry. No other error code is retried: a P2002, a
+ * constraint violation or a business error must surface immediately.
+ */
+const TRANSACTION_RETRY_ATTEMPTS = 3;
+const TRANSACTION_RETRY_BASE_DELAY_MS = 50;
+
+/** Thrown when a credit operation runs against an organization that has no wallet. */
+export class MissingCreditWalletError extends Error {
+  readonly organizationId: string;
+
+  constructor(organizationId: string) {
+    super(`no credit wallet exists for organization ${organizationId}`);
+    this.name = "MissingCreditWalletError";
+    this.organizationId = organizationId;
+  }
+}
+
+/** Thrown when a lot row carries a `kind` this module does not know how to price. */
+export class UnknownCreditLotKindError extends Error {
+  constructor(lotId: string, kind: string) {
+    super(`credit lot ${lotId} has unknown kind ${JSON.stringify(kind)}`);
+    this.name = "UnknownCreditLotKindError";
+  }
+}
+
 export type ReserveCreditResult =
   | { ok: true; reservationId: string }
   | { ok: false; error: "no_credits_available" };
@@ -70,13 +113,16 @@ type ReservationRow = {
  * Prisma stores `kind`/`status` as plain `String` columns, so rows arrive typed as
  * `string`. This is the single place where the database representation is narrowed
  * to the domain type consumed by `@prelude/core` — no `as` casts anywhere else.
- * An unrecognised value is mapped to a non-spendable state on purpose: an unknown
- * lot must never be selected for a reservation.
+ *
+ * The two columns fail in opposite directions on purpose. An unknown `kind` throws:
+ * `kind` decides consumption order (free is spent before paid), so guessing would
+ * silently spend the wrong money — a money module must refuse. An unknown `status`
+ * maps to `revoked`, which is non-spendable, so it fails closed.
  */
 function toLotSnapshot(row: LotRow): CreditLotSnapshot {
   return {
     id: row.id,
-    kind: row.kind === "paid" ? "paid" : "free",
+    kind: toLotKind(row.id, row.kind),
     status: toLotStatus(row.status),
     creditsGranted: row.creditsGranted,
     creditsConsumed: row.creditsConsumed,
@@ -84,6 +130,16 @@ function toLotSnapshot(row: LotRow): CreditLotSnapshot {
     grantedAt: row.grantedAt,
     expiresAt: row.expiresAt,
   };
+}
+
+function toLotKind(lotId: string, value: string): CreditLotSnapshot["kind"] {
+  switch (value) {
+    case "free":
+    case "paid":
+      return value;
+    default:
+      throw new UnknownCreditLotKindError(lotId, value);
+  }
 }
 
 function toLotStatus(value: string): CreditLotSnapshot["status"] {
@@ -103,13 +159,84 @@ function isUniqueViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
 }
 
+function isTransactionExpired(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028";
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Runs one interactive transaction with the explicit budget above, retrying only
+ * P2028 with a jittered backoff.
+ */
+async function runTransaction<T>(
+  db: PrismaClient,
+  work: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= TRANSACTION_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      return await db.$transaction(work, TRANSACTION_OPTIONS);
+    } catch (error) {
+      if (!isTransactionExpired(error)) {
+        throw error;
+      }
+      lastError = error;
+      if (attempt < TRANSACTION_RETRY_ATTEMPTS) {
+        await sleep(TRANSACTION_RETRY_BASE_DELAY_MS * attempt * (0.5 + Math.random()));
+      }
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * The one entry point for every credit mutation. Routing all of them through here
+ * is what makes "the first statement is the wallet `FOR UPDATE`" structural rather
+ * than a convention each function has to remember.
+ */
+function runInWalletTransaction<T>(
+  db: PrismaClient,
+  organizationId: string,
+  work: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return runTransaction(db, async (tx) => {
+    await lockWallet(tx, organizationId);
+    return work(tx);
+  });
+}
+
 /**
  * The serialisation point of the whole system. Taking the wallet row lock first
  * means every later read in the transaction (lots, reservations, balances) sees a
  * state no other credit operation for this organization can be mutating.
+ *
+ * `FOR UPDATE` on a row that does not exist locks nothing and silently succeeds, so
+ * an absent wallet would quietly downgrade every caller to no serialisation at all.
+ * The row count is therefore checked and the absent case fails loudly.
  */
-async function lockWallet(tx: Prisma.TransactionClient, organizationId: string): Promise<void> {
-  await tx.$queryRaw`SELECT "id" FROM "CreditWallet" WHERE "organizationId" = ${organizationId} FOR UPDATE`;
+async function lockWallet(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+): Promise<string> {
+  const walletId = await tryLockWallet(tx, organizationId);
+  if (!walletId) {
+    throw new MissingCreditWalletError(organizationId);
+  }
+  return walletId;
+}
+
+/** The same lock for the one caller that legitimately runs before a wallet exists. */
+async function tryLockWallet(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+): Promise<string | null> {
+  const rows = await tx.$queryRaw<
+    { id: string }[]
+  >`SELECT "id" FROM "CreditWallet" WHERE "organizationId" = ${organizationId} FOR UPDATE`;
+  return rows[0]?.id ?? null;
 }
 
 async function loadLots(
@@ -148,14 +275,15 @@ export async function ensureWallet(
   }
 
   try {
-    return await db.$transaction(async (tx) => {
-      await lockWallet(tx, organizationId);
-
+    return await runTransaction(db, async (tx) => {
+      // The only caller that may legitimately find no wallet to lock — it is the
+      // one creating it. The `organizationId @unique` constraint, not the lock, is
+      // what makes this race-safe.
+      const lockedWalletId = await tryLockWallet(tx, organizationId);
       // Re-check under the lock: a concurrent transaction may have committed the
       // wallet between the read above and this transaction starting.
-      const current = await tx.creditWallet.findUnique({ where: { organizationId } });
-      if (current) {
-        return { walletId: current.id };
+      if (lockedWalletId) {
+        return { walletId: lockedWalletId };
       }
 
       const wallet = await tx.creditWallet.create({
@@ -199,7 +327,10 @@ export async function ensureWallet(
 }
 
 /**
- * Holds one credit for a candidate session. Resume-safe and charged at most once.
+ * Holds one credit for a candidate session. Resume-safe and charged at most once
+ * *per hold*: a session whose hold is still live or already captured short-circuits,
+ * while a session whose hold was given back must acquire a fresh one before it can
+ * run again — otherwise a released hold would buy a free interview.
  */
 export async function reserveCreditForSession(
   db: PrismaClient,
@@ -209,9 +340,7 @@ export async function reserveCreditForSession(
 
   await ensureWallet(db, { organizationId, now });
 
-  return db.$transaction(async (tx) => {
-    await lockWallet(tx, organizationId);
-
+  return runInWalletTransaction(db, organizationId, async (tx) => {
     const existing = await tx.creditReservation.findUnique({
       where: { candidateSessionId },
     });
@@ -223,13 +352,10 @@ export async function reserveCreditForSession(
         `credit reservation ${existing.id} for candidate session ${candidateSessionId} belongs to another organization`,
       );
     }
-    if (existing) {
-      // One candidate session is charged at most once, whatever the reservation's
-      // current state: `held` means the same hold is still live; `captured` means
-      // the credit is already spent for this session; `released` means the hold was
-      // handed back (not billable, or swept at TTL) and re-charging would be an
-      // unaudited second debit — and `candidateSessionId @unique` means there is no
-      // second row to create anyway.
+    if (existing && (existing.status === "held" || existing.status === "captured")) {
+      // `held`: the same hold is still live, so this is a resume.
+      // `captured`: the credit is already spent for this session; re-charging would
+      // be an unaudited second debit.
       return { ok: true as const, reservationId: existing.id };
     }
 
@@ -249,16 +375,26 @@ export async function reserveCreditForSession(
       where: { id: lot.id },
       data: { creditsReserved: { increment: 1 } },
     });
-    const reservation = await tx.creditReservation.create({
-      data: {
-        organizationId,
-        candidateSessionId,
-        lotId: lot.id,
-        status: "held",
-        heldAt: now,
-        expiresAt: new Date(now.getTime() + RESERVATION_TTL_HOURS * HOUR_MS),
-      },
-    });
+    const heldUntil = new Date(now.getTime() + RESERVATION_TTL_HOURS * HOUR_MS);
+    const reservationData = {
+      lotId: lot.id,
+      status: "held",
+      heldAt: now,
+      expiresAt: heldUntil,
+      resolvedAt: null,
+    };
+    // A released reservation is re-held on the row that already exists, because
+    // `candidateSessionId @unique` leaves no room for a second one. The lot is
+    // re-selected from scratch: the lot that backed the original hold may have
+    // expired or run out in the meantime.
+    const reservation = existing
+      ? await tx.creditReservation.update({
+          where: { id: existing.id },
+          data: reservationData,
+        })
+      : await tx.creditReservation.create({
+          data: { organizationId, candidateSessionId, ...reservationData },
+        });
     await tx.creditLedgerEntry.create({
       data: {
         organizationId,
@@ -289,9 +425,7 @@ export async function captureReservationForSession(
 ): Promise<CaptureReservationResult> {
   const { organizationId, candidateSessionId, now } = input;
 
-  return db.$transaction(async (tx) => {
-    await lockWallet(tx, organizationId);
-
+  return runInWalletTransaction(db, organizationId, async (tx) => {
     const reservation = await tx.creditReservation.findUnique({
       where: { candidateSessionId },
     });
@@ -357,9 +491,7 @@ export async function releaseReservationForSession(
 ): Promise<ReleaseReservationResult> {
   const { organizationId, candidateSessionId, now, reason } = input;
 
-  return db.$transaction(async (tx) => {
-    await lockWallet(tx, organizationId);
-
+  return runInWalletTransaction(db, organizationId, async (tx) => {
     const reservation = await tx.creditReservation.findUnique({
       where: { candidateSessionId },
     });
@@ -371,14 +503,15 @@ export async function releaseReservationForSession(
       return { outcome: "already_resolved" as const };
     }
 
-    const availableDelta = await releaseReservationRow(tx, reservation, now, reason);
+    await releaseReservationRow(tx, reservation, now, reason);
     await tx.creditWallet.update({
       where: { organizationId },
-      data: {
-        availableCredits: { increment: availableDelta },
-        reservedCredits: { decrement: 1 },
-      },
+      data: { availableCredits: { increment: 1 }, reservedCredits: { decrement: 1 } },
     });
+    // The credit is back in its lot, which may have fallen due while it was held.
+    // Sweeping here is what stops a post-expiry release from leaving a spendable
+    // credit behind; see the comment on `releaseReservationRow`.
+    await expireDueLotsInTx(tx, organizationId, now);
 
     return { outcome: "released" as const };
   });
@@ -389,9 +522,11 @@ export async function releaseExpiredReservations(
   db: PrismaClient,
   input: { organizationId: string; now: Date },
 ): Promise<{ releasedCount: number }> {
-  return db.$transaction(async (tx) => {
-    await lockWallet(tx, input.organizationId);
-    return releaseExpiredReservationsInTx(tx, input.organizationId, input.now);
+  const { organizationId, now } = input;
+  return runInWalletTransaction(db, organizationId, async (tx) => {
+    const result = await releaseExpiredReservationsInTx(tx, organizationId, now);
+    await expireDueLotsInTx(tx, organizationId, now);
+    return result;
   });
 }
 
@@ -400,10 +535,9 @@ export async function expireDueLots(
   db: PrismaClient,
   input: { organizationId: string; now: Date },
 ): Promise<{ expiredLotIds: string[] }> {
-  return db.$transaction(async (tx) => {
-    await lockWallet(tx, input.organizationId);
-    return expireDueLotsInTx(tx, input.organizationId, input.now);
-  });
+  return runInWalletTransaction(db, input.organizationId, (tx) =>
+    expireDueLotsInTx(tx, input.organizationId, input.now),
+  );
 }
 
 /**
@@ -423,9 +557,7 @@ export async function reconcileWallet(
   const { organizationId } = input;
   const now = new Date();
 
-  return db.$transaction(async (tx) => {
-    await lockWallet(tx, organizationId);
-
+  return runInWalletTransaction(db, organizationId, async (tx) => {
     const wallet = await tx.creditWallet.findUnique({ where: { organizationId } });
     const lotRows = await tx.creditLot.findMany({ where: { organizationId } });
     const ledgerSum = await tx.creditLedgerEntry.aggregate({
@@ -468,19 +600,13 @@ async function releaseExpiredReservationsInTx(
     return { releasedCount: 0 };
   }
 
-  let availableDelta = 0;
   for (const reservation of due) {
-    availableDelta += await releaseReservationRow(
-      tx,
-      reservation,
-      now,
-      "reservation_ttl_expired",
-    );
+    await releaseReservationRow(tx, reservation, now, "reservation_ttl_expired");
   }
   await tx.creditWallet.update({
     where: { organizationId },
     data: {
-      availableCredits: { increment: availableDelta },
+      availableCredits: { increment: due.length },
       reservedCredits: { decrement: due.length },
     },
   });
@@ -489,22 +615,28 @@ async function releaseExpiredReservationsInTx(
 }
 
 /**
- * Releases one held reservation and returns the change it makes to *available*
- * credits, so the caller can fold several releases into a single wallet update.
+ * Releases one held reservation: the credit goes back to the lot it came from and
+ * the wallet gains one available credit (`release` = +1, always).
  *
- * A hold can outlive its lot (a reservation taken hours before a lot's expiry is
- * swept up to 12h later). Returning that credit to a dead lot would credit the
- * wallet with something no lot can back, so the release (+1) is immediately
- * balanced by an `expire` (−1) entry: the ledger stays append-only, its sum still
- * equals the wallet's available credits, and the lots still explain the balance.
+ * A hold can outlive its lot — a reservation taken shortly before a lot's
+ * `expiresAt` is only swept up to `RESERVATION_TTL_HOURS` later — so the returned
+ * credit can land in a lot that has since fallen due. That is *not* handled here by
+ * refusing the +1: the expiry sweep already wrote off this lot's available balance
+ * excluding held credits, so declining the +1 would leave the lot's counters saying
+ * the credit is spendable while the wallet says it is gone, and the next sweep would
+ * write the same credit off a second time and drive the wallet negative. Instead the
+ * release is always honest and every caller runs `expireDueLotsInTx` immediately
+ * afterwards, which writes off the lot's whole remaining balance in one `expire`
+ * entry. Net effect for a post-expiry release: +1 then −(everything left), so no
+ * spendable credit survives and the ledger still sums to the wallet.
  */
 async function releaseReservationRow(
   tx: Prisma.TransactionClient,
   reservation: ReservationRow,
   now: Date,
   reason: string,
-): Promise<number> {
-  const lot = await tx.creditLot.update({
+): Promise<void> {
+  await tx.creditLot.update({
     where: { id: reservation.lotId },
     data: { creditsReserved: { decrement: 1 } },
   });
@@ -523,23 +655,6 @@ async function releaseReservationRow(
       reason,
     },
   });
-
-  if (lot.status === "active") {
-    return 1;
-  }
-
-  await tx.creditLedgerEntry.create({
-    data: {
-      organizationId: reservation.organizationId,
-      lotId: reservation.lotId,
-      type: "expire",
-      delta: -1,
-      candidateSessionId: reservation.candidateSessionId,
-      actorKind: "system",
-      reason: "released_into_closed_lot",
-    },
-  });
-  return 0;
 }
 
 async function expireDueLotsInTx(
