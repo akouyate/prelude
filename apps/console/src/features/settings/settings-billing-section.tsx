@@ -239,9 +239,17 @@ function CreditPurchasePanel({
         </p>
       </div>
 
+      {/*
+        The catalogue stays visible to everyone — knowing what a pack costs is not
+        a privilege — but only a manager gets the controls. The server refuses a
+        non-manager anyway (`canPurchaseCredits`, re-derived from the session in
+        both the action and the return route); this flag is what stops the console
+        offering a button whose only possible answer is "not allowed".
+      */}
       <div className="mt-5 grid gap-3 border-t border-ink-100 pt-5 sm:grid-cols-3">
         {creditBilling.packs.map((pack) => (
           <CreditPackCard
+            canPurchase={creditBilling.canPurchase}
             currency={currency}
             key={pack.id}
             locale={locale}
@@ -256,9 +264,10 @@ function CreditPurchasePanel({
       {/*
         Amendment 20 — the quiet pack's gate. `visibility: "quiet"` keeps
         `volume_1000` off the ladder above, but it stays fully purchasable: this
-        line opens the same checkout, through the same action.
+        line opens the same checkout, through the same action, and is gated by the
+        same role (visibility was never an authorization boundary).
       */}
-      {creditBilling.volumePackId ? (
+      {creditBilling.volumePackId && creditBilling.canPurchase ? (
         <button
           className="mt-4 cursor-pointer text-left text-[12.5px] font-medium text-olive-900 underline underline-offset-4 hover:text-olive-800 disabled:pointer-events-none disabled:opacity-50"
           disabled={pendingPackId !== null}
@@ -271,6 +280,12 @@ function CreditPurchasePanel({
         </button>
       ) : null}
 
+      {creditBilling.canPurchase ? null : (
+        <p className="mt-4 text-xs leading-5 text-ink-500">
+          {t("settings.billing.credits.nonManagerHint")}
+        </p>
+      )}
+
       {checkoutFailed ? (
         <Notice className="mt-4" role="alert" tone="warning">
           {t("settings.billing.credits.checkoutFailed")}
@@ -281,6 +296,7 @@ function CreditPurchasePanel({
 }
 
 function CreditPackCard({
+  canPurchase,
   currency,
   locale,
   onBuy,
@@ -288,6 +304,7 @@ function CreditPackCard({
   pending,
   pendingElsewhere,
 }: {
+  canPurchase: boolean;
   currency: DisplayCurrency;
   locale: string;
   onBuy: (packId: string) => Promise<void>;
@@ -310,21 +327,23 @@ function CreditPackCard({
           {formatCreditPrice(price.amountCents, price.currency, locale)}
         </p>
       </div>
-      <Button
-        className="w-full"
-        disabled={pending || pendingElsewhere}
-        onClick={() => {
-          void onBuy(pack.id);
-        }}
-        type="button"
-        variant="secondary"
-      >
-        {t(
-          pending
-            ? "settings.billing.credits.opening"
-            : "settings.billing.credits.buy",
-        )}
-      </Button>
+      {canPurchase ? (
+        <Button
+          className="w-full"
+          disabled={pending || pendingElsewhere}
+          onClick={() => {
+            void onBuy(pack.id);
+          }}
+          type="button"
+          variant="secondary"
+        >
+          {t(
+            pending
+              ? "settings.billing.credits.opening"
+              : "settings.billing.credits.buy",
+          )}
+        </Button>
+      ) : null}
     </div>
   );
 }

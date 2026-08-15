@@ -12,8 +12,12 @@ import {
 import { computeWalletTotals, type CreditLotSnapshot } from "@prelude/core";
 import { prisma, type Prisma } from "@prelude/db";
 import { readWorkspaceNotificationPreferences } from "@prelude/notifications/preferences";
+import type { OrganizationRole } from "@prelude/types";
 
-import { canManageTeam } from "../../domain/organization-permissions";
+import {
+  canManageTeam,
+  canPurchaseCredits,
+} from "../../domain/organization-permissions";
 import { getConsoleAuthIdentity } from "../auth/console-auth-provider";
 import { clerkOrganizationDirectory } from "../organizations/clerk-organization-directory";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
@@ -113,7 +117,7 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
       clerkOrganizationId: scope.clerkOrganizationId,
       organizationId: scope.organizationId,
     }),
-    loadCreditBilling({ organizationId: scope.organizationId }),
+    loadCreditBilling({ organizationId: scope.organizationId, role: scope.role }),
   ]);
 
   const preferences = parseOrganizationSettings(organization.settings);
@@ -232,8 +236,10 @@ async function loadWorkspaceBillingOverview({
  */
 async function loadCreditBilling({
   organizationId,
+  role,
 }: {
   organizationId: string;
+  role: OrganizationRole;
 }): Promise<WorkspaceCreditBilling | null> {
   if (!isCreditBillingEnabled() || !isStripePurchaseConfigured()) {
     return null;
@@ -270,7 +276,7 @@ async function loadCreditBilling({
     }),
   ]);
 
-  return toWorkspaceCreditBilling({ lots, packs, now: new Date() });
+  return toWorkspaceCreditBilling({ lots, packs, now: new Date(), role });
 }
 
 /**
@@ -283,6 +289,7 @@ export function toWorkspaceCreditBilling({
   lots,
   packs,
   now,
+  role,
 }: {
   lots: Array<{
     id: string;
@@ -304,6 +311,7 @@ export function toWorkspaceCreditBilling({
     displayOrder: number;
   }>;
   now: Date;
+  role: OrganizationRole;
 }): WorkspaceCreditBilling {
   const totals = computeWalletTotals(lots as CreditLotSnapshot[], now);
   const sellable = [...packs]
@@ -311,6 +319,9 @@ export function toWorkspaceCreditBilling({
     .sort((left, right) => left.displayOrder - right.displayOrder);
 
   return {
+    // A hint for the UI, never the enforcement: the action and the return route
+    // re-derive this from the session and refuse on their own.
+    canPurchase: canPurchaseCredits(role),
     paidAvailable: totals.paidAvailable,
     freeAvailable: totals.freeAvailable,
     nextExpiry: totals.nextExpiry

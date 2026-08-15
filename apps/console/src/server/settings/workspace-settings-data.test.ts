@@ -214,6 +214,36 @@ describe("toWorkspaceCreditBilling", () => {
     };
   }
 
+  it("tells the UI whether this viewer may buy, so the buttons are not decorative", () => {
+    // Same owner/admin set as the action and the return route. The server refuses
+    // regardless; this flag is what stops the console offering a button that can
+    // only answer "not allowed".
+    for (const role of ["owner", "admin"] as const) {
+      expect(
+        toWorkspaceCreditBilling({ lots: [], packs: [pack()], now, role }).canPurchase,
+      ).toBe(true);
+    }
+    for (const role of ["recruiter", "viewer"] as const) {
+      expect(
+        toWorkspaceCreditBilling({ lots: [], packs: [pack()], now, role }).canPurchase,
+      ).toBe(false);
+    }
+  });
+
+  it("still shows a non-manager the balance and the catalogue — they just cannot buy", () => {
+    // Hiding the wallet from a recruiter would be worse than useless: they need to
+    // know whether an interview can even run before they invite a candidate.
+    const result = toWorkspaceCreditBilling({
+      lots: [lot({ creditsGranted: 40 })],
+      packs: [pack()],
+      now,
+      role: "viewer",
+    });
+
+    expect(result.paidAvailable).toBe(40);
+    expect(result.packs).toHaveLength(1);
+  });
+
   it("splits what was paid for from what was offered, and names the soonest expiry", () => {
     const result = toWorkspaceCreditBilling({
       lots: [
@@ -228,6 +258,7 @@ describe("toWorkspaceCreditBilling", () => {
       ],
       packs: [pack()],
       now,
+      role: "owner",
     });
 
     expect(result.paidAvailable).toBe(87);
@@ -248,13 +279,14 @@ describe("toWorkspaceCreditBilling", () => {
       ],
       packs: [pack()],
       now,
+      role: "owner",
     });
 
     expect(result.paidAvailable).toBe(25);
   });
 
   it("reads an empty wallet as zero rather than as nothing to render", () => {
-    const result = toWorkspaceCreditBilling({ lots: [], packs: [pack()], now });
+    const result = toWorkspaceCreditBilling({ lots: [], packs: [pack()], now, role: "owner" });
 
     expect(result).toMatchObject({ paidAvailable: 0, freeAvailable: 0, nextExpiry: null });
   });
@@ -263,6 +295,7 @@ describe("toWorkspaceCreditBilling", () => {
     const result = toWorkspaceCreditBilling({
       lots: [],
       now,
+      role: "owner",
       packs: [
         pack({ id: "scale_500", creditsGranted: 500, unitAmountCents: 149000, displayOrder: 3 }),
         pack({ id: "starter_25", creditsGranted: 25, unitAmountCents: 9900, displayOrder: 1 }),
@@ -293,6 +326,7 @@ describe("toWorkspaceCreditBilling", () => {
     const result = toWorkspaceCreditBilling({
       lots: [],
       now,
+      role: "owner",
       packs: [
         pack(),
         pack({ id: "volume_1000", visibility: "quiet", creditsGranted: 1000, displayOrder: 4 }),
@@ -307,6 +341,7 @@ describe("toWorkspaceCreditBilling", () => {
     const result = toWorkspaceCreditBilling({
       lots: [],
       now,
+      role: "owner",
       packs: [pack(), pack({ id: "volume_1000", visibility: "quiet", enabled: false })],
     });
 

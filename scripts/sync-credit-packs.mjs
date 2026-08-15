@@ -34,6 +34,21 @@ const requireFromDbPackage = createRequire(
 );
 const { PrismaClient } = requireFromDbPackage("@prisma/client");
 
+// Every Product carries a tax code. Without one, Stripe refuses the Checkout
+// session outright — "Invalid line_items[0]: the product tax code is missing" —
+// so this is not a tax nicety, it is what makes the pack purchasable at all.
+//
+// `txcd_10103001` = "Software as a service (SaaS) - business use", verified
+// against the live `GET /v1/tax_codes` list (673 codes) rather than copied from
+// memory. The "business use" variant, not the personal one, because the B2B-only
+// clause in the ToS is load-bearing for this product (amendment 22's legal
+// posture) — the credits are only ever sold to companies.
+//
+// Stripe Tax maps this code to the right treatment per jurisdiction: an
+// electronically supplied service for EU VAT, and the state-by-state SaaS rules
+// in the US. Changing it is a tax decision, not a refactor.
+const PRODUCT_TAX_CODE = "txcd_10103001";
+
 // USD working values mirror the EUR numerals ($99 / $349 / $1,490 / $2,790)
 // — same "subject to validation" status as the EUR ladder (amendment 22).
 const PACKS = [
@@ -191,29 +206,67 @@ function priceMatches(price, amountEurCents, amountUsdCents) {
   return price.currency_options?.usd?.unit_amount === amountUsdCents;
 }
 
-async function ensureStripeProductAndPrice(pack, cachedProductId, amountEurCents, amountUsdCents) {
-  let productId = cachedProductId;
-  if (!productId) {
-    const found = await findProductByPackId(pack.id);
-    productId = found?.id;
+// Stripe returns `tax_code` as a bare id unless it is expanded; tolerate both so
+// the comparison below never reads an object as "no tax code" and rewrites a
+// product that is already correct.
+function taxCodeIdOf(product) {
+  const value = product?.tax_code;
+  if (!value) return null;
+  return typeof value === "string" ? value : value.id;
+}
+
+// A cached product id can be stale — deleted in the dashboard, or belonging to a
+// different Stripe account after a key rotation. Treat "cannot read it" as "we
+// do not have it" and fall through to the metadata lookup, rather than crashing
+// a sync over a bad cache entry.
+async function retrieveProduct(productId) {
+  try {
+    return await stripeCall(`products/${productId}`, {}, { method: "GET" });
+  } catch {
+    return null;
   }
-  if (!productId) {
-    const product = await stripeCall(
+}
+
+async function ensureStripeProductAndPrice(pack, cachedProductId, amountEurCents, amountUsdCents) {
+  let product = cachedProductId ? await retrieveProduct(cachedProductId) : null;
+  if (!product) {
+    product = await findProductByPackId(pack.id);
+  }
+
+  let taxCodeAction = "ok";
+  if (!product) {
+    product = await stripeCall(
       "products",
       {
         name: `HireCall credits — ${pack.creditsGranted} interviews`,
         "metadata[packId]": pack.id,
+        tax_code: PRODUCT_TAX_CODE,
       },
       { idempotencyKey: `credit-pack-product:${pack.id}` },
     );
-    productId = product.id;
+    taxCodeAction = "set";
+  } else if (taxCodeIdOf(product) !== PRODUCT_TAX_CODE) {
+    // The backfill pass. Products created before the tax code was required have
+    // none, and every checkout against them fails; `tax_code` is mutable on a
+    // Product (unlike `tax_behavior` on a Price), so this repairs them in place
+    // without rotating anything. Guarded by the comparison above, so a second run
+    // writes nothing — the sync stays idempotent.
+    product = await stripeCall(`products/${product.id}`, { tax_code: PRODUCT_TAX_CODE });
+    taxCodeAction = "backfilled";
   }
 
+  const productId = product.id;
   const activePrices = await listActivePrices(productId);
   const matching = activePrices.find((price) => priceMatches(price, amountEurCents, amountUsdCents));
 
   if (matching) {
-    return { productId, priceId: matching.id, confirmedEurCents: matching.unit_amount, confirmedUsdCents: matching.currency_options.usd.unit_amount };
+    return {
+      productId,
+      priceId: matching.id,
+      confirmedEurCents: matching.unit_amount,
+      confirmedUsdCents: matching.currency_options.usd.unit_amount,
+      taxCodeAction,
+    };
   }
 
   await Promise.all(
@@ -236,6 +289,7 @@ async function ensureStripeProductAndPrice(pack, cachedProductId, amountEurCents
     priceId: price.id,
     confirmedEurCents: price.unit_amount,
     confirmedUsdCents: price.currency_options.usd.unit_amount,
+    taxCodeAction,
   };
 }
 
@@ -276,12 +330,13 @@ async function syncPack(prisma, pack) {
     return;
   }
 
-  const { productId, priceId, confirmedEurCents, confirmedUsdCents } = await ensureStripeProductAndPrice(
-    pack,
-    existing?.stripeProductId,
-    desiredEurCents,
-    desiredUsdCents,
-  );
+  const { productId, priceId, confirmedEurCents, confirmedUsdCents, taxCodeAction } =
+    await ensureStripeProductAndPrice(
+      pack,
+      existing?.stripeProductId,
+      desiredEurCents,
+      desiredUsdCents,
+    );
 
   await prisma.creditPack.upsert({
     where: { id: pack.id },
@@ -308,7 +363,8 @@ async function syncPack(prisma, pack) {
   });
 
   console.log(
-    `${pack.id}: ${confirmedEurCents / 100}€ / $${confirmedUsdCents / 100} product=${productId} price=${priceId}`,
+    `${pack.id}: ${confirmedEurCents / 100}€ / $${confirmedUsdCents / 100} ` +
+      `product=${productId} price=${priceId} tax_code=${PRODUCT_TAX_CODE} (${taxCodeAction})`,
   );
 }
 

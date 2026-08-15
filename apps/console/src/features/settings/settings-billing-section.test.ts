@@ -74,6 +74,13 @@ describe("purchase outcome banner", () => {
     });
   });
 
+  it("names the permission refusal, because that one IS actionable", () => {
+    expect(purchaseBannerFor("not_allowed")).toEqual({
+      tone: "warning",
+      key: "settings.billing.credits.purchaseNotAllowed",
+    });
+  });
+
   it("renders one generic line for anything else — never the token itself", () => {
     for (const value of ["error", "needs_admin", "foreign_session", "<script>", "42"]) {
       expect(purchaseBannerFor(value)).toEqual({

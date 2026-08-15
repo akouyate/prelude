@@ -97,6 +97,70 @@ describe("startCreditPackCheckout", () => {
     expect(billingMock.createCreditCheckoutSession).not.toHaveBeenCalled();
   });
 
+  /**
+   * Buying credits commits the organization's money. The gate is the same
+   * owner/admin set the rest of the workspace already uses — a recruiter runs
+   * interviews and a viewer reads them; neither signs for €2,790.
+   */
+  it("refuses a viewer, and never opens a Checkout session for them", async () => {
+    scopeMock.getCompletedOrganizationScope.mockResolvedValue({
+      organizationId: "org_session",
+      organizationName: "Acme Talent",
+      clerkOrganizationId: null,
+      role: "viewer",
+      userId: "user_1",
+    });
+
+    expect(await startCreditPackCheckout("hiring_100")).toEqual({
+      error: "not_allowed",
+    });
+    expect(billingMock.createCreditCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("refuses a recruiter too — running interviews is not signing for them", async () => {
+    scopeMock.getCompletedOrganizationScope.mockResolvedValue({
+      organizationId: "org_session",
+      organizationName: "Acme Talent",
+      clerkOrganizationId: null,
+      role: "recruiter",
+      userId: "user_1",
+    });
+
+    expect(await startCreditPackCheckout("hiring_100")).toEqual({
+      error: "not_allowed",
+    });
+    expect(billingMock.createCreditCheckoutSession).not.toHaveBeenCalled();
+  });
+
+  it("lets an admin buy", async () => {
+    scopeMock.getCompletedOrganizationScope.mockResolvedValue({
+      organizationId: "org_session",
+      organizationName: "Acme Talent",
+      clerkOrganizationId: null,
+      role: "admin",
+      userId: "user_1",
+    });
+
+    expect(await startCreditPackCheckout("hiring_100")).toEqual({
+      url: "https://checkout.stripe.test/cs_1",
+    });
+  });
+
+  it("gates the quiet volume pack on the same role, not a laxer one", async () => {
+    scopeMock.getCompletedOrganizationScope.mockResolvedValue({
+      organizationId: "org_session",
+      organizationName: "Acme Talent",
+      clerkOrganizationId: null,
+      role: "viewer",
+      userId: "user_1",
+    });
+
+    expect(await startCreditPackCheckout("volume_1000")).toEqual({
+      error: "not_allowed",
+    });
+    expect(billingMock.createCreditCheckoutSession).not.toHaveBeenCalled();
+  });
+
   it("refuses a blank pack id before it reaches the catalogue", async () => {
     expect(await startCreditPackCheckout("   ")).toEqual({ error: "unknown_pack" });
     expect(billingMock.createCreditCheckoutSession).not.toHaveBeenCalled();

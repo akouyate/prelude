@@ -8,6 +8,7 @@ import { prisma } from "@prelude/db";
 import { redirect } from "next/navigation";
 import type { NextRequest } from "next/server";
 
+import { canPurchaseCredits } from "@/domain/organization-permissions";
 import { getCompletedOrganizationScope } from "@/server/organizations/organization-scope";
 
 /**
@@ -38,7 +39,12 @@ export async function GET(request: NextRequest) {
   redirect(`/settings?view=billing&purchase=${destination}`);
 }
 
-type PurchaseBannerOutcome = "granted" | "already" | "processing" | "error";
+type PurchaseBannerOutcome =
+  | "granted"
+  | "already"
+  | "processing"
+  | "not_allowed"
+  | "error";
 
 async function resolveReturnOutcome(sessionId: string | null): Promise<PurchaseBannerOutcome> {
   if (!isCreditBillingEnabled() || !isStripePurchaseConfigured()) {
@@ -55,6 +61,14 @@ async function resolveReturnOutcome(sessionId: string | null): Promise<PurchaseB
   // Throws for an unauthenticated or un-onboarded caller — the same guard every
   // console loader relies on, and the reason this route can trust the org below.
   const scope = await getCompletedOrganizationScope();
+
+  // The same owner/admin line the buy action draws, applied on the way back too.
+  // Nothing is lost by refusing here: the webhook and the missed-event sweep
+  // fulfil this session regardless, so a non-manager who opens a return link
+  // simply does not get to trigger it — one rule instead of two.
+  if (!canPurchaseCredits(scope.role)) {
+    return "not_allowed";
+  }
 
   try {
     const result = await fulfillCreditCheckout(prisma, {

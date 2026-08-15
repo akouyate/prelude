@@ -100,6 +100,10 @@ export type WorkspaceSettingsData = {
  * on this type.
  */
 export type WorkspaceCreditBilling = {
+  // Whether THIS viewer may spend the organization's money (owner/admin). The
+  // balance and the catalogue stay visible to everyone — a recruiter needs to
+  // know whether an interview can run — but the buy controls do not.
+  canPurchase: boolean;
   paidAvailable: number;
   freeAvailable: number;
   nextExpiry: { credits: number; expiresAt: string } | null;

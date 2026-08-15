@@ -684,6 +684,8 @@
           "checkoutFailed": "Impossible d'ouvrir la page de paiement. Réessayez, ou contactez-nous si le problème persiste.",
           "currencyLabel": "Devise affichée",
           "volumeGate": "Besoin de plus de 500 entretiens ? Obtenez un tarif volume",
+          "nonManagerHint": "Seul un propriétaire ou un administrateur peut acheter des crédits pour cet espace de travail.",
+          "purchaseNotAllowed": "Seul un propriétaire ou un administrateur peut acheter des crédits pour cet espace de travail. Demandez-lui de finaliser cet achat.",
           "purchaseGranted": "Paiement reçu — vos crédits ont été ajoutés à cet espace de travail et sont valables 12 mois.",
           "purchaseProcessing": "Le paiement est encore en cours de traitement par votre banque. Vos crédits apparaîtront dès qu'il sera confirmé.",
           "purchaseCancelled": "Paiement annulé. Aucun montant n'a été débité.",

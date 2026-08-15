@@ -684,6 +684,8 @@
           "checkoutFailed": "We could not open the payment page. Please try again, or contact us if it keeps failing.",
           "currencyLabel": "Display currency",
           "volumeGate": "Need more than 500 interviews? Get volume pricing",
+          "nonManagerHint": "Only an owner or admin can buy credits for this workspace.",
+          "purchaseNotAllowed": "Only an owner or admin can buy credits for this workspace. Ask one of them to complete this purchase.",
           "purchaseGranted": "Payment received — your credits have been added to this workspace and are valid for 12 months.",
           "purchaseProcessing": "Payment is still being processed by your bank. Your credits will appear as soon as it settles.",
           "purchaseCancelled": "Checkout was cancelled. Nothing was charged.",

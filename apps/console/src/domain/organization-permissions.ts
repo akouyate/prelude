@@ -36,6 +36,23 @@ export function canManageRoles(role: OrganizationRole): boolean {
 }
 
 /**
+ * Whether `role` may spend the organization's money on interview credits (#140).
+ *
+ * Deliberately delegates to `canManageTeam` rather than declaring its own set: a
+ * second, drifting definition of "manager" is how permission bugs are born, and
+ * this is the same owner/admin line the dispute notification and the team
+ * controls already draw. It is named separately because the *reason* differs —
+ * committing the company to a €2,790 charge, not administering members — so the
+ * day the two diverge, this is the one line that changes.
+ *
+ * Reading the wallet is NOT gated: a recruiter needs to know whether an interview
+ * can run before inviting a candidate.
+ */
+export function canPurchaseCredits(role: OrganizationRole): boolean {
+  return canManageTeam(role);
+}
+
+/**
  * Whether `actorRole` may act on a member who currently holds `targetRole`.
  * An owner can act on anyone; an admin can act on anyone except an owner.
  */

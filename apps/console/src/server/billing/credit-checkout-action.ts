@@ -8,6 +8,7 @@ import {
 import { prisma } from "@prelude/db";
 import { headers } from "next/headers";
 
+import { canPurchaseCredits } from "../../domain/organization-permissions";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
 /**
@@ -40,6 +41,14 @@ export async function startCreditPackCheckout(
   }
 
   const scope = await getCompletedOrganizationScope();
+
+  // The role comes from the session's membership, like the organization itself —
+  // the UI hides the buttons for a non-manager, but the UI is not a permission.
+  // Applied to every pack including the quiet `volume_1000`: `visibility` gates
+  // listing, it was never an authorization boundary.
+  if (!canPurchaseCredits(scope.role)) {
+    return { error: "not_allowed" };
+  }
 
   try {
     const result = await createCreditCheckoutSession(prisma, {

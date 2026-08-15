@@ -76,6 +76,16 @@ export function purchaseBannerFor(value: string | null): PurchaseBanner | null {
     };
   }
 
+  if (value === "not_allowed") {
+    // Named rather than collapsed into the generic line: this one IS actionable
+    // ("ask an owner or admin"), and it reveals nothing the viewer does not
+    // already know about their own role.
+    return {
+      tone: "warning",
+      key: "settings.billing.credits.purchaseNotAllowed",
+    };
+  }
+
   return { tone: "warning", key: "settings.billing.credits.purchaseFailed" };
 }
 

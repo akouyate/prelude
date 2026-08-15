@@ -93,6 +93,45 @@ describe("GET /api/billing/checkout-return — ownership", () => {
     expect(redirectedTo()).toBe("/settings?view=billing&purchase=error");
   });
 
+  /**
+   * The role gate applies on the way back too, not only on the way out.
+   * Fulfilment here is a convenience: the webhook and the sweep grant the same
+   * session regardless, so refusing a viewer costs the organization nothing and
+   * keeps one rule instead of two.
+   */
+  it("refuses a viewer returning from Checkout, without calling fulfilment", async () => {
+    scopeMock.getCompletedOrganizationScope.mockResolvedValue({
+      organizationId: "org_session",
+      organizationName: "Acme Talent",
+      clerkOrganizationId: null,
+      role: "viewer",
+      userId: "user_1",
+    });
+
+    await GET(requestFor("?session_id=cs_1"));
+
+    expect(billingMock.fulfillCreditCheckout).not.toHaveBeenCalled();
+    expect(redirectedTo()).toBe("/settings?view=billing&purchase=not_allowed");
+  });
+
+  it("lets an admin's return fulfil normally", async () => {
+    scopeMock.getCompletedOrganizationScope.mockResolvedValue({
+      organizationId: "org_session",
+      organizationName: "Acme Talent",
+      clerkOrganizationId: null,
+      role: "admin",
+      userId: "user_1",
+    });
+
+    await GET(requestFor("?session_id=cs_1"));
+
+    expect(billingMock.fulfillCreditCheckout).toHaveBeenCalledWith(
+      prismaMock,
+      expect.objectContaining({ expectedOrganizationId: "org_session" }),
+    );
+    expect(redirectedTo()).toBe("/settings?view=billing&purchase=granted");
+  });
+
   it("requires an authenticated console session before touching Stripe", async () => {
     scopeMock.getCompletedOrganizationScope.mockRejectedValue(
       new Error("Completed onboarding is required."),
