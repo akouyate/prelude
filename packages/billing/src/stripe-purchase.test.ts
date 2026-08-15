@@ -242,7 +242,15 @@ describe("createCreditCheckoutSession", () => {
       line_items: [{ price: "price_hiring", quantity: 1 }],
       automatic_tax: { enabled: true },
       tax_id_collection: { enabled: true },
-      invoice_creation: { enabled: true },
+      // Amendment 15 — the expiry travels on the invoice the customer keeps, not
+      // just on a screen they saw once. 2026-08-15 + 365 days.
+      invoice_creation: {
+        enabled: true,
+        invoice_data: {
+          description:
+            "100 HireCall interview credits — valid until 2027-08-15 (12 months from the purchase date).",
+        },
+      },
       customer_update: { address: "auto" },
       client_reference_id: "org_1",
       metadata: {
@@ -252,8 +260,11 @@ describe("createCreditCheckoutSession", () => {
         amountCents: "34900",
         amountCentsUsd: "37900",
       },
-      success_url: "http://localhost:3000/settings?credit_checkout={CHECKOUT_SESSION_ID}",
-      cancel_url: "http://localhost:3000/settings?credit_checkout=cancelled",
+      // Amendment 6 — the return lands on a route handler that re-authenticates
+      // the caller and refuses a session belonging to another organization. It
+      // must NOT land on a page that would fulfil whatever `cs_…` the URL carries.
+      success_url: "http://localhost:3000/api/billing/checkout-return?session_id={CHECKOUT_SESSION_ID}",
+      cancel_url: "http://localhost:3000/settings?view=billing&purchase=cancelled",
     });
     // Happy path: the stored price is verified once, never re-resolved or rewritten.
     expect(stripe.prices.retrieve).toHaveBeenCalledWith("price_hiring");
@@ -469,8 +480,35 @@ describe("createCreditCheckoutSession", () => {
 
     expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        success_url: "https://app.hirecall.test/settings?credit_checkout={CHECKOUT_SESSION_ID}",
-        cancel_url: "https://app.hirecall.test/settings?credit_checkout=cancelled",
+        success_url:
+          "https://app.hirecall.test/api/billing/checkout-return?session_id={CHECKOUT_SESSION_ID}",
+        cancel_url: "https://app.hirecall.test/settings?view=billing&purchase=cancelled",
+      }),
+    );
+  });
+
+  it("states the credits and their expiry date on the invoice the customer keeps", async () => {
+    const { db } = fakeDb({
+      packs: [pack({ id: "volume_1000", creditsGranted: 1000, visibility: "quiet" })],
+    });
+    const stripe = fakeStripe();
+
+    await createCreditCheckoutSession(db, {
+      ...checkoutInput({ packId: "volume_1000", now: new Date("2026-12-31T23:00:00.000Z") }),
+      stripe,
+    });
+
+    // The date is the lot's real `expiresAt` (purchase + PAID_CREDIT_EXPIRY_DAYS),
+    // computed from the same constant the ledger uses — not a hand-written "+1 year".
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        invoice_creation: {
+          enabled: true,
+          invoice_data: {
+            description:
+              "1000 HireCall interview credits — valid until 2027-12-31 (12 months from the purchase date).",
+          },
+        },
       }),
     );
   });

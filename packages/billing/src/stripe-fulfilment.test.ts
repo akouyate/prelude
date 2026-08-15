@@ -466,3 +466,96 @@ describe("fulfillCreditCheckout", () => {
     expect(grant).toHaveBeenCalledWith(db, expect.objectContaining({ stripeInvoiceId: undefined }));
   });
 });
+
+/**
+ * Amendment 6. The browser-return route hands this function a `cs_…` taken
+ * straight out of a query string — attacker input. Without an ownership check the
+ * route answers differently for "a session that exists and belongs to someone
+ * else" than for "a session that does not exist", which turns it into an
+ * enumeration oracle over other organizations' checkouts (and, worse, fulfils
+ * them). `expectedOrganizationId` puts that check inside the money boundary
+ * rather than leaving it to each caller's discipline.
+ *
+ * The webhook and the sweep pass NO expected organization: they are authenticated
+ * by Stripe's signature, not by a session, and must keep parking anomalies in
+ * `needs_admin` rather than silently answering `foreign_session`.
+ */
+describe("fulfillCreditCheckout ownership guard", () => {
+  it("refuses a session belonging to another organization without reading the catalogue or the ledger", async () => {
+    const { db, findUnique } = fakeDb();
+    const { stripe } = fakeStripe();
+
+    await expect(
+      fulfillCreditCheckout(db, {
+        checkoutSessionId: "cs_1",
+        expectedOrganizationId: "org_intruder",
+        now,
+        stripe,
+      }),
+    ).resolves.toEqual({ outcome: "foreign_session" });
+    expect(grant).not.toHaveBeenCalled();
+    expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it("answers foreign_session for an UNPAID foreign session too, so the outcome leaks nothing about it", async () => {
+    // The refusal has to land before the payment-status branch: a caller who can
+    // tell "someone else's paid session" from "someone else's unpaid session" can
+    // still read other organizations' checkout state one bit at a time.
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe({ paymentStatus: "unpaid" });
+
+    await expect(
+      fulfillCreditCheckout(db, {
+        checkoutSessionId: "cs_1",
+        expectedOrganizationId: "org_intruder",
+        now,
+        stripe,
+      }),
+    ).resolves.toEqual({ outcome: "foreign_session" });
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it("answers foreign_session — not needs_admin — for a session with no owner in its metadata", async () => {
+    // Same single answer for "not ours" whatever the reason. `needs_admin` here
+    // would tell the caller the session exists and is one we could not attribute.
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe({ metadata: null });
+
+    await expect(
+      fulfillCreditCheckout(db, {
+        checkoutSessionId: "cs_1",
+        expectedOrganizationId: "org_1",
+        now,
+        stripe,
+      }),
+    ).resolves.toEqual({ outcome: "foreign_session" });
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it("fulfils normally when the expected organization is the session's own", async () => {
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe();
+
+    await expect(
+      fulfillCreditCheckout(db, {
+        checkoutSessionId: "cs_1",
+        expectedOrganizationId: "org_1",
+        now,
+        stripe,
+      }),
+    ).resolves.toEqual({ outcome: "granted", lotId: "lot_1" });
+    expect(grant).toHaveBeenCalledWith(db, expect.objectContaining({ organizationId: "org_1" }));
+  });
+
+  it("keeps the webhook path untouched: no expected organization means no ownership refusal", async () => {
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe({ metadata: null });
+
+    // Unattributable via the signed webhook is still a human's problem, not a
+    // "not yours" — the archive must keep parking it.
+    await expect(fulfillCreditCheckout(db, { checkoutSessionId: "cs_1", now, stripe })).resolves.toEqual({
+      outcome: "needs_admin",
+      reason: "missing_metadata",
+    });
+  });
+});

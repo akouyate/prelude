@@ -48,6 +48,11 @@ export type StripeFulfilmentClient = {
  * They stay distinct here because the three call for different human actions:
  * fix the catalogue, investigate a price divergence, investigate a session we
  * may not have created.
+ *
+ * `foreign_session` is the odd one out: it is not a verdict about the money at
+ * all, only about the *caller* (amendment 6). It can only be reached by a caller
+ * that passed an `expectedOrganizationId`, i.e. the browser return, and it says
+ * "this session is not yours" without saying anything more.
  */
 export type CreditCheckoutFulfilment =
   | { outcome: "granted"; lotId: string }
@@ -56,6 +61,7 @@ export type CreditCheckoutFulfilment =
   | { outcome: "unknown_pack" }
   | { outcome: "no_payment_intent" }
   | { outcome: "amount_mismatch" }
+  | { outcome: "foreign_session" }
   | { outcome: "needs_admin"; reason: "missing_metadata" | "no_payment_required" };
 
 /** Currencies a lot can be denominated in — amendment 22, lower-cased as Stripe reports them. */
@@ -98,25 +104,58 @@ export async function fulfillPaidPaymentIntent(
  * (excluding tax) is the figure compared against the metadata written at session
  * creation — `amount_total` carries Stripe Tax and would never match.
  *
- * The guard order is: did it collect a payment? → is this session ours? → does
- * the pack exist and grant something? → does the money agree? → can we identify
- * the payment? Each step is a refusal to grant, and a refusal never writes
- * anything.
+ * The guard order is: is this session the caller's at all? → did it collect a
+ * payment? → is this session ours? → does the pack exist and grant something? →
+ * does the money agree? → can we identify the payment? Each step is a refusal to
+ * grant, and a refusal never writes anything.
+ *
+ * `expectedOrganizationId` is the caller-ownership guard (amendment 6). Only the
+ * browser-return route passes it, because only it takes the session id from a
+ * query string: a `cs_…` a recruiter can edit must not fulfil, or even report on,
+ * another organization's checkout. The webhook and the sweep omit it — they are
+ * authenticated by Stripe's signature and are legitimately allowed to fulfil for
+ * any organization. Keeping the check here rather than in the route is deliberate:
+ * it lives inside the money boundary, where it cannot be forgotten by a future
+ * caller.
  */
 export async function fulfillCreditCheckout(
   db: PrismaClient,
   input: {
     checkoutSessionId: string;
+    expectedOrganizationId?: string;
     stripeEventId?: string;
     now: Date;
     stripe?: StripeFulfilmentClient;
   },
 ): Promise<CreditCheckoutFulfilment> {
-  const { checkoutSessionId, stripeEventId, now, stripe = getStripeClient() } = input;
+  const {
+    checkoutSessionId,
+    expectedOrganizationId,
+    stripeEventId,
+    now,
+    stripe = getStripeClient(),
+  } = input;
 
   const session = await stripe.checkout.sessions.retrieve(checkoutSessionId, {
     expand: ["payment_intent", "invoice"],
   });
+
+  // FIRST, before any other verdict. Every later branch returns a different
+  // outcome for a different session state, so running any of them on a session
+  // the caller does not own turns this function into an enumeration oracle: feed
+  // it `cs_…` ids and read other organizations' checkout state off the answers.
+  // One indistinguishable `foreign_session` for "not yours", whatever the reason
+  // — including metadata we cannot attribute at all, which for an authenticated
+  // browser caller is simply "not yours" rather than a queue for a human.
+  if (expectedOrganizationId !== undefined) {
+    if (session.metadata?.organizationId?.trim() !== expectedOrganizationId) {
+      console.error("[stripe-fulfilment] refused a checkout session the caller does not own", {
+        checkoutSessionId: session.id,
+        expectedOrganizationId,
+      });
+      return { outcome: "foreign_session" };
+    }
+  }
 
   // A Checkout session completes before the funds land on deferred methods (SEPA
   // debit, bank transfers): Stripe calls us again with

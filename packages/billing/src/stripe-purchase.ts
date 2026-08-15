@@ -2,7 +2,7 @@ import type { PrismaClient } from "@prelude/db";
 import type Stripe from "stripe";
 
 import { isCreditBillingEnabled } from "./credit-billing-flag";
-import { ensureWallet } from "./credit-ledger";
+import { ensureWallet, PAID_CREDIT_EXPIRY_DAYS } from "./credit-ledger";
 import { getStripeClient, isStripePurchaseConfigured } from "./stripe-client";
 
 /**
@@ -214,7 +214,14 @@ export async function createCreditCheckoutSession(
     line_items: [{ price: pricing.priceId, quantity: 1 }],
     automatic_tax: { enabled: true },
     tax_id_collection: { enabled: true },
-    invoice_creation: { enabled: true },
+    // Amendment 15 — the balance is never a bare number, and neither is the
+    // receipt. The invoice is the one artefact the buyer keeps and forwards to
+    // their finance team, so the expiry travels on it: a customer who discovers
+    // the 12-month clock only when credits vanish is a dispute we created.
+    invoice_creation: {
+      enabled: true,
+      invoice_data: { description: creditInvoiceDescription(pack.creditsGranted, now) },
+    },
     // Persist the tax address Checkout collects onto the Customer. The default
     // ("never") throws it away: the next purchase would re-collect it, and the
     // Customer that `invoice_creation` bills would stay address-less — which no
@@ -222,8 +229,14 @@ export async function createCreditCheckoutSession(
     customer_update: { address: "auto" },
     client_reference_id: organizationId,
     metadata,
-    success_url: `${baseUrl}/settings?credit_checkout={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${baseUrl}/settings?credit_checkout=cancelled`,
+    // Amendment 6: the return is a route handler, never a page. It re-resolves
+    // the caller's organization server-side and refuses a session that is not
+    // theirs before fulfilment sees it — the `{CHECKOUT_SESSION_ID}` Stripe
+    // substitutes here is indistinguishable, once in the address bar, from one a
+    // recruiter typed. The handler then redirects to `/settings?purchase=…`, so
+    // the session id never survives a reload.
+    success_url: `${baseUrl}/api/billing/checkout-return?session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${baseUrl}/settings?view=billing&purchase=cancelled`,
   });
 
   if (!session.url) {
@@ -231,6 +244,22 @@ export async function createCreditCheckoutSession(
   }
 
   return { ok: true, url: session.url };
+}
+
+/**
+ * The invoice line the customer keeps. Deliberately plain English and ISO-dated:
+ * Stripe renders invoices in the account's language, this string is not
+ * translated by anything downstream, and an unambiguous `YYYY-MM-DD` beats a
+ * locale-formatted date that a French and a US buyer would read differently.
+ *
+ * The date is computed from `PAID_CREDIT_EXPIRY_DAYS` — the same constant the
+ * ledger stamps onto the lot — so the promise on the invoice and the row in the
+ * database can never drift apart.
+ */
+function creditInvoiceDescription(credits: number, now: Date): string {
+  const expiresAt = new Date(now.getTime() + PAID_CREDIT_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+  const expiryDate = expiresAt.toISOString().slice(0, 10);
+  return `${credits} HireCall interview credits — valid until ${expiryDate} (12 months from the purchase date).`;
 }
 
 type PackPricing = { priceId: string; amountCents: number; amountCentsUsd: number | null };

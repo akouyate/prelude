@@ -262,6 +262,12 @@ function archiveStatusForFulfilment(outcome: CreditCheckoutFulfilment): StripeWe
       return "processed";
     case "unknown_pack":
     case "amount_mismatch":
+    // Unreachable from here — `foreign_session` requires an
+    // `expectedOrganizationId`, which only the browser-return route passes and
+    // this dispatcher never does. Listed rather than defaulted so the `never` arm
+    // below keeps its meaning, and mapped to `needs_admin` because if it ever DID
+    // arrive it would mean money landed and nothing was granted.
+    case "foreign_session":
     case "needs_admin":
       return "needs_admin";
     default: {
