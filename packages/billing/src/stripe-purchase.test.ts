@@ -16,6 +16,7 @@ type PackRow = {
   id: string;
   creditsGranted: number;
   unitAmountCents: number;
+  unitAmountCentsUsd: number | null;
   currency: string;
   stripeProductId: string | null;
   stripePriceId: string | null;
@@ -28,6 +29,9 @@ function pack(overrides: Partial<PackRow> = {}): PackRow {
     id: "hiring_100",
     creditsGranted: 100,
     unitAmountCents: 34900,
+    // Deliberately not the EUR numeral (the real catalogue mirrors them): a swap
+    // between the two cached amounts has to fail a test.
+    unitAmountCentsUsd: 37900,
     currency: "EUR",
     stripeProductId: "prod_hiring",
     stripePriceId: "price_hiring",
@@ -78,10 +82,16 @@ function fakeDb(options: { wallet?: Partial<WalletRow>; packs?: PackRow[] } = {}
         return row ? { ...row } : null;
       }),
       update: vi.fn(
-        async ({ where, data }: { where: { id: string }; data: { stripePriceId: string } }) => {
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: string };
+          data: { stripePriceId: string; unitAmountCents: number; unitAmountCentsUsd: number | null };
+        }) => {
           const row = packs.get(where.id);
           if (!row) throw new Error("pack not found");
-          row.stripePriceId = data.stripePriceId;
+          Object.assign(row, data);
           return { ...row };
         },
       ),
@@ -91,10 +101,17 @@ function fakeDb(options: { wallet?: Partial<WalletRow>; packs?: PackRow[] } = {}
   return { db: db as unknown as PrismaClient, spies: db, wallet: () => ({ ...wallet }) };
 }
 
+type ListedPrice = {
+  id: string;
+  metadata: Record<string, string>;
+  unit_amount: number | null;
+  currency_options?: { [key: string]: { unit_amount: number | null } };
+};
+
 function fakeStripe(
   overrides: {
     price?: { id: string; active: boolean; product: string };
-    listed?: Array<{ id: string; metadata: Record<string, string> }>;
+    listed?: ListedPrice[];
     sessionUrl?: string | null;
   } = {},
 ) {
@@ -222,6 +239,7 @@ describe("createCreditCheckoutSession", () => {
         packId: "hiring_100",
         credits: "100",
         amountCents: "34900",
+        amountCentsUsd: "37900",
       },
       success_url: "http://localhost:3000/settings?credit_checkout={CHECKOUT_SESSION_ID}",
       cancel_url: "http://localhost:3000/settings?credit_checkout=cancelled",
@@ -232,13 +250,18 @@ describe("createCreditCheckoutSession", () => {
     expect(spies.creditPack.update).not.toHaveBeenCalled();
   });
 
-  it("re-resolves and persists the pack price when another sync deactivated the stored one", async () => {
+  it("re-resolves the price and refreshes the cached amounts when another sync deactivated the stored one", async () => {
     const { db, spies } = fakeDb();
     const stripe = fakeStripe({
       price: { id: "price_hiring", active: false, product: "prod_hiring" },
       listed: [
-        { id: "price_other_pack", metadata: { packId: "scale_500" } },
-        { id: "price_hiring_v2", metadata: { packId: "hiring_100" } },
+        { id: "price_other_pack", metadata: { packId: "scale_500" }, unit_amount: 149000 },
+        {
+          id: "price_hiring_v2",
+          metadata: { packId: "hiring_100" },
+          unit_amount: 39900,
+          currency_options: { usd: { unit_amount: 42900 } },
+        },
       ],
     });
 
@@ -246,12 +269,43 @@ describe("createCreditCheckoutSession", () => {
 
     expect(result).toEqual({ ok: true, url: "https://checkout.stripe.test/cs_1" });
     expect(stripe.prices.list).toHaveBeenCalledWith({ product: "prod_hiring", active: true, limit: 100 });
+    // Stripe just confirmed what the pack costs: the cache follows it, and the
+    // metadata Task 5 cross-checks carries those refreshed amounts, not the stale ones.
     expect(spies.creditPack.update).toHaveBeenCalledWith({
       where: { id: "hiring_100" },
-      data: { stripePriceId: "price_hiring_v2" },
+      data: { stripePriceId: "price_hiring_v2", unitAmountCents: 39900, unitAmountCentsUsd: 42900 },
     });
     expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
-      expect.objectContaining({ line_items: [{ price: "price_hiring_v2", quantity: 1 }] }),
+      expect.objectContaining({
+        line_items: [{ price: "price_hiring_v2", quantity: 1 }],
+        metadata: {
+          organizationId: "org_1",
+          packId: "hiring_100",
+          credits: "100",
+          amountCents: "39900",
+          amountCentsUsd: "42900",
+        },
+      }),
+    );
+  });
+
+  it("keeps the cached amounts when the re-resolved price reports none", async () => {
+    const { db, spies } = fakeDb();
+    const stripe = fakeStripe({
+      price: { id: "price_hiring", active: false, product: "prod_hiring" },
+      listed: [{ id: "price_hiring_v2", metadata: { packId: "hiring_100" }, unit_amount: null }],
+    });
+
+    await createCreditCheckoutSession(db, { ...checkoutInput(), stripe });
+
+    expect(spies.creditPack.update).toHaveBeenCalledWith({
+      where: { id: "hiring_100" },
+      data: { stripePriceId: "price_hiring_v2", unitAmountCents: 34900, unitAmountCentsUsd: 37900 },
+    });
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ amountCents: "34900", amountCentsUsd: "37900" }),
+      }),
     );
   });
 
@@ -259,7 +313,7 @@ describe("createCreditCheckoutSession", () => {
     const { db, spies } = fakeDb();
     const stripe = fakeStripe({
       price: { id: "price_hiring", active: false, product: "prod_hiring" },
-      listed: [{ id: "price_other_pack", metadata: { packId: "scale_500" } }],
+      listed: [{ id: "price_other_pack", metadata: { packId: "scale_500" }, unit_amount: 149000 }],
     });
 
     expect(await createCreditCheckoutSession(db, { ...checkoutInput(), stripe })).toEqual({
@@ -296,7 +350,15 @@ describe("createCreditCheckoutSession", () => {
 
   it("sells a quiet pack — visibility only controls listing", async () => {
     const { db } = fakeDb({
-      packs: [pack({ id: "volume_1000", visibility: "quiet", creditsGranted: 1000, unitAmountCents: 279000 })],
+      packs: [
+        pack({
+          id: "volume_1000",
+          visibility: "quiet",
+          creditsGranted: 1000,
+          unitAmountCents: 279000,
+          unitAmountCentsUsd: 289000,
+        }),
+      ],
     });
     const stripe = fakeStripe();
 
@@ -313,6 +375,27 @@ describe("createCreditCheckoutSession", () => {
           packId: "volume_1000",
           credits: "1000",
           amountCents: "279000",
+          amountCentsUsd: "289000",
+        },
+      }),
+    );
+  });
+
+  it("omits the USD amount from the metadata when the pack has none", async () => {
+    const { db } = fakeDb({ packs: [pack({ unitAmountCentsUsd: null })] });
+    const stripe = fakeStripe();
+
+    await createCreditCheckoutSession(db, { ...checkoutInput(), stripe });
+
+    // Exact object: an `amountCentsUsd` key here would make Task 5's
+    // currency-aware check compare a USD payment against a phantom amount.
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: {
+          organizationId: "org_1",
+          packId: "hiring_100",
+          credits: "100",
+          amountCents: "34900",
         },
       }),
     );

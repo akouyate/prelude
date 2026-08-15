@@ -24,7 +24,14 @@ export type StripePurchaseClient = {
       product: string | { id: string };
     }>;
     list(params: Stripe.PriceListParams): Promise<{
-      data: Array<{ id: string; metadata: Stripe.Metadata | null }>;
+      data: Array<{
+        id: string;
+        metadata: Stripe.Metadata | null;
+        unit_amount: number | null;
+        // Returned with the Price, no `expand` needed — the field is simply
+        // absent on a single-currency Price.
+        currency_options?: { [currency: string]: { unit_amount: number | null } } | null;
+      }>;
     }>;
   };
   checkout: {
@@ -141,12 +148,14 @@ export async function createCreditCheckoutSession(
     throw new UnsupportedCreditCurrencyError(pack.id, pack.currency);
   }
 
-  const priceId = await resolveActivePriceId(db, stripe, {
+  const pricing = await resolvePackPricing(db, stripe, {
     packId: pack.id,
     storedPriceId: pack.stripePriceId,
     storedProductId: pack.stripeProductId,
+    cachedAmountCents: pack.unitAmountCents,
+    cachedAmountCentsUsd: pack.unitAmountCentsUsd,
   });
-  if (!priceId) {
+  if (!pricing) {
     return { ok: false, error: "pack_not_purchasable" };
   }
 
@@ -158,6 +167,22 @@ export async function createCreditCheckoutSession(
   });
 
   const baseUrl = origin.replace(/\/+$/, "");
+  // Server-owned, never read back from the browser (amendment 3): fulfilment
+  // cross-checks these against what Stripe says was actually paid before it
+  // grants anything. Both currencies travel because Checkout — not this code —
+  // decides which one the buyer pays (amendment 22): fulfilment picks the
+  // comparison amount from `session.currency`, so a pack with no USD amount
+  // sends no `amountCentsUsd` rather than a phantom one.
+  const metadata: Record<string, string> = {
+    organizationId,
+    packId: pack.id,
+    credits: String(pack.creditsGranted),
+    amountCents: String(pricing.amountCents),
+  };
+  if (pricing.amountCentsUsd !== null) {
+    metadata.amountCentsUsd = String(pricing.amountCentsUsd);
+  }
+
   // go-live (amendment 21): once the CGV/ToS URL is configured in the Stripe
   // dashboard, add `consent_collection: { terms_of_service: "required" }` here —
   // Stripe errors on the parameter while no ToS URL is set, so it cannot ship yet.
@@ -166,22 +191,12 @@ export async function createCreditCheckoutSession(
   const session = await stripe.checkout.sessions.create({
     mode: "payment",
     customer: stripeCustomerId,
-    line_items: [{ price: priceId, quantity: 1 }],
+    line_items: [{ price: pricing.priceId, quantity: 1 }],
     automatic_tax: { enabled: true },
     tax_id_collection: { enabled: true },
     invoice_creation: { enabled: true },
     client_reference_id: organizationId,
-    // Server-owned, never read back from the browser (amendment 3): fulfilment
-    // cross-checks these against what Stripe says was actually paid before it
-    // grants anything. `amountCents` is the catalogue's EUR reference amount —
-    // a USD buyer pays the Price's USD option, which is why the check at
-    // fulfilment is currency-aware rather than a bare equality.
-    metadata: {
-      organizationId,
-      packId: pack.id,
-      credits: String(pack.creditsGranted),
-      amountCents: String(pack.unitAmountCents),
-    },
+    metadata,
     success_url: `${baseUrl}/settings?credit_checkout={CHECKOUT_SESSION_ID}`,
     cancel_url: `${baseUrl}/settings?credit_checkout=cancelled`,
   });
@@ -193,29 +208,49 @@ export async function createCreditCheckoutSession(
   return { ok: true, url: session.url };
 }
 
+type PackPricing = { priceId: string; amountCents: number; amountCentsUsd: number | null };
+
 /**
  * Stripe is the price authority; `CreditPack.stripePriceId` is a cache that can
  * go stale — a teammate rotating a price against the shared test account
  * deactivates the Price other developers' databases still point at (amendment
  * 12). One `retrieve` per checkout tells us whether the cached id is still
- * live; only when it is not do we pay for the product-scoped lookup, and the
- * corrected id is written back so the next checkout is a single call again.
+ * live; only when it is not do we pay for the product-scoped lookup.
  *
  * The lookup is `prices.list` over the product rather than `prices.search`:
  * search is eventually consistent, and a price created seconds ago by the sync
  * script is exactly the one we need to find.
  *
+ * The rotation branch writes back the whole cache, not just the corrected id: a
+ * rotation is usually a price *change*, and shipping the stale amounts into the
+ * session metadata would make fulfilment's cross-check (amendment 3) read a
+ * legitimate payment as a divergence and park it in `needs_admin`. Writing what
+ * Stripe just confirmed is the same discipline amendment 2 imposes on the sync
+ * script — the cache follows Stripe, it never leads it. A Price that reports no
+ * fixed `unit_amount` (tiered pricing) cannot refresh anything, so the cached
+ * value stands.
+ *
  * Returns `null` when the product has no active price carrying this pack id —
  * the catalogue promises something Stripe cannot sell.
  */
-async function resolveActivePriceId(
+async function resolvePackPricing(
   db: PrismaClient,
   stripe: StripePurchaseClient,
-  pack: { packId: string; storedPriceId: string; storedProductId: string | null },
-): Promise<string | null> {
+  pack: {
+    packId: string;
+    storedPriceId: string;
+    storedProductId: string | null;
+    cachedAmountCents: number;
+    cachedAmountCentsUsd: number | null;
+  },
+): Promise<PackPricing | null> {
   const stored = await stripe.prices.retrieve(pack.storedPriceId);
   if (stored.active) {
-    return stored.id;
+    return {
+      priceId: stored.id,
+      amountCents: pack.cachedAmountCents,
+      amountCentsUsd: pack.cachedAmountCentsUsd,
+    };
   }
 
   const productId =
@@ -226,10 +261,19 @@ async function resolveActivePriceId(
     return null;
   }
 
+  const refreshed: PackPricing = {
+    priceId: replacement.id,
+    amountCents: replacement.unit_amount ?? pack.cachedAmountCents,
+    amountCentsUsd: replacement.currency_options?.usd?.unit_amount ?? pack.cachedAmountCentsUsd,
+  };
   await db.creditPack.update({
     where: { id: pack.packId },
-    data: { stripePriceId: replacement.id },
+    data: {
+      stripePriceId: refreshed.priceId,
+      unitAmountCents: refreshed.amountCents,
+      unitAmountCentsUsd: refreshed.amountCentsUsd,
+    },
   });
 
-  return replacement.id;
+  return refreshed;
 }
