@@ -214,14 +214,31 @@ export async function createCreditCheckoutSession(
     line_items: [{ price: pricing.priceId, quantity: 1 }],
     automatic_tax: { enabled: true },
     tax_id_collection: { enabled: true },
-    // Amendment 15 — the balance is never a bare number, and neither is the
-    // receipt. The invoice is the one artefact the buyer keeps and forwards to
-    // their finance team, so the expiry travels on it: a customer who discovers
-    // the 12-month clock only when credits vanish is a dispute we created.
-    invoice_creation: {
-      enabled: true,
-      invoice_data: { description: creditInvoiceDescription(pack.creditsGranted, now) },
-    },
+    // BLOCKED — amendment 15 asks for `invoice_data.description` here, carrying
+    // the credits and their expiry date onto the invoice the buyer keeps. The
+    // live Stripe account rejects it outright:
+    //
+    //   invoice_creation[invoice_data] is not supported when Managed Payments is
+    //   enabled. Omit invoice_creation[invoice_data].
+    //
+    // Managed Payments (Stripe as merchant of record) is ON by default on this
+    // account, and it also forbids `custom_text`. Verified against the real test
+    // account: the same session creation succeeds without `invoice_data` and
+    // fails with it, so shipping the parameter would break every purchase.
+    //
+    // The remedy is a business decision, not a code one: turning Managed Payments
+    // off makes US the merchant of record — which is what the rest of Phase 2
+    // already assumes (our Stripe Tax registrations, our SIREN/RCS invoice
+    // mentions per amendment 17, our CGV and refund rule per amendment 21) — but
+    // it moves the VAT liability and needs a human to decide. With it off, the
+    // full parameter set below PLUS `customer_update: { name: "auto" }` and
+    // `invoice_creation.invoice_data` was verified to create a session cleanly.
+    //
+    // Until then the expiry reaches the buyer through the settings wallet line
+    // and the post-purchase banner, which are the same promise on a surface the
+    // payment provider does not veto. `creditInvoiceDescription` below is kept,
+    // tested, and ready to be re-attached the day the account setting changes.
+    invoice_creation: { enabled: true },
     // Persist the tax address Checkout collects onto the Customer. The default
     // ("never") throws it away: the next purchase would re-collect it, and the
     // Customer that `invoice_creation` bills would stay address-less — which no
@@ -247,16 +264,21 @@ export async function createCreditCheckoutSession(
 }
 
 /**
- * The invoice line the customer keeps. Deliberately plain English and ISO-dated:
- * Stripe renders invoices in the account's language, this string is not
- * translated by anything downstream, and an unambiguous `YYYY-MM-DD` beats a
- * locale-formatted date that a French and a US buyer would read differently.
+ * The invoice line the customer keeps — amendment 15's wording, ready but NOT
+ * currently attached to the session (see the `invoice_creation` comment above:
+ * Managed Payments rejects `invoice_data`). Exported so the copy stays tested and
+ * so re-attaching it is a one-line change once the account setting is decided.
+ *
+ * Deliberately plain English and ISO-dated: Stripe renders invoices in the
+ * account's language, this string is not translated by anything downstream, and
+ * an unambiguous `YYYY-MM-DD` beats a locale-formatted date that a French and a
+ * US buyer would read differently.
  *
  * The date is computed from `PAID_CREDIT_EXPIRY_DAYS` — the same constant the
  * ledger stamps onto the lot — so the promise on the invoice and the row in the
  * database can never drift apart.
  */
-function creditInvoiceDescription(credits: number, now: Date): string {
+export function creditInvoiceDescription(credits: number, now: Date): string {
   const expiresAt = new Date(now.getTime() + PAID_CREDIT_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
   const expiryDate = expiresAt.toISOString().slice(0, 10);
   return `${credits} HireCall interview credits — valid until ${expiryDate} (12 months from the purchase date).`;

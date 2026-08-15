@@ -4,6 +4,7 @@ import type { PrismaClient } from "@prelude/db";
 
 import {
   createCreditCheckoutSession,
+  creditInvoiceDescription,
   ensureStripeCustomer,
   MissingCheckoutSessionUrlError,
   UnsupportedCreditCurrencyError,
@@ -242,15 +243,12 @@ describe("createCreditCheckoutSession", () => {
       line_items: [{ price: "price_hiring", quantity: 1 }],
       automatic_tax: { enabled: true },
       tax_id_collection: { enabled: true },
-      // Amendment 15 — the expiry travels on the invoice the customer keeps, not
-      // just on a screen they saw once. 2026-08-15 + 365 days.
-      invoice_creation: {
-        enabled: true,
-        invoice_data: {
-          description:
-            "100 HireCall interview credits — valid until 2027-08-15 (12 months from the purchase date).",
-        },
-      },
+      // No `invoice_data` — pinned deliberately. Amendment 15 wants the expiry on
+      // the invoice, but the live account runs Managed Payments, which rejects
+      // `invoice_creation[invoice_data]` outright and would break every purchase.
+      // Re-adding it here must be a conscious act taken together with the
+      // merchant-of-record decision (see the comment in `stripe-purchase.ts`).
+      invoice_creation: { enabled: true },
       customer_update: { address: "auto" },
       client_reference_id: "org_1",
       metadata: {
@@ -487,29 +485,35 @@ describe("createCreditCheckoutSession", () => {
     );
   });
 
-  it("states the credits and their expiry date on the invoice the customer keeps", async () => {
-    const { db } = fakeDb({
-      packs: [pack({ id: "volume_1000", creditsGranted: 1000, visibility: "quiet" })],
-    });
-    const stripe = fakeStripe();
-
-    await createCreditCheckoutSession(db, {
-      ...checkoutInput({ packId: "volume_1000", now: new Date("2026-12-31T23:00:00.000Z") }),
-      stripe,
-    });
-
+  /**
+   * Amendment 15's invoice line, kept whole and tested while it cannot be sent.
+   *
+   * The live Stripe account has Managed Payments enabled, which rejects
+   * `invoice_creation[invoice_data]` and would fail every checkout — verified
+   * against the real test account, both ways. Turning Managed Payments off makes
+   * us the merchant of record, which is a VAT decision rather than a code one, so
+   * the copy waits here instead of being deleted and rewritten from memory later.
+   */
+  it("keeps the invoice wording ready: credits plus the lot's real expiry date", () => {
     // The date is the lot's real `expiresAt` (purchase + PAID_CREDIT_EXPIRY_DAYS),
     // computed from the same constant the ledger uses — not a hand-written "+1 year".
-    expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        invoice_creation: {
-          enabled: true,
-          invoice_data: {
-            description:
-              "1000 HireCall interview credits — valid until 2027-12-31 (12 months from the purchase date).",
-          },
-        },
-      }),
+    expect(creditInvoiceDescription(1000, new Date("2026-12-31T23:00:00.000Z"))).toBe(
+      "1000 HireCall interview credits — valid until 2027-12-31 (12 months from the purchase date).",
     );
+    expect(creditInvoiceDescription(25, new Date("2026-08-15T09:00:00.000Z"))).toBe(
+      "25 HireCall interview credits — valid until 2027-08-15 (12 months from the purchase date).",
+    );
+  });
+
+  it("sends no invoice_data at all, because Managed Payments rejects the whole session when it is present", async () => {
+    const { db } = fakeDb();
+    const stripe = fakeStripe();
+
+    await createCreditCheckoutSession(db, { ...checkoutInput(), stripe });
+
+    const [params] = stripe.checkout.sessions.create.mock.calls[0] as [
+      { invoice_creation: Record<string, unknown> },
+    ];
+    expect(params.invoice_creation).toEqual({ enabled: true });
   });
 });
