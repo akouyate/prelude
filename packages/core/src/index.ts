@@ -1,4 +1,9 @@
 export {
+  BILLABLE_THRESHOLD_RATIO,
+  evaluateBillableCompletion,
+  type QuestionOutcome,
+} from "./domain/billable-completion";
+export {
   candidateLifecycleActiveStatuses,
   candidateLifecycleLegacyStatusMap,
   candidateLifecycleStatuses,
