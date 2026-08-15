@@ -18,6 +18,7 @@ export {
   type WorkspacePlanEntitlements,
 } from "./billing-policy";
 export { isCreditBillingEnabled } from "./credit-billing-flag";
+export { getStripeClient, isStripePurchaseConfigured, MissingStripeConfigError } from "./stripe-client";
 export {
   captureReservationForSession,
   ensureWallet,
