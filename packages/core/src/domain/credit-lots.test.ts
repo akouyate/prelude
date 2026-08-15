@@ -86,4 +86,23 @@ describe("credit lot policy", () => {
       nextExpiry: { credits: 99, expiresAt: new Date("2026-10-01T00:00:00Z") },
     });
   });
+
+  it("counts reserved credits of a fully-reserved lot in wallet totals", () => {
+    // A lot with nothing left to give out (available === 0) is not eligible
+    // for consumption, but it is still holding real reserved credits that
+    // the wallet's `reserved` total must not drop.
+    const totals = computeWalletTotals(
+      [lot({ id: "full", creditsGranted: 5, creditsReserved: 5 })],
+      now,
+    );
+    expect(totals).toEqual({
+      available: 0,
+      reserved: 5,
+      freeAvailable: 0,
+      paidAvailable: 0,
+      // No available credits are at risk of being lost, so this lot must not
+      // surface as the next expiry warning.
+      nextExpiry: null,
+    });
+  });
 });

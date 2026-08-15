@@ -19,6 +19,15 @@ export function isLotEligible(lot: CreditLotSnapshot, now: Date): boolean {
   return lot.status === "active" && lot.expiresAt > now && availableInLot(lot) > 0;
 }
 
+// Clock-active says nothing about remaining credits — only that the lot
+// hasn't expired or been deactivated. Balance aggregates need this weaker
+// notion: a fully-reserved lot (availableInLot === 0) is not eligible for
+// consumption, but it is still holding real reserved credits that must
+// stay in the wallet's totals.
+function isLotClockActive(lot: CreditLotSnapshot, now: Date): boolean {
+  return lot.status === "active" && lot.expiresAt > now;
+}
+
 // The single consumption sort key from #139: free first, then soonest expiry,
 // then oldest grant, then id as a deterministic tiebreak.
 export function compareLotsForConsumption(a: CreditLotSnapshot, b: CreditLotSnapshot): number {
@@ -42,12 +51,18 @@ export function selectLotForReservation(
 }
 
 export function computeWalletTotals(lots: CreditLotSnapshot[], now: Date) {
-  const eligible = lots.filter((lot) => isLotEligible(lot, now));
-  const available = eligible.reduce((sum, lot) => sum + availableInLot(lot), 0);
-  const reserved = eligible.reduce((sum, lot) => sum + lot.creditsReserved, 0);
-  const freeAvailable = eligible
+  // Balance sums (available/reserved/free/paid) span every clock-active lot,
+  // including a fully-reserved one with nothing left to consume — its
+  // reserved credits are real and must not disappear from the total.
+  const clockActive = lots.filter((lot) => isLotClockActive(lot, now));
+  const available = clockActive.reduce((sum, lot) => sum + availableInLot(lot), 0);
+  const reserved = clockActive.reduce((sum, lot) => sum + lot.creditsReserved, 0);
+  const freeAvailable = clockActive
     .filter((lot) => lot.kind === "free")
     .reduce((sum, lot) => sum + availableInLot(lot), 0);
+  // nextExpiry warns about available credits that are about to be lost, so
+  // it stays scoped to lots that actually have credits left to lose.
+  const eligible = lots.filter((lot) => isLotEligible(lot, now));
   const soonest = [...eligible].sort(
     (a, b) => a.expiresAt.getTime() - b.expiresAt.getTime(),
   )[0];
