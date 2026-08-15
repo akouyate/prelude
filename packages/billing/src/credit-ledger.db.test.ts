@@ -232,6 +232,118 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
     });
   });
 
+  it("mints no phantom credit when two holds on a due lot are both released", async () => {
+    // The second release is the dangerous one: the first release's trailing sweep
+    // closes the lot, so the second finds it already `expired` and the sweep can no
+    // longer write anything off. Everything here is produced by the clock and the
+    // ordinary release path — no external actor, no forced status.
+    const organizationId = await grantedOrganization();
+    const first = `pair_a_${organizationId}`;
+    const second = `pair_b_${organizationId}`;
+    await reserveCreditForSession(db, { organizationId, candidateSessionId: first, now });
+    await reserveCreditForSession(db, { organizationId, candidateSessionId: second, now });
+    expect(
+      await db.creditWallet.findUniqueOrThrow({ where: { organizationId } }),
+    ).toMatchObject({ availableCredits: 3, reservedCredits: 2 });
+
+    const afterLotExpiry = new Date(now.getTime() + 30 * DAY_MS + 1000);
+    for (const candidateSessionId of [first, second]) {
+      const released = await releaseReservationForSession(db, {
+        organizationId,
+        candidateSessionId,
+        now: afterLotExpiry,
+        reason: "below_billable_threshold",
+      });
+      expect(released.outcome).toBe("released");
+    }
+
+    const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+    expect(wallet).toMatchObject({ availableCredits: 0, reservedCredits: 0 });
+    const audit = await reconcileWallet(db, { organizationId });
+    expect(audit).toMatchObject({
+      consistent: true,
+      expected: { available: 0, reserved: 0 },
+      actual: { available: 0, reserved: 0 },
+    });
+    const ledger = await db.creditLedgerEntry.aggregate({
+      where: { organizationId },
+      _sum: { delta: true },
+    });
+    expect(ledger._sum.delta).toBe(0);
+    // The phantom would be spendable-looking on the wallet but backed by no lot.
+    expect(
+      await reserveCreditForSession(db, {
+        organizationId,
+        candidateSessionId: `pair_c_${organizationId}`,
+        now: afterLotExpiry,
+      }),
+    ).toEqual({ ok: false, error: "no_credits_available" });
+  });
+
+  it("mints no phantom credit when the lot was swept before the release", async () => {
+    const organizationId = await grantedOrganization();
+    const candidateSessionId = `swept_first_${organizationId}`;
+    await reserveCreditForSession(db, { organizationId, candidateSessionId, now });
+
+    const afterLotExpiry = new Date(now.getTime() + 30 * DAY_MS + 1000);
+    // An external sweep closes the lot while the hold is still live.
+    expect(
+      (await expireDueLots(db, { organizationId, now: afterLotExpiry })).expiredLotIds,
+    ).toHaveLength(1);
+    expect(
+      await db.creditWallet.findUniqueOrThrow({ where: { organizationId } }),
+    ).toMatchObject({ availableCredits: 0, reservedCredits: 1 });
+
+    const released = await releaseReservationForSession(db, {
+      organizationId,
+      candidateSessionId,
+      now: afterLotExpiry,
+      reason: "below_billable_threshold",
+    });
+    expect(released.outcome).toBe("released");
+
+    const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+    expect(wallet).toMatchObject({ availableCredits: 0, reservedCredits: 0 });
+    const audit = await reconcileWallet(db, { organizationId });
+    expect(audit).toMatchObject({
+      consistent: true,
+      expected: { available: 0, reserved: 0 },
+      actual: { available: 0, reserved: 0 },
+    });
+    const ledger = await db.creditLedgerEntry.aggregate({
+      where: { organizationId },
+      _sum: { delta: true },
+    });
+    expect(ledger._sum.delta).toBe(0);
+  });
+
+  it("compensates a TTL sweep that releases holds into an already-closed lot", async () => {
+    // Same hazard on the sweep path, where several holds are released in one pass:
+    // the wallet increment must count only the releases that returned a spendable
+    // credit, not the number of reservations released.
+    const organizationId = await grantedOrganization();
+    await reserveCreditForSession(db, {
+      organizationId,
+      candidateSessionId: `ttl_pair_a_${organizationId}`,
+      now,
+    });
+    await reserveCreditForSession(db, {
+      organizationId,
+      candidateSessionId: `ttl_pair_b_${organizationId}`,
+      now,
+    });
+
+    const afterLotExpiry = new Date(now.getTime() + 30 * DAY_MS + 1000);
+    await expireDueLots(db, { organizationId, now: afterLotExpiry });
+    expect(
+      await releaseExpiredReservations(db, { organizationId, now: afterLotExpiry }),
+    ).toEqual({ releasedCount: 2 });
+
+    const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+    expect(wallet).toMatchObject({ availableCredits: 0, reservedCredits: 0 });
+    expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+  });
+
   it("re-holds a released reservation instead of granting a free interview", async () => {
     const organizationId = await grantedOrganization();
     const candidateSessionId = `rehold_${organizationId}`;

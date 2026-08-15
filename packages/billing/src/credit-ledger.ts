@@ -503,14 +503,17 @@ export async function releaseReservationForSession(
       return { outcome: "already_resolved" as const };
     }
 
-    await releaseReservationRow(tx, reservation, now, reason);
+    const availableDelta = await releaseReservationRow(tx, reservation, now, reason);
     await tx.creditWallet.update({
       where: { organizationId },
-      data: { availableCredits: { increment: 1 }, reservedCredits: { decrement: 1 } },
+      data: {
+        availableCredits: { increment: availableDelta },
+        reservedCredits: { decrement: 1 },
+      },
     });
-    // The credit is back in its lot, which may have fallen due while it was held.
-    // Sweeping here is what stops a post-expiry release from leaving a spendable
-    // credit behind; see the comment on `releaseReservationRow`.
+    // The credit is back in a still-open lot that may have fallen due while it was
+    // held; sweeping here writes it off. A lot that was already closed took the
+    // compensating path inside `releaseReservationRow` and this sweep skips it.
     await expireDueLotsInTx(tx, organizationId, now);
 
     return { outcome: "released" as const };
@@ -558,7 +561,9 @@ export async function reconcileWallet(
   const now = new Date();
 
   return runInWalletTransaction(db, organizationId, async (tx) => {
-    const wallet = await tx.creditWallet.findUnique({ where: { organizationId } });
+    // The lock above already threw if this organization has no wallet, so the row
+    // is guaranteed to exist here.
+    const wallet = await tx.creditWallet.findUniqueOrThrow({ where: { organizationId } });
     const lotRows = await tx.creditLot.findMany({ where: { organizationId } });
     const ledgerSum = await tx.creditLedgerEntry.aggregate({
       where: { organizationId },
@@ -568,8 +573,8 @@ export async function reconcileWallet(
     const totals = computeWalletTotals(lotRows.map(toLotSnapshot), now);
     const expected = { available: totals.available, reserved: totals.reserved };
     const actual = {
-      available: wallet?.availableCredits ?? 0,
-      reserved: wallet?.reservedCredits ?? 0,
+      available: wallet.availableCredits,
+      reserved: wallet.reservedCredits,
     };
     const ledgerDelta = ledgerSum._sum.delta ?? 0;
 
@@ -600,13 +605,22 @@ async function releaseExpiredReservationsInTx(
     return { releasedCount: 0 };
   }
 
+  // Holds in one sweep can sit on different lots, some still open and some already
+  // closed, so the wallet increment is the number of releases that actually
+  // returned a spendable credit — not the number of reservations released.
+  let availableDelta = 0;
   for (const reservation of due) {
-    await releaseReservationRow(tx, reservation, now, "reservation_ttl_expired");
+    availableDelta += await releaseReservationRow(
+      tx,
+      reservation,
+      now,
+      "reservation_ttl_expired",
+    );
   }
   await tx.creditWallet.update({
     where: { organizationId },
     data: {
-      availableCredits: { increment: due.length },
+      availableCredits: { increment: availableDelta },
       reservedCredits: { decrement: due.length },
     },
   });
@@ -615,28 +629,40 @@ async function releaseExpiredReservationsInTx(
 }
 
 /**
- * Releases one held reservation: the credit goes back to the lot it came from and
- * the wallet gains one available credit (`release` = +1, always).
+ * Releases one held reservation and returns the change it makes to *available*
+ * credits, so the caller can fold several releases into a single wallet update.
  *
  * A hold can outlive its lot — a reservation taken shortly before a lot's
  * `expiresAt` is only swept up to `RESERVATION_TTL_HOURS` later — so the returned
- * credit can land in a lot that has since fallen due. That is *not* handled here by
- * refusing the +1: the expiry sweep already wrote off this lot's available balance
- * excluding held credits, so declining the +1 would leave the lot's counters saying
- * the credit is spendable while the wallet says it is gone, and the next sweep would
- * write the same credit off a second time and drive the wallet negative. Instead the
- * release is always honest and every caller runs `expireDueLotsInTx` immediately
- * afterwards, which writes off the lot's whole remaining balance in one `expire`
- * entry. Net effect for a post-expiry release: +1 then −(everything left), so no
- * spendable credit survives and the ledger still sums to the wallet.
+ * credit can land in a lot that is dead or dying. Two disjoint mechanisms cover
+ * that, split on whether the lot is still open, because each is unsound in the
+ * other's case:
+ *
+ *  - **Lot still `active`** (whether or not it is past `expiresAt`): return `+1`
+ *    honestly and let the caller's trailing `expireDueLotsInTx` write off whatever
+ *    is left. Compensating here instead would be wrong — the `creditsReserved`
+ *    decrement puts the credit straight back into `availableInLot`, so the next
+ *    sweep would write the same credit off a second time and drive the wallet
+ *    negative.
+ *  - **Lot no longer `active`** (`expired` by an earlier sweep, or `frozen` /
+ *    `revoked`): the trailing sweep matches only `status: "active"`, so it will
+ *    never touch this lot again. Returning `+1` would mint a credit no lot backs.
+ *    The `release` (+1) is therefore balanced by an `expire` (−1) in the same
+ *    transaction and the wallet's available total is left unchanged.
+ *
+ * The second case is reached on the ordinary path, not just by an external actor:
+ * two holds on one due lot: the first release's trailing sweep closes the lot, so
+ * the second release finds it already `expired`.
+ *
+ * Both branches keep the ledger append-only and `Σ delta == wallet.availableCredits`.
  */
 async function releaseReservationRow(
   tx: Prisma.TransactionClient,
   reservation: ReservationRow,
   now: Date,
   reason: string,
-): Promise<void> {
-  await tx.creditLot.update({
+): Promise<number> {
+  const lot = await tx.creditLot.update({
     where: { id: reservation.lotId },
     data: { creditsReserved: { decrement: 1 } },
   });
@@ -655,6 +681,23 @@ async function releaseReservationRow(
       reason,
     },
   });
+
+  if (lot.status === "active") {
+    return 1;
+  }
+
+  await tx.creditLedgerEntry.create({
+    data: {
+      organizationId: reservation.organizationId,
+      lotId: reservation.lotId,
+      type: "expire",
+      delta: -1,
+      candidateSessionId: reservation.candidateSessionId,
+      actorKind: "system",
+      reason: "released_into_closed_lot",
+    },
+  });
+  return 0;
 }
 
 async function expireDueLotsInTx(
