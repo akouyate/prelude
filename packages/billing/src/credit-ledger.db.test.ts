@@ -18,6 +18,33 @@ const databaseUrl = process.env.TEST_DATABASE_URL;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
+/**
+ * The widest fan-out in this file (the ten-way admission race). Every one of those
+ * callers holds a Prisma connection for the whole interactive transaction, so the
+ * pool has to be at least this large for them to contend on the wallet row lock.
+ */
+const MAX_TEST_PARALLELISM = 10;
+
+/**
+ * Pinned, not inherited. Prisma's default pool is `cpus * 2 + 1` — 21 on a ten-core
+ * laptop, 9 on a four-core CI runner — and a URL may carry its own `connection_limit`.
+ * Below `MAX_TEST_PARALLELISM` the losers of the concurrency tests queue on the
+ * *connection pool* instead of on the row lock: the tests still pass, but they stop
+ * proving the thing they exist to prove. A proof of contention must pin its contention
+ * in the code, so the pool is set here rather than left to whatever host runs it.
+ */
+const TEST_CONNECTION_LIMIT = MAX_TEST_PARALLELISM + 6;
+
+function withPinnedPool(url: string): string {
+  const parsed = new URL(url);
+  parsed.searchParams.set("connection_limit", String(TEST_CONNECTION_LIMIT));
+  return parsed.toString();
+}
+
+// `set` rather than append, so a `connection_limit` already carried by
+// `TEST_DATABASE_URL` is overridden instead of silently winning.
+const pooledDatabaseUrl = databaseUrl ? withPinnedPool(databaseUrl) : undefined;
+
 describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
   let db: PrismaClient;
   let organizationId: string;
@@ -35,7 +62,7 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
   const session = (name: string) => `${name}_${organizationId}`;
 
   beforeAll(async () => {
-    db = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+    db = new PrismaClient({ datasources: { db: { url: pooledDatabaseUrl } } });
     const organization = await db.organization.create({
       data: { name: `ledger-test-${Date.now()}` },
     });
@@ -469,10 +496,16 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
     }
 
     it("never over-reserves: ten parallel admissions against three credits hold exactly three", async () => {
-      const organizationId = await organizationWithCredits(3);
+      const credits = 3;
+      // The fixture spends the rest of the grant down, and each of those spend-downs
+      // writes a `reserve` line of its own — named here so that changing `credits`
+      // moves the fixture's contribution instead of reading as an over-reservation.
+      const spentDownByFixture = FIRST_FIVE_CREDITS - credits;
+      const admissions = MAX_TEST_PARALLELISM;
+      const organizationId = await organizationWithCredits(credits);
 
       const attempts = await Promise.all(
-        Array.from({ length: 10 }, (_, index) =>
+        Array.from({ length: admissions }, (_, index) =>
           reserveCreditForSession(db, {
             organizationId,
             candidateSessionId: `conc_${organizationId}_${index}`,
@@ -480,28 +513,31 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
           }),
         ),
       );
-      expect(attempts.filter((attempt) => attempt.ok)).toHaveLength(3);
-      // The seven losers must be told *why*, not silently handed a hold: a refusal
-      // that is not `no_credits_available` would mean the lock leaked an error.
+      expect(attempts.filter((attempt) => attempt.ok)).toHaveLength(credits);
+      // The losers must be told *why*, not silently handed a hold: a refusal that is
+      // not `no_credits_available` would mean the lock leaked an error.
       expect(attempts.filter((attempt) => !attempt.ok)).toEqual(
-        Array.from({ length: 7 }, () => ({ ok: false, error: "no_credits_available" })),
+        Array.from({ length: admissions - credits }, () => ({
+          ok: false,
+          error: "no_credits_available",
+        })),
       );
       // Three *distinct* reservations — not one id handed out three times.
       const reservationIds = attempts.flatMap((attempt) =>
         attempt.ok ? [attempt.reservationId] : [],
       );
-      expect(new Set(reservationIds).size).toBe(3);
+      expect(new Set(reservationIds).size).toBe(credits);
 
       const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
-      expect(wallet).toMatchObject({ availableCredits: 0, reservedCredits: 3 });
+      expect(wallet).toMatchObject({ availableCredits: 0, reservedCredits: credits });
       expect(
         await db.creditReservation.count({ where: { organizationId, status: "held" } }),
-      ).toBe(3);
+      ).toBe(credits);
       // Ten admissions, three `reserve` lines: the ledger cannot have recorded a
       // debit for a hold that was refused.
       expect(
         await db.creditLedgerEntry.count({ where: { organizationId, type: "reserve" } }),
-      ).toBe(3 + 2); // three winners here, plus the two that spent the wallet down
+      ).toBe(credits + spentDownByFixture);
       expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
     });
 
