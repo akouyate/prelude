@@ -14,6 +14,7 @@ export {
 } from "./notification-service";
 export {
   CandidateInterviewCompletedEmail,
+  CreditDisputeFrozenEmail,
   RecruiterBriefNeedsAttentionEmail,
   RecruiterBriefReadyEmail,
 } from "./templates";

@@ -1,6 +1,9 @@
 import { constructStripeEvent, handleStripeWebhookEvent } from "@prelude/billing";
 import { prisma } from "@prelude/db";
+import { createNotificationDispatcher } from "@prelude/notifications";
 import type { NextRequest } from "next/server";
+
+const notificationDispatcher = createNotificationDispatcher();
 
 // Stripe's event endpoint for credit purchases. Public route (no Clerk session)
 // — authenticity comes entirely from the `stripe-signature` HMAC, verified
@@ -56,7 +59,20 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const result = await handleStripeWebhookEvent(prisma, event);
+    const result = await handleStripeWebhookEvent(prisma, event, {
+      // Amendment 16 — the freeze notifies the recruiter. The hook is wired HERE
+      // rather than inside `@prelude/billing` on purpose: the notification
+      // dispatcher reaches for the Prisma singleton and pulls React and the email
+      // provider with it, and moving money must not depend on any of that. The
+      // dispute handler swallows and logs a notification failure, so this can
+      // never turn a committed freeze into a 500 and a Stripe retry.
+      notifyDisputeFrozen: ({ organizationId, frozenCredits, stripeEventId }) =>
+        notificationDispatcher.notifyCreditDisputeFrozen({
+          frozenCredits,
+          organizationId,
+          stripeEventId,
+        }),
+    });
     // `needs_admin` is still a 200: the event was handled and parked on purpose.
     // Retrying it would pile up attempts on a payment no retry can fix.
     return Response.json(result);

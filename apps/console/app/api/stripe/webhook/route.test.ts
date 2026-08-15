@@ -75,6 +75,20 @@ describe("POST /api/stripe/webhook", () => {
     expect(event.type).toBe("checkout.session.completed");
   });
 
+  /**
+   * Amendment 16. `@prelude/billing` deliberately does not depend on
+   * `@prelude/notifications` — the ledger must move money without an email stack —
+   * so the console is the layer that owns the dispatcher and hands it down. If
+   * this wiring is dropped, the freeze still happens and the recruiter is never
+   * told, which is exactly the silent failure the amendment exists to prevent.
+   */
+  it("hands the dispatcher a dispute-freeze notifier", async () => {
+    await POST(post(payload, sign(payload)));
+
+    const deps = dispatch.mock.calls[0]![2];
+    expect(typeof deps?.notifyDisputeFrozen).toBe("function");
+  });
+
   it("reports the dispatcher's status verbatim, including needs_admin", async () => {
     dispatch.mockResolvedValue({ status: "needs_admin" });
 

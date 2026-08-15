@@ -82,6 +82,44 @@ export function RecruiterBriefNeedsAttentionEmail({
   );
 }
 
+/**
+ * Amendment 16 of the prepaid-credit plan. A chargeback freezes the disputed
+ * credits the moment Stripe reports it, and the workspace has to hear it from us
+ * — not from a recruiter whose candidate cannot start an interview.
+ *
+ * Deliberately factual and non-accusatory: at `charge.dispute.created` nobody
+ * knows yet whether the dispute is a fraud signal, a bank error or a
+ * misremembered line on a statement, and the freeze is reversed in full if it is
+ * won.
+ */
+export function CreditDisputeFrozenEmail({
+  billingUrl,
+  frozenCredits,
+}: {
+  billingUrl: string;
+  frozenCredits: number;
+}) {
+  return (
+    <EmailFrame preview={`${frozenCredits} interview credits are temporarily blocked`}>
+      <Heading style={heading}>Your interview credits are on hold</Heading>
+      <Text style={paragraph}>
+        A bank dispute was opened on one of your credit purchases, so{" "}
+        {frozenCredits} interview {frozenCredits === 1 ? "credit is" : "credits are"}{" "}
+        temporarily blocked while it is resolved. Interviews already under way are
+        not interrupted.
+      </Text>
+      <Text style={paragraph}>
+        If this was not intentional, withdrawing the dispute with your bank is the
+        fastest way to unblock them — reply to this email and we will help.
+      </Text>
+      <EmailButton href={billingUrl}>Open billing settings</EmailButton>
+      <Text style={muted}>
+        Credits are released in full if the dispute is resolved in your favour.
+      </Text>
+    </EmailFrame>
+  );
+}
+
 function EmailFrame({
   children,
   preview,

@@ -16,6 +16,7 @@ import {
 import { readWorkspaceNotificationPreferences } from "./preferences";
 import {
   CandidateInterviewCompletedEmail,
+  CreditDisputeFrozenEmail,
   RecruiterBriefNeedsAttentionEmail,
   RecruiterBriefReadyEmail,
 } from "./templates";
@@ -24,6 +25,7 @@ export const notificationEventTypes = [
   "candidate_interview_completed",
   "candidate_brief_ready",
   "candidate_brief_needs_attention",
+  "credit_dispute_frozen",
 ] as const;
 
 export type NotificationEventType = (typeof notificationEventTypes)[number];
@@ -36,6 +38,9 @@ export type NotificationDispatchOutcome = {
 const retryWindowMs = 23 * 60 * 60 * 1000;
 const staleClaimMs = 5 * 60 * 1000;
 const recruiterRoles = ["owner", "admin", "recruiter"];
+// A frozen wallet is a money problem, not a hiring one: it goes to the people who
+// can act on the bank dispute, not to every recruiter in the workspace.
+const billingRoles = ["owner", "admin"];
 
 export function createNotificationDispatcher({
   now = () => new Date(),
@@ -101,6 +106,7 @@ export function createNotificationDispatcher({
         recipients.map((recipientEmail) =>
           dispatchDelivery({
             candidateSessionId: session.id,
+            dedupeSubject: session.id,
             eventType,
             forceSkipReason: preferences.screensReadyForReview
               ? null
@@ -172,6 +178,7 @@ export function createNotificationDispatcher({
 
       return dispatchDelivery({
         candidateSessionId: session.id,
+        dedupeSubject: session.id,
         eventType: "candidate_interview_completed",
         forceSkipReason: !preferences.candidateCompletionConfirmation
           ? "candidate_confirmation_disabled"
@@ -192,11 +199,79 @@ export function createNotificationDispatcher({
         now,
       });
     },
+    /**
+     * Amendment 16 of the prepaid-credit plan: `charge.dispute.created` freezes
+     * the disputed lot immediately, and the workspace has to be told. The
+     * alternative — a recruiter discovering the block when a candidate cannot
+     * start — is the churn scenario this exists to prevent.
+     *
+     * Workspace-scoped, so it is the one delivery with no candidate session
+     * behind it (`NotificationDelivery.candidateSessionId` is nullable), and the
+     * only one with no preference gate: this is an operational notice about the
+     * customer's money, not a hiring digest anyone can opt out of.
+     *
+     * The dedupe key is the STRIPE EVENT id, so a replayed `charge.dispute.created`
+     * sends nothing new — which matters, because the ledger freeze it accompanies
+     * is idempotent too.
+     */
+    notifyCreditDisputeFrozen: async ({
+      frozenCredits,
+      organizationId,
+      stripeEventId,
+    }: {
+      frozenCredits: number;
+      organizationId: string;
+      stripeEventId: string;
+    }) => {
+      const organization = await prisma.organization.findUnique({
+        include: {
+          memberships: {
+            include: { user: { select: { email: true } } },
+            where: { role: { in: billingRoles }, status: "active" },
+          },
+        },
+        where: { id: organizationId },
+      });
+
+      if (!organization) {
+        return [] as NotificationDispatchOutcome[];
+      }
+
+      const billingUrl = resolveBillingSettingsUrl();
+      const recipients = uniqueEmails(
+        organization.memberships.map((membership) => membership.user.email),
+      );
+      const creditLabel = frozenCredits === 1 ? "credit" : "credits";
+
+      return Promise.all(
+        recipients.map((recipientEmail) =>
+          dispatchDelivery({
+            candidateSessionId: null,
+            dedupeSubject: stripeEventId,
+            eventType: "credit_dispute_frozen",
+            forceSkipReason: null,
+            message: {
+              react: createElement(CreditDisputeFrozenEmail, {
+                billingUrl,
+                frozenCredits,
+              }),
+              subject: `Action needed: a bank dispute has frozen ${frozenCredits} interview ${creditLabel}`,
+              text: `A bank dispute was opened on one of your HireCall credit purchases, so ${frozenCredits} interview ${creditLabel} ${frozenCredits === 1 ? "is" : "are"} temporarily blocked while it is resolved. Interviews already under way are not interrupted, and the credits are released in full if the dispute is resolved in your favour. Billing settings: ${billingUrl}`,
+            },
+            organizationId,
+            provider,
+            recipientEmail,
+            now,
+          }),
+        ),
+      );
+    },
   };
 }
 
 async function dispatchDelivery({
   candidateSessionId,
+  dedupeSubject,
   eventType,
   forceSkipReason,
   message,
@@ -205,7 +280,15 @@ async function dispatchDelivery({
   provider,
   recipientEmail,
 }: {
-  candidateSessionId: string;
+  candidateSessionId: string | null;
+  /**
+   * What "the same notification" is scoped to — the candidate session for
+   * candidate-shaped events, the Stripe event id for a workspace-level one.
+   * Split from `candidateSessionId` so a delivery with no session still gets a
+   * stable key; for the candidate events the two are the same value, so no
+   * existing `dedupeKey` changes.
+   */
+  dedupeSubject: string;
   eventType: NotificationEventType;
   forceSkipReason: string | null;
   message: Pick<NotificationEmailMessage, "react" | "subject" | "text">;
@@ -215,7 +298,7 @@ async function dispatchDelivery({
   recipientEmail: string;
 }): Promise<NotificationDispatchOutcome> {
   const dedupeKey = createDedupeKey({
-    candidateSessionId,
+    dedupeSubject,
     eventType,
     recipientEmail,
   });
@@ -391,25 +474,33 @@ async function persistSkippedAttempt({
 }
 
 function createDedupeKey({
-  candidateSessionId,
+  dedupeSubject,
   eventType,
   recipientEmail,
 }: {
-  candidateSessionId: string;
+  dedupeSubject: string;
   eventType: NotificationEventType;
   recipientEmail: string;
 }) {
   const recipientHash = createHash("sha256")
     .update(recipientEmail)
     .digest("base64url");
-  return `v1:${eventType}:${candidateSessionId}:${recipientHash}`;
+  return `v1:${eventType}:${dedupeSubject}:${recipientHash}`;
 }
 
 function resolveCandidateDetailUrl(candidateSessionId: string) {
-  const baseUrl =
+  return `${resolveConsoleBaseUrl()}/interviews/${candidateSessionId}`;
+}
+
+function resolveBillingSettingsUrl() {
+  return `${resolveConsoleBaseUrl()}/settings`;
+}
+
+function resolveConsoleBaseUrl() {
+  return (
     process.env.NEXT_PUBLIC_CONSOLE_URL?.trim().replace(/\/$/u, "") ||
-    "http://localhost:3000";
-  return `${baseUrl}/interviews/${candidateSessionId}`;
+    "http://localhost:3000"
+  );
 }
 
 function normalizeEmail(value: string | null | undefined) {
