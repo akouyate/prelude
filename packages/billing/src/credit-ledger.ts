@@ -102,6 +102,28 @@ export class CreditReservationOrganizationMismatchError extends Error {
 }
 
 /**
+ * Thrown when a purchase would grant nothing (or take credits away). The ledger is
+ * append-only, so a `pack_purchase` of zero or fewer credits cannot be deleted
+ * afterwards — undoing it costs a compensating entry and an explanation. Refusing
+ * before the first write is the cheap end of that trade.
+ */
+export class InvalidCreditPurchaseAmountError extends Error {
+  readonly organizationId: string;
+  readonly creditsGranted: number;
+  readonly unitAmountCents: number;
+
+  constructor(organizationId: string, creditsGranted: number, unitAmountCents: number) {
+    super(
+      `purchase for organization ${organizationId} grants ${creditsGranted} credits at ${unitAmountCents} cents: a purchase must add credits and cannot cost a negative amount`,
+    );
+    this.name = "InvalidCreditPurchaseAmountError";
+    this.organizationId = organizationId;
+    this.creditsGranted = creditsGranted;
+    this.unitAmountCents = unitAmountCents;
+  }
+}
+
+/**
  * Everything the ledger needs to turn one settled Stripe payment into credits.
  *
  * The money figures are the ones the *payment* carried — the caller derives them
@@ -402,15 +424,23 @@ export async function ensureWallet(
  * for a payment, whoever asks and however often.
  *
  * That refusal is read narrowly on purpose. A unique violation is only proof of a
- * duplicate grant if the payment this call carries is now on a lot, so the catch
- * re-reads by payment intent: found means the credits exist and the caller may
- * answer Stripe 200; absent means some *other* constraint fired and the payment
- * was never credited — rethrowing is what keeps Stripe retrying instead of
- * marking an ungranted payment as handled.
+ * duplicate grant if the payment this call carries is now on a lot *of this
+ * organization*, so the catch re-reads by payment intent and checks the owner:
+ * anything else — no lot, or a lot belonging to someone else — rethrows, because
+ * answering Stripe 200 would end the retries on a payment this organization was
+ * never credited for.
  *
  * Concurrent deliveries serialise on the wallet lock, so the loser's whole
  * transaction (lot + entry + counter) rolls back together and no partial grant can
  * survive it.
+ *
+ * One deliberate exception to that all-or-nothing rule: `ensureWallet` runs before
+ * the transaction and is not rolled back with it, so a purchase that ends up
+ * rethrowing still leaves the organization with a wallet whose First Five sits on
+ * the 365-day clock. Amendment 19's "wallet created BY the purchase" therefore
+ * means created by the *attempt* — which is the honest reading, since a failed
+ * grant is retried by Stripe rather than abandoned, and an empty wallet carrying
+ * five free credits is not a state anyone needs protecting from.
  */
 export async function grantPurchasedCreditLot(
   db: PrismaClient,
@@ -428,6 +458,12 @@ export async function grantPurchasedCreditLot(
     stripeEventId,
     now,
   } = input;
+
+  // Before the first write of any kind, including the wallet: a caller that has
+  // mis-derived the credits from a session should not leave a trace at all.
+  if (creditsGranted <= 0 || unitAmountCents < 0) {
+    throw new InvalidCreditPurchaseAmountError(organizationId, creditsGranted, unitAmountCents);
+  }
 
   // Outside the transaction, like every other entry point: it takes the lock
   // itself. Buying is a legitimate first billing touch, so this is also where a
@@ -487,6 +523,16 @@ export async function grantPurchasedCreditLot(
     }
     const granted = await db.creditLot.findUnique({ where: { stripePaymentIntentId } });
     if (!granted) {
+      throw error;
+    }
+    // `stripePaymentIntentId` is unique across the whole table, not per
+    // organization, so this re-read can legitimately return someone else's lot. If
+    // it does, this organization was never credited — reporting `already_granted`
+    // would silently leave the money on the other wallet and tell Stripe the job
+    // is done. Impossible while fulfilment resolves the organization from the
+    // payment's own metadata, which is exactly why it fails loudly if that ever
+    // stops being true.
+    if (granted.organizationId !== organizationId) {
       throw error;
     }
     return { outcome: "already_granted" as const };

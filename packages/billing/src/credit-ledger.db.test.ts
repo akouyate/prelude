@@ -8,6 +8,7 @@ import {
   FIRST_FIVE_CREDITS,
   FIRST_FIVE_EXPIRY_DAYS,
   grantPurchasedCreditLot,
+  InvalidCreditPurchaseAmountError,
   MissingCreditWalletError,
   PAID_CREDIT_EXPIRY_DAYS,
   reconcileWallet,
@@ -694,6 +695,92 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
       const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
       expect(wallet.availableCredits).toBe(25 + FIRST_FIVE_CREDITS);
       expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
+
+    it("refuses to report a replay as granted when the credits went to another organization", async () => {
+      const buyer = await organizationWithoutWallet("owner");
+      const stranger = await organizationWithoutWallet("stranger");
+      const stripePaymentIntentId = `pi_crossorg_${buyer}`;
+      const paid = {
+        packId: "starter_25",
+        creditsGranted: 25,
+        unitAmountCents: 9900,
+        currency: "EUR",
+        stripePaymentIntentId,
+        now,
+      };
+      expect(
+        (await grantPurchasedCreditLot(db, { ...paid, organizationId: buyer })).outcome,
+      ).toBe("granted");
+
+      // The payment intent is unique across the whole table, so the idempotence
+      // re-read can hand back a lot belonging to someone else. Answering
+      // `already_granted` here would leave this organization uncredited while
+      // Stripe is told to stop retrying — and both wallets would still reconcile,
+      // which is what makes it silent. It must fail loudly instead.
+      await expect(
+        grantPurchasedCreditLot(db, { ...paid, organizationId: stranger }),
+      ).rejects.toMatchObject({ code: "P2002" });
+
+      expect(
+        await db.creditLot.count({ where: { organizationId: stranger, source: "pack_purchase" } }),
+      ).toBe(0);
+      // The refused caller still gets the wallet `ensureWallet` opened for it —
+      // five free credits and not one bought credit more.
+      const strangerWallet = await db.creditWallet.findUniqueOrThrow({
+        where: { organizationId: stranger },
+      });
+      expect(strangerWallet).toMatchObject({
+        availableCredits: FIRST_FIVE_CREDITS,
+        reservedCredits: 0,
+      });
+      const buyerWallet = await db.creditWallet.findUniqueOrThrow({
+        where: { organizationId: buyer },
+      });
+      expect(buyerWallet.availableCredits).toBe(25 + FIRST_FIVE_CREDITS);
+      expect((await reconcileWallet(db, { organizationId: buyer })).consistent).toBe(true);
+      expect((await reconcileWallet(db, { organizationId: stranger })).consistent).toBe(true);
+    });
+
+    it("refuses a purchase that grants nothing, before it writes anything", async () => {
+      const organizationId = await organizationWithoutWallet("empty-purchase");
+      const paid = {
+        organizationId,
+        packId: "starter_25",
+        creditsGranted: 25,
+        unitAmountCents: 9900,
+        currency: "EUR",
+        now,
+      };
+
+      await expect(
+        grantPurchasedCreditLot(db, {
+          ...paid,
+          creditsGranted: 0,
+          stripePaymentIntentId: `pi_zero_${organizationId}`,
+        }),
+      ).rejects.toThrow(InvalidCreditPurchaseAmountError);
+      await expect(
+        grantPurchasedCreditLot(db, {
+          ...paid,
+          creditsGranted: -25,
+          stripePaymentIntentId: `pi_negative_${organizationId}`,
+        }),
+      ).rejects.toThrow(InvalidCreditPurchaseAmountError);
+      await expect(
+        grantPurchasedCreditLot(db, {
+          ...paid,
+          unitAmountCents: -1,
+          stripePaymentIntentId: `pi_negative_amount_${organizationId}`,
+        }),
+      ).rejects.toThrow(InvalidCreditPurchaseAmountError);
+
+      // "Before any write" is the point of the guard: the ledger is append-only, so
+      // a bad grant is only undone by a compensating entry. Not even the wallet
+      // exists after three refusals.
+      expect(await db.creditWallet.findUnique({ where: { organizationId } })).toBeNull();
+      expect(await db.creditLot.count({ where: { organizationId } })).toBe(0);
+      expect(await db.creditLedgerEntry.count({ where: { organizationId } })).toBe(0);
     });
 
     it("records the currency that was actually paid instead of defaulting to EUR", async () => {

@@ -33,6 +33,7 @@ export {
   PAID_CREDIT_EXPIRY_DAYS,
   RESERVATION_TTL_HOURS,
   CreditReservationOrganizationMismatchError,
+  InvalidCreditPurchaseAmountError,
   MissingCreditWalletError,
   UnknownCreditLotKindError,
   type CaptureReservationResult,
