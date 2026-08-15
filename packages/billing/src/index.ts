@@ -23,7 +23,10 @@ export {
   captureReservationForSession,
   ensureWallet,
   expireDueLots,
-  grantPurchasedCreditLot,
+  // `grantPurchasedCreditLot` is deliberately NOT re-exported: `fulfillPaidPaymentIntent`
+  // is the named boundary for turning money into credits, and no package outside
+  // this one may reach the ledger without passing the fulfilment cross-checks.
+  // It stays exported from `./credit-ledger` for intra-package use and its db tests.
   reconcileWallet,
   releaseExpiredReservations,
   releaseReservationForSession,

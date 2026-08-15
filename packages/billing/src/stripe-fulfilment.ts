@@ -56,7 +56,7 @@ export type CreditCheckoutFulfilment =
   | { outcome: "unknown_pack" }
   | { outcome: "no_payment_intent" }
   | { outcome: "amount_mismatch" }
-  | { outcome: "needs_admin"; reason: "missing_metadata" };
+  | { outcome: "needs_admin"; reason: "missing_metadata" | "no_payment_required" };
 
 /** Currencies a lot can be denominated in — amendment 22, lower-cased as Stripe reports them. */
 const FULFILLABLE_CURRENCIES = ["eur", "usd"] as const;
@@ -98,9 +98,10 @@ export async function fulfillPaidPaymentIntent(
  * (excluding tax) is the figure compared against the metadata written at session
  * creation — `amount_total` carries Stripe Tax and would never match.
  *
- * The guard order is: settled? → is this session ours? → does the pack exist? →
- * does the money agree? → can we identify the payment? Each step is a refusal to
- * grant, and a refusal never writes anything.
+ * The guard order is: did it collect a payment? → is this session ours? → does
+ * the pack exist and grant something? → does the money agree? → can we identify
+ * the payment? Each step is a refusal to grant, and a refusal never writes
+ * anything.
  */
 export async function fulfillCreditCheckout(
   db: PrismaClient,
@@ -117,13 +118,29 @@ export async function fulfillCreditCheckout(
     expand: ["payment_intent", "invoice"],
   });
 
-  // A Checkout session completes before the funds land on deferred methods
-  // (SEPA debit, bank transfers): Stripe calls us again with
-  // `checkout.session.async_payment_succeeded` once they do. `no_payment_required`
-  // is not a refusal — it is a fully-discounted session, and the amount
-  // cross-check below is what keeps that from granting anything unexpected.
+  // A Checkout session completes before the funds land on deferred methods (SEPA
+  // debit, bank transfers): Stripe calls us again with
+  // `checkout.session.async_payment_succeeded` once they do, so `unpaid` is a
+  // "not yet", not a problem.
   if (session.payment_status === "unpaid") {
     return { outcome: "not_paid" };
+  }
+
+  // Everything else must be `paid` before a single credit moves, and the amount
+  // cross-check below CANNOT stand in for this guard: `amount_subtotal` is the
+  // total *before* discounts (SDK: "Total of all items before discounts or taxes
+  // are applied"), so a 100%-discounted session matches the metadata to the cent
+  // while `amount_total` is zero and nothing was ever collected. A session that
+  // collected nothing never grants automatically, whatever its metadata says —
+  // and an unrecognised status (Stripe types this field open-ended) parks here
+  // too rather than being read as a payment.
+  if (session.payment_status !== "paid") {
+    console.error("[stripe-fulfilment] session completed without collecting a payment", {
+      checkoutSessionId: session.id,
+      paymentStatus: session.payment_status,
+      stripeEventId,
+    });
+    return { outcome: "needs_admin", reason: "no_payment_required" };
   }
 
   const metadata = session.metadata ?? {};
@@ -142,13 +159,19 @@ export async function fulfillCreditCheckout(
     return { outcome: "needs_admin", reason: "missing_metadata" };
   }
 
+  // The `creditsGranted` floor closes a corrupt-catalogue path, not a customer
+  // one: a row promising zero credits would sail past the cross-check below
+  // (metadata written from that same row agrees with it), hit the ledger's
+  // positivity guard, throw, archive `failed` and have Stripe retry a payment
+  // that can never succeed. Parking it is the only terminal answer.
   const pack = await db.creditPack.findUnique({ where: { id: packId } });
-  if (!pack || !pack.enabled) {
+  if (!pack || !pack.enabled || pack.creditsGranted <= 0) {
     console.error("[stripe-fulfilment] paid session for a pack we cannot map", {
       checkoutSessionId: session.id,
       organizationId,
       packId,
       disabled: Boolean(pack),
+      creditsGranted: pack?.creditsGranted ?? null,
     });
     return { outcome: "unknown_pack" };
   }

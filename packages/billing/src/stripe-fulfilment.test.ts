@@ -82,6 +82,7 @@ type SessionFixture = {
   paymentStatus?: string;
   currency?: string | null;
   amountSubtotal?: number | null;
+  amountTotal?: number | null;
   metadata?: Record<string, string> | null;
   paymentIntentId?: string | null;
   invoiceId?: string | null;
@@ -101,6 +102,11 @@ function fakeStripe(fixture: SessionFixture = {}) {
     paymentStatus = "paid",
     currency = "eur",
     amountSubtotal = 34900,
+    // Checkout adds Stripe Tax on top of the subtotal and takes discounts off it,
+    // so the two differ on every real session: a cross-check reading
+    // `amount_total` cannot pass here, and a fully discounted session can be
+    // fixtured honestly (subtotal intact, total zero).
+    amountTotal = amountSubtotal === null ? null : Math.round(amountSubtotal * 1.2),
     metadata = paidMetadata,
     paymentIntentId = "pi_1",
     invoiceId = "in_1",
@@ -122,9 +128,7 @@ function fakeStripe(fixture: SessionFixture = {}) {
       payment_status: paymentStatus,
       currency,
       amount_subtotal: amountSubtotal,
-      // Checkout adds Stripe Tax on top of the subtotal, so the two differ on
-      // every real session: a cross-check reading `amount_total` cannot pass here.
-      amount_total: amountSubtotal === null ? null : Math.round(amountSubtotal * 1.2),
+      amount_total: amountTotal,
       metadata,
       payment_intent: link("payment_intent", paymentIntentId),
       invoice: link("invoice", invoiceId),
@@ -277,6 +281,53 @@ describe("fulfillCreditCheckout", () => {
     });
     expect(grant).not.toHaveBeenCalled();
     expect(findUnique).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["a fully discounted session that collected nothing", "no_payment_required"],
+    ["a payment status this code has never seen", "pending_review"],
+  ])("refuses to grant on %s", async (_label, paymentStatus) => {
+    const { db, findUnique } = fakeDb();
+    // `amount_subtotal` is the total BEFORE discounts (SDK: "Total of all items
+    // before discounts or taxes are applied"), so it matches the metadata to the
+    // cent while `amount_total` is zero and the customer paid nothing. The amount
+    // cross-check cannot see this — only a paid-only guard can.
+    const { stripe } = fakeStripe({ paymentStatus, amountSubtotal: 34900, amountTotal: 0 });
+
+    await expect(fulfillCreditCheckout(db, { checkoutSessionId: "cs_1", now, stripe })).resolves.toEqual({
+      outcome: "needs_admin",
+      reason: "no_payment_required",
+    });
+    expect(findUnique).not.toHaveBeenCalled();
+    expect(grant).not.toHaveBeenCalled();
+  });
+
+  it("parks a catalogue row that would grant no credits at all", async () => {
+    const { db } = fakeDb([pack({ creditsGranted: 0 })]);
+    // The metadata agrees with the corrupt row, so the credits cross-check waves
+    // it straight through: without a floor on the pack itself this reaches the
+    // ledger's positivity guard, throws, archives `failed`, and Stripe retries a
+    // payment that can never succeed. It has to park instead.
+    const { stripe } = fakeStripe({ metadata: { ...paidMetadata, credits: "0" } });
+
+    await expect(fulfillCreditCheckout(db, { checkoutSessionId: "cs_1", now, stripe })).resolves.toEqual({
+      outcome: "unknown_pack",
+    });
+    expect(grant).not.toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalled();
+  });
+
+  it("does not swallow the ledger's positivity guard", async () => {
+    // True by construction today — the grant is a tail call. The test is here so
+    // that a future defensive `catch` around it cannot land unnoticed and turn a
+    // refused grant into a silent success.
+    grant.mockRejectedValue(new InvalidCreditPurchaseAmountError("org_1", 100, -1));
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe();
+
+    await expect(
+      fulfillCreditCheckout(db, { checkoutSessionId: "cs_1", now, stripe }),
+    ).rejects.toBeInstanceOf(InvalidCreditPurchaseAmountError);
   });
 
   it("maps a duplicate delivery to already_granted", async () => {
