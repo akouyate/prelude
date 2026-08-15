@@ -10,6 +10,7 @@ import {
   reconcileWallet,
   releaseExpiredReservations,
   releaseReservationForSession,
+  RESERVATION_TTL_HOURS,
   reserveCreditForSession,
 } from "./credit-ledger";
 
@@ -407,6 +408,59 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
       await db.creditWallet.findUniqueOrThrow({ where: { organizationId } }),
     ).toMatchObject({ availableCredits: 4, reservedCredits: 0 });
     expect(await db.creditReservation.count({ where: { organizationId } })).toBe(1);
+    expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+  });
+
+  it("renews a resumed hold that has already outlived its TTL", async () => {
+    // The composed flow the `held` short-circuit used to lose: admitted at T0, the
+    // candidate comes back at T0+13h. Everything here is produced by the clock and
+    // the ordinary reserve path — the reservation row is never touched by hand, so
+    // the state under test is exactly the one production reaches. Without the
+    // renewal the interview runs on a hold the organization's next admission sweeps
+    // away, and the capture that follows finds `released` and never charges.
+    const organizationId = await grantedOrganization();
+    const candidateSessionId = `resume_past_ttl_${organizationId}`;
+    await reserveCreditForSession(db, { organizationId, candidateSessionId, now });
+
+    const resumedAt = new Date(now.getTime() + (RESERVATION_TTL_HOURS + 1) * HOUR_MS);
+    const admitted = await db.creditReservation.findUniqueOrThrow({
+      where: { candidateSessionId },
+    });
+    // Due, and still unswept — the precondition, asserted rather than assumed.
+    expect(admitted.status).toBe("held");
+    expect(admitted.expiresAt.getTime()).toBeLessThan(resumedAt.getTime());
+
+    const resumed = await reserveCreditForSession(db, {
+      organizationId,
+      candidateSessionId,
+      now: resumedAt,
+    });
+    expect(resumed).toEqual({ ok: true, reservationId: admitted.id });
+
+    const renewed = await db.creditReservation.findUniqueOrThrow({
+      where: { candidateSessionId },
+    });
+    expect(renewed.status).toBe("held");
+    expect(renewed.expiresAt.getTime()).toBeGreaterThan(resumedAt.getTime());
+    // `heldAt` records when the credit was first taken and must survive the renewal.
+    expect(renewed.heldAt.getTime()).toBe(now.getTime());
+
+    // The renewed hold now survives the sweep that would have released it…
+    expect(await releaseExpiredReservations(db, { organizationId, now: resumedAt })).toEqual({
+      releasedCount: 0,
+    });
+    // …so the interview it backs is still billable when it finishes.
+    expect(
+      (await captureReservationForSession(db, { organizationId, candidateSessionId, now: resumedAt }))
+        .outcome,
+    ).toBe("captured");
+    expect(
+      await db.creditWallet.findUniqueOrThrow({ where: { organizationId } }),
+    ).toMatchObject({ availableCredits: 4, reservedCredits: 0 });
+    // One debit, not two: the resume renewed the hold, it did not buy another.
+    expect(
+      await db.creditLedgerEntry.count({ where: { organizationId, type: "reserve" } }),
+    ).toBe(1);
     expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
   });
 

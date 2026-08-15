@@ -72,6 +72,26 @@ export class UnknownCreditLotKindError extends Error {
   }
 }
 
+/**
+ * Thrown when the reservation already attached to a candidate session belongs to a
+ * different organization. Impossible by construction (candidate session ids are
+ * globally unique), so it is a data-integrity failure rather than a business
+ * outcome — named so a caller can tell it apart from an ordinary refusal.
+ */
+export class CreditReservationOrganizationMismatchError extends Error {
+  readonly candidateSessionId: string;
+  readonly reservationId: string;
+
+  constructor(reservationId: string, candidateSessionId: string) {
+    super(
+      `credit reservation ${reservationId} for candidate session ${candidateSessionId} belongs to another organization`,
+    );
+    this.name = "CreditReservationOrganizationMismatchError";
+    this.candidateSessionId = candidateSessionId;
+    this.reservationId = reservationId;
+  }
+}
+
 export type ReserveCreditResult =
   | { ok: true; reservationId: string }
   | { ok: false; error: "no_credits_available" };
@@ -331,6 +351,9 @@ export async function ensureWallet(
  * *per hold*: a session whose hold is still live or already captured short-circuits,
  * while a session whose hold was given back must acquire a fresh one before it can
  * run again — otherwise a released hold would buy a free interview.
+ *
+ * A resume also *renews* the hold's TTL, which is what keeps the short-circuit from
+ * handing back a doomed reservation; see the `held` branch below.
  */
 export async function reserveCreditForSession(
   db: PrismaClient,
@@ -345,17 +368,37 @@ export async function reserveCreditForSession(
       where: { candidateSessionId },
     });
     if (existing && existing.organizationId !== organizationId) {
-      // Impossible by construction (candidate session ids are globally unique), so
-      // this is a data-integrity failure rather than a business outcome. Fail loudly
-      // instead of letting it surface as a raw unique-constraint violation below.
-      throw new Error(
-        `credit reservation ${existing.id} for candidate session ${candidateSessionId} belongs to another organization`,
+      // Fail loudly instead of letting it surface as a raw unique-constraint
+      // violation below.
+      throw new CreditReservationOrganizationMismatchError(
+        existing.id,
+        candidateSessionId,
       );
     }
-    if (existing && (existing.status === "held" || existing.status === "captured")) {
-      // `held`: the same hold is still live, so this is a resume.
-      // `captured`: the credit is already spent for this session; re-charging would
-      // be an unaudited second debit.
+    if (existing && existing.status === "captured") {
+      // The credit is already spent for this session; re-charging would be an
+      // unaudited second debit.
+      return { ok: true as const, reservationId: existing.id };
+    }
+    if (existing && existing.status === "held") {
+      // A resume on the same hold. The TTL is *renewed*, not merely read: a hold
+      // that is already past `expiresAt` but not yet swept would otherwise let the
+      // interview run on a reservation the organization's next admission releases
+      // underneath it — and the capture that follows the interview would then find
+      // a `released` row and never charge. Renewing here is what makes the ":330"
+      // invariant ("charged at most once *per hold*") also mean "charged at least
+      // once per hold that actually ran".
+      //
+      // Deliberately a renewal rather than release-then-re-hold: moving the sweeps
+      // above this branch would churn a `release` + `reserve` pair through every
+      // ordinary reconnect, for no money difference.
+      //
+      // `heldAt` is untouched on purpose — it records when the credit was first
+      // taken, which is what the `reserve` ledger entry describes.
+      await tx.creditReservation.update({
+        where: { id: existing.id },
+        data: { expiresAt: new Date(now.getTime() + RESERVATION_TTL_HOURS * HOUR_MS) },
+      });
       return { ok: true as const, reservationId: existing.id };
     }
 
@@ -477,6 +520,13 @@ export async function captureReservationForSession(
       data: { reservedCredits: { decrement: 1 } },
     });
 
+    // Deliberately no trailing `expireDueLotsInTx` here, unlike release. Capture
+    // hands nothing back to a lot, so there is no credit for a sweep to write off;
+    // the only thing a sweep would change is closing a lot that fell due while the
+    // hold was live. Leaving it open is transient reconcile drift with zero money
+    // effect — the captured credit is spent either way — and it self-heals at this
+    // organization's next admission, which does sweep. Adding a sweep here would
+    // buy nothing and put a second write path on the money-critical capture.
     return { outcome: "captured" as const };
   });
 }
@@ -655,6 +705,13 @@ async function releaseExpiredReservationsInTx(
  * the second release finds it already `expired`.
  *
  * Both branches keep the ledger append-only and `Σ delta == wallet.availableCredits`.
+ *
+ * Forward constraint on whoever adds freeze/revoke: the compensating `−1` above is
+ * correct ONLY IF the path that closes a lot writes off `availableInLot` — which
+ * *excludes* held credits — exactly as `expireDueLotsInTx` does. A freeze that also
+ * wrote off the lot's held credits would already have debited this credit, and the
+ * compensation here would debit it a second time when the hold is finally released,
+ * driving the wallet negative.
  */
 async function releaseReservationRow(
   tx: Prisma.TransactionClient,

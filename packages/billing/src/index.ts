@@ -29,6 +29,7 @@ export {
   FIRST_FIVE_CREDITS,
   FIRST_FIVE_EXPIRY_DAYS,
   RESERVATION_TTL_HOURS,
+  CreditReservationOrganizationMismatchError,
   MissingCreditWalletError,
   UnknownCreditLotKindError,
   type CaptureReservationResult,
