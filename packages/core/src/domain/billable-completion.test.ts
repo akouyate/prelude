@@ -38,4 +38,22 @@ describe("evaluateBillableCompletion", () => {
       requiredCount: 0,
     });
   });
+
+  it("honors an explicit thresholdRatio override", () => {
+    const result = evaluateBillableCompletion({
+      plannedQuestionCount: 4,
+      outcomes: [answered, answered, skipped, skipped],
+      thresholdRatio: 1,
+    });
+    expect(result).toEqual({ billable: false, answeredCount: 2, requiredCount: 4 });
+  });
+
+  it("treats a zero thresholdRatio as a real override, not a missing one", () => {
+    const result = evaluateBillableCompletion({
+      plannedQuestionCount: 4,
+      outcomes: [answered, skipped, skipped, skipped],
+      thresholdRatio: 0,
+    });
+    expect(result).toEqual({ billable: true, answeredCount: 1, requiredCount: 1 });
+  });
 });
