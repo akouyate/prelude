@@ -51,12 +51,18 @@ export function selectLotForReservation(
 }
 
 export function computeWalletTotals(lots: CreditLotSnapshot[], now: Date) {
-  // Balance sums (available/reserved/free/paid) span every clock-active lot,
-  // including a fully-reserved one with nothing left to consume — its
-  // reserved credits are real and must not disappear from the total.
+  // Available sums span clock-active lots only: an expired or deactivated lot has
+  // nothing left to spend, whatever its counters say.
   const clockActive = lots.filter((lot) => isLotClockActive(lot, now));
   const available = clockActive.reduce((sum, lot) => sum + availableInLot(lot), 0);
-  const reserved = clockActive.reduce((sum, lot) => sum + lot.creditsReserved, 0);
+  // Reserved is summed over EVERY lot, with no filter at all. Reserve, capture and
+  // release move the lot counter and the wallet counter in lockstep, so the sum of
+  // `creditsReserved` across all lots is exactly the wallet's reserved total — a lot
+  // holding no reservations contributes 0, so no filter is needed and any filter is
+  // wrong. In particular an expired or frozen lot can still carry live holds (the
+  // expiry sweep deliberately leaves `creditsReserved` intact so held credits are not
+  // written off twice), and those holds stay real for up to the reservation TTL.
+  const reserved = lots.reduce((sum, lot) => sum + lot.creditsReserved, 0);
   const freeAvailable = clockActive
     .filter((lot) => lot.kind === "free")
     .reduce((sum, lot) => sum + availableInLot(lot), 0);

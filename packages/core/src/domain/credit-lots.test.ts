@@ -105,4 +105,39 @@ describe("credit lot policy", () => {
       nextExpiry: null,
     });
   });
+
+  it("keeps reserved credits of an expired lot in wallet totals", () => {
+    // The expiry sweep writes off a lot's *available* credits and deliberately
+    // leaves `creditsReserved` intact, so an expired lot can still carry a live
+    // hold for up to the reservation TTL. `reserved` is therefore summed over
+    // every lot with no filter: reserve/capture/release move the lot counter and
+    // the wallet counter in lockstep, so any filter drops real credits.
+    const totals = computeWalletTotals(
+      [
+        lot({
+          id: "expired-with-hold",
+          status: "expired",
+          creditsGranted: 5,
+          creditsConsumed: 0,
+          creditsReserved: 1,
+        }),
+      ],
+      now,
+    );
+    expect(totals).toEqual({
+      available: 0,
+      reserved: 1,
+      freeAvailable: 0,
+      paidAvailable: 0,
+      nextExpiry: null,
+    });
+  });
+
+  it("keeps reserved credits of a frozen lot in wallet totals", () => {
+    const totals = computeWalletTotals(
+      [lot({ id: "frozen-with-hold", status: "frozen", creditsGranted: 5, creditsReserved: 2 })],
+      now,
+    );
+    expect(totals).toMatchObject({ available: 0, reserved: 2 });
+  });
 });
