@@ -443,6 +443,87 @@ describe("handleStripeWebhookEvent — status transitions", () => {
     expect(archive.rows.get("evt_1")?.attemptCount).toBe(2);
   });
 
+  /**
+   * A parked row's `lastError` is its LIVE failure signal — the row is still
+   * unresolved and still in the admin queue. A refused replay must not clear it,
+   * and must not claim the replay settled anything.
+   *
+   * This combination escaped the first round because the `parked()` helper only
+   * ever seeded `lastError: null` for a `needs_admin` row — so the clear had
+   * nothing to erase and the bug was invisible.
+   */
+  it("never erases the live failure signal when the transition is refused", async () => {
+    const archive = fakeArchive([
+      {
+        ...parked("needs_admin"),
+        firstError: "unknown pack",
+        lastError: "database unreachable",
+      },
+    ]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const result = await handleStripeWebhookEvent(
+      archive.db,
+      checkoutEvent("checkout.session.completed"),
+      { fulfill: fulfilling({ outcome: "granted", lotId: "lot_1" }), now },
+    );
+
+    expect(result).toEqual({ status: "needs_admin" });
+    const row = archive.rows.get("evt_1");
+    expect(row?.status).toBe("needs_admin");
+    // The whole point: still unresolved, so the reason is still on the row.
+    expect(row?.lastError).toBe("database unreachable");
+    expect(row?.firstError).toBe("unknown pack");
+    expect(row?.processedAt).toBeNull();
+    // ...and nothing claimed this replay settled.
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("reaches that state through real attempts, not just a seeded row", async () => {
+    const archive = fakeArchive();
+    const event = checkoutEvent("checkout.session.completed");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    // 1. Fulfilment refuses to grant — the row is parked for an operator.
+    await handleStripeWebhookEvent(archive.db, event, {
+      fulfill: fulfilling({ outcome: "unknown_pack" }),
+      now,
+    });
+    expect(archive.rows.get("evt_1")?.status).toBe("needs_admin");
+
+    // 2. A retry throws — parked row records a live failure (documented row of
+    //    the transition table: "stays parked, lastError recorded").
+    await expect(
+      handleStripeWebhookEvent(archive.db, event, {
+        fulfill: vi.fn(async () => {
+          throw new Error("database unreachable");
+        }),
+        now,
+      }),
+    ).rejects.toThrow("database unreachable");
+    expect(archive.rows.get("evt_1")?.lastError).toBe("database unreachable");
+
+    // Step 1 legitimately stamped processedAt: that attempt's own decision
+    // (needs_admin) is the one that stuck. A distinct clock for step 3 makes the
+    // next assertion sharp — a re-stamp would show up as `later`.
+    expect(archive.rows.get("evt_1")?.processedAt).toEqual(now);
+    const later = new Date("2026-08-15T11:00:00.000Z");
+
+    // 3. A later retry succeeds — but the transition is still refused.
+    await handleStripeWebhookEvent(archive.db, event, {
+      fulfill: fulfilling({ outcome: "granted", lotId: "lot_1" }),
+      now: later,
+    });
+
+    const row = archive.rows.get("evt_1");
+    expect(row?.status).toBe("needs_admin");
+    expect(row?.lastError).toBe("database unreachable");
+    // Untouched by the refused replay — still step 1's stamp, not `later`.
+    expect(row?.processedAt).toEqual(now);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it("does not stamp processedAt on a replay whose transition was refused", async () => {
     const archive = fakeArchive([parked("needs_admin")]);
 

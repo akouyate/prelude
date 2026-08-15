@@ -114,7 +114,7 @@ export async function handleStripeWebhookEvent(
   // this attempt did not produce.
   const parked = status !== computed;
 
-  if (archived.lastError !== null) {
+  if (!parked && archived.lastError !== null) {
     // Symmetric with the parking refusal below: every erasure of failure
     // history is visible. `firstError` survives, so the forensic record does
     // not depend on anyone having read this line.
@@ -130,11 +130,14 @@ export async function handleStripeWebhookEvent(
     where: { stripeEventId: event.id },
     data: {
       status,
-      lastError: null,
-      // `processedAt` means "this attempt ran to a decision that stuck". On a
-      // refused transition it did not: stamping a parked row would tell the
-      // admin queue amendment 8 exists for that the event has been dealt with.
-      ...(parked ? {} : { processedAt: now }),
+      // Both of these say "this attempt's decision stuck", so both are gated on
+      // the same condition. On a refused transition the row keeps a status this
+      // attempt did not produce, and it is still unresolved in the admin queue:
+      // `lastError` is its LIVE failure signal, not stale history, and clearing
+      // it would delete the only record of what is currently wrong. Stamping
+      // `processedAt` beside it would tell the queue amendment 8 exists for that
+      // the event has been dealt with.
+      ...(parked ? {} : { lastError: null, processedAt: now }),
     },
   });
   return { status };
