@@ -4,7 +4,12 @@ import {
   getWorkspaceBillingOverview,
   syncClerkOrganizationBilling,
 } from "@prelude/billing/server";
-import type { WorkspaceBilling } from "@prelude/billing";
+import {
+  isCreditBillingEnabled,
+  isStripePurchaseConfigured,
+  type WorkspaceBilling,
+} from "@prelude/billing";
+import { computeWalletTotals, type CreditLotSnapshot } from "@prelude/core";
 import { prisma, type Prisma } from "@prelude/db";
 import { readWorkspaceNotificationPreferences } from "@prelude/notifications/preferences";
 
@@ -15,6 +20,7 @@ import { getCompletedOrganizationScope } from "../organizations/organization-sco
 import type {
   SettingsInterviewPreferences,
   SettingsNotificationPreferences,
+  WorkspaceCreditBilling,
   WorkspaceSettingsData,
 } from "../../features/settings/settings-types";
 import { coerceConsoleLocale } from "../../libs/i18n-server";
@@ -55,6 +61,7 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
     pendingInvitations,
     connectedAccounts,
     billingOverview,
+    creditBilling,
   ] = await Promise.all([
     prisma.organization.findUniqueOrThrow({
       include: {
@@ -106,6 +113,7 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
       clerkOrganizationId: scope.clerkOrganizationId,
       organizationId: scope.organizationId,
     }),
+    loadCreditBilling({ organizationId: scope.organizationId }),
   ]);
 
   const preferences = parseOrganizationSettings(organization.settings);
@@ -133,6 +141,7 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
       }),
       usage: billingOverview.usage,
     }),
+    creditBilling,
     connectedAccounts: connectedAccounts.map((account) => ({
       capabilities: account.capabilities,
       connectedAt: account.connectedAt?.toISOString() ?? null,
@@ -209,6 +218,117 @@ async function loadWorkspaceBillingOverview({
   }
 
   return overview;
+}
+
+/**
+ * The prepaid-credit buy surface (#140), or `null` when there is nothing to sell.
+ *
+ * Both flags matter, and for different reasons: `isCreditBillingEnabled` is the
+ * product kill switch, `isStripePurchaseConfigured` says whether this deployment
+ * has a secret key at all. Rendering prices without the second one would give a
+ * recruiter buttons that can only fail.
+ *
+ * Read scoped by organization, like every other console read.
+ */
+async function loadCreditBilling({
+  organizationId,
+}: {
+  organizationId: string;
+}): Promise<WorkspaceCreditBilling | null> {
+  if (!isCreditBillingEnabled() || !isStripePurchaseConfigured()) {
+    return null;
+  }
+
+  const [lots, packs] = await Promise.all([
+    prisma.creditLot.findMany({
+      select: {
+        id: true,
+        kind: true,
+        status: true,
+        creditsGranted: true,
+        creditsConsumed: true,
+        creditsReserved: true,
+        grantedAt: true,
+        expiresAt: true,
+      },
+      where: { organizationId },
+    }),
+    prisma.creditPack.findMany({
+      select: {
+        id: true,
+        creditsGranted: true,
+        unitAmountCents: true,
+        unitAmountCentsUsd: true,
+        visibility: true,
+        enabled: true,
+        displayOrder: true,
+      },
+      // The quiet pack is fetched too: it is never listed, but amendment 20's
+      // volume line needs its id to open a checkout.
+      where: { enabled: true },
+      orderBy: { displayOrder: "asc" },
+    }),
+  ]);
+
+  return toWorkspaceCreditBilling({ lots, packs, now: new Date() });
+}
+
+/**
+ * The pure half of the above: totals from `@prelude/core` (the same function the
+ * ledger uses, so the settings page and the reservation path can never disagree
+ * about what "available" means) plus the catalogue split into what may be listed
+ * and what may only be linked.
+ */
+export function toWorkspaceCreditBilling({
+  lots,
+  packs,
+  now,
+}: {
+  lots: Array<{
+    id: string;
+    kind: string;
+    status: string;
+    creditsGranted: number;
+    creditsConsumed: number;
+    creditsReserved: number;
+    grantedAt: Date;
+    expiresAt: Date;
+  }>;
+  packs: Array<{
+    id: string;
+    creditsGranted: number;
+    unitAmountCents: number;
+    unitAmountCentsUsd: number | null;
+    visibility: string;
+    enabled: boolean;
+    displayOrder: number;
+  }>;
+  now: Date;
+}): WorkspaceCreditBilling {
+  const totals = computeWalletTotals(lots as CreditLotSnapshot[], now);
+  const sellable = [...packs]
+    .filter((pack) => pack.enabled)
+    .sort((left, right) => left.displayOrder - right.displayOrder);
+
+  return {
+    paidAvailable: totals.paidAvailable,
+    freeAvailable: totals.freeAvailable,
+    nextExpiry: totals.nextExpiry
+      ? {
+          credits: totals.nextExpiry.credits,
+          expiresAt: totals.nextExpiry.expiresAt.toISOString(),
+        }
+      : null,
+    packs: sellable
+      .filter((pack) => pack.visibility === "public")
+      .map((pack) => ({
+        id: pack.id,
+        creditsGranted: pack.creditsGranted,
+        unitAmountCents: pack.unitAmountCents,
+        unitAmountCentsUsd: pack.unitAmountCentsUsd,
+      })),
+    volumePackId: sellable.find((pack) => pack.visibility === "quiet")?.id ?? null,
+  };
 }
 
 export function toWorkspaceSettingsBilling({

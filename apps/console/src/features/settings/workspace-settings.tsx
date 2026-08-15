@@ -154,7 +154,12 @@ function SettingsSectionContent({
   }
 
   if (section === "billing") {
-    return <BillingSection billing={data.billing} />;
+    return (
+      <BillingSection
+        billing={data.billing}
+        creditBilling={data.creditBilling}
+      />
+    );
   }
 
   return <ProfileSection data={data} />;

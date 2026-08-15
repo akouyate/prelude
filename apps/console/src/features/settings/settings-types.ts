@@ -45,6 +45,10 @@ export type WorkspaceSettingsData = {
       publishedRoles: number;
     };
   };
+  // Prepaid interview credits (#140). `null` whenever the credit kill switch is
+  // off OR Stripe is unconfigured: the whole buy surface then never renders, so
+  // the console cannot show a price it has no way to charge.
+  creditBilling: WorkspaceCreditBilling | null;
   connectedAccounts: SettingsConnectedAccount[];
   connectors: Array<{
     provider: string;
@@ -84,6 +88,35 @@ export type WorkspaceSettingsData = {
     id: string;
     role: string;
   }>;
+};
+
+/**
+ * Amendment 15: never a bare number. A recruiter deciding whether to buy needs
+ * to know how much of the balance they actually PAID for (the First Five are a
+ * one-off, not a renewable allowance) and what is about to expire — so the split
+ * and the next expiry are part of the contract, not a UI afterthought.
+ *
+ * Dates cross the server/client boundary as ISO strings, like every other date
+ * on this type.
+ */
+export type WorkspaceCreditBilling = {
+  paidAvailable: number;
+  freeAvailable: number;
+  nextExpiry: { credits: number; expiresAt: string } | null;
+  packs: WorkspaceCreditPack[];
+  // Amendment 20: the `quiet` pack is never listed but stays purchasable, so the
+  // "need more than 500 interviews?" line gets its id here rather than hardcoding
+  // a catalogue slug in a component. `null` when nothing quiet is on sale.
+  volumePackId: string | null;
+};
+
+export type WorkspaceCreditPack = {
+  id: string;
+  creditsGranted: number;
+  // Display cache only — Stripe Checkout remains the authority on what is charged
+  // (amendment 22: it picks the buyer's currency from their location).
+  unitAmountCents: number;
+  unitAmountCentsUsd: number | null;
 };
 
 export type SettingsConnectedAccountStatus =

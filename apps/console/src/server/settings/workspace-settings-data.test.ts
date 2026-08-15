@@ -9,6 +9,7 @@ vi.mock("server-only", () => ({}));
 import {
   canManageWorkspaceBilling,
   parseOrganizationSettings,
+  toWorkspaceCreditBilling,
   toWorkspaceSettingsBilling,
 } from "./workspace-settings-data";
 
@@ -175,6 +176,141 @@ describe("toWorkspaceSettingsBilling", () => {
       canManageBilling: false,
       manageBillingUnavailableReason: "local_mock",
     });
+  });
+});
+
+/**
+ * Amendment 15 — the balance is never a bare number. "You have 12 credits" hides
+ * the two facts a recruiter needs before deciding to buy: how many they PAID for
+ * (the free five are not a renewable allowance) and what is about to expire.
+ */
+describe("toWorkspaceCreditBilling", () => {
+  const now = new Date("2026-08-15T09:00:00.000Z");
+
+  function lot(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "lot_1",
+      kind: "paid",
+      status: "active",
+      creditsGranted: 100,
+      creditsConsumed: 0,
+      creditsReserved: 0,
+      grantedAt: new Date("2026-08-01T09:00:00.000Z"),
+      expiresAt: new Date("2027-08-01T09:00:00.000Z"),
+      ...overrides,
+    };
+  }
+
+  function pack(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "hiring_100",
+      creditsGranted: 100,
+      unitAmountCents: 34900,
+      unitAmountCentsUsd: 37900,
+      visibility: "public",
+      enabled: true,
+      displayOrder: 2,
+      ...overrides,
+    };
+  }
+
+  it("splits what was paid for from what was offered, and names the soonest expiry", () => {
+    const result = toWorkspaceCreditBilling({
+      lots: [
+        lot({ id: "lot_paid", creditsGranted: 100, creditsConsumed: 12, creditsReserved: 1 }),
+        lot({
+          id: "lot_free",
+          kind: "free",
+          creditsGranted: 5,
+          creditsConsumed: 2,
+          expiresAt: new Date("2026-09-01T09:00:00.000Z"),
+        }),
+      ],
+      packs: [pack()],
+      now,
+    });
+
+    expect(result.paidAvailable).toBe(87);
+    expect(result.freeAvailable).toBe(3);
+    // The free lot dies first — that is the one worth warning about.
+    expect(result.nextExpiry).toEqual({
+      credits: 3,
+      expiresAt: "2026-09-01T09:00:00.000Z",
+    });
+  });
+
+  it("ignores expired and revoked lots in the balance", () => {
+    const result = toWorkspaceCreditBilling({
+      lots: [
+        lot({ id: "lot_gone", expiresAt: new Date("2026-08-01T09:00:00.000Z") }),
+        lot({ id: "lot_revoked", status: "revoked" }),
+        lot({ id: "lot_live", creditsGranted: 25 }),
+      ],
+      packs: [pack()],
+      now,
+    });
+
+    expect(result.paidAvailable).toBe(25);
+  });
+
+  it("reads an empty wallet as zero rather than as nothing to render", () => {
+    const result = toWorkspaceCreditBilling({ lots: [], packs: [pack()], now });
+
+    expect(result).toMatchObject({ paidAvailable: 0, freeAvailable: 0, nextExpiry: null });
+  });
+
+  it("lists only enabled public packs, in display order", () => {
+    const result = toWorkspaceCreditBilling({
+      lots: [],
+      now,
+      packs: [
+        pack({ id: "scale_500", creditsGranted: 500, unitAmountCents: 149000, displayOrder: 3 }),
+        pack({ id: "starter_25", creditsGranted: 25, unitAmountCents: 9900, displayOrder: 1 }),
+        pack(),
+        pack({ id: "legacy_50", enabled: false, displayOrder: 0 }),
+      ],
+    });
+
+    expect(result.packs.map((entry) => entry.id)).toEqual([
+      "starter_25",
+      "hiring_100",
+      "scale_500",
+    ]);
+    expect(result.packs[0]).toEqual({
+      id: "starter_25",
+      creditsGranted: 25,
+      unitAmountCents: 9900,
+      unitAmountCentsUsd: 37900,
+    });
+  });
+
+  /**
+   * Amendment 20 — `visibility: "quiet"` gates LISTING, not purchase. The volume
+   * line under the three public packs opens a real checkout, so the loader hands
+   * the UI the id instead of letting a component hardcode a catalogue slug.
+   */
+  it("keeps the quiet pack out of the list but hands its id to the volume gate", () => {
+    const result = toWorkspaceCreditBilling({
+      lots: [],
+      now,
+      packs: [
+        pack(),
+        pack({ id: "volume_1000", visibility: "quiet", creditsGranted: 1000, displayOrder: 4 }),
+      ],
+    });
+
+    expect(result.packs.map((entry) => entry.id)).toEqual(["hiring_100"]);
+    expect(result.volumePackId).toBe("volume_1000");
+  });
+
+  it("offers no volume gate when the catalogue has no quiet pack to sell", () => {
+    const result = toWorkspaceCreditBilling({
+      lots: [],
+      now,
+      packs: [pack(), pack({ id: "volume_1000", visibility: "quiet", enabled: false })],
+    });
+
+    expect(result.volumePackId).toBeNull();
   });
 });
 
