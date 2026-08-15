@@ -43,3 +43,11 @@ export {
   type ReserveCreditResult,
   type WalletReconciliation,
 } from "./credit-ledger";
+export {
+  createCreditCheckoutSession,
+  ensureStripeCustomer,
+  SUPPORTED_CREDIT_CURRENCIES,
+  UnsupportedCreditCurrencyError,
+  type CreditCheckoutResult,
+  type StripePurchaseClient,
+} from "./stripe-purchase";
