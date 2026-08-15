@@ -6,7 +6,10 @@ import {
   workspacePlanCatalog,
 } from "@prelude/billing";
 
-import { createEntitledCandidateSession } from "./billing-admission";
+import {
+  createEntitledCandidateSession,
+  resumeEntitledCandidateSession,
+} from "./billing-admission";
 
 beforeEach(() => {
   // Flag-off is the deterministic default for every test in this file; the
@@ -210,6 +213,83 @@ describe("createEntitledCandidateSession", () => {
   });
 });
 
+describe("resumeEntitledCandidateSession", () => {
+  it("resumes on the still-live hold without taking a second credit", async () => {
+    vi.stubEnv("CREDIT_BILLING_ENABLED", "1");
+    const reserve = vi
+      .fn()
+      .mockResolvedValue({ ok: true, reservationId: "res_1" });
+    const database = fakeDatabase(0);
+
+    const result = await resumeEntitledCandidateSession(resumeInput(), {
+      ...dependencies(database, paidBilling()),
+      reserveCredit: reserve,
+    });
+
+    expect(result).toMatchObject({ ok: true, session: { status: "starting" } });
+    expect(reserve).toHaveBeenCalledWith(expect.anything(), {
+      organizationId: "org_1",
+      candidateSessionId: "candidate_session_1",
+      now,
+    });
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(database.candidateSession.update).toHaveBeenCalledWith({
+      data: expect.objectContaining({ status: "starting" }),
+      where: { id: "candidate_session_1" },
+    });
+  });
+
+  it("refuses a resume whose hold can no longer be re-taken and leaves the session alone", async () => {
+    vi.stubEnv("CREDIT_BILLING_ENABLED", "1");
+    const reserve = vi
+      .fn()
+      .mockResolvedValue({ ok: false, error: "no_credits_available" });
+    const database = fakeDatabase(0);
+
+    const result = await resumeEntitledCandidateSession(resumeInput(), {
+      ...dependencies(database, paidBilling()),
+      reserveCredit: reserve,
+    });
+
+    expect(result).toEqual({
+      error: "candidate_interview_limit_reached",
+      ok: false,
+    });
+    expect(database.candidateSession.update).not.toHaveBeenCalled();
+  });
+
+  it("keeps the resume write untouched when the flag is off", async () => {
+    vi.stubEnv("CREDIT_BILLING_ENABLED", "");
+    const reserve = vi.fn();
+    const database = fakeDatabase(0);
+
+    const result = await resumeEntitledCandidateSession(resumeInput(), {
+      ...dependencies(database, paidBilling()),
+      reserveCredit: reserve,
+    });
+
+    expect(result).toMatchObject({ ok: true });
+    expect(reserve).not.toHaveBeenCalled();
+    expect(database.candidateSession.update).toHaveBeenCalledTimes(1);
+  });
+});
+
+function resumeInput() {
+  return {
+    data: {
+      candidateEmail: "ada@example.com",
+      candidateName: "Ada",
+      consentCopyVersion: "candidate-consent-v2",
+      consentedAt: now,
+      startedAt: now,
+      status: "starting",
+    },
+    now,
+    organizationId: "org_1",
+    sessionId: "candidate_session_1",
+  };
+}
+
 function sessionInput() {
   return {
     data: {
@@ -274,6 +354,10 @@ function fakeDatabase(usage: number) {
       ...data,
     })),
     delete: vi.fn(async () => ({})),
+    update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
+      id: "candidate_session_1",
+      ...data,
+    })),
   };
 
   return {

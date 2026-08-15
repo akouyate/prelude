@@ -25,10 +25,22 @@ type BillingAdmissionDependencies = {
   reserveCredit: typeof reserveCreditForSession;
 };
 
+type ResumeAdmissionDependencies = Pick<
+  BillingAdmissionDependencies,
+  "database" | "reserveCredit"
+>;
+
 type CreateEntitledCandidateSessionInput = {
   data: CandidateSessionCreateData;
   now: Date;
   organizationId: string;
+};
+
+type ResumeEntitledCandidateSessionInput = {
+  data: Prisma.CandidateSessionUncheckedUpdateInput;
+  now: Date;
+  organizationId: string;
+  sessionId: string;
 };
 
 const defaultDependencies: BillingAdmissionDependencies = {
@@ -101,6 +113,53 @@ export async function createEntitledCandidateSession(
       { isolationLevel: "Serializable" },
     ),
   );
+}
+
+/**
+ * Admission for a session that already exists: resuming an attempt still needs a
+ * credit behind it, otherwise the ledger's own invariant — no interview runs
+ * without one — holds only for the first attempt.
+ *
+ * The common resume (a reconnect minutes later, hold still live) costs nothing:
+ * `reserveCredit` is idempotent and hands the existing hold back. The resumes
+ * that genuinely take a credit are the ones that would otherwise run free — an
+ * attempt resumed after its hold was swept at `RESERVATION_TTL_HOURS`, a session
+ * `deleteOrphanedSession` below failed to clean up, and a session created while
+ * the flag was off and resumed after it was turned on.
+ *
+ * Reserving before the update is what makes a refusal harmless: the session is
+ * left exactly as it was, so the candidate can retry once the wallet is topped
+ * up. Nothing is created here, so a refusal has nothing to compensate either.
+ */
+export async function resumeEntitledCandidateSession(
+  input: ResumeEntitledCandidateSessionInput,
+  dependencies: ResumeAdmissionDependencies = defaultDependencies,
+) {
+  if (isCreditBillingEnabled()) {
+    const reservation = await dependencies.reserveCredit(
+      dependencies.database,
+      {
+        organizationId: input.organizationId,
+        candidateSessionId: input.sessionId,
+        now: input.now,
+      },
+    );
+
+    if (!reservation.ok) {
+      return {
+        error: "candidate_interview_limit_reached" as const,
+        ok: false as const,
+      };
+    }
+  }
+
+  return {
+    ok: true as const,
+    session: await dependencies.database.candidateSession.update({
+      data: input.data,
+      where: { id: input.sessionId },
+    }),
+  };
 }
 
 /**

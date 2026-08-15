@@ -10,7 +10,10 @@ import { prisma } from "@prelude/db";
 import { createNotificationDispatcher } from "@prelude/notifications";
 import type { Prisma } from "@prelude/db";
 
-import { createEntitledCandidateSession } from "./billing-admission";
+import {
+  createEntitledCandidateSession,
+  resumeEntitledCandidateSession,
+} from "./billing-admission";
 import { settleCandidateSessionCredit } from "./credit-settlement";
 
 const notificationDispatcher = createNotificationDispatcher();
@@ -337,22 +340,21 @@ export async function prepareCandidateSession(
   const shouldResumeExisting =
     existingSession && startPolicy.action === "resume_same_attempt";
   const sessionResult = shouldResumeExisting
-    ? {
-        ok: true as const,
-        session: await prisma.candidateSession.update({
-          data: {
-            candidateEmail,
-            candidateName,
-            candidateInvitationId: context.invitation?.id,
-            consentCopyVersion: candidateConsentCopyVersion,
-            // Resuming requires accepting the current consent copy again.
-            consentedAt: now,
-            startedAt: existingSession.startedAt ?? now,
-            status: "starting",
-          },
-          where: { id: existingSession.id },
-        }),
-      }
+    ? await resumeEntitledCandidateSession({
+        data: {
+          candidateEmail,
+          candidateName,
+          candidateInvitationId: context.invitation?.id,
+          consentCopyVersion: candidateConsentCopyVersion,
+          // Resuming requires accepting the current consent copy again.
+          consentedAt: now,
+          startedAt: existingSession.startedAt ?? now,
+          status: "starting",
+        },
+        now,
+        organizationId: context.interview.organizationId,
+        sessionId: existingSession.id,
+      })
     : await createEntitledCandidateSession({
         data: {
           candidateEmail,
