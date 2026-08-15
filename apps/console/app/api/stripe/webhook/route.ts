@@ -1,0 +1,59 @@
+import { constructStripeEvent, handleStripeWebhookEvent } from "@prelude/billing";
+import { prisma } from "@prelude/db";
+import type { NextRequest } from "next/server";
+
+// Stripe's event endpoint for credit purchases. Public route (no Clerk session)
+// — authenticity comes entirely from the `stripe-signature` HMAC, verified
+// against STRIPE_WEBHOOK_SECRET before a single byte of the body is trusted.
+//
+// Deliberately thin, mirroring the Clerk webhook route: verify, delegate,
+// translate the outcome into a status code. Every decision about what an event
+// means — the archive, idempotence, fulfilment, what gets parked for a human —
+// lives in `handleStripeWebhookEvent` in `@prelude/billing`, where it is unit
+// tested without a request object.
+//
+// Amendment 7: this file imports NOTHING from `stripe`. `constructStripeEvent`
+// is the package's named boundary for signature verification, which keeps the
+// payment SDK out of the console entirely (`stripe` is a devDependency here, for
+// the offline signature tests only).
+//
+// Local development:
+//   stripe listen --forward-to localhost:3000/api/stripe/webhook
+// That prints a `whsec_…` unique to your machine and session. It belongs in
+// `.env.local`, NEVER in the shared dotenvx-encrypted `.env` (amendment 12):
+// every developer's CLI session has a different one, and committing yours would
+// break everyone else's forwarding.
+//
+// Retries: a non-2xx makes Stripe redeliver — roughly 3 days of retries in live
+// mode, 3 attempts in test mode, after which Stripe disables the endpoint and
+// emails the account. That window is why a handler failure answers 500 rather
+// than swallowing the error, and why anything past it is recovered by the
+// missed-event sweep (Task 9) rather than by Stripe.
+export async function POST(request: NextRequest) {
+  // The raw body, before anything parses it. `request.json()` would re-serialise
+  // the payload and invalidate the signature — Stripe signs bytes, not JSON.
+  const payload = await request.text();
+
+  let event;
+  try {
+    event = constructStripeEvent(payload, request.headers.get("stripe-signature") ?? "");
+  } catch (error) {
+    // Covers an unset secret, an absent or malformed header, a forged body and a
+    // replayed-too-late timestamp alike. None of them may reach the ledger, and
+    // none of them is worth a retry.
+    console.error("[stripe-webhook] signature verification failed", error);
+    return new Response("Webhook verification failed", { status: 400 });
+  }
+
+  try {
+    const result = await handleStripeWebhookEvent(prisma, event);
+    // `needs_admin` is still a 200: the event was handled and parked on purpose.
+    // Retrying it would pile up attempts on a payment no retry can fix.
+    return Response.json(result);
+  } catch (error) {
+    console.error("[stripe-webhook] dispatch failed", event.type, event.id, error);
+    // 500 asks Stripe to redeliver. The dispatcher archived the failure before
+    // rethrowing, and fulfilment is idempotent, so a retry is safe.
+    return new Response("Webhook dispatch failed", { status: 500 });
+  }
+}

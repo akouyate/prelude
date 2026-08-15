@@ -18,7 +18,13 @@ export {
   type WorkspacePlanEntitlements,
 } from "./billing-policy";
 export { isCreditBillingEnabled } from "./credit-billing-flag";
-export { getStripeClient, isStripePurchaseConfigured, MissingStripeConfigError } from "./stripe-client";
+export {
+  constructStripeEvent,
+  getStripeClient,
+  isStripePurchaseConfigured,
+  MissingStripeConfigError,
+  MissingStripeWebhookSecretError,
+} from "./stripe-client";
 export {
   captureReservationForSession,
   ensureWallet,
@@ -52,6 +58,11 @@ export {
   type CreditCheckoutFulfilment,
   type StripeFulfilmentClient,
 } from "./stripe-fulfilment";
+export {
+  handleStripeWebhookEvent,
+  type StripeWebhookDeps,
+  type StripeWebhookStatus,
+} from "./stripe-webhook";
 export {
   createCreditCheckoutSession,
   ensureStripeCustomer,
