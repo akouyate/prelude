@@ -5,6 +5,7 @@ import {
   captureReservationForSession,
   ensureWallet,
   expireDueLots,
+  FIRST_FIVE_CREDITS,
   MissingCreditWalletError,
   reconcileWallet,
   releaseExpiredReservations,
@@ -435,5 +436,183 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
     expect(await db.creditLot.count({ where: { organizationId } })).toBe(1);
     expect(await db.creditLedgerEntry.count({ where: { organizationId } })).toBe(1);
     expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+  });
+
+  // The tests above establish what the ledger does when it is asked one thing at a
+  // time. The ones below are the reason the wallet row lock exists: they are the
+  // claim a reviewer should be able to reject on its own. Each fails the moment a
+  // balance read escapes the transaction or a statement is reordered past the
+  // `FOR UPDATE` — which is exactly what an "optimistic, we'll check the counter
+  // first" refactor would do.
+  //
+  // The fourth concurrency property — a race on `ensureWallet` grants First Five
+  // once — is already proven above by "grants First Five exactly once under
+  // concurrent ensureWallet calls" (6 racers, and it also pins the single ledger
+  // entry), so it is deliberately not repeated here.
+  describe("under concurrency", () => {
+    // Spends the grant down to `credits` through the ordinary reserve → capture
+    // path. Editing `creditsGranted` by hand would be quicker but would leave the
+    // `free_grant` entry claiming five, and `reconcileWallet` audits the ledger sum
+    // against the wallet — the fixture would then poison the assertion it is meant
+    // to support. So the balance is produced the way a customer produces it.
+    async function organizationWithCredits(credits: number): Promise<string> {
+      const organizationId = await grantedOrganization();
+      for (let index = 0; index < FIRST_FIVE_CREDITS - credits; index += 1) {
+        const candidateSessionId = `spend_down_${organizationId}_${index}`;
+        await reserveCreditForSession(db, { organizationId, candidateSessionId, now });
+        await captureReservationForSession(db, { organizationId, candidateSessionId, now });
+      }
+      expect(
+        await db.creditWallet.findUniqueOrThrow({ where: { organizationId } }),
+      ).toMatchObject({ availableCredits: credits, reservedCredits: 0 });
+      return organizationId;
+    }
+
+    it("never over-reserves: ten parallel admissions against three credits hold exactly three", async () => {
+      const organizationId = await organizationWithCredits(3);
+
+      const attempts = await Promise.all(
+        Array.from({ length: 10 }, (_, index) =>
+          reserveCreditForSession(db, {
+            organizationId,
+            candidateSessionId: `conc_${organizationId}_${index}`,
+            now,
+          }),
+        ),
+      );
+      expect(attempts.filter((attempt) => attempt.ok)).toHaveLength(3);
+      // The seven losers must be told *why*, not silently handed a hold: a refusal
+      // that is not `no_credits_available` would mean the lock leaked an error.
+      expect(attempts.filter((attempt) => !attempt.ok)).toEqual(
+        Array.from({ length: 7 }, () => ({ ok: false, error: "no_credits_available" })),
+      );
+      // Three *distinct* reservations — not one id handed out three times.
+      const reservationIds = attempts.flatMap((attempt) =>
+        attempt.ok ? [attempt.reservationId] : [],
+      );
+      expect(new Set(reservationIds).size).toBe(3);
+
+      const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+      expect(wallet).toMatchObject({ availableCredits: 0, reservedCredits: 3 });
+      expect(
+        await db.creditReservation.count({ where: { organizationId, status: "held" } }),
+      ).toBe(3);
+      // Ten admissions, three `reserve` lines: the ledger cannot have recorded a
+      // debit for a hold that was refused.
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "reserve" } }),
+      ).toBe(3 + 2); // three winners here, plus the two that spent the wallet down
+      expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
+
+    it("admits exactly one of two candidates racing for the last credit", async () => {
+      // The minimal race, and the one most likely to survive a careless refactor of
+      // the ten-way test above: with a single credit left there is no slack at all,
+      // so any window between reading the balance and taking the hold shows up as
+      // two winners.
+      const organizationId = await organizationWithCredits(1);
+
+      const results = await Promise.all([
+        reserveCreditForSession(db, {
+          organizationId,
+          candidateSessionId: `last_a_${organizationId}`,
+          now,
+        }),
+        reserveCreditForSession(db, {
+          organizationId,
+          candidateSessionId: `last_b_${organizationId}`,
+          now,
+        }),
+      ]);
+      expect(results.filter((result) => result.ok)).toHaveLength(1);
+      expect(results).toContainEqual({ ok: false, error: "no_credits_available" });
+
+      const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+      expect(wallet).toMatchObject({ availableCredits: 0, reservedCredits: 1 });
+      expect(
+        await db.creditReservation.count({ where: { organizationId, status: "held" } }),
+      ).toBe(1);
+      expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
+
+    it("is resume-safe: reserving twice for one session holds exactly one credit", async () => {
+      // A candidate who reloads the page, and a candidate whose two tabs hit the
+      // room at the same instant. Both must cost one credit, not two — and the
+      // second call must return the *same* hold, not a fresh one.
+      const organizationId = await grantedOrganization();
+      const reload = `resume_${organizationId}`;
+
+      const first = await reserveCreditForSession(db, {
+        organizationId,
+        candidateSessionId: reload,
+        now,
+      });
+      const second = await reserveCreditForSession(db, {
+        organizationId,
+        candidateSessionId: reload,
+        now,
+      });
+      expect(first.ok).toBe(true);
+      expect(second).toEqual(first);
+
+      const twoTabs = `resume_parallel_${organizationId}`;
+      const raced = await Promise.all([
+        reserveCreditForSession(db, { organizationId, candidateSessionId: twoTabs, now }),
+        reserveCreditForSession(db, { organizationId, candidateSessionId: twoTabs, now }),
+      ]);
+      expect(raced[0].ok).toBe(true);
+      expect(raced[1]).toEqual(raced[0]);
+
+      // Two sessions, two reservation rows, two credits — four calls.
+      expect(await db.creditReservation.count({ where: { organizationId } })).toBe(2);
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "reserve" } }),
+      ).toBe(2);
+      const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+      expect(wallet).toMatchObject({ availableCredits: 3, reservedCredits: 2 });
+      expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
+
+    it("captures at most once when the same completion is delivered twice", async () => {
+      const organizationId = await grantedOrganization();
+      const redelivered = `capture_twice_${organizationId}`;
+      await reserveCreditForSession(db, { organizationId, candidateSessionId: redelivered, now });
+
+      const first = await captureReservationForSession(db, {
+        organizationId,
+        candidateSessionId: redelivered,
+        now,
+      });
+      const second = await captureReservationForSession(db, {
+        organizationId,
+        candidateSessionId: redelivered,
+        now,
+      });
+      expect(first.outcome).toBe("captured");
+      expect(second.outcome).toBe("already_captured");
+
+      // Redelivery is rarely polite enough to arrive after the first call returned:
+      // two workers reporting the same session at once must still charge once, and
+      // the loser must say so rather than report a second capture.
+      const concurrent = `capture_race_${organizationId}`;
+      await reserveCreditForSession(db, { organizationId, candidateSessionId: concurrent, now });
+      const raced = await Promise.all([
+        captureReservationForSession(db, { organizationId, candidateSessionId: concurrent, now }),
+        captureReservationForSession(db, { organizationId, candidateSessionId: concurrent, now }),
+      ]);
+      expect(raced.map((result) => result.outcome).sort()).toEqual([
+        "already_captured",
+        "captured",
+      ]);
+
+      const lot = await db.creditLot.findFirstOrThrow({ where: { organizationId } });
+      expect(lot).toMatchObject({ creditsConsumed: 2, creditsReserved: 0 });
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "consume" } }),
+      ).toBe(2);
+      const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+      expect(wallet).toMatchObject({ availableCredits: 3, reservedCredits: 0 });
+      expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
   });
 });
