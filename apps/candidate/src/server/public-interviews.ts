@@ -352,7 +352,9 @@ export async function prepareCandidateSession(
           status: "starting",
         },
         now,
-        organizationId: context.interview.organizationId,
+        // The session row owns the organization it was admitted under; the
+        // interview is only how the candidate reached it.
+        organizationId: existingSession.organizationId,
         sessionId: existingSession.id,
       })
     : await createEntitledCandidateSession({
@@ -529,6 +531,7 @@ export async function markCandidateSessionLifecycle(
     };
   }
 
+  const now = new Date();
   const nextStatus = input.action === "abandon" ? "abandoned" : "failed";
   const result = await prisma.candidateSession.updateMany({
     data: {
@@ -551,7 +554,7 @@ export async function markCandidateSessionLifecycle(
     });
     await settleCandidateSessionCredit(prisma, {
       kind: nextStatus,
-      now: new Date(),
+      now,
       sessionId: input.sessionId,
     });
     return { ok: true as const, status: nextStatus };
@@ -583,7 +586,7 @@ export async function markCandidateSessionLifecycle(
     // and hand back a credit the interview earned.
     await settleCandidateSessionCredit(prisma, {
       kind: nextStatus,
-      now: new Date(),
+      now,
       sessionId: input.sessionId,
     });
     return { ok: true as const, status: normalizedStatus };
@@ -692,6 +695,11 @@ export async function submitCandidateFormInterview(
     await prisma.candidateSession.update({
       data: { status: "superseded" },
       where: { id: prepared.supersededSessionId },
+    });
+    await settleCandidateSessionCredit(prisma, {
+      kind: "superseded",
+      now,
+      sessionId: prepared.supersededSessionId,
     });
   }
 

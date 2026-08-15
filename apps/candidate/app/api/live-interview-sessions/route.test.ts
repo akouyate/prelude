@@ -30,6 +30,15 @@ vi.mock("@prelude/billing/server", () => ({
   getWorkspaceBilling: getWorkspaceBillingMock,
 }));
 
+// Both terminal writes below bypass `markCandidateSessionLifecycle`, so the
+// route has to settle for itself. The rule is covered in
+// `credit-settlement.test.ts`; here we pin that the calls exist.
+const settleCandidateSessionCreditMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../../src/server/credit-settlement", () => ({
+  settleCandidateSessionCredit: settleCandidateSessionCreditMock,
+}));
+
 import { POST } from "./route";
 
 describe("POST /api/live-interview-sessions", () => {
@@ -46,6 +55,8 @@ describe("POST /api/live-interview-sessions", () => {
     prismaMock.candidateSession.create.mockReset();
     prismaMock.candidateSession.findFirst.mockReset();
     prismaMock.candidateSession.update.mockReset();
+    settleCandidateSessionCreditMock.mockReset();
+    settleCandidateSessionCreditMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -326,6 +337,11 @@ describe("POST /api/live-interview-sessions", () => {
       data: { status: "superseded" },
       where: { id: "cs_failed" },
     });
+    expect(settleCandidateSessionCreditMock).toHaveBeenCalledWith(prismaMock, {
+      kind: "superseded",
+      now: expect.any(Date),
+      sessionId: "cs_failed",
+    });
     expect(prismaMock.candidateSession.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -377,6 +393,13 @@ describe("POST /api/live-interview-sessions", () => {
     expect(prismaMock.candidateSession.update).not.toHaveBeenCalledWith({
       data: { status: "superseded" },
       where: { id: "cs_failed" },
+    });
+    // The credit was reserved at admission moments earlier and the room never
+    // came up; nothing else in the flow would ever hand it back.
+    expect(settleCandidateSessionCreditMock).toHaveBeenCalledWith(prismaMock, {
+      kind: "failed",
+      now: expect.any(Date),
+      sessionId: "cs_retry",
     });
   });
 

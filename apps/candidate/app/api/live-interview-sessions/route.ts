@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@prelude/db";
 
+import { settleCandidateSessionCredit } from "../../../src/server/credit-settlement";
 import {
   prepareCandidateSession,
   toProductCandidateLifecycleStatus,
@@ -89,6 +90,11 @@ export async function POST(request: Request) {
       data: { status: "superseded" },
       where: { id: prepared.supersededSessionId },
     });
+    await settleCandidateSessionCredit(prisma, {
+      kind: "superseded",
+      now: new Date(),
+      sessionId: prepared.supersededSessionId,
+    });
   }
 
   return NextResponse.json({
@@ -118,6 +124,14 @@ async function markProvisioningFailed(prepared: PreparedCandidateSession) {
     await prisma.candidateSession.update({
       data: { status: "failed" },
       where: { id: prepared.productSession.id },
+    });
+    // This is a terminal write that bypasses `markCandidateSessionLifecycle`, so
+    // it has to settle for itself: the credit was reserved at admission a few
+    // lines earlier and the room never came up, which is nobody's interview.
+    await settleCandidateSessionCredit(prisma, {
+      kind: "failed",
+      now: new Date(),
+      sessionId: prepared.productSession.id,
     });
   }
   if (prepared.candidateInvitationId) {

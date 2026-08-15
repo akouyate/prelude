@@ -44,8 +44,11 @@ describe("settleCandidateSessionCredit", () => {
       organizationId: "org_1",
     });
     expect(deps.release).not.toHaveBeenCalled();
+    // The ordering is what makes last-write-wins mean "final verdict"; without
+    // it the dedupe below settles on whatever order the database returned.
     expect(database.liveInterviewEvent.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
+        orderBy: { sequenceNumber: "asc" },
         where: { sessionId: "is_1", type: "question_completed" },
       }),
     );
@@ -154,9 +157,11 @@ describe("settleCandidateSessionCredit", () => {
 
   it("keeps the last outcome recorded for a question", async () => {
     const database = fakeDatabase({
+      // Handed over newest-first: only a query that asks for ascending sequence
+      // sees the correction as the question's final word.
       events: [
-        questionCompleted(2, { question_id: "q1", completion_reason: "skipped" }),
         questionCompleted(7, { question_id: "q1", completion_reason: "answered" }),
+        questionCompleted(2, { question_id: "q1", completion_reason: "skipped" }),
       ],
       session: fakeSession({ questionCount: 2 }),
     });
@@ -172,7 +177,7 @@ describe("settleCandidateSessionCredit", () => {
     expect(deps.release).not.toHaveBeenCalled();
   });
 
-  it("captures a completion that carries no runtime evidence", async () => {
+  it("refuses to charge a completion that carries no runtime evidence", async () => {
     const database = fakeDatabase({
       session: fakeSession({ questionCount: 3, realtimeSessionId: null }),
     });
@@ -184,7 +189,51 @@ describe("settleCandidateSessionCredit", () => {
       deps,
     );
 
-    expect(deps.capture).toHaveBeenCalledTimes(1);
+    expect(deps.release).toHaveBeenCalledWith(
+      database,
+      expect.objectContaining({ reason: "no_billable_evidence" }),
+    );
+    expect(deps.capture).not.toHaveBeenCalled();
+    expect(database.liveInterviewEvent.findMany).not.toHaveBeenCalled();
+  });
+
+  it("drops question_completed rows that name no question", async () => {
+    const database = fakeDatabase({
+      events: [
+        questionCompleted(1, { question_id: "q1", completion_reason: "answered" }),
+        questionCompleted(2, { completion_reason: "answered" }),
+        questionCompleted(3, { completion_reason: "answered" }),
+      ],
+    });
+    const deps = dependencies();
+
+    await settleCandidateSessionCredit(
+      database as never,
+      { kind: "completed", now, sessionId: "cs_1" },
+      deps,
+    );
+
+    expect(deps.release).toHaveBeenCalledWith(
+      database,
+      expect.objectContaining({ reason: "below_billable_threshold" }),
+    );
+    expect(deps.capture).not.toHaveBeenCalled();
+  });
+
+  it("releases a superseded session", async () => {
+    const database = fakeDatabase();
+    const deps = dependencies();
+
+    await settleCandidateSessionCredit(
+      database as never,
+      { kind: "superseded", now, sessionId: "cs_1" },
+      deps,
+    );
+
+    expect(deps.release).toHaveBeenCalledWith(
+      database,
+      expect.objectContaining({ reason: "superseded" }),
+    );
     expect(database.liveInterviewEvent.findMany).not.toHaveBeenCalled();
   });
 
@@ -301,7 +350,26 @@ function fakeDatabase({
       findUnique: vi.fn(async () => session),
     },
     liveInterviewEvent: {
-      findMany: vi.fn(async () => events),
+      // The fake orders rows the way Postgres would, so that dropping the
+      // `orderBy` from the query is something a test can actually catch: the
+      // dedupe's last-write-wins is only a "final verdict" while rows arrive
+      // ascending.
+      findMany: vi.fn(
+        async ({
+          orderBy,
+        }: { orderBy?: { sequenceNumber?: "asc" | "desc" } } = {}) => {
+          const direction = orderBy?.sequenceNumber;
+          if (!direction) {
+            return events;
+          }
+
+          return [...events].sort((left, right) =>
+            direction === "asc"
+              ? left.sequenceNumber - right.sequenceNumber
+              : right.sequenceNumber - left.sequenceNumber,
+          );
+        },
+      ),
     },
   };
 }

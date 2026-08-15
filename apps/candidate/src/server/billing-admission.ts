@@ -123,9 +123,9 @@ export async function createEntitledCandidateSession(
  * The common resume (a reconnect minutes later, hold still live) costs nothing:
  * `reserveCredit` is idempotent and hands the existing hold back. The resumes
  * that genuinely take a credit are the ones that would otherwise run free — an
- * attempt resumed after its hold was swept at `RESERVATION_TTL_HOURS`, a session
- * `deleteOrphanedSession` below failed to clean up, and a session created while
- * the flag was off and resumed after it was turned on.
+ * attempt resumed after its hold was released, a session `deleteOrphanedSession`
+ * below failed to clean up, and a session created while the flag was off and
+ * resumed after it was turned on.
  *
  * Reserving before the update is what makes a refusal harmless: the session is
  * left exactly as it was, so the candidate can retry once the wallet is topped
@@ -221,19 +221,14 @@ async function createCreditBackedCandidateSession(
 }
 
 /**
- * Best-effort cleanup for a session created without a live credit
- * reservation (refused, or `reserveCredit` threw). The failure mode if this
- * delete itself fails is not merely "a stray row": the session was created
- * with `status: "starting"`, and the candidate's next request against it
- * resolves to `resolveCandidateStartPolicy`'s `resume_same_attempt`, whose
- * branch in `public-interviews.ts` updates the existing row directly and
- * never calls back into `createEntitledCandidateSession` — so the interview
- * would run to completion without ever being charged. Logging and swallowing
- * here (rather than surfacing a 500 for a refusal that already succeeded) is
- * deliberate: the immediate backstop is Task 7's settlement treating a
- * missing reservation as a `no_reservation` no-op, and closing the
- * resume-branch charge gap itself is Task 7 follow-up, not this admission
- * path.
+ * Best-effort cleanup for a session created without a live credit reservation
+ * (refused, or `reserveCredit` threw). Logging and swallowing here — rather than
+ * surfacing a 500 for a refusal that already succeeded — is deliberate, and it is
+ * now safe to leave the row behind: a candidate returning to this `starting`
+ * session resolves to `resume_same_attempt`, and that branch goes through
+ * `resumeEntitledCandidateSession` above, which reserves before it resumes. The
+ * stray row can no longer buy a free interview — it refuses the resume instead,
+ * which is the correct outcome for a wallet that had nothing to give.
  */
 async function deleteOrphanedSession(
   dependencies: BillingAdmissionDependencies,
