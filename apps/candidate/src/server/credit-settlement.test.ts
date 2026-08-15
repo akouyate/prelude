@@ -22,13 +22,18 @@ afterEach(() => {
 
 describe("settleCandidateSessionCredit", () => {
   it("captures a live session that met the billable threshold", async () => {
+    // 6 planned / 3 answered: clears both the 50% ratio (ceil(6*0.5)=3) and the
+    // 3-answer floor, so this pins the ordinary billable path above the floor.
     const database = fakeDatabase({
       events: [
         questionCompleted(1, { question_id: "q1", completion_reason: "answered" }),
         questionCompleted(2, { question_id: "q2", completion_reason: "answered" }),
-        questionCompleted(3, { question_id: "q3", completion_reason: "skipped" }),
+        questionCompleted(3, { question_id: "q3", completion_reason: "answered" }),
         questionCompleted(4, { question_id: "q4", completion_reason: "skipped" }),
+        questionCompleted(5, { question_id: "q5", completion_reason: "skipped" }),
+        questionCompleted(6, { question_id: "q6", completion_reason: "skipped" }),
       ],
+      session: fakeSession({ questionCount: 6 }),
     });
     const deps = dependencies();
 
@@ -55,12 +60,15 @@ describe("settleCandidateSessionCredit", () => {
   });
 
   it("reads the written fallback's own payload casing", async () => {
+    // 3 planned / 3 answered clears the floor (requiredCount 3); the point under
+    // test is the camelCase payload keys, not the threshold arithmetic.
     const database = fakeDatabase({
       events: [
         questionCompleted(3, { questionId: "q1", completionReason: "answered" }),
-        questionCompleted(6, { questionId: "q2", completionReason: "skipped" }),
+        questionCompleted(6, { questionId: "q2", completionReason: "answered" }),
+        questionCompleted(9, { questionId: "q3", completionReason: "answered" }),
       ],
-      session: fakeSession({ questionCount: 2 }),
+      session: fakeSession({ questionCount: 3 }),
     });
     const deps = dependencies();
 
@@ -158,12 +166,17 @@ describe("settleCandidateSessionCredit", () => {
   it("keeps the last outcome recorded for a question", async () => {
     const database = fakeDatabase({
       // Handed over newest-first: only a query that asks for ascending sequence
-      // sees the correction as the question's final word.
+      // sees the correction as the question's final word. q2 and q3 are answered
+      // outright so the fixture clears the 3-answer floor on q1's corrected
+      // outcome alone — a dedupe bug that picked the first write instead of the
+      // last would leave q1 "skipped" and drop the session below the floor.
       events: [
         questionCompleted(7, { question_id: "q1", completion_reason: "answered" }),
         questionCompleted(2, { question_id: "q1", completion_reason: "skipped" }),
+        questionCompleted(3, { question_id: "q2", completion_reason: "answered" }),
+        questionCompleted(4, { question_id: "q3", completion_reason: "answered" }),
       ],
-      session: fakeSession({ questionCount: 2 }),
+      session: fakeSession({ questionCount: 3 }),
     });
     const deps = dependencies();
 
@@ -269,10 +282,13 @@ describe("settleCandidateSessionCredit", () => {
   });
 
   it("settles a session that never held a reservation as a no-op", async () => {
+    // Must stay billable (>= 3 answered) so the overridden `capture` below is the
+    // dependency actually exercised, not `release`.
     const database = fakeDatabase({
       events: [
         questionCompleted(1, { question_id: "q1", completion_reason: "answered" }),
         questionCompleted(2, { question_id: "q2", completion_reason: "answered" }),
+        questionCompleted(3, { question_id: "q3", completion_reason: "answered" }),
       ],
     });
     const deps = dependencies({
@@ -289,10 +305,13 @@ describe("settleCandidateSessionCredit", () => {
   });
 
   it("never lets a billing failure break the candidate flow", async () => {
+    // Must stay billable (>= 3 answered) so the overridden `capture` below — the
+    // one that throws — is the dependency actually exercised.
     const database = fakeDatabase({
       events: [
         questionCompleted(1, { question_id: "q1", completion_reason: "answered" }),
         questionCompleted(2, { question_id: "q2", completion_reason: "answered" }),
+        questionCompleted(3, { question_id: "q3", completion_reason: "answered" }),
       ],
     });
     const deps = dependencies({

@@ -1,4 +1,5 @@
 export {
+  BILLABLE_MINIMUM_ANSWERS,
   BILLABLE_THRESHOLD_RATIO,
   evaluateBillableCompletion,
   type QuestionOutcome,
