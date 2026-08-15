@@ -17,7 +17,8 @@ import { Prisma, type PrismaClient } from "@prelude/db";
  *  - `CreditLedgerEntry` is append-only — this module never updates or deletes one;
  *  - `delta` is the signed change to *available* credits:
  *    `free_grant +N`, `pack_purchase +N`, `reserve −1`, `release +1`, `consume 0`,
- *    `expire −remaining`;
+ *    `expire −remaining`, `dispute_freeze −availableInLot`,
+ *    `dispute_release +availableInLot(now)`, `refund_reversal −N`;
  *  - a counter change and the ledger entry that explains it are always written in
  *    the same transaction, never split.
  */
@@ -169,6 +170,28 @@ export type WalletReconciliation = {
   expected: { available: number; reserved: number };
   actual: { available: number; reserved: number };
 };
+
+/**
+ * The shared shape of the three money-EXIT transitions (freeze, dispute
+ * resolution, refund revocation).
+ *
+ * `already_applied` — not `needs_admin` — is what a lot in any other status
+ * returns (amendment 1). Stripe replays events and describes one fact with more
+ * than one event type (`refund.created` AND `charge.refunded`), so a second
+ * delivery is the normal case, not an anomaly: parking it would pile retries and
+ * admin rows onto a payment that was already settled correctly.
+ *
+ * `needs_admin` is reserved for a refund whose amount no automated rule can turn
+ * into a number of credits. It writes NOTHING.
+ *
+ * `applied` carries `credits` — the magnitude the wallet moved by, which the
+ * caller needs to tell the recruiter how many credits a dispute just blocked.
+ */
+export type CreditLotAdjustmentResult =
+  | { outcome: "applied"; organizationId: string; lotId: string; credits: number }
+  | { outcome: "already_applied"; organizationId: string; lotId: string; status: string }
+  | { outcome: "no_lot" }
+  | { outcome: "needs_admin"; organizationId: string; lotId: string; reason: string };
 
 type LotRow = {
   id: string;
@@ -537,6 +560,305 @@ export async function grantPurchasedCreditLot(
     }
     return { outcome: "already_granted" as const };
   }
+}
+
+/**
+ * Blocks a disputed lot the moment Stripe reports a chargeback
+ * (`charge.dispute.created`): `active → frozen`, and the lot's spendable credits
+ * are written off the wallet. A customer who has asked their bank to take the
+ * money back must not keep spending it while the dispute runs.
+ *
+ * **The write-off is `availableInLot`, which EXCLUDES held credits.** This is the
+ * forward constraint documented in `releaseReservationRow` and it is not a
+ * preference: a hold that is released later takes the compensating branch there
+ * (`release +1` balanced by `expire −1`, because the lot is no longer `active`),
+ * so a freeze that had also written off the held credit would debit it twice and
+ * drive the wallet negative. The credit comes back into `availableInLot` and is
+ * re-granted exactly once, by `resolveDisputeOnLot(won)` recomputing the figure
+ * at resolve time.
+ *
+ * Any status other than `active` returns `already_applied` and writes nothing —
+ * Stripe replays events, and a second `dispute_freeze` would be an unaudited
+ * second write-off.
+ */
+export async function freezeLotForDispute(
+  db: PrismaClient,
+  input: { stripePaymentIntentId: string; stripeEventId?: string; now: Date },
+): Promise<CreditLotAdjustmentResult> {
+  const { stripePaymentIntentId, stripeEventId, now } = input;
+
+  return withLockedLotForPayment(db, stripePaymentIntentId, async (tx, lot) => {
+    if (lot.status !== "active") {
+      return { outcome: "already_applied", organizationId: lot.organizationId, lotId: lot.id, status: lot.status };
+    }
+
+    const frozenCredits = availableInLot(toLotSnapshot(lot));
+    await tx.creditLot.update({
+      where: { id: lot.id },
+      // `frozenAt` is set on every freeze, so a lot disputed twice records the
+      // latest block rather than an ancient one.
+      data: { status: "frozen", frozenAt: now },
+    });
+    await tx.creditLedgerEntry.create({
+      data: {
+        organizationId: lot.organizationId,
+        lotId: lot.id,
+        type: "dispute_freeze",
+        delta: -frozenCredits,
+        stripeEventId: stripeEventId ?? null,
+        actorKind: "stripe_webhook",
+        reason: "dispute_created",
+      },
+    });
+    await tx.creditWallet.update({
+      where: { organizationId: lot.organizationId },
+      data: { availableCredits: { decrement: frozenCredits } },
+    });
+
+    return {
+      outcome: "applied",
+      organizationId: lot.organizationId,
+      lotId: lot.id,
+      credits: frozenCredits,
+    };
+  });
+}
+
+/**
+ * Closes a dispute on a frozen lot (`charge.dispute.closed`).
+ *
+ * `won` — the money stays with us — unfreezes: `frozen → active` and a
+ * `dispute_release` for `availableInLot` **recomputed now**, never the figure the
+ * freeze wrote off. Those two numbers differ whenever a hold was released while
+ * the lot was frozen: that release left a compensating `release +1` / `expire −1`
+ * pair, and recomputing here is what hands the credit back exactly once.
+ *
+ * `lost` — the bank took the money — is `frozen → revoked` with **no further
+ * delta**: the freeze already wrote the credits off, and a second entry would
+ * debit them twice. It also writes no ledger row at all, deliberately: every
+ * available entry type would misdescribe "nothing moved", and the closing event
+ * is already archived in `StripeWebhookEvent` with the lot's `revoked` status and
+ * the original `dispute_freeze` as its money trail.
+ *
+ * Amendment 11: the `won` path chains the expiry sweep **in the same
+ * transaction**. A lot that fell past `expiresAt` while it was frozen would
+ * otherwise be unfrozen into a state where the wallet counts credits no
+ * clock-active lot backs, until the next sweep clawed them back.
+ *
+ * `frozenAt` is deliberately NOT cleared on `won`: the lot's credits were
+ * unspendable while the expiry clock kept running, and that duration is the datum
+ * a future expiry-extension decision needs.
+ */
+export async function resolveDisputeOnLot(
+  db: PrismaClient,
+  input: {
+    stripePaymentIntentId: string;
+    disposition: "won" | "lost";
+    stripeEventId?: string;
+    now: Date;
+  },
+): Promise<CreditLotAdjustmentResult> {
+  const { stripePaymentIntentId, disposition, stripeEventId, now } = input;
+
+  return withLockedLotForPayment(db, stripePaymentIntentId, async (tx, lot) => {
+    if (lot.status !== "frozen") {
+      return { outcome: "already_applied", organizationId: lot.organizationId, lotId: lot.id, status: lot.status };
+    }
+
+    if (disposition === "lost") {
+      await tx.creditLot.update({ where: { id: lot.id }, data: { status: "revoked" } });
+      return { outcome: "applied", organizationId: lot.organizationId, lotId: lot.id, credits: 0 };
+    }
+
+    const restoredCredits = availableInLot(toLotSnapshot(lot));
+    await tx.creditLot.update({ where: { id: lot.id }, data: { status: "active" } });
+    await tx.creditLedgerEntry.create({
+      data: {
+        organizationId: lot.organizationId,
+        lotId: lot.id,
+        type: "dispute_release",
+        delta: restoredCredits,
+        stripeEventId: stripeEventId ?? null,
+        actorKind: "stripe_webhook",
+        reason: "dispute_won",
+      },
+    });
+    await tx.creditWallet.update({
+      where: { organizationId: lot.organizationId },
+      data: { availableCredits: { increment: restoredCredits } },
+    });
+    // Must run AFTER the unfreeze: the sweep only matches `status: "active"`, and
+    // the whole point is to write the lot off again if the freeze outlived it.
+    await expireDueLotsInTx(tx, lot.organizationId, now);
+
+    return {
+      outcome: "applied",
+      organizationId: lot.organizationId,
+      lotId: lot.id,
+      credits: restoredCredits,
+    };
+  });
+}
+
+/**
+ * Takes credits back when Stripe reports a refund (`refund.created` /
+ * `charge.refunded`): `active → revoked`, entry `refund_reversal`.
+ *
+ * Two — and only two — shapes apply automatically:
+ *
+ *  - **Full refund of a lot the customer never drew on.** "Full" is Stripe's own
+ *    notion (`amount_refunded >= amount` on the charge), not a comparison against
+ *    `lot.unitAmountCents`: the lot records the tax-EXCLUSIVE subtotal, the charge
+ *    carries Stripe Tax on top, and the two never match on a real purchase.
+ *  - **The published CGV rule (amendment 21): prorata of the unconsumed credits.**
+ *    The refund must equal `availableInLot × (unitAmountCents / creditsGranted)`
+ *    to within a cent of rounding.
+ *
+ * Both revoke `availableInLot` and close the lot, which is the only arithmetic a
+ * closing transition can be consistent with: a revoked lot stops contributing to
+ * the recomputed balance entirely, so writing off anything less than its whole
+ * available balance would leave `reconcileWallet` permanently inconsistent. The
+ * prorata gate is what makes that safe rather than lucky — it only passes when the
+ * refunded amount IS the price of everything unconsumed, so `round(amount / unit)`
+ * and `availableInLot` are the same number and neither can exceed the other.
+ *
+ * Everything else — a partial amount that maps to no whole number of remaining
+ * credits, a full refund on a lot with consumed credits, a lot whose unit price
+ * cannot be derived — returns `needs_admin` and writes NOTHING. The wallet must
+ * never go negative down an automated path; a human decides.
+ *
+ * Held credits are excluded from the write-off for exactly the reason the freeze
+ * excludes them (see `freezeLotForDispute`), so a refund issued mid-interview
+ * settles correctly when the hold is finally released.
+ */
+export async function revokeUnconsumedLot(
+  db: PrismaClient,
+  input: {
+    stripePaymentIntentId: string;
+    /** Cumulative amount refunded on the charge, in the charge's currency. */
+    refundedAmountCents: number;
+    /** What the charge collected — the denominator for "is this a full refund?". */
+    chargeAmountCents: number;
+    stripeEventId?: string;
+    now: Date;
+  },
+): Promise<CreditLotAdjustmentResult> {
+  const { stripePaymentIntentId, refundedAmountCents, chargeAmountCents, stripeEventId } = input;
+
+  return withLockedLotForPayment(db, stripePaymentIntentId, async (tx, lot) => {
+    const parked = (reason: string): CreditLotAdjustmentResult => {
+      console.error("[credit-ledger] refund parked for an operator", {
+        stripePaymentIntentId,
+        lotId: lot.id,
+        organizationId: lot.organizationId,
+        reason,
+        refundedAmountCents,
+        chargeAmountCents,
+      });
+      return { outcome: "needs_admin", organizationId: lot.organizationId, lotId: lot.id, reason };
+    };
+
+    if (lot.status !== "active") {
+      return { outcome: "already_applied", organizationId: lot.organizationId, lotId: lot.id, status: lot.status };
+    }
+
+    const revocable = availableInLot(toLotSnapshot(lot));
+
+    if (refundedAmountCents >= chargeAmountCents) {
+      // A full refund on a lot the customer already spent from is a commercial
+      // decision (a gesture, a service failure), not an arithmetic one.
+      if (lot.creditsConsumed > 0) {
+        return parked("full_refund_after_consumption");
+      }
+    } else if (!matchesUnconsumedProrata(lot, revocable, refundedAmountCents)) {
+      return parked("partial_refund_not_prorata");
+    }
+
+    await tx.creditLot.update({ where: { id: lot.id }, data: { status: "revoked" } });
+    await tx.creditLedgerEntry.create({
+      data: {
+        organizationId: lot.organizationId,
+        lotId: lot.id,
+        type: "refund_reversal",
+        delta: -revocable,
+        stripeEventId: stripeEventId ?? null,
+        actorKind: "stripe_webhook",
+        reason: refundedAmountCents >= chargeAmountCents ? "refund_full" : "refund_prorata",
+      },
+    });
+    await tx.creditWallet.update({
+      where: { organizationId: lot.organizationId },
+      data: { availableCredits: { decrement: revocable } },
+    });
+
+    return {
+      outcome: "applied",
+      organizationId: lot.organizationId,
+      lotId: lot.id,
+      credits: revocable,
+    };
+  });
+}
+
+/**
+ * Amendment 21's gate. True only when the amount refunded is the price of ALL the
+ * credits still unconsumed in this lot — the CGV rule, and the only partial shape
+ * whose write-off can close the lot without breaking `reconcileWallet`.
+ *
+ * Both checks are deliberate rather than redundant. The ±1 cent tolerance absorbs
+ * the rounding a merchant does when they compute the prorata by hand; the
+ * `round(amount / unit) === revocable` check is what stops a lot whose unit price
+ * is a cent or two from letting that same tolerance swallow a whole credit.
+ *
+ * The lot's `unitAmountCents` is tax-EXCLUSIVE (it is `session.amount_subtotal`),
+ * so a prorata refund computed on the tax-inclusive total will not match and parks
+ * for a human. That is the intended failure direction: paying a customer back too
+ * few credits is a ticket, paying back too many is a hole in the wallet.
+ */
+function matchesUnconsumedProrata(
+  lot: { unitAmountCents: number | null; creditsGranted: number },
+  revocable: number,
+  refundedAmountCents: number,
+): boolean {
+  if (lot.unitAmountCents === null || lot.unitAmountCents <= 0 || lot.creditsGranted <= 0) {
+    return false;
+  }
+  if (revocable <= 0) {
+    return false;
+  }
+  const unitPriceCents = lot.unitAmountCents / lot.creditsGranted;
+  if (Math.abs(refundedAmountCents - revocable * unitPriceCents) > 1) {
+    return false;
+  }
+  return Math.round(refundedAmountCents / unitPriceCents) === revocable;
+}
+
+/**
+ * The shared preamble of the three exit transitions: find the lot the payment
+ * bought, take ITS organization's wallet lock, then re-read the lot under that
+ * lock before deciding anything.
+ *
+ * The re-read is what makes the status guards sound. Stripe can deliver
+ * `refund.created` and `charge.refunded` at the same instant; without it both
+ * callers would decide on the same pre-lock snapshot and both would apply.
+ */
+async function withLockedLotForPayment(
+  db: PrismaClient,
+  stripePaymentIntentId: string,
+  work: (
+    tx: Prisma.TransactionClient,
+    lot: LotRow & { organizationId: string; unitAmountCents: number | null },
+  ) => Promise<CreditLotAdjustmentResult>,
+): Promise<CreditLotAdjustmentResult> {
+  const located = await db.creditLot.findUnique({ where: { stripePaymentIntentId } });
+  if (!located) {
+    return { outcome: "no_lot" };
+  }
+
+  return runInWalletTransaction(db, located.organizationId, async (tx) => {
+    const lot = await tx.creditLot.findUniqueOrThrow({ where: { id: located.id } });
+    return work(tx, lot);
+  });
 }
 
 /**

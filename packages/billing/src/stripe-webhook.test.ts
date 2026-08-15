@@ -1,10 +1,30 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { PrismaClient } from "@prelude/db";
 import type Stripe from "stripe";
 
 import type { CreditCheckoutFulfilment } from "./stripe-fulfilment";
+import { handleDisputeEvent, handleRefundEvent } from "./stripe-refunds";
 import { handleStripeWebhookEvent } from "./stripe-webhook";
+
+/**
+ * Task 7's handlers are mocked so the routing table can be proven at its
+ * DEFAULTS — no injection — which is the only way to catch a dispatcher that
+ * still falls through to `ignored`. What each handler decides is proven in
+ * `stripe-refunds.test.ts`; what this file owns is that they are reached.
+ */
+vi.mock("./stripe-refunds", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./stripe-refunds")>();
+  return { ...actual, handleRefundEvent: vi.fn(), handleDisputeEvent: vi.fn() };
+});
+
+const refundHandler = vi.mocked(handleRefundEvent);
+const disputeHandler = vi.mocked(handleDisputeEvent);
+
+beforeEach(() => {
+  refundHandler.mockReset();
+  disputeHandler.mockReset();
+});
 
 // Without this, `vi.spyOn(console, …)` in a later test returns the spy a
 // previous test already installed — call history and all — and assertions on
@@ -673,11 +693,54 @@ describe("handleStripeWebhookEvent — double fault", () => {
 });
 
 /**
- * The Task 7 seam. The dispatcher owns the archive and the transitions; refunds
- * and disputes own their own ledger semantics. Task 7 supplies the two handlers
- * and changes nothing here.
+ * The Task 7 seam, now filled. The dispatcher owns the archive and the
+ * transitions; refunds and disputes own their own ledger semantics. Injection
+ * survives so a caller (the console route, the sweep) can decorate a handler
+ * without rewriting the routing table.
  */
 describe("handleStripeWebhookEvent — refund and dispute seam", () => {
+  it.each(["charge.refunded", "refund.created"] as const)(
+    "routes %s to the real refund handler with no injection at all",
+    async (type) => {
+      const archive = fakeArchive();
+      refundHandler.mockResolvedValue("processed");
+
+      const result = await handleStripeWebhookEvent(archive.db, otherEvent(type), { now });
+
+      expect(refundHandler).toHaveBeenCalledTimes(1);
+      expect(refundHandler.mock.calls[0]?.[1]).toMatchObject({ type });
+      expect(result).toEqual({ status: "processed" });
+    },
+  );
+
+  it.each(["charge.dispute.created", "charge.dispute.closed"] as const)(
+    "routes %s to the real dispute handler with no injection at all",
+    async (type) => {
+      const archive = fakeArchive();
+      disputeHandler.mockResolvedValue("processed");
+
+      const result = await handleStripeWebhookEvent(archive.db, otherEvent(type), { now });
+
+      expect(disputeHandler).toHaveBeenCalledTimes(1);
+      expect(result).toEqual({ status: "processed" });
+    },
+  );
+
+  it("hands the freeze notifier to the dispute handler (amendment 16)", async () => {
+    // The console route supplies the notifier; the dispatcher must not swallow it,
+    // or a frozen recruiter learns about the block from their candidates.
+    const archive = fakeArchive();
+    disputeHandler.mockResolvedValue("processed");
+    const notifyDisputeFrozen = vi.fn(async () => {});
+
+    await handleStripeWebhookEvent(archive.db, otherEvent("charge.dispute.created"), {
+      notifyDisputeFrozen,
+      now,
+    });
+
+    expect(disputeHandler.mock.calls[0]?.[2]).toMatchObject({ notifyDisputeFrozen });
+  });
+
   it.each(["charge.refunded", "refund.created"] as const)(
     "routes %s to handleRefund when one is injected",
     async (type) => {
@@ -713,15 +776,17 @@ describe("handleStripeWebhookEvent — refund and dispute seam", () => {
     },
   );
 
-  it("ignores refund events until Task 7 injects a handler", async () => {
+  it("still ignores an event type nothing is subscribed to", async () => {
     const archive = fakeArchive();
 
-    const result = await handleStripeWebhookEvent(archive.db, otherEvent("charge.refunded"), {
+    const result = await handleStripeWebhookEvent(archive.db, otherEvent("customer.updated"), {
       fulfill: fulfilling({ outcome: "granted", lotId: "lot_1" }),
       now,
     });
 
     expect(result).toEqual({ status: "ignored" });
     expect(archive.rows.get("evt_1")?.status).toBe("ignored");
+    expect(refundHandler).not.toHaveBeenCalled();
+    expect(disputeHandler).not.toHaveBeenCalled();
   });
 });

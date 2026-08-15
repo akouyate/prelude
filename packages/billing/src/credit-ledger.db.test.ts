@@ -7,6 +7,7 @@ import {
   expireDueLots,
   FIRST_FIVE_CREDITS,
   FIRST_FIVE_EXPIRY_DAYS,
+  freezeLotForDispute,
   grantPurchasedCreditLot,
   InvalidCreditPurchaseAmountError,
   MissingCreditWalletError,
@@ -16,6 +17,8 @@ import {
   releaseReservationForSession,
   RESERVATION_TTL_HOURS,
   reserveCreditForSession,
+  resolveDisputeOnLot,
+  revokeUnconsumedLot,
 } from "./credit-ledger";
 
 const databaseUrl = process.env.TEST_DATABASE_URL;
@@ -845,6 +848,436 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
       const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
       expect(wallet.availableCredits).toBe(25 + 25 + FIRST_FIVE_CREDITS);
       expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Task 7 — the money EXIT paths. Everything here is produced through the public
+  // functions and the clock; no `updateMany` forces a status the runtime would
+  // never write, because a forced state proves nothing about the transitions.
+  // ---------------------------------------------------------------------------
+  describe("disputes and refunds", () => {
+    const PACK_CREDITS = 25;
+    const PACK_AMOUNT_CENTS = 9900;
+    const UNIT_PRICE_CENTS = PACK_AMOUNT_CENTS / PACK_CREDITS; // 396
+
+    /**
+     * An organization whose ONLY lot is a paid one, so every assertion below reads
+     * the disputed lot's arithmetic rather than the First Five's. The free grant is
+     * spent down through the ordinary reserve → capture path before the purchase:
+     * editing counters by hand would leave the `free_grant` entry claiming five and
+     * poison `reconcileWallet`, which audits the ledger sum against the wallet.
+     */
+    async function organizationWithPaidLot(
+      label: string,
+    ): Promise<{ organizationId: string; stripePaymentIntentId: string }> {
+      const organizationId = await grantedOrganization();
+      for (let index = 0; index < FIRST_FIVE_CREDITS; index += 1) {
+        const candidateSessionId = `${label}_burn_${organizationId}_${index}`;
+        await reserveCreditForSession(db, { organizationId, candidateSessionId, now });
+        await captureReservationForSession(db, { organizationId, candidateSessionId, now });
+      }
+      const stripePaymentIntentId = `pi_${label}_${organizationId}`;
+      const granted = await grantPurchasedCreditLot(db, {
+        organizationId,
+        packId: "starter_25",
+        creditsGranted: PACK_CREDITS,
+        unitAmountCents: PACK_AMOUNT_CENTS,
+        currency: "EUR",
+        stripePaymentIntentId,
+        stripeCheckoutSessionId: `cs_${label}_${organizationId}`,
+        now,
+      });
+      expect(granted.outcome).toBe("granted");
+      return { organizationId, stripePaymentIntentId };
+    }
+
+    async function walletOf(organizationId: string) {
+      return db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+    }
+
+    async function ledgerSum(organizationId: string): Promise<number> {
+      const aggregate = await db.creditLedgerEntry.aggregate({
+        where: { organizationId },
+        _sum: { delta: true },
+      });
+      return aggregate._sum.delta ?? 0;
+    }
+
+    /** Σ delta == wallet.availableCredits, and the lots agree with the counters. */
+    async function expectReconciled(organizationId: string) {
+      const wallet = await walletOf(organizationId);
+      expect(await ledgerSum(organizationId)).toBe(wallet.availableCredits);
+      expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+    }
+
+    it("freezes a disputed lot without touching its live holds", async () => {
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("freeze");
+      const candidateSessionId = `freeze_live_${organizationId}`;
+      await reserveCreditForSession(db, { organizationId, candidateSessionId, now });
+      expect(await walletOf(organizationId)).toMatchObject({
+        availableCredits: PACK_CREDITS - 1,
+        reservedCredits: 1,
+      });
+
+      const frozen = await freezeLotForDispute(db, {
+        stripePaymentIntentId,
+        stripeEventId: `evt_freeze_${organizationId}`,
+        now,
+      });
+      expect(frozen).toMatchObject({ outcome: "applied", organizationId, credits: 24 });
+
+      // The forward constraint in `releaseReservationRow`'s doc block: the write-off
+      // is `availableInLot`, which EXCLUDES the held credit. Writing off 25 here
+      // would debit the held credit a second time when the hold is released.
+      expect(await walletOf(organizationId)).toMatchObject({
+        availableCredits: 0,
+        reservedCredits: 1,
+      });
+      const lot = await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } });
+      expect(lot).toMatchObject({ status: "frozen", creditsReserved: 1, creditsConsumed: 0 });
+      expect(lot.frozenAt?.getTime()).toBe(now.getTime());
+
+      const entry = await db.creditLedgerEntry.findFirstOrThrow({
+        where: { organizationId, type: "dispute_freeze" },
+      });
+      expect(entry).toMatchObject({
+        lotId: lot.id,
+        delta: -24,
+        actorKind: "stripe_webhook",
+        stripeEventId: `evt_freeze_${organizationId}`,
+      });
+      await expectReconciled(organizationId);
+
+      // A frozen lot is not spendable, so the recruiter cannot keep drawing on the
+      // disputed money — the whole point of freezing at `charge.dispute.created`.
+      expect(
+        await reserveCreditForSession(db, {
+          organizationId,
+          candidateSessionId: `freeze_after_${organizationId}`,
+          now,
+        }),
+      ).toEqual({ ok: false, error: "no_credits_available" });
+    });
+
+    it("applies one freeze however many times Stripe delivers the dispute", async () => {
+      // Stripe replays events, and `refund.created` + `charge.refunded` describe one
+      // fact — a second delta here would be an unaudited double write-off.
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("refreeze");
+      const first = await freezeLotForDispute(db, { stripePaymentIntentId, now });
+      const second = await freezeLotForDispute(db, { stripePaymentIntentId, now });
+      expect([first.outcome, second.outcome]).toEqual(["applied", "already_applied"]);
+
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "dispute_freeze" } }),
+      ).toBe(1);
+      expect(await walletOf(organizationId)).toMatchObject({ availableCredits: 0 });
+      await expectReconciled(organizationId);
+    });
+
+    it("reports a payment intent no lot was ever granted for", async () => {
+      expect(
+        await freezeLotForDispute(db, { stripePaymentIntentId: `pi_unknown_${Date.now()}`, now }),
+      ).toEqual({ outcome: "no_lot" });
+      expect(
+        await resolveDisputeOnLot(db, {
+          stripePaymentIntentId: `pi_unknown_r_${Date.now()}`,
+          disposition: "won",
+          now,
+        }),
+      ).toEqual({ outcome: "no_lot" });
+      expect(
+        await revokeUnconsumedLot(db, {
+          stripePaymentIntentId: `pi_unknown_v_${Date.now()}`,
+          refundedAmountCents: 9900,
+          chargeAmountCents: 9900,
+          now,
+        }),
+      ).toEqual({ outcome: "no_lot" });
+    });
+
+    it("restores a won dispute through the compensating pair a release left behind", async () => {
+      // The composed flow the forward constraint exists for:
+      //   freeze with two live holds → one released into the frozen lot → won.
+      // The release writes `release +1` and a compensating `expire −1` (the lot is
+      // no longer `active`, so the trailing sweep can never reach it), and the
+      // unfreeze re-grants that credit exactly once by recomputing `availableInLot`
+      // at resolve time rather than replaying the frozen figure.
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("won");
+      const releasedSession = `won_released_${organizationId}`;
+      const capturedSession = `won_captured_${organizationId}`;
+      await reserveCreditForSession(db, { organizationId, candidateSessionId: releasedSession, now });
+      await reserveCreditForSession(db, { organizationId, candidateSessionId: capturedSession, now });
+
+      expect((await freezeLotForDispute(db, { stripePaymentIntentId, now })).outcome).toBe("applied");
+      expect(await walletOf(organizationId)).toMatchObject({
+        availableCredits: 0,
+        reservedCredits: 2,
+      });
+
+      const released = await releaseReservationForSession(db, {
+        organizationId,
+        candidateSessionId: releasedSession,
+        now,
+        reason: "below_billable_threshold",
+      });
+      expect(released.outcome).toBe("released");
+      // Net zero: the credit came back into a lot nothing can spend from.
+      expect(await walletOf(organizationId)).toMatchObject({
+        availableCredits: 0,
+        reservedCredits: 1,
+      });
+      await expectReconciled(organizationId);
+
+      const resolved = await resolveDisputeOnLot(db, {
+        stripePaymentIntentId,
+        disposition: "won",
+        stripeEventId: `evt_won_${organizationId}`,
+        now,
+      });
+      expect(resolved).toMatchObject({ outcome: "applied", credits: 24 });
+
+      const release = await db.creditLedgerEntry.findFirstOrThrow({
+        where: { organizationId, type: "dispute_release" },
+      });
+      expect(release).toMatchObject({ delta: 24, stripeEventId: `evt_won_${organizationId}` });
+      expect(await walletOf(organizationId)).toMatchObject({
+        availableCredits: 24,
+        reservedCredits: 1,
+      });
+      expect(
+        await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } }),
+      ).toMatchObject({ status: "active" });
+      await expectReconciled(organizationId);
+
+      // And the hold that survived the whole dispute still captures normally.
+      expect(
+        (await captureReservationForSession(db, {
+          organizationId,
+          candidateSessionId: capturedSession,
+          now,
+        })).outcome,
+      ).toBe("captured");
+      expect(await walletOf(organizationId)).toMatchObject({
+        availableCredits: 24,
+        reservedCredits: 0,
+      });
+      await expectReconciled(organizationId);
+    });
+
+    it("does not resurrect credits when the lot fell due while it was frozen", async () => {
+      // Amendment 11: the unfreeze chains the expiry sweep in the SAME transaction,
+      // so credits handed back to a lot that is already past `expiresAt` are written
+      // off immediately instead of looking spendable until the next sweep.
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("stale");
+      expect((await freezeLotForDispute(db, { stripePaymentIntentId, now })).outcome).toBe("applied");
+
+      const afterLotExpiry = new Date(now.getTime() + PAID_CREDIT_EXPIRY_DAYS * DAY_MS + 1000);
+      const resolved = await resolveDisputeOnLot(db, {
+        stripePaymentIntentId,
+        disposition: "won",
+        now: afterLotExpiry,
+      });
+      expect(resolved.outcome).toBe("applied");
+
+      const lot = await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } });
+      expect(lot.status).toBe("expired");
+      expect(await walletOf(organizationId)).toMatchObject({ availableCredits: 0 });
+      await expectReconciled(organizationId);
+    });
+
+    it("keeps the write-off when the dispute is lost and never adds a second one", async () => {
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("lost");
+      expect((await freezeLotForDispute(db, { stripePaymentIntentId, now })).outcome).toBe("applied");
+
+      const first = await resolveDisputeOnLot(db, {
+        stripePaymentIntentId,
+        disposition: "lost",
+        now,
+      });
+      const second = await resolveDisputeOnLot(db, {
+        stripePaymentIntentId,
+        disposition: "lost",
+        now,
+      });
+      expect([first.outcome, second.outcome]).toEqual(["applied", "already_applied"]);
+      expect(first).toMatchObject({ credits: 0 });
+
+      expect(
+        await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } }),
+      ).toMatchObject({ status: "revoked" });
+      // The freeze already wrote the credits off; a `lost` must not write them off twice.
+      expect(await walletOf(organizationId)).toMatchObject({ availableCredits: 0 });
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "dispute_freeze" } }),
+      ).toBe(1);
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "dispute_release" } }),
+      ).toBe(0);
+      await expectReconciled(organizationId);
+    });
+
+    it("refuses to resolve a dispute on a lot nobody froze", async () => {
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("unfrozen");
+      const resolved = await resolveDisputeOnLot(db, {
+        stripePaymentIntentId,
+        disposition: "won",
+        now,
+      });
+      expect(resolved.outcome).toBe("already_applied");
+      expect(await walletOf(organizationId)).toMatchObject({ availableCredits: PACK_CREDITS });
+      await expectReconciled(organizationId);
+    });
+
+    it("revokes an untouched lot on a full refund, once per payment", async () => {
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("full");
+      const refund = {
+        stripePaymentIntentId,
+        refundedAmountCents: 11880, // the charge, tax included — Stripe's own full-refund signal
+        chargeAmountCents: 11880,
+        stripeEventId: `evt_refund_${organizationId}`,
+        now,
+      };
+      const first = await revokeUnconsumedLot(db, refund);
+      // `refund.created` and `charge.refunded` are two events for one fact.
+      const second = await revokeUnconsumedLot(db, refund);
+      expect([first.outcome, second.outcome]).toEqual(["applied", "already_applied"]);
+      expect(first).toMatchObject({ credits: PACK_CREDITS });
+
+      expect(
+        await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } }),
+      ).toMatchObject({ status: "revoked" });
+      const entries = await db.creditLedgerEntry.findMany({
+        where: { organizationId, type: "refund_reversal" },
+      });
+      expect(entries).toHaveLength(1);
+      expect(entries[0]).toMatchObject({
+        delta: -PACK_CREDITS,
+        stripeEventId: `evt_refund_${organizationId}`,
+      });
+      expect(await walletOf(organizationId)).toMatchObject({ availableCredits: 0 });
+      await expectReconciled(organizationId);
+    });
+
+    it("parks a full refund on a lot the customer already drew on", async () => {
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("consumed");
+      const candidateSessionId = `consumed_${organizationId}`;
+      await reserveCreditForSession(db, { organizationId, candidateSessionId, now });
+      await captureReservationForSession(db, { organizationId, candidateSessionId, now });
+
+      const refunded = await revokeUnconsumedLot(db, {
+        stripePaymentIntentId,
+        refundedAmountCents: PACK_AMOUNT_CENTS,
+        chargeAmountCents: PACK_AMOUNT_CENTS,
+        now,
+      });
+      expect(refunded.outcome).toBe("needs_admin");
+
+      // Changed NOTHING: no entry, no status change, no counter move.
+      expect(
+        await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } }),
+      ).toMatchObject({ status: "active" });
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "refund_reversal" } }),
+      ).toBe(0);
+      expect(await walletOf(organizationId)).toMatchObject({ availableCredits: PACK_CREDITS - 1 });
+      await expectReconciled(organizationId);
+    });
+
+    it("auto-applies a partial refund that is exactly the prorata of what is left", async () => {
+      // Amendment 21 (user-approved CGV rule): prorata of the unconsumed credits.
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("prorata");
+      const candidateSessionId = `prorata_used_${organizationId}`;
+      await reserveCreditForSession(db, { organizationId, candidateSessionId, now });
+      await captureReservationForSession(db, { organizationId, candidateSessionId, now });
+
+      const unconsumed = PACK_CREDITS - 1;
+      const refunded = await revokeUnconsumedLot(db, {
+        stripePaymentIntentId,
+        // One cent off the exact prorata — inside the rounding tolerance.
+        refundedAmountCents: unconsumed * UNIT_PRICE_CENTS - 1,
+        chargeAmountCents: PACK_AMOUNT_CENTS,
+        now,
+      });
+      expect(refunded).toMatchObject({ outcome: "applied", credits: unconsumed });
+
+      expect(
+        await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } }),
+      ).toMatchObject({ status: "revoked" });
+      const entry = await db.creditLedgerEntry.findFirstOrThrow({
+        where: { organizationId, type: "refund_reversal" },
+      });
+      expect(entry.delta).toBe(-unconsumed);
+      expect(await walletOf(organizationId)).toMatchObject({ availableCredits: 0 });
+      await expectReconciled(organizationId);
+    });
+
+    it("parks a partial refund that matches no whole number of unconsumed credits", async () => {
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("odd");
+      const refunded = await revokeUnconsumedLot(db, {
+        stripePaymentIntentId,
+        refundedAmountCents: 5000, // neither the charge nor 25 × 396
+        chargeAmountCents: PACK_AMOUNT_CENTS,
+        now,
+      });
+      expect(refunded.outcome).toBe("needs_admin");
+      expect(
+        await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } }),
+      ).toMatchObject({ status: "active" });
+      expect(await walletOf(organizationId)).toMatchObject({ availableCredits: PACK_CREDITS });
+      await expectReconciled(organizationId);
+    });
+
+    it("leaves a frozen lot to the dispute path when a refund lands on it", async () => {
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("frozen-refund");
+      expect((await freezeLotForDispute(db, { stripePaymentIntentId, now })).outcome).toBe("applied");
+
+      const refunded = await revokeUnconsumedLot(db, {
+        stripePaymentIntentId,
+        refundedAmountCents: PACK_AMOUNT_CENTS,
+        chargeAmountCents: PACK_AMOUNT_CENTS,
+        now,
+      });
+      expect(refunded.outcome).toBe("already_applied");
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "refund_reversal" } }),
+      ).toBe(0);
+      expect(await walletOf(organizationId)).toMatchObject({ availableCredits: 0 });
+      await expectReconciled(organizationId);
+    });
+
+    it("survives a refund whose credits are all still held", async () => {
+      // The mirror of the freeze case on the revoke path: the write-off excludes the
+      // hold, and the release that follows compensates itself into a closed lot.
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("held-refund");
+      const candidateSessionId = `held_refund_${organizationId}`;
+      await reserveCreditForSession(db, { organizationId, candidateSessionId, now });
+
+      const refunded = await revokeUnconsumedLot(db, {
+        stripePaymentIntentId,
+        refundedAmountCents: PACK_AMOUNT_CENTS,
+        chargeAmountCents: PACK_AMOUNT_CENTS,
+        now,
+      });
+      expect(refunded).toMatchObject({ outcome: "applied", credits: PACK_CREDITS - 1 });
+      expect(await walletOf(organizationId)).toMatchObject({
+        availableCredits: 0,
+        reservedCredits: 1,
+      });
+      await expectReconciled(organizationId);
+
+      await releaseReservationForSession(db, {
+        organizationId,
+        candidateSessionId,
+        now,
+        reason: "below_billable_threshold",
+      });
+      // The wallet must not go negative, and the credit must not come back to life.
+      expect(await walletOf(organizationId)).toMatchObject({
+        availableCredits: 0,
+        reservedCredits: 0,
+      });
+      await expectReconciled(organizationId);
     });
   });
 

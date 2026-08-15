@@ -2,9 +2,26 @@ import type { Prisma, PrismaClient } from "@prelude/db";
 import type Stripe from "stripe";
 
 import { fulfillCreditCheckout, type CreditCheckoutFulfilment } from "./stripe-fulfilment";
+import {
+  handleDisputeEvent,
+  handleRefundEvent,
+  type DisputeFreezeNotifier,
+} from "./stripe-refunds";
 
 /** What the dispatcher reports back to its caller — and what the archive stores. */
 export type StripeWebhookStatus = "processed" | "ignored" | "needs_admin";
+
+/**
+ * The money-EXIT event types. Named because two callers need the same list: the
+ * routing table below, and the backfill that recovers rows archived `ignored`
+ * before Task 7 existed.
+ */
+export const refundAndDisputeEventTypes = [
+  "refund.created",
+  "charge.refunded",
+  "charge.dispute.created",
+  "charge.dispute.closed",
+] as const;
 
 /**
  * `failed` is an archived status but never a returned one: a handler that threw
@@ -18,14 +35,34 @@ type CreditCheckoutFulfiller = (
   input: { checkoutSessionId: string; stripeEventId: string; now: Date },
 ) => Promise<CreditCheckoutFulfilment>;
 
-type StripeEventHandler = (db: PrismaClient, event: Stripe.Event) => Promise<StripeWebhookStatus>;
+type StripeRefundEventHandler = (
+  db: PrismaClient,
+  event: Stripe.Event,
+) => Promise<StripeWebhookStatus>;
+
+/**
+ * The dispute handler takes a third argument the refund one does not: the
+ * notifier hook (amendment 16). It stays optional so the dispatcher can be
+ * exercised — and the ledger driven — without an email stack.
+ */
+type StripeDisputeEventHandler = (
+  db: PrismaClient,
+  event: Stripe.Event,
+  handlerDeps: { notifyDisputeFrozen?: DisputeFreezeNotifier },
+) => Promise<StripeWebhookStatus>;
 
 export type StripeWebhookDeps = {
   fulfill?: CreditCheckoutFulfiller;
-  /** Task 7: `charge.refunded` / `refund.created`. Absent until then — those events are ignored. */
-  handleRefund?: StripeEventHandler;
-  /** Task 7: `charge.dispute.created` / `charge.dispute.closed`. */
-  handleDispute?: StripeEventHandler;
+  /** `charge.refunded` / `refund.created` — defaults to Task 7's handler. */
+  handleRefund?: StripeRefundEventHandler;
+  /** `charge.dispute.created` / `charge.dispute.closed` — defaults to Task 7's handler. */
+  handleDispute?: StripeDisputeEventHandler;
+  /**
+   * Amendment 16. Supplied by the console webhook route, which owns the
+   * notification dispatcher; absent everywhere else, and never able to fail a
+   * freeze (the dispute handler swallows and logs its errors).
+   */
+  notifyDisputeFrozen?: DisputeFreezeNotifier;
   now?: Date;
 };
 
@@ -56,7 +93,13 @@ export async function handleStripeWebhookEvent(
   event: Stripe.Event,
   deps: StripeWebhookDeps = {},
 ): Promise<{ status: StripeWebhookStatus }> {
-  const { fulfill = fulfillCreditCheckout, handleRefund, handleDispute, now = new Date() } = deps;
+  const {
+    fulfill = fulfillCreditCheckout,
+    handleRefund = handleRefundEvent,
+    handleDispute = handleDisputeEvent,
+    notifyDisputeFrozen,
+    now = new Date(),
+  } = deps;
 
   // The `update` branch touches only `attemptCount`, so what comes back carries
   // the row's PRIOR status — which is exactly what the transition guard needs,
@@ -75,7 +118,13 @@ export async function handleStripeWebhookEvent(
 
   let computed: StripeWebhookStatus;
   try {
-    computed = await dispatch(db, event, { fulfill, handleRefund, handleDispute, now });
+    computed = await dispatch(db, event, {
+      fulfill,
+      handleRefund,
+      handleDispute,
+      notifyDisputeFrozen,
+      now,
+    });
   } catch (error) {
     const message = describeError(error);
     try {
@@ -143,12 +192,12 @@ export async function handleStripeWebhookEvent(
   return { status };
 }
 
-/** The routing table. Task 7 supplies the two optional handlers and changes nothing here. */
+/** The routing table. */
 async function dispatch(
   db: PrismaClient,
   event: Stripe.Event,
-  deps: Required<Pick<StripeWebhookDeps, "fulfill" | "now">> &
-    Pick<StripeWebhookDeps, "handleRefund" | "handleDispute">,
+  deps: Required<Pick<StripeWebhookDeps, "fulfill" | "handleRefund" | "handleDispute" | "now">> &
+    Pick<StripeWebhookDeps, "notifyDisputeFrozen">,
 ): Promise<StripeWebhookStatus> {
   switch (event.type) {
     // Both mean "the money may now be real". `completed` fires immediately;
@@ -170,13 +219,18 @@ async function dispatch(
     case "checkout.session.expired":
       return "processed";
 
+    // Money leaving. Both types describe one fact and both are routed: the
+    // ledger's status-guarded transitions are what make the second delivery a
+    // no-op, not a filter here.
     case "charge.refunded":
     case "refund.created":
-      return deps.handleRefund ? deps.handleRefund(db, event) : "ignored";
+      return deps.handleRefund(db, event);
 
     case "charge.dispute.created":
     case "charge.dispute.closed":
-      return deps.handleDispute ? deps.handleDispute(db, event) : "ignored";
+      return deps.handleDispute(db, event, {
+        notifyDisputeFrozen: deps.notifyDisputeFrozen,
+      });
 
     // Stripe delivers whatever the endpoint is subscribed to, and subscriptions
     // drift. An unrecognised type is archived and ignored — never an error, or
@@ -215,6 +269,98 @@ function archiveStatusForFulfilment(outcome: CreditCheckoutFulfilment): StripeWe
       throw new Error(`unhandled fulfilment outcome: ${JSON.stringify(exhaustive)}`);
     }
   }
+}
+
+export type StripeEventReprocessReport = {
+  reprocessed: number;
+  processed: number;
+  needsAdmin: number;
+  stillIgnored: number;
+  failed: number;
+};
+
+/** How many archived rows one backfill pass will re-dispatch by default. */
+const REPROCESS_BATCH_LIMIT = 100;
+
+/**
+ * Recovers events the dispatcher archived `ignored` before a handler for them
+ * existed.
+ *
+ * The gap is real and dated: Task 6 shipped the routing table with the refund and
+ * dispute arms falling through to `ignored`, so every chargeback and refund that
+ * arrived between then and Task 7 was recorded as a decision we were "willing to
+ * be final about" — and was not. Stripe's own retries cannot fix that (we
+ * answered 200), so the only way back is to re-read our own archive.
+ *
+ * Safe to run repeatedly, and safe to run over money: it re-dispatches through
+ * `handleStripeWebhookEvent`, so each row gets the same archive-first upsert, the
+ * same attempt counting and the same transition guard as a live delivery, and the
+ * ledger's status guards make a lot that was already settled report
+ * `already_applied` rather than move twice. A row stops being selected the moment
+ * it leaves `ignored`.
+ *
+ * One row's failure never aborts the pass: a throw is counted and logged, because
+ * a single unfetchable Stripe object must not strand every later row.
+ */
+export async function reprocessIgnoredStripeEvents(
+  db: PrismaClient,
+  input: {
+    types?: readonly string[];
+    deps?: StripeWebhookDeps;
+    limit?: number;
+  } = {},
+): Promise<StripeEventReprocessReport> {
+  const {
+    types = refundAndDisputeEventTypes,
+    deps = {},
+    limit = REPROCESS_BATCH_LIMIT,
+  } = input;
+
+  const rows = await db.stripeWebhookEvent.findMany({
+    where: { status: "ignored", type: { in: [...types] } },
+    orderBy: { receivedAt: "asc" },
+    take: limit,
+  });
+
+  const report: StripeEventReprocessReport = {
+    reprocessed: 0,
+    processed: 0,
+    needsAdmin: 0,
+    stillIgnored: 0,
+    failed: 0,
+  };
+
+  for (const row of rows) {
+    // The archive stores the event verbatim, so the payload IS the event. It is
+    // still checked rather than cast blindly: a row whose payload was truncated
+    // or hand-edited must be reported, not fed to a money handler.
+    const event = row.payload as unknown as Stripe.Event | null;
+    if (!event || typeof event !== "object" || event.id !== row.stripeEventId) {
+      report.failed += 1;
+      console.error("[stripe-webhook] archived payload is not the event it claims to be", {
+        stripeEventId: row.stripeEventId,
+        type: row.type,
+      });
+      continue;
+    }
+
+    report.reprocessed += 1;
+    try {
+      const { status } = await handleStripeWebhookEvent(db, event, deps);
+      if (status === "processed") report.processed += 1;
+      else if (status === "needs_admin") report.needsAdmin += 1;
+      else report.stillIgnored += 1;
+    } catch (error) {
+      report.failed += 1;
+      console.error("[stripe-webhook] reprocessing an archived event failed", {
+        stripeEventId: row.stripeEventId,
+        type: row.type,
+        error: describeError(error),
+      });
+    }
+  }
+
+  return report;
 }
 
 /**

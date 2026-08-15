@@ -409,6 +409,11 @@ model CreditLot {
   status                  String       @default("active") // active | exhausted | expired | frozen | revoked
   grantedAt               DateTime
   expiresAt               DateTime
+  // Phase 2 (#140) amendment 11: when a chargeback froze this lot. Kept after the
+  // dispute is won — the clock kept running while the credits were unspendable,
+  // and this is the only record of how long, which is what a future
+  // expiry-extension decision needs. Overwritten only by a LATER freeze.
+  frozenAt                DateTime?
   stripePaymentIntentId   String?      @unique
   stripeCheckoutSessionId String?      @unique
   stripeInvoiceId         String?      @unique
