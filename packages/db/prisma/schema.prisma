@@ -454,6 +454,49 @@ model CreditReservation {
   @@index([organizationId, status, expiresAt])
 }
 
+// Phase 2 (#140): the purchasable catalogue. Stripe Products/Prices are the
+// price authority; this row maps a stable pack slug to the active Stripe
+// price and caches display values. Prices rotate by pointing stripePriceId
+// at a new Price — past purchases are never rewritten (their unitAmountCents
+// lives on the CreditLot). The local cache follows Stripe, never leads it:
+// unitAmountCents/unitAmountCentsUsd are only written once Stripe confirms
+// the Price (sync script amendment 2).
+model CreditPack {
+  id                 String   @id // stable slug: starter_25 | hiring_100 | scale_500 | volume_1000
+  creditsGranted     Int
+  unitAmountCents    Int // display cache (EUR); Stripe Price is authoritative at checkout
+  unitAmountCentsUsd Int? // display cache (USD) — currency_options mirror on the Stripe Price
+  currency           String   @default("EUR")
+  stripeProductId    String?  @unique
+  stripePriceId      String?  @unique
+  visibility         String   @default("public") // public (pricing surfaces) | quiet (purchasable, never listed)
+  enabled            Boolean  @default(true)
+  displayOrder       Int      @default(0)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// Local archive of every received Stripe event: Stripe retains events 30
+// days; reconciliation and dispute forensics need longer. Dedupe hygiene
+// only — the anti-double-credit guarantee is CreditLot's unique Stripe ids.
+// attemptCount/lastError track replay: Stripe replays events, and the
+// upsert never silently overwrites a prior needs_admin/failed status with
+// processed — transitions are explicit (amendment 8).
+model StripeWebhookEvent {
+  id            String    @id @default(cuid())
+  stripeEventId String    @unique
+  type          String
+  payload       Json
+  status        String    @default("received") // received | processed | ignored | failed | needs_admin
+  error         String?
+  attemptCount  Int       @default(1)
+  lastError     String?
+  receivedAt    DateTime  @default(now())
+  processedAt   DateTime?
+
+  @@index([type, receivedAt])
+}
+
 model CandidateSessionReviewEvent {
   id                 String           @id @default(cuid())
   organizationId     String

@@ -42,7 +42,7 @@ VOICE_SMOKE_PYTHON ?= 3.13
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell role-intake-env-up role-intake-worker db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke dev
+.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell role-intake-env-up role-intake-worker db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke billing-packs-sync dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "HireCall local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -307,6 +307,9 @@ e2e-voice-smoke: ## Drive a full live interview as a synthetic candidate (TTS po
 		uv_with="$$uv_with --with pocket-tts==2.1.0"; \
 	fi; \
 	cd services/interviewer-agent && PYTHONPATH=. uv run --python $(VOICE_SMOKE_PYTHON) $$uv_with python -m app.synthetic_candidate $$harness_args
+
+billing-packs-sync: ## Upsert the credit pack catalogue; creates Stripe Products/Prices when STRIPE_SECRET_KEY is set.
+	@$(LOAD_ENV); node scripts/sync-credit-packs.mjs
 
 dev: env-up ## Start local infrastructure, app dev stack, and role-intake worker.
 	@$(LOAD_ENV); \
