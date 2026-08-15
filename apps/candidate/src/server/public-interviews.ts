@@ -10,7 +10,11 @@ import { prisma } from "@prelude/db";
 import { createNotificationDispatcher } from "@prelude/notifications";
 import type { Prisma } from "@prelude/db";
 
-import { createEntitledCandidateSession } from "./billing-admission";
+import {
+  createEntitledCandidateSession,
+  resumeEntitledCandidateSession,
+} from "./billing-admission";
+import { settleCandidateSessionCredit } from "./credit-settlement";
 
 const notificationDispatcher = createNotificationDispatcher();
 
@@ -336,22 +340,23 @@ export async function prepareCandidateSession(
   const shouldResumeExisting =
     existingSession && startPolicy.action === "resume_same_attempt";
   const sessionResult = shouldResumeExisting
-    ? {
-        ok: true as const,
-        session: await prisma.candidateSession.update({
-          data: {
-            candidateEmail,
-            candidateName,
-            candidateInvitationId: context.invitation?.id,
-            consentCopyVersion: candidateConsentCopyVersion,
-            // Resuming requires accepting the current consent copy again.
-            consentedAt: now,
-            startedAt: existingSession.startedAt ?? now,
-            status: "starting",
-          },
-          where: { id: existingSession.id },
-        }),
-      }
+    ? await resumeEntitledCandidateSession({
+        data: {
+          candidateEmail,
+          candidateName,
+          candidateInvitationId: context.invitation?.id,
+          consentCopyVersion: candidateConsentCopyVersion,
+          // Resuming requires accepting the current consent copy again.
+          consentedAt: now,
+          startedAt: existingSession.startedAt ?? now,
+          status: "starting",
+        },
+        now,
+        // The session row owns the organization it was admitted under; the
+        // interview is only how the candidate reached it.
+        organizationId: existingSession.organizationId,
+        sessionId: existingSession.id,
+      })
     : await createEntitledCandidateSession({
         data: {
           candidateEmail,
@@ -440,9 +445,10 @@ export async function completeCandidateSession(
     return { ok: false as const, status: 400 };
   }
 
+  const now = new Date();
   const result = await prisma.candidateSession.updateMany({
     data: {
-      completedAt: new Date(),
+      completedAt: now,
       status: "completed",
     },
     where: {
@@ -459,6 +465,11 @@ export async function completeCandidateSession(
       resumeToken,
       sessionId: input.sessionId,
       status: "completed",
+    });
+    await settleCandidateSessionCredit(prisma, {
+      kind: "completed",
+      now,
+      sessionId: input.sessionId,
     });
     await notifyCandidateInterviewCompleted(input.sessionId);
     return { ok: true as const };
@@ -488,6 +499,14 @@ export async function completeCandidateSession(
       sessionId: input.sessionId,
       status: "completed",
     });
+    // Settling again on this replay is how a completion whose first settlement
+    // failed still gets charged: capture reports `already_captured` when it
+    // succeeded, and retakes the decision when it never ran.
+    await settleCandidateSessionCredit(prisma, {
+      kind: "completed",
+      now,
+      sessionId: input.sessionId,
+    });
     await notifyCandidateInterviewCompleted(input.sessionId);
     return { ok: true as const };
   }
@@ -512,6 +531,7 @@ export async function markCandidateSessionLifecycle(
     };
   }
 
+  const now = new Date();
   const nextStatus = input.action === "abandon" ? "abandoned" : "failed";
   const result = await prisma.candidateSession.updateMany({
     data: {
@@ -531,6 +551,11 @@ export async function markCandidateSessionLifecycle(
       resumeToken,
       sessionId: input.sessionId,
       status: nextStatus,
+    });
+    await settleCandidateSessionCredit(prisma, {
+      kind: nextStatus,
+      now,
+      sessionId: input.sessionId,
     });
     return { ok: true as const, status: nextStatus };
   }
@@ -554,7 +579,20 @@ export async function markCandidateSessionLifecycle(
   const normalizedStatus = normalizeCandidateLifecycleStatus(
     existingSession.status,
   );
-  if (normalizedStatus === "completed" || normalizedStatus === nextStatus) {
+  if (normalizedStatus === nextStatus) {
+    // Same replay recovery as the completion path. A session already marked
+    // `completed` is deliberately excluded: completion owns its own settlement,
+    // and a release issued here could land ahead of a capture still in flight
+    // and hand back a credit the interview earned.
+    await settleCandidateSessionCredit(prisma, {
+      kind: nextStatus,
+      now,
+      sessionId: input.sessionId,
+    });
+    return { ok: true as const, status: normalizedStatus };
+  }
+
+  if (normalizedStatus === "completed") {
     return { ok: true as const, status: normalizedStatus };
   }
 
@@ -657,6 +695,11 @@ export async function submitCandidateFormInterview(
     await prisma.candidateSession.update({
       data: { status: "superseded" },
       where: { id: prepared.supersededSessionId },
+    });
+    await settleCandidateSessionCredit(prisma, {
+      kind: "superseded",
+      now,
+      sessionId: prepared.supersededSessionId,
     });
   }
 

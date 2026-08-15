@@ -1,4 +1,9 @@
 export {
+  BILLABLE_THRESHOLD_RATIO,
+  evaluateBillableCompletion,
+  type QuestionOutcome,
+} from "./domain/billable-completion";
+export {
   candidateLifecycleActiveStatuses,
   candidateLifecycleLegacyStatusMap,
   candidateLifecycleStatuses,
@@ -18,6 +23,14 @@ export {
   type CandidateLifecycleTransitionResult,
   type CandidateStartPolicy,
 } from "./domain/candidate-lifecycle";
+export {
+  availableInLot,
+  compareLotsForConsumption,
+  computeWalletTotals,
+  isLotEligible,
+  selectLotForReservation,
+  type CreditLotSnapshot,
+} from "./domain/credit-lots";
 export {
   generateDeterministicInterviewDraft,
   resolveTargetInterviewQuestionCount,

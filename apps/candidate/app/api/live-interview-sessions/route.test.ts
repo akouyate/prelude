@@ -30,6 +30,15 @@ vi.mock("@prelude/billing/server", () => ({
   getWorkspaceBilling: getWorkspaceBillingMock,
 }));
 
+// Both terminal writes below bypass `markCandidateSessionLifecycle`, so the
+// route has to settle for itself. The rule is covered in
+// `credit-settlement.test.ts`; here we pin that the calls exist.
+const settleCandidateSessionCreditMock = vi.hoisted(() => vi.fn());
+
+vi.mock("../../../src/server/credit-settlement", () => ({
+  settleCandidateSessionCredit: settleCandidateSessionCreditMock,
+}));
+
 import { POST } from "./route";
 
 describe("POST /api/live-interview-sessions", () => {
@@ -46,6 +55,8 @@ describe("POST /api/live-interview-sessions", () => {
     prismaMock.candidateSession.create.mockReset();
     prismaMock.candidateSession.findFirst.mockReset();
     prismaMock.candidateSession.update.mockReset();
+    settleCandidateSessionCreditMock.mockReset();
+    settleCandidateSessionCreditMock.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -326,6 +337,11 @@ describe("POST /api/live-interview-sessions", () => {
       data: { status: "superseded" },
       where: { id: "cs_failed" },
     });
+    expect(settleCandidateSessionCreditMock).toHaveBeenCalledWith(prismaMock, {
+      kind: "superseded",
+      now: expect.any(Date),
+      sessionId: "cs_failed",
+    });
     expect(prismaMock.candidateSession.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
@@ -378,6 +394,72 @@ describe("POST /api/live-interview-sessions", () => {
       data: { status: "superseded" },
       where: { id: "cs_failed" },
     });
+    // The credit was reserved at admission moments earlier and the room never
+    // came up; nothing else in the flow would ever hand it back.
+    expect(settleCandidateSessionCreditMock).toHaveBeenCalledWith(prismaMock, {
+      kind: "failed",
+      now: expect.any(Date),
+      sessionId: "cs_retry",
+    });
+  });
+
+  it("settles the credit when provisioning reports an already-terminal session", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValueOnce(null);
+    prismaMock.interview.findFirst.mockResolvedValueOnce(publishedInterview());
+    prismaMock.candidateSession.findFirst.mockResolvedValueOnce(null);
+    prismaMock.candidateSession.create.mockResolvedValueOnce(
+      candidateSession(),
+    );
+    prismaMock.candidateSession.update.mockResolvedValueOnce({
+      ...candidateSession(),
+      realtimeSessionId: "is_real",
+      status: "expired",
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(
+      realtimeResponse(["audio"], "lk_is_real", "expired"),
+    );
+
+    const response = await POST(
+      request({ candidateToken: "iv_public", consentAccepted: true }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(prismaMock.candidateSession.update).toHaveBeenCalledWith({
+      data: { realtimeSessionId: "is_real", status: "expired" },
+      where: { id: "cs_123" },
+    });
+    // This terminal write bypasses `markCandidateSessionLifecycle` too, so nothing
+    // downstream would ever hand back the credit reserved at admission.
+    expect(settleCandidateSessionCreditMock).toHaveBeenCalledWith(prismaMock, {
+      kind: "expired",
+      now: expect.any(Date),
+      sessionId: "cs_123",
+    });
+  });
+
+  it("leaves the hold alone when provisioning reports a session still under way", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValueOnce(null);
+    prismaMock.interview.findFirst.mockResolvedValueOnce(publishedInterview());
+    prismaMock.candidateSession.findFirst.mockResolvedValueOnce(null);
+    prismaMock.candidateSession.create.mockResolvedValueOnce(
+      candidateSession(),
+    );
+    prismaMock.candidateSession.update.mockResolvedValueOnce({
+      ...candidateSession(),
+      realtimeSessionId: "is_real",
+      status: "in_progress",
+    });
+    vi.mocked(fetch).mockResolvedValueOnce(
+      realtimeResponse(["audio"], "lk_is_real", "in_progress"),
+    );
+
+    const response = await POST(
+      request({ candidateToken: "iv_public", consentAccepted: true }),
+    );
+
+    expect(response.status).toBe(200);
+    // The interview is about to run on this hold; settling now would release it.
+    expect(settleCandidateSessionCreditMock).not.toHaveBeenCalled();
   });
 
   it("frees quota when realtime returns a malformed success payload", async () => {
@@ -645,7 +727,11 @@ function unconfiguredBilling() {
   };
 }
 
-function realtimeResponse(allowedModalities: string[], token = "lk_is_real") {
+function realtimeResponse(
+  allowedModalities: string[],
+  token = "lk_is_real",
+  status = "waiting_candidate",
+) {
   return Response.json({
     livekit_join: {
       expires_at: "2026-06-20T10:15:00.000Z",
@@ -658,7 +744,7 @@ function realtimeResponse(allowedModalities: string[], token = "lk_is_real") {
       allowed_modalities: allowedModalities,
       id: "is_real",
       livekit_room_name: "prelude-is_real",
-      status: "waiting_candidate",
+      status,
     },
   });
 }

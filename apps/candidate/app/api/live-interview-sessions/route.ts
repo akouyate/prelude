@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@prelude/db";
 
+import { settleCandidateSessionCredit } from "../../../src/server/credit-settlement";
 import {
   prepareCandidateSession,
   toProductCandidateLifecycleStatus,
@@ -73,6 +74,20 @@ export async function POST(request: Request) {
       },
       where: { id: prepared.productSession.id },
     });
+    // Provisioning can hand back a session that is already over. That write is
+    // terminal and bypasses `markCandidateSessionLifecycle` exactly like
+    // `markProvisioningFailed` below, so it has to settle for itself — otherwise
+    // the credit reserved at admission is left held with nothing downstream that
+    // would ever resolve it. `update` throws when it matches nothing, so reaching
+    // this line means the terminal status is durable.
+    const settlementKind = terminalSettlementKind(productStatus);
+    if (settlementKind) {
+      await settleCandidateSessionCredit(prisma, {
+        kind: settlementKind,
+        now: new Date(),
+        sessionId: prepared.productSession.id,
+      });
+    }
     if (prepared.candidateInvitationId) {
       await prisma.candidateInvitation.updateMany({
         data: { status: productStatus },
@@ -88,6 +103,11 @@ export async function POST(request: Request) {
     await prisma.candidateSession.update({
       data: { status: "superseded" },
       where: { id: prepared.supersededSessionId },
+    });
+    await settleCandidateSessionCredit(prisma, {
+      kind: "superseded",
+      now: new Date(),
+      sessionId: prepared.supersededSessionId,
     });
   }
 
@@ -113,11 +133,40 @@ type PreparedCandidateSession = Extract<
   { ok: true }
 >;
 
+/**
+ * The three statuses `toProductCandidateLifecycleStatus` can map to that end the
+ * session, narrowed to the settlement kinds. `completed` settles as a completion on
+ * purpose — the threshold evaluation is the right call there, and the events it
+ * reads already exist by the time the realtime API reports the session as over.
+ * Everything else (`starting`, `in_progress`, `reconnecting`) is still running and
+ * must keep its hold.
+ */
+function terminalSettlementKind(
+  status: ReturnType<typeof toProductCandidateLifecycleStatus>,
+) {
+  switch (status) {
+    case "completed":
+    case "expired":
+    case "failed":
+      return status;
+    default:
+      return null;
+  }
+}
+
 async function markProvisioningFailed(prepared: PreparedCandidateSession) {
   if (prepared.productSession) {
     await prisma.candidateSession.update({
       data: { status: "failed" },
       where: { id: prepared.productSession.id },
+    });
+    // This is a terminal write that bypasses `markCandidateSessionLifecycle`, so
+    // it has to settle for itself: the credit was reserved at admission a few
+    // lines earlier and the room never came up, which is nobody's interview.
+    await settleCandidateSessionCredit(prisma, {
+      kind: "failed",
+      now: new Date(),
+      sessionId: prepared.productSession.id,
     });
   }
   if (prepared.candidateInvitationId) {

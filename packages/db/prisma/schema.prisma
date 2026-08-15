@@ -35,6 +35,10 @@ model Organization {
   memberships            OrganizationMembership[]
   invitations            OrganizationInvitation[]
   billingState           OrganizationBillingState?
+  creditWallet           CreditWallet?
+  creditLots             CreditLot[]
+  creditLedgerEntries    CreditLedgerEntry[]
+  creditReservations     CreditReservation[]
 }
 
 model User {
@@ -375,6 +379,81 @@ model OrganizationBillingState {
   @@index([state, periodEnd])
 }
 
+// Credit billing (issue #140, phase 1). The ledger is append-only and is the
+// source of truth; the wallet row caches totals and is the FOR UPDATE lock
+// target that serialises credit operations per organization. Rows here must
+// survive product-row deletion, so nothing cascades from CandidateSession and
+// organizations with billing history cannot be hard-deleted (Restrict).
+model CreditWallet {
+  id               String       @id @default(cuid())
+  organizationId   String       @unique
+  availableCredits Int          @default(0)
+  reservedCredits  Int          @default(0)
+  stripeCustomerId String?      @unique
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+}
+
+model CreditLot {
+  id                      String       @id @default(cuid())
+  organizationId          String
+  kind                    String // free | paid
+  source                  String // first_five | pack_purchase | auto_topup | manual_grant | enterprise_commitment
+  packId                  String?
+  creditsGranted          Int
+  creditsConsumed         Int          @default(0)
+  creditsReserved         Int          @default(0)
+  unitAmountCents         Int?
+  currency                String       @default("EUR")
+  status                  String       @default("active") // active | exhausted | expired | frozen | revoked
+  grantedAt               DateTime
+  expiresAt               DateTime
+  stripePaymentIntentId   String?      @unique
+  stripeCheckoutSessionId String?      @unique
+  stripeInvoiceId         String?      @unique
+  createdAt               DateTime     @default(now())
+  updatedAt               DateTime     @updatedAt
+  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  ledgerEntries           CreditLedgerEntry[]
+  reservations            CreditReservation[]
+
+  @@index([organizationId, status, expiresAt])
+}
+
+model CreditLedgerEntry {
+  id                 String       @id @default(cuid())
+  organizationId     String
+  lotId              String?
+  type               String // free_grant | pack_purchase | reserve | release | consume | refund_reversal | expire | manual_adjustment | dispute_freeze | dispute_release
+  delta              Int // signed change to available credits (see plan header)
+  candidateSessionId String?
+  stripeEventId      String?
+  actorKind          String       @default("system") // system | stripe_webhook | admin
+  actorId            String?
+  reason             String?
+  createdAt          DateTime     @default(now())
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  lot                CreditLot?   @relation(fields: [lotId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, createdAt])
+}
+
+model CreditReservation {
+  id                 String       @id @default(cuid())
+  organizationId     String
+  candidateSessionId String       @unique
+  lotId              String
+  status             String       @default("held") // held | captured | released
+  heldAt             DateTime
+  expiresAt          DateTime
+  resolvedAt         DateTime?
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  lot                CreditLot    @relation(fields: [lotId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, status, expiresAt])
+}
+
 model CandidateSessionReviewEvent {
   id                 String           @id @default(cuid())
   organizationId     String
@@ -556,7 +635,7 @@ model LiveInterviewSession {
   livekitRoomName   String                   @map("livekit_room_name")
   allowedModalities Json                     @map("allowed_modalities")
   kind              String                   @default("candidate")
-  expiresAt         DateTime?                @map("expires_at")
+  expiresAt         DateTime?                @map("expires_at") @db.Timestamptz
   createdAt         DateTime                 @map("created_at")
   updatedAt         DateTime                 @map("updated_at")
   events            LiveInterviewEvent[]

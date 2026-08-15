@@ -1,17 +1,34 @@
 import {
   evaluateWorkspaceEntitlement,
+  isCreditBillingEnabled,
   resolveBillingUsagePeriod,
+  reserveCreditForSession,
+  type WorkspaceBilling,
 } from "@prelude/billing";
 import { getWorkspaceBilling } from "@prelude/billing/server";
 import { prisma, type Prisma, type PrismaClient } from "@prelude/db";
 
 type CandidateSessionCreateData = Prisma.CandidateSessionUncheckedCreateInput;
-type BillingAdmissionDatabase = Pick<PrismaClient, "$transaction">;
+// The full client, not a narrower `Pick`: `reserveCredit` (Task 4's
+// `reserveCreditForSession`) is frozen at `db: PrismaClient`, and under
+// TypeScript's contravariant function-parameter checking no `Pick` — however
+// wide — is assignable where a full `PrismaClient` is required, so a narrower
+// alias here would only reintroduce a cast at the `reserveCredit` call below.
+// In practice this admission module touches `candidateSession` directly and,
+// via `reserveCredit`, `creditWallet` / `creditLot` / `creditReservation` /
+// `creditLedgerEntry` — never anything else on the client.
+type BillingAdmissionDatabase = PrismaClient;
 
 type BillingAdmissionDependencies = {
   database: BillingAdmissionDatabase;
   loadBilling: typeof getWorkspaceBilling;
+  reserveCredit: typeof reserveCreditForSession;
 };
+
+type ResumeAdmissionDependencies = Pick<
+  BillingAdmissionDependencies,
+  "database" | "reserveCredit"
+>;
 
 type CreateEntitledCandidateSessionInput = {
   data: CandidateSessionCreateData;
@@ -19,9 +36,17 @@ type CreateEntitledCandidateSessionInput = {
   organizationId: string;
 };
 
+type ResumeEntitledCandidateSessionInput = {
+  data: Prisma.CandidateSessionUncheckedUpdateInput;
+  now: Date;
+  organizationId: string;
+  sessionId: string;
+};
+
 const defaultDependencies: BillingAdmissionDependencies = {
   database: prisma,
   loadBilling: getWorkspaceBilling,
+  reserveCredit: reserveCreditForSession,
 };
 
 export async function createEntitledCandidateSession(
@@ -32,6 +57,11 @@ export async function createEntitledCandidateSession(
     organizationId: input.organizationId,
     now: input.now,
   });
+
+  if (isCreditBillingEnabled()) {
+    return createCreditBackedCandidateSession(input, dependencies, billing);
+  }
+
   const period = resolveBillingUsagePeriod(billing, input.now);
 
   return runSerializable(async () =>
@@ -83,6 +113,137 @@ export async function createEntitledCandidateSession(
       { isolationLevel: "Serializable" },
     ),
   );
+}
+
+/**
+ * Admission for a session that already exists: resuming an attempt still needs a
+ * credit behind it, otherwise the ledger's own invariant — no interview runs
+ * without one — holds only for the first attempt.
+ *
+ * The common resume (a reconnect minutes later, hold still live) costs nothing:
+ * `reserveCredit` is idempotent and hands the existing hold back. The resumes
+ * that genuinely take a credit are the ones that would otherwise run free — an
+ * attempt resumed after its hold was released, a session `deleteOrphanedSession`
+ * below failed to clean up, and a session created while the flag was off and
+ * resumed after it was turned on.
+ *
+ * Reserving before the update is what makes a refusal harmless: the session is
+ * left exactly as it was, so the candidate can retry once the wallet is topped
+ * up. Nothing is created here, so a refusal has nothing to compensate either.
+ */
+export async function resumeEntitledCandidateSession(
+  input: ResumeEntitledCandidateSessionInput,
+  dependencies: ResumeAdmissionDependencies = defaultDependencies,
+) {
+  if (isCreditBillingEnabled()) {
+    const reservation = await dependencies.reserveCredit(
+      dependencies.database,
+      {
+        organizationId: input.organizationId,
+        candidateSessionId: input.sessionId,
+        now: input.now,
+      },
+    );
+
+    if (!reservation.ok) {
+      return {
+        error: "candidate_interview_limit_reached" as const,
+        ok: false as const,
+      };
+    }
+  }
+
+  return {
+    ok: true as const,
+    session: await dependencies.database.candidateSession.update({
+      data: input.data,
+      where: { id: input.sessionId },
+    }),
+  };
+}
+
+/**
+ * Prepaid-credit admission path (`CREDIT_BILLING_ENABLED=1`). `reserveCredit`
+ * (Task 4) opens its own per-organization wallet transaction, so it cannot run
+ * inside the transaction that creates the session — see Task 6 brief's Step 3
+ * resolution. The session is therefore created first, outside any transaction,
+ * and the reservation is taken against the id it was given.
+ */
+async function createCreditBackedCandidateSession(
+  input: CreateEntitledCandidateSessionInput,
+  dependencies: BillingAdmissionDependencies,
+  billing: WorkspaceBilling,
+) {
+  const recordingDecision = evaluateWorkspaceEntitlement({
+    billing,
+    feature: "recording",
+    usage: 0,
+  });
+
+  const session = await dependencies.database.candidateSession.create({
+    data: {
+      ...input.data,
+      recordingEntitled: recordingDecision.allowed,
+    },
+  });
+
+  let reservation;
+  try {
+    reservation = await dependencies.reserveCredit(dependencies.database, {
+      organizationId: input.organizationId,
+      candidateSessionId: session.id,
+      now: input.now,
+    });
+  } catch (error) {
+    // reserveCredit can throw (P2028 retry exhaustion, a ledger integrity
+    // error) without ever reaching an ok/no_credits_available decision.
+    // Best-effort compensate exactly as a refusal does below, then let the
+    // original error surface — swallowing it here would hide a real failure
+    // behind a fabricated admission outcome.
+    await deleteOrphanedSession(dependencies, session.id);
+    throw error;
+  }
+
+  if (reservation.ok) {
+    return { ok: true as const, session };
+  }
+
+  // `reserveCredit` already committed its refusal on its own (no wrapping
+  // transaction is possible here — see the function doc above), so there is
+  // nothing left to roll back atomically; this is a best-effort compensating
+  // delete, not a guarantee.
+  await deleteOrphanedSession(dependencies, session.id);
+
+  return {
+    error: "candidate_interview_limit_reached" as const,
+    ok: false as const,
+  };
+}
+
+/**
+ * Best-effort cleanup for a session created without a live credit reservation
+ * (refused, or `reserveCredit` threw). Logging and swallowing here — rather than
+ * surfacing a 500 for a refusal that already succeeded — is deliberate, and it is
+ * now safe to leave the row behind: a candidate returning to this `starting`
+ * session resolves to `resume_same_attempt`, and that branch goes through
+ * `resumeEntitledCandidateSession` above, which reserves before it resumes. The
+ * stray row can no longer buy a free interview — it refuses the resume instead,
+ * which is the correct outcome for a wallet that had nothing to give.
+ */
+async function deleteOrphanedSession(
+  dependencies: BillingAdmissionDependencies,
+  sessionId: string,
+): Promise<void> {
+  try {
+    await dependencies.database.candidateSession.delete({
+      where: { id: sessionId },
+    });
+  } catch (error) {
+    console.error(
+      "[billing-admission] failed to delete orphaned candidate session after a credit reservation failure",
+      { sessionId, error },
+    );
+  }
 }
 
 async function runSerializable<T>(operation: () => Promise<T>): Promise<T> {
