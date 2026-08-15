@@ -301,20 +301,23 @@ const REPROCESS_BATCH_LIMIT = 100;
  *
  * One row's failure never aborts the pass: a throw is counted and logged, because
  * a single unfetchable Stripe object must not strand every later row.
+ *
+ * `deps` is REQUIRED, with no default. A backfilled `charge.dispute.created`
+ * freezes a wallet exactly as a live one does, so it owes the recruiter the same
+ * notice (amendment 16) — arguably more, since the dispute has been open and
+ * silent since the row was archived. The notifier lives in the app layer, so a
+ * caller that forgets it has to fail the BUILD rather than quietly freeze
+ * wallets and tell nobody. Pass `{}` only where that is genuinely intended.
  */
 export async function reprocessIgnoredStripeEvents(
   db: PrismaClient,
   input: {
+    deps: StripeWebhookDeps;
     types?: readonly string[];
-    deps?: StripeWebhookDeps;
     limit?: number;
-  } = {},
+  },
 ): Promise<StripeEventReprocessReport> {
-  const {
-    types = refundAndDisputeEventTypes,
-    deps = {},
-    limit = REPROCESS_BATCH_LIMIT,
-  } = input;
+  const { deps, types = refundAndDisputeEventTypes, limit = REPROCESS_BATCH_LIMIT } = input;
 
   const rows = await db.stripeWebhookEvent.findMany({
     where: { status: "ignored", type: { in: [...types] } },

@@ -723,9 +723,10 @@ export async function resolveDisputeOnLot(
  * and `availableInLot` are the same number and neither can exceed the other.
  *
  * Everything else — a partial amount that maps to no whole number of remaining
- * credits, a full refund on a lot with consumed credits, a lot whose unit price
- * cannot be derived — returns `needs_admin` and writes NOTHING. The wallet must
- * never go negative down an automated path; a human decides.
+ * credits, a full refund on a lot with consumed credits, an `exhausted` lot
+ * (consumption by definition), a lot whose unit price cannot be derived —
+ * returns `needs_admin` and writes NOTHING. The wallet must never go negative
+ * down an automated path; a human decides.
  *
  * Held credits are excluded from the write-off for exactly the reason the freeze
  * excludes them (see `freezeLotForDispute`), so a refund issued mid-interview
@@ -758,6 +759,21 @@ export async function revokeUnconsumedLot(
       return { outcome: "needs_admin", organizationId: lot.organizationId, lotId: lot.id, reason };
     };
 
+    // `exhausted` is the one non-`active` status that is NOT "already applied":
+    // a lot only reaches it by being spent to the last credit, so a refund on it
+    // is by definition a refund after consumption — the worst commercial case
+    // (25 interviews delivered, then a chargeback for the whole charge) and the
+    // one an `active`-only guard would wave through as `processed`. It is checked
+    // before the general guard so it cannot fall into the `already_applied`
+    // bucket with the statuses that genuinely were settled.
+    if (lot.status === "exhausted") {
+      return parked("full_refund_after_consumption");
+    }
+    // The remaining statuses really are already applied. `revoked` was refunded;
+    // `frozen` belongs to the dispute path, which owns that lot until it closes;
+    // `expired` wrote its credits off on the clock — whether a refund of expired
+    // (breakage) credits should reverse anything is a finance question, ledgered
+    // deliberately rather than decided here.
     if (lot.status !== "active") {
       return { outcome: "already_applied", organizationId: lot.organizationId, lotId: lot.id, status: lot.status };
     }

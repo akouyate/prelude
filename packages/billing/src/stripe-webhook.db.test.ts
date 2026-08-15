@@ -1,8 +1,12 @@
 import { PrismaClient } from "@prisma/client";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { grantPurchasedCreditLot, reconcileWallet } from "./credit-ledger";
-import { handleRefundEvent, type StripeRefundClient } from "./stripe-refunds";
+import {
+  handleDisputeEvent,
+  handleRefundEvent,
+  type StripeRefundClient,
+} from "./stripe-refunds";
 import {
   refundAndDisputeEventTypes,
   reprocessIgnoredStripeEvents,
@@ -140,5 +144,93 @@ describe.skipIf(!databaseUrl)("reprocessIgnoredStripeEvents (Postgres)", () => {
     expect(
       await db.creditLedgerEntry.count({ where: { organizationId, type: "refund_reversal" } }),
     ).toBe(1);
+  });
+
+  /**
+   * A backfilled freeze is still a freeze: the recruiter's credits become
+   * unspendable at the moment the sweep runs, so amendment 16's notice is owed
+   * exactly as much as it is on a live delivery — arguably more, since the
+   * dispute has been open (and silent) since the row was first archived.
+   *
+   * `deps` is a REQUIRED parameter on `reprocessIgnoredStripeEvents` for this
+   * reason: the notifier lives in the app layer, and a caller that forgets it
+   * must fail to compile rather than freeze wallets quietly.
+   */
+  it("carries the freeze notifier into a backfilled dispute", async () => {
+    const organization = await db.organization.create({
+      data: { name: `backfill-dispute-${Date.now()}-${Math.random()}` },
+    });
+    const organizationId = organization.id;
+    const stripePaymentIntentId = `pi_backfill_dispute_${organizationId}`;
+    const now = new Date(Date.now() - 60 * 60 * 1000);
+
+    await grantPurchasedCreditLot(db, {
+      organizationId,
+      packId: "starter_25",
+      creditsGranted: 25,
+      unitAmountCents: 9900,
+      currency: "EUR",
+      stripePaymentIntentId,
+      now,
+    });
+
+    const stripeEventId = `evt_backfill_dispute_${organizationId}`;
+    await db.stripeWebhookEvent.create({
+      data: {
+        stripeEventId,
+        type: "charge.dispute.created",
+        status: "ignored",
+        payload: {
+          id: stripeEventId,
+          object: "event",
+          type: "charge.dispute.created",
+          created: 1_755_248_400,
+          livemode: false,
+          pending_webhooks: 1,
+          request: { id: null, idempotency_key: null },
+          data: { object: { id: "dp_backfill", object: "dispute" } },
+        },
+      },
+    });
+
+    const notifyDisputeFrozen = vi.fn(async () => {});
+    const report = await reprocessIgnoredStripeEvents(db, {
+      types: ["charge.dispute.created"],
+      deps: {
+        notifyDisputeFrozen,
+        // Only the Stripe API is faked; the notifier has to reach the handler
+        // through the dispatcher's own threading, not through this override.
+        handleDispute: (client, event, handlerDeps) =>
+          handleDisputeEvent(client, event, {
+            stripe: fakeStripe(stripePaymentIntentId, 11880),
+            now,
+            ...handlerDeps,
+          }),
+      },
+    });
+
+    expect(report).toMatchObject({ reprocessed: 1, processed: 1, failed: 0 });
+    expect(
+      await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } }),
+    ).toMatchObject({ status: "frozen" });
+    expect(notifyDisputeFrozen).toHaveBeenCalledWith({
+      organizationId,
+      lotId: expect.any(String),
+      // The whole paid lot: nothing was held or consumed before the freeze.
+      frozenCredits: 25,
+      stripeEventId,
+    });
+    expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+  });
+
+  it("refuses at compile time to be called without deps", () => {
+    // Never invoked — the assertion IS the type error. A sweep that omits `deps`
+    // would freeze wallets and notify nobody, so it has to fail the build rather
+    // than production; `@ts-expect-error` fails `tsc` the moment `deps` goes
+    // back to being optional.
+    const withoutDeps = () =>
+      // @ts-expect-error — `deps` is a required parameter.
+      reprocessIgnoredStripeEvents(db, { types: refundAndDisputeEventTypes });
+    expect(typeof withoutDeps).toBe("function");
   });
 });

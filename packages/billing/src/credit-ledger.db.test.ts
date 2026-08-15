@@ -1184,6 +1184,48 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
       await expectReconciled(organizationId);
     });
 
+    it("parks a refund on a lot the customer consumed to the last credit", async () => {
+      // The worst commercial case, and the one an `active`-only status guard lets
+      // through: 25 interviews delivered, then a chargeback for the whole charge.
+      // `exhausted` IS consumption — the lot only reaches that status by being
+      // spent — so it belongs in the admin queue beside the partially-consumed
+      // case, not in the `already_applied` bucket with the statuses that really
+      // were already settled.
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("spent");
+      for (let index = 0; index < PACK_CREDITS; index += 1) {
+        const candidateSessionId = `spent_all_${organizationId}_${index}`;
+        await reserveCreditForSession(db, { organizationId, candidateSessionId, now });
+        await captureReservationForSession(db, { organizationId, candidateSessionId, now });
+      }
+      // Reached through the ordinary capture path, never forced.
+      expect(
+        await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } }),
+      ).toMatchObject({ status: "exhausted", creditsConsumed: PACK_CREDITS });
+
+      const refund = {
+        stripePaymentIntentId,
+        refundedAmountCents: 11880,
+        chargeAmountCents: 11880,
+        now,
+      };
+      const first = await revokeUnconsumedLot(db, refund);
+      expect(first).toMatchObject({ outcome: "needs_admin", reason: "full_refund_after_consumption" });
+
+      // A replay stays parked and piles up no writes — `needs_admin` is terminal
+      // for the archive status, and here it is terminal for the ledger too.
+      const second = await revokeUnconsumedLot(db, refund);
+      expect(second).toMatchObject({ outcome: "needs_admin" });
+
+      expect(
+        await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } }),
+      ).toMatchObject({ status: "exhausted" });
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "refund_reversal" } }),
+      ).toBe(0);
+      expect(await walletOf(organizationId)).toMatchObject({ availableCredits: 0 });
+      await expectReconciled(organizationId);
+    });
+
     it("auto-applies a partial refund that is exactly the prorata of what is left", async () => {
       // Amendment 21 (user-approved CGV rule): prorata of the unconsumed credits.
       const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("prorata");
