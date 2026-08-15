@@ -26,10 +26,13 @@ export type StripePurchaseClient = {
     list(params: Stripe.PriceListParams): Promise<{
       data: Array<{
         id: string;
+        created: number;
         metadata: Stripe.Metadata | null;
         unit_amount: number | null;
-        // Returned with the Price, no `expand` needed — the field is simply
-        // absent on a single-currency Price.
+        // NOT returned by default: Stripe omits `currency_options` from the Price
+        // unless the request expands it (`expand[]=data.currency_options` on a
+        // list). Absent here therefore means "not asked for" just as often as
+        // "single-currency Price" — the reader below always asks.
         currency_options?: { [currency: string]: { unit_amount: number | null } } | null;
       }>;
     }>;
@@ -71,13 +74,30 @@ export class UnsupportedCreditCurrencyError extends Error {
 }
 
 /**
+ * A hosted Checkout session in `payment` mode always carries a redirect URL;
+ * `null` means Stripe returned a shape this code cannot act on (an embedded
+ * session), which is a wiring bug rather than a purchase outcome.
+ */
+export class MissingCheckoutSessionUrlError extends Error {
+  constructor(readonly sessionId: string) {
+    super(`Stripe Checkout session ${sessionId} came back without a redirect URL`);
+    this.name = "MissingCheckoutSessionUrlError";
+  }
+}
+
+/**
  * One Stripe Customer per organization, stored on the wallet.
  *
  * Two guards make concurrent callers converge on a single customer: the
  * `stripeCustomerId @unique` column, and Stripe's idempotency key derived from
  * the organization id — a replay inside the key's 24 h window returns the very
  * same customer instead of minting a duplicate that would split the billing
- * history in two.
+ * history in two. Two callers racing in-flight on the same key get one customer
+ * and one retryable `idempotency_key_in_use` error, never two customers. The
+ * only residue is an orphan: if the wallet write fails and the key has since
+ * been pruned (24 h), the next call mints a second customer while the first is
+ * referenced by nothing — no double billing, no split history, and it is
+ * recoverable by hand, so we accept it rather than add a reservation dance.
  */
 export async function ensureStripeCustomer(
   db: PrismaClient,
@@ -195,6 +215,11 @@ export async function createCreditCheckoutSession(
     automatic_tax: { enabled: true },
     tax_id_collection: { enabled: true },
     invoice_creation: { enabled: true },
+    // Persist the tax address Checkout collects onto the Customer. The default
+    // ("never") throws it away: the next purchase would re-collect it, and the
+    // Customer that `invoice_creation` bills would stay address-less — which no
+    // compliant French invoice can be (amendment 17).
+    customer_update: { address: "auto" },
     client_reference_id: organizationId,
     metadata,
     success_url: `${baseUrl}/settings?credit_checkout={CHECKOUT_SESSION_ID}`,
@@ -202,7 +227,7 @@ export async function createCreditCheckoutSession(
   });
 
   if (!session.url) {
-    throw new Error(`Stripe Checkout session ${session.id} came back without a redirect URL`);
+    throw new MissingCheckoutSessionUrlError(session.id);
   }
 
   return { ok: true, url: session.url };
@@ -255,8 +280,19 @@ async function resolvePackPricing(
 
   const productId =
     pack.storedProductId ?? (typeof stored.product === "string" ? stored.product : stored.product.id);
-  const { data } = await stripe.prices.list({ product: productId, active: true, limit: 100 });
-  const replacement = data.find((price) => price.metadata?.packId === pack.packId);
+  const { data } = await stripe.prices.list({
+    product: productId,
+    active: true,
+    limit: 100,
+    // Without this the response carries no `currency_options` at all and the USD
+    // refresh below would silently read nothing.
+    expand: ["data.currency_options"],
+  });
+  // Mid-rotation the product can hold two active prices for the same pack (the
+  // sync script creates the new one before deactivating the old): newest wins.
+  const replacement = data
+    .filter((price) => price.metadata?.packId === pack.packId)
+    .sort((left, right) => right.created - left.created)[0];
   if (!replacement) {
     return null;
   }

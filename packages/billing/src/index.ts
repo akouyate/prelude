@@ -46,6 +46,7 @@ export {
 export {
   createCreditCheckoutSession,
   ensureStripeCustomer,
+  MissingCheckoutSessionUrlError,
   SUPPORTED_CREDIT_CURRENCIES,
   UnsupportedCreditCurrencyError,
   type CreditCheckoutResult,

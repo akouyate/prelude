@@ -5,6 +5,7 @@ import type { PrismaClient } from "@prelude/db";
 import {
   createCreditCheckoutSession,
   ensureStripeCustomer,
+  MissingCheckoutSessionUrlError,
   UnsupportedCreditCurrencyError,
 } from "./stripe-purchase";
 
@@ -103,6 +104,7 @@ function fakeDb(options: { wallet?: Partial<WalletRow>; packs?: PackRow[] } = {}
 
 type ListedPrice = {
   id: string;
+  created: number;
   metadata: Record<string, string>;
   unit_amount: number | null;
   currency_options?: { [key: string]: { unit_amount: number | null } };
@@ -121,7 +123,15 @@ function fakeStripe(
       retrieve: vi
         .fn()
         .mockResolvedValue(overrides.price ?? { id: "price_hiring", active: true, product: "prod_hiring" }),
-      list: vi.fn().mockResolvedValue({ data: overrides.listed ?? [] }),
+      // Honest about the API: Stripe omits `currency_options` unless the caller
+      // expands it, so a reader that forgets the expand must see nothing here.
+      list: vi.fn(async (params: { expand?: string[] }) => ({
+        data: (overrides.listed ?? []).map((price) => {
+          if (params.expand?.includes("data.currency_options")) return price;
+          const { currency_options: _unexpanded, ...withoutOptions } = price;
+          return withoutOptions;
+        }),
+      })),
     },
     checkout: {
       sessions: {
@@ -233,6 +243,7 @@ describe("createCreditCheckoutSession", () => {
       automatic_tax: { enabled: true },
       tax_id_collection: { enabled: true },
       invoice_creation: { enabled: true },
+      customer_update: { address: "auto" },
       client_reference_id: "org_1",
       metadata: {
         organizationId: "org_1",
@@ -255,9 +266,19 @@ describe("createCreditCheckoutSession", () => {
     const stripe = fakeStripe({
       price: { id: "price_hiring", active: false, product: "prod_hiring" },
       listed: [
-        { id: "price_other_pack", metadata: { packId: "scale_500" }, unit_amount: 149000 },
+        { id: "price_other_pack", created: 300, metadata: { packId: "scale_500" }, unit_amount: 149000 },
+        // Mid-rotation the product can carry two active prices for the same pack.
+        // The older one comes first in the list so a plain `find` would pick it.
+        {
+          id: "price_hiring_v1_bis",
+          created: 100,
+          metadata: { packId: "hiring_100" },
+          unit_amount: 34900,
+          currency_options: { usd: { unit_amount: 37900 } },
+        },
         {
           id: "price_hiring_v2",
+          created: 200,
           metadata: { packId: "hiring_100" },
           unit_amount: 39900,
           currency_options: { usd: { unit_amount: 42900 } },
@@ -268,7 +289,14 @@ describe("createCreditCheckoutSession", () => {
     const result = await createCreditCheckoutSession(db, { ...checkoutInput(), stripe });
 
     expect(result).toEqual({ ok: true, url: "https://checkout.stripe.test/cs_1" });
-    expect(stripe.prices.list).toHaveBeenCalledWith({ product: "prod_hiring", active: true, limit: 100 });
+    // `currency_options` is absent from the response unless it is expanded — without
+    // this parameter the USD refresh below silently reads nothing.
+    expect(stripe.prices.list).toHaveBeenCalledWith({
+      product: "prod_hiring",
+      active: true,
+      limit: 100,
+      expand: ["data.currency_options"],
+    });
     // Stripe just confirmed what the pack costs: the cache follows it, and the
     // metadata Task 5 cross-checks carries those refreshed amounts, not the stale ones.
     expect(spies.creditPack.update).toHaveBeenCalledWith({
@@ -293,7 +321,7 @@ describe("createCreditCheckoutSession", () => {
     const { db, spies } = fakeDb();
     const stripe = fakeStripe({
       price: { id: "price_hiring", active: false, product: "prod_hiring" },
-      listed: [{ id: "price_hiring_v2", metadata: { packId: "hiring_100" }, unit_amount: null }],
+      listed: [{ id: "price_hiring_v2", created: 100, metadata: { packId: "hiring_100" }, unit_amount: null }],
     });
 
     await createCreditCheckoutSession(db, { ...checkoutInput(), stripe });
@@ -313,7 +341,7 @@ describe("createCreditCheckoutSession", () => {
     const { db, spies } = fakeDb();
     const stripe = fakeStripe({
       price: { id: "price_hiring", active: false, product: "prod_hiring" },
-      listed: [{ id: "price_other_pack", metadata: { packId: "scale_500" }, unit_amount: 149000 }],
+      listed: [{ id: "price_other_pack", created: 100, metadata: { packId: "scale_500" }, unit_amount: 149000 }],
     });
 
     expect(await createCreditCheckoutSession(db, { ...checkoutInput(), stripe })).toEqual({
@@ -425,9 +453,9 @@ describe("createCreditCheckoutSession", () => {
     const { db } = fakeDb();
     const stripe = fakeStripe({ sessionUrl: null });
 
-    await expect(createCreditCheckoutSession(db, { ...checkoutInput(), stripe })).rejects.toThrow(
-      /redirect url/i,
-    );
+    await expect(
+      createCreditCheckoutSession(db, { ...checkoutInput(), stripe }),
+    ).rejects.toBeInstanceOf(MissingCheckoutSessionUrlError);
   });
 
   it("tolerates a trailing slash on the console origin", async () => {
