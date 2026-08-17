@@ -117,12 +117,26 @@ describe.skipIf(!sandboxKey || !databaseUrl)("Stripe purchase path (sandbox)", (
     }
 
     if (db) {
-      // Children first: `CreditWallet.organizationId` is `onDelete: Restrict`.
-      await db.creditLedgerEntry.deleteMany({ where: { organizationId } });
-      await db.creditReservation.deleteMany({ where: { organizationId } });
-      await db.creditLot.deleteMany({ where: { organizationId } });
-      await db.creditWallet.deleteMany({ where: { organizationId } });
-      await db.organization.deleteMany({ where: { id: organizationId } });
+      // The guard is not defensive style, it is a safety interlock. `beforeAll`
+      // assigns `organizationId` only after two Stripe calls, and `afterAll` runs
+      // even when those throw — so this block can be reached with it still
+      // `undefined`. Prisma (without `strictUndefinedChecks`) does not treat an
+      // undefined filter value as "match nothing": it DROPS the key, turning
+      // `where: { organizationId: undefined }` into `where: {}` and the delete
+      // into an unfiltered `DELETE FROM`. That would empty these five tables in
+      // the shared `TEST_DATABASE_URL` that the sibling gated suites use. Never
+      // remove it, and never let one of these filters reference a `let` that is
+      // not proven assigned by this point.
+      if (organizationId) {
+        // Children first: `CreditWallet.organizationId` is `onDelete: Restrict`.
+        await db.creditLedgerEntry.deleteMany({ where: { organizationId } });
+        await db.creditReservation.deleteMany({ where: { organizationId } });
+        await db.creditLot.deleteMany({ where: { organizationId } });
+        await db.creditWallet.deleteMany({ where: { organizationId } });
+        await db.organization.deleteMany({ where: { id: organizationId } });
+      }
+      // `packId` needs no guard: it is a `const` computed at suite scope, so it
+      // is a string on every path that can reach here.
       await db.creditPack.deleteMany({ where: { id: packId } });
       await db.$disconnect();
     }
