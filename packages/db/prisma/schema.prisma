@@ -14,6 +14,11 @@ model Organization {
   companySize            String?
   hiringFocus            String?
   defaultInterviewMode   String?
+  // Declared jurisdiction hint (organizationCountrySchema enum in @prelude/contracts),
+  // settings-only, owner/admin submit only. Never a fiscal fact and never a
+  // currency input — fiscal authority stays the address Stripe collects at
+  // Checkout. Null means "nobody told us"; no inference, no backfill.
+  country                String?
   settings               Json                          @default("{}")
   onboardingState        Json                          @default("{}")
   onboardingStep         String                        @default("welcome")
@@ -398,28 +403,38 @@ model OrganizationBillingState {
 // survive product-row deletion, so nothing cascades from CandidateSession and
 // organizations with billing history cannot be hard-deleted (Restrict).
 model CreditWallet {
-  id               String       @id @default(cuid())
-  organizationId   String       @unique
-  availableCredits Int          @default(0)
-  reservedCredits  Int          @default(0)
-  stripeCustomerId String?      @unique
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
-  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  id                 String       @id @default(cuid())
+  organizationId     String       @unique
+  availableCredits   Int          @default(0)
+  reservedCredits    Int          @default(0)
+  stripeCustomerId   String?      @unique
+  // Locked at the first paid lot from session.currency (grantPurchasedCreditLot);
+  // a later purchase in a different currency is refused, never converted — the
+  // prorata auto-refund math is only computable when every paid lot shares one
+  // currency. Free lots never set nor check it.
+  settlementCurrency String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
 }
 
 model CreditLot {
-  id                      String       @id @default(cuid())
+  id                      String              @id @default(cuid())
   organizationId          String
   kind                    String // free | paid
   source                  String // first_five | pack_purchase | auto_topup | manual_grant | enterprise_commitment
   packId                  String?
   creditsGranted          Int
-  creditsConsumed         Int          @default(0)
-  creditsReserved         Int          @default(0)
+  creditsConsumed         Int                 @default(0)
+  creditsReserved         Int                 @default(0)
   unitAmountCents         Int?
-  currency                String       @default("EUR")
-  status                  String       @default("active") // active | exhausted | expired | frozen | revoked
+  currency                String              @default("EUR")
+  // Observed at fulfilment from session.customer_details.address.country (the
+  // tax-grade fact Stripe collected at Checkout). Never copied to
+  // Organization.country — observed and declared stay separate columns with
+  // separate authority. Absent address stays null; no error.
+  billingCountry          String?
+  status                  String              @default("active") // active | exhausted | expired | frozen | revoked
   grantedAt               DateTime
   expiresAt               DateTime
   // Phase 2 (#140) amendment 11: when a chargeback froze this lot. Kept after the
@@ -427,12 +442,12 @@ model CreditLot {
   // and this is the only record of how long, which is what a future
   // expiry-extension decision needs. Overwritten only by a LATER freeze.
   frozenAt                DateTime?
-  stripePaymentIntentId   String?      @unique
-  stripeCheckoutSessionId String?      @unique
-  stripeInvoiceId         String?      @unique
-  createdAt               DateTime     @default(now())
-  updatedAt               DateTime     @updatedAt
-  organization            Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  stripePaymentIntentId   String?             @unique
+  stripeCheckoutSessionId String?             @unique
+  stripeInvoiceId         String?             @unique
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+  organization            Organization        @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   ledgerEntries           CreditLedgerEntry[]
   reservations            CreditReservation[]
 
@@ -586,6 +601,10 @@ model NotificationDelivery {
   failedAt           DateTime?
   errorCode          String?
   errorSummary       String?
+  // Locale the delivery was rendered in — recorded for audit alongside the
+  // recipient's User.preferredLanguage that drove it. Written by the
+  // notification service (T4); templates stay EN copy for now.
+  locale             String?
   createdAt          DateTime              @default(now())
   updatedAt          DateTime              @updatedAt
   organization       Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)

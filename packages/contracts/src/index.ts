@@ -66,6 +66,10 @@ export {
   type SaveOrganizationOnboardingProgressInput,
 } from "./schemas/onboarding";
 export {
+  organizationCountrySchema,
+  type OrganizationCountry,
+} from "./schemas/organization";
+export {
   importedRoleDraftSchema,
   roleIntakeAcquisitionStrategySchema,
   roleIntakeDraftLimits,
