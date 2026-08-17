@@ -24,7 +24,7 @@ export function isLotEligible(lot: CreditLotSnapshot, now: Date): boolean {
 // notion: a fully-reserved lot (availableInLot === 0) is not eligible for
 // consumption, but it is still holding real reserved credits that must
 // stay in the wallet's totals.
-function isLotClockActive(lot: CreditLotSnapshot, now: Date): boolean {
+export function isLotClockActive(lot: CreditLotSnapshot, now: Date): boolean {
   return lot.status === "active" && lot.expiresAt > now;
 }
 
