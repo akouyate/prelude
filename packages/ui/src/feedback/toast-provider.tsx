@@ -130,7 +130,17 @@ export function useToast() {
   managerRef.current = manager;
 
   const toast = React.useCallback(
-    ({ tone = "info", message, duration, dismissLabel }: ToastOptions) => {
+    ({ tone = "info", message, duration, dismissLabel }: ToastOptions): void => {
+      // Explicitly `void`, not inferred: `add()` below returns the created
+      // toast's id, but the `queueMicrotask` deferral means that id doesn't
+      // exist yet when this function returns — there is nothing synchronous
+      // left to hand back. No call site relies on a return value today (and
+      // `dismiss()` is unused), so this just makes the compiler enforce what
+      // the code already does. A future programmatic-dismiss or
+      // promise-toast API that needs the id would have to generate it
+      // caller-side and pass it in as part of `ToastOptions`, not read it
+      // off this call's return.
+      //
       // Every real call site fires this from a useEffect (an outcome arriving,
       // a copy succeeding, an invite being created) — never a render body. That
       // still isn't safe to call synchronously: React keeps CommitContext on
