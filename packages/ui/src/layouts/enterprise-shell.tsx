@@ -80,6 +80,17 @@ export type EnterpriseNavCounts = {
   roles?: number;
 };
 
+// Populated by `getWorkspaceCreditSummary` (apps/console) from the prepaid
+// wallet. `nextExpiryLabel` arrives pre-formatted so this package stays free
+// of a date library, same reasoning as passing counts instead of raw records.
+export type EnterpriseNavCredits = {
+  available: number;
+  low: boolean;
+  nextExpiryLabel: string | null;
+  topUpHref: string;
+  totalGranted: number;
+};
+
 const settingsNavItem: ShellNavItem = {
   href: "/settings",
   key: "settings",
@@ -133,6 +144,7 @@ export type EnterpriseShellProps = {
   children: React.ReactNode;
   className?: string;
   collapsed?: boolean;
+  credits?: EnterpriseNavCredits | null;
   navCounts?: EnterpriseNavCounts;
   onCollapsedChange?: (collapsed: boolean) => void;
 };
@@ -144,6 +156,7 @@ export function EnterpriseShell({
   children,
   className,
   collapsed = false,
+  credits,
   navCounts = {},
   onCollapsedChange,
 }: EnterpriseShellProps) {
@@ -157,6 +170,7 @@ export function EnterpriseShell({
           accountActions={accountActions}
           activePath={activePath}
           collapsed={collapsed}
+          credits={credits}
           navCounts={navCounts}
           onCollapsedChange={onCollapsedChange}
           organizationName={organizationName}
@@ -168,7 +182,7 @@ export function EnterpriseShell({
             collapsed && "min-[901px]:pl-[68px]",
           )}
         >
-          <MobileWorkspaceHeader organizationName={organizationName} />
+          <MobileWorkspaceHeader credits={credits} organizationName={organizationName} />
           <main className="px-[clamp(16px,3vw,40px)] py-[clamp(20px,3vw,38px)] pb-16">
             <div className="mx-auto w-full max-w-[1180px]">{children}</div>
           </main>
@@ -180,17 +194,46 @@ export function EnterpriseShell({
 }
 
 function MobileWorkspaceHeader({
+  credits,
   organizationName,
 }: {
+  credits?: EnterpriseNavCredits | null;
   organizationName: string;
 }) {
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-[#e7e2d8] bg-[#faf8f3]/97 px-4 py-[11px] backdrop-blur-[14px] min-[901px]:hidden">
       <BrandMark appearance="color" labelClassName="h-[26px] max-w-none" />
-      <span className="max-w-[9rem] truncate text-right text-xs font-medium text-[#8a8178]">
-        {organizationName}
-      </span>
+      {credits ? (
+        <MobileCreditPill credits={credits} />
+      ) : (
+        <span className="max-w-[9rem] truncate text-right text-xs font-medium text-[#8a8178]">
+          {organizationName}
+        </span>
+      )}
     </header>
+  );
+}
+
+function MobileCreditPill({ credits }: { credits: EnterpriseNavCredits }) {
+  return (
+    <a
+      className={cn(
+        "flex shrink-0 items-center gap-1.5 rounded-full border bg-white px-3 py-1.5 font-title text-[12px] font-semibold text-ink-900",
+        credits.low && "border-[#eccfc2] bg-[#fffaf7] text-[#a3421f]",
+        !credits.low && "border-[#e7e2d8]",
+      )}
+      href={credits.topUpHref}
+      title={creditMeterTitle(credits)}
+    >
+      <span
+        className={cn(
+          "h-1.5 w-1.5 shrink-0 rounded-full",
+          credits.low ? "bg-[#c2542f]" : "bg-olive-700",
+        )}
+      />
+      {credits.available}
+      <span className="font-medium text-[#8a8178]">credits</span>
+    </a>
   );
 }
 
@@ -233,6 +276,7 @@ function EnterpriseSidebar({
   accountActions,
   activePath,
   collapsed,
+  credits,
   navCounts,
   onCollapsedChange,
   organizationName,
@@ -241,6 +285,7 @@ function EnterpriseSidebar({
   accountActions?: React.ReactNode;
   activePath: string;
   collapsed: boolean;
+  credits?: EnterpriseNavCredits | null;
   navCounts: EnterpriseNavCounts;
   onCollapsedChange?: (collapsed: boolean) => void;
   organizationName: string;
@@ -314,6 +359,7 @@ function EnterpriseSidebar({
       ))}
 
       <div className="mt-auto flex flex-col gap-0.5 border-t border-[#f0ece1] pt-2.5">
+        {credits ? <CreditMeter collapsed={collapsed} credits={credits} /> : null}
         <SidebarNavItem
           active={isActivePath(activePath, settingsNavItem.href)}
           collapsed={collapsed}
@@ -356,6 +402,132 @@ function EnterpriseSidebar({
       </div>
     </aside>
   );
+}
+
+// The prepaid wallet, above Settings in the bottom section. `credits.available`
+// already excludes held reservations (it comes straight from
+// `computeWalletTotals` in @prelude/core), so the "used" fraction below is
+// exactly `totalGranted - available` — a reservation shows as used without
+// this component knowing reservations exist.
+function CreditMeter({
+  collapsed,
+  credits,
+}: {
+  collapsed: boolean;
+  credits: EnterpriseNavCredits;
+}) {
+  const usedFraction =
+    credits.totalGranted > 0
+      ? Math.min(
+          1,
+          Math.max(0, (credits.totalGranted - credits.available) / credits.totalGranted),
+        )
+      : 0;
+
+  if (collapsed) {
+    return (
+      <a
+        className={cn(
+          "mb-2 flex flex-col items-center gap-1 rounded-[14px] border bg-white px-2 py-2 transition hover:bg-ink-900/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
+          credits.low && "border-[#eccfc2] bg-[#fffaf7]",
+          !credits.low && "border-[#e7e2d8]",
+        )}
+        href={credits.topUpHref}
+        title={creditMeterTitle(credits)}
+      >
+        <span
+          className={cn(
+            "font-title text-[12.5px] font-semibold",
+            credits.low ? "text-[#a3421f]" : "text-ink-900",
+          )}
+        >
+          {credits.available}
+        </span>
+        <span
+          className={cn(
+            "h-1 w-[26px] overflow-hidden rounded-full",
+            credits.low ? "bg-[#f7e4dc]" : "bg-[#eceada]",
+          )}
+        >
+          <span
+            className={cn(
+              "block h-full rounded-full",
+              credits.low ? "bg-[#c2542f]" : "bg-olive-800",
+            )}
+            style={{ width: `${usedFraction * 100}%` }}
+          />
+        </span>
+      </a>
+    );
+  }
+
+  return (
+    <a
+      className={cn(
+        "mb-2.5 flex flex-col gap-2 rounded-2xl border px-3 py-2.5 transition hover:bg-ink-900/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
+        credits.low && "border-[#eccfc2] bg-[#fffaf7]",
+        !credits.low && "border-[#e7e2d8]",
+      )}
+      href={credits.topUpHref}
+    >
+      <div className="flex items-center justify-between">
+        <span className="font-title text-[10px] font-semibold uppercase tracking-[0.1em] text-[#a29b8d]">
+          Credits
+        </span>
+        <span
+          className={cn(
+            "font-title text-[11px] font-semibold",
+            credits.low ? "text-[#a3421f]" : "text-olive-900",
+          )}
+        >
+          Top up
+        </span>
+      </div>
+      <div className="flex items-baseline gap-1.5">
+        <span
+          className={cn(
+            "font-title text-[21px] font-semibold tracking-[-0.02em]",
+            credits.low ? "text-[#a3421f]" : "text-[#171715]",
+          )}
+        >
+          {credits.available}
+        </span>
+        {credits.totalGranted > 0 ? (
+          <span className="text-[11.5px] text-[#8a8178]">
+            left of {credits.totalGranted}
+          </span>
+        ) : null}
+      </div>
+      <span
+        className={cn(
+          "block h-[5px] overflow-hidden rounded-full",
+          credits.low ? "bg-[#f7e4dc]" : "bg-[#eceada]",
+        )}
+      >
+        <span
+          className={cn(
+            "block h-full rounded-full",
+            credits.low ? "bg-[#c2542f]" : "bg-olive-800",
+          )}
+          style={{ width: `${usedFraction * 100}%` }}
+        />
+      </span>
+      {credits.nextExpiryLabel ? (
+        <span className="text-[10.5px] text-[#a29b8d]">
+          {credits.nextExpiryLabel}
+        </span>
+      ) : null}
+    </a>
+  );
+}
+
+function creditMeterTitle(credits: EnterpriseNavCredits): string {
+  const base =
+    credits.totalGranted > 0
+      ? `${credits.available} credits available, left of ${credits.totalGranted}`
+      : `${credits.available} credits available`;
+
+  return credits.nextExpiryLabel ? `${base}. ${credits.nextExpiryLabel}.` : `${base}.`;
 }
 
 function ChevronPair({ direction }: { direction: "left" | "right" }) {
