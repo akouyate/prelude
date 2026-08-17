@@ -47,10 +47,18 @@
   --color-signal-weak: #f2ab93;
   --color-coral-50: #fff4f0;
   --color-coral-100: #ffe3d8;
+  /* Added for the dark toast's danger-tone countdown ring (`stroke-coral-400`
+     in packages/ui/src/feedback/toast-provider.tsx) — matches
+     packages/design-system/src/tokens/colors.ts, which had this shade all
+     along; this file only ever declared the subset already in use. */
+  --color-coral-400: #f66d4c;
   --color-coral-600: #b93920;
   --color-coral-700: #922f1d;
   --color-coral-800: #762a1d;
   --color-gold-100: #ffedb8;
+  /* Added for the dark toast's warning-tone countdown ring
+     (`stroke-gold-300`) — same source as coral-400 above. */
+  --color-gold-300: #f6c84e;
   --color-gold-800: #5e3e14;
   --font-title: var(--font-title-sans), ui-sans-serif, system-ui, sans-serif;
   --font-display: Georgia, ui-serif, serif;
@@ -87,6 +95,70 @@ h3 {
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+/*
+ * The toast's circular countdown (packages/ui/src/feedback/toast-provider.tsx's
+ * `CountdownClose`) depletes over the toast's own duration. packages/ui ships
+ * no CSS of its own — every consumer's Tailwind build supplies its utility
+ * classes already — so the one animation this needs lives here, the same way
+ * `cc-paneIn` above does.
+ *
+ * `--toast-duration` and `--toast-ring-circumference` are set inline, per
+ * toast, by `CountdownClose`. `data-animated="true"` is set only for a toast
+ * with a real duration (never a persistent `duration: null` one — see that
+ * component's doc comment for why a persistent toast must not deplete).
+ */
+@keyframes toast-countdown-deplete {
+  from {
+    stroke-dashoffset: 0;
+  }
+
+  to {
+    stroke-dashoffset: var(--toast-ring-circumference);
+  }
+}
+
+.toast-countdown-ring[data-animated="true"] {
+  animation-name: toast-countdown-deplete;
+  animation-duration: var(--toast-duration, 6000ms);
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
+/*
+ * Base UI's `Toast.Root` (and `Toast.Viewport`) carry `data-expanded` for
+ * exactly the pause conditions that flow through its `hovering`/`focused`
+ * state — hover, focus, and a touch-swipe start
+ * (@base-ui-components/react/toast: provider/ToastProvider.js's
+ * `expanded = hovering || focused`; root/ToastRoot.js and
+ * viewport/ToastViewport.js both render it as `data-expanded`). Pausing the
+ * ring here keeps it in phase with the real dismissal timer for those three.
+ *
+ * The timer's fourth pause condition — the browser window losing focus — is
+ * NOT covered: `viewport/ToastViewport.js`'s `handleWindowBlur` calls
+ * `pauseTimers()` straight from a `blur` listener without touching
+ * `hovering`/`focused` or setting any other state, so it triggers no
+ * re-render and no attribute changes. The ring keeps sweeping while the
+ * window is blurred even though the real timer is frozen — confirmed by
+ * reading Base UI's source, not an oversight here. A ring that silently
+ * disagreed with the timer for hover/focus/swipe would be worse than no ring
+ * at all, which is why those three are wired up; this fourth case is the one
+ * gap CSS cannot close.
+ */
+[data-expanded] .toast-countdown-ring[data-animated="true"] {
+  animation-play-state: paused;
+}
+
+/* No sweeping animation under reduced motion: the ring renders fully
+   "complete" (`stroke-dashoffset: 0`), a static tone-colour circle carrying
+   the same information (there is a dismiss control, in the toast's tone)
+   with no motion. */
+@media (prefers-reduced-motion: reduce) {
+  .toast-countdown-ring[data-animated="true"] {
+    animation: none;
+    stroke-dashoffset: 0;
   }
 }
 

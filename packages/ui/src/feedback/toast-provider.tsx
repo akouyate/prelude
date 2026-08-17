@@ -20,6 +20,36 @@ import { Toast } from "./toast";
 
 export type ToastTone = "danger" | "info" | "success" | "warning";
 
+// The countdown ring: an 18-20px circle, ~2px stroke, that depletes over the
+// toast's own duration. Geometry is computed once, then handed to the SVG as
+// `stroke-dasharray`/a `--toast-ring-circumference` custom property — see
+// `apps/console/app/globals.css` for the `@keyframes` that actually animates
+// `stroke-dashoffset` from there (packages/ui ships no CSS of its own; every
+// consumer's Tailwind build supplies the utility classes already, so the one
+// small animation this adds lives in the same place).
+const RING_SIZE = 20;
+const RING_STROKE = 2;
+const RING_RADIUS = (RING_SIZE - RING_STROKE) / 2;
+const RING_CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+// Tone is carried by the ring's stroke colour, not the card background (the
+// card stays the same dark surface for every tone — see `toast.tsx`). Each
+// value is verified >4.5:1 against the `ink-900`-based surface (the AA floor
+// for the description text is 4.5:1; these are graphical/UI elements, whose
+// floor is 3:1, but the actual numbers clear both):
+//   meadow-400 vs surface  6.36:1
+//   coral-400  vs surface  5.28:1
+//   gold-300   vs surface  9.73:1
+//   ink-300    vs surface  8.58:1
+// (computed against the worst case — the surface composited at its actual
+// opacity over the app's cream background, not the solid ink-900 swatch).
+const ringToneClasses: Record<ToastTone, string> = {
+  danger: "stroke-coral-400",
+  info: "stroke-ink-300",
+  success: "stroke-meadow-400",
+  warning: "stroke-gold-300",
+};
+
 export type ToastOptions = {
   tone?: ToastTone;
   message: React.ReactNode;
@@ -38,13 +68,6 @@ type ToastData = { dismissLabel: string };
 
 const DEFAULT_DURATION_MS = 6000;
 
-const toneClasses: Record<ToastTone, string> = {
-  danger: "border-coral-100 bg-coral-50/95 text-coral-800",
-  info: "border-ink-100 bg-white/86 text-ink-800",
-  success: "border-[#dfe7ca] bg-[#f7f9ef]/95 text-olive-900",
-  warning: "border-gold-100 bg-[#fff8e6]/95 text-gold-800",
-};
-
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <BaseToast.Provider timeout={DEFAULT_DURATION_MS}>
@@ -54,9 +77,9 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           Bottom-center, floating, blurred card: the same idiom this codebase
           already uses for other transient/fixed overlays anchored to the
           viewport edge (see the candidate decision bar), and the shape the
-          `Toast` primitive's own styling (rounded-2xl, translucent white,
-          backdrop-blur) reads as designed for — a light floating card, not a
-          persistent corner control.
+          `Toast` primitive's own styling (rounded-2xl, dark translucent
+          surface, backdrop-blur) reads as designed for — a floating card, not
+          a persistent corner control.
         */}
         <BaseToast.Viewport className="fixed inset-x-0 bottom-6 z-[70] flex flex-col-reverse items-center gap-2 px-4 outline-none">
           <ToastStack />
@@ -72,18 +95,24 @@ function ToastStack() {
   return toasts.map((entry) => {
     const tone = (entry.type as ToastTone | undefined) ?? "info";
     const dismissLabel = (entry.data as ToastData | undefined)?.dismissLabel ?? "Dismiss";
+    // `entry.timeout` is always a number here (see `useToast` below: `0` for
+    // "persistent", never `undefined`) — `0`/negative means Base UI never
+    // scheduled a dismissal at all (`toast/provider/ToastProvider.js`'s
+    // `add()`: `duration > 0` gates `scheduleTimer`), so there is nothing for
+    // a ring to honestly count down.
+    const durationMs = entry.timeout && entry.timeout > 0 ? entry.timeout : null;
 
     return (
       <BaseToast.Root
+        // This is the element `data-expanded` lands on (see `CountdownClose`'s
+        // doc comment) — `apps/console/app/globals.css`'s
+        // `[data-expanded] .toast-countdown-ring` rule reads it from here.
         className="w-[min(380px,88vw)] transition-all duration-200 ease-out data-[ending-style]:opacity-0 data-[starting-style]:translate-y-2 data-[starting-style]:opacity-0 motion-reduce:transition-none"
         key={entry.id}
         toast={entry}
       >
         <Toast
-          className={cn(
-            "pointer-events-auto flex w-full items-start justify-between gap-3 shadow-[0_16px_44px_rgba(20,18,12,0.16)]",
-            toneClasses[tone],
-          )}
+          className="pointer-events-auto flex w-full items-start justify-between gap-3"
           // `Toast.Viewport` already renders role="region" aria-live="polite"
           // aria-relevant="additions text" (base-ui: toast/viewport/ToastViewport.js) —
           // it is the sole announcer for this stack. `Toast`'s own role="status"
@@ -93,19 +122,101 @@ function ToastStack() {
           // that made VoiceOver double-announce.
           role="presentation"
         >
-          <BaseToast.Description className="min-w-0 flex-1">
+          <BaseToast.Description className="min-w-0 flex-1 pt-0.5">
             {entry.description}
           </BaseToast.Description>
-          <BaseToast.Close
-            aria-label={dismissLabel}
-            className="shrink-0 cursor-pointer rounded-full p-0.5 text-current opacity-60 transition hover:opacity-100"
-          >
-            <Xmark className="h-4 w-4" />
-          </BaseToast.Close>
+          <CountdownClose dismissLabel={dismissLabel} durationMs={durationMs} tone={tone} />
         </Toast>
       </BaseToast.Root>
     );
   });
+}
+
+/**
+ * The circular countdown IS the close control: a real `<button>`
+ * (`BaseToast.Close`, which already carries `close(toast.id)` on click and
+ * `aria-hidden={!expanded}` for screen readers — base-ui:
+ * toast/close/ToastClose.js) wrapping an SVG ring plus a centred `×` that
+ * fades in on hover/focus.
+ *
+ * Two correctness rules govern the ring itself (both enforced in CSS, in
+ * `apps/console/app/globals.css`, not here — this component only supplies the
+ * per-instance geometry/duration as data):
+ *
+ * 1. It must pause exactly when the dismissal timer pauses. Base UI's
+ *    `Toast.Root` carries `data-expanded` for exactly three of its four pause
+ *    conditions — hover, focus, and a touch-swipe start, all of which flow
+ *    through the shared `expanded = hovering || focused` state
+ *    (toast/provider/ToastProvider.js) that both `Toast.Root` and
+ *    `Toast.Viewport` render as `data-expanded`. The fourth — window blur —
+ *    calls `pauseTimers()` directly from a `blur` listener
+ *    (toast/viewport/ToastViewport.js's `handleWindowBlur`) without touching
+ *    `hovering`/`focused` or any other state, so it triggers no re-render and
+ *    sets no attribute. That pause is real but **not observable from CSS** —
+ *    the ring keeps sweeping while the window is blurred and the real timer
+ *    is frozen. Shipping a ring that silently drifts from the timer for the
+ *    other three conditions would be worse than no ring; this gap is
+ *    documented rather than hidden, and is the one case this component cannot
+ *    honestly represent.
+ * 2. A persistent toast (`durationMs === null`) renders the same ring
+ *    geometry, fully "complete" (`stroke-dashoffset: 0`, a solid tone-colour
+ *    circle) and marked `data-animated="false"` — never the depleting
+ *    animation, which would claim an expiry that does not exist.
+ */
+function CountdownClose({
+  dismissLabel,
+  durationMs,
+  tone,
+}: {
+  dismissLabel: string;
+  durationMs: number | null;
+  tone: ToastTone;
+}) {
+  return (
+    <BaseToast.Close
+      aria-label={dismissLabel}
+      className="group relative grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-full text-ink-50 outline-none focus-visible:ring-2 focus-visible:ring-ink-50 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-900"
+    >
+      <svg
+        aria-hidden="true"
+        className="-rotate-90"
+        height={RING_SIZE}
+        viewBox={`0 0 ${RING_SIZE} ${RING_SIZE}`}
+        width={RING_SIZE}
+      >
+        <circle
+          className="stroke-white/15"
+          cx={RING_SIZE / 2}
+          cy={RING_SIZE / 2}
+          fill="none"
+          r={RING_RADIUS}
+          strokeWidth={RING_STROKE}
+        />
+        <circle
+          className={cn("toast-countdown-ring", ringToneClasses[tone])}
+          cx={RING_SIZE / 2}
+          cy={RING_SIZE / 2}
+          data-animated={durationMs !== null}
+          data-testid="toast-countdown-ring"
+          fill="none"
+          r={RING_RADIUS}
+          strokeDasharray={RING_CIRCUMFERENCE}
+          strokeLinecap="round"
+          strokeWidth={RING_STROKE}
+          style={
+            {
+              "--toast-duration": durationMs !== null ? `${durationMs}ms` : undefined,
+              "--toast-ring-circumference": `${RING_CIRCUMFERENCE}px`,
+            } as React.CSSProperties
+          }
+        />
+      </svg>
+      <Xmark
+        aria-hidden="true"
+        className="absolute h-3.5 w-3.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
+      />
+    </BaseToast.Close>
+  );
 }
 
 export function useToast() {

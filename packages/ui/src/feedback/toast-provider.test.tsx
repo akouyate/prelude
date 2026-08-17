@@ -1,5 +1,6 @@
 import * as React from "react";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ToastProvider, useToast } from "./toast-provider";
@@ -220,5 +221,102 @@ describe("dedupe on settle identity, not on every dependency's stability", () =>
       setTimeout(resolve, 100);
     });
     expect(screen.getAllByText("Invited")).toHaveLength(1);
+  });
+});
+
+function FiresToast({
+  duration,
+  message = "Hello",
+}: {
+  duration?: number | null;
+  message?: string;
+}) {
+  const { toast } = useToast();
+
+  React.useEffect(() => {
+    toast({ dismissLabel: "Dismiss", duration, message, tone: "success" });
+    // Fire-once-on-mount, same shape as `FiresOnMount` above.
+  }, [toast]);
+
+  return null;
+}
+
+/**
+ * Rule 2 from the redesign brief: a persistent toast (`duration: null`, the
+ * shape `purchaseToastFor`'s failure branch uses in
+ * `apps/console/src/features/settings/settings-billing-helpers.ts`) never
+ * expires on its own, so a depleting ring would assert a countdown that does
+ * not exist. jsdom cannot observe whether a CSS animation is actually
+ * running (no rendering engine), so this pins what IS observable in jsdom —
+ * `data-animated` on the ring circle — and leaves the *visual* sweep/no-sweep
+ * proof to the browser screenshots in the redesign report.
+ */
+describe("countdown ring: persistent toasts render no animated countdown", () => {
+  it("marks a persistent toast's ring data-animated=false", async () => {
+    render(
+      <ToastProvider>
+        <FiresToast duration={null} message="Persistent" />
+      </ToastProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Persistent")).toBeInTheDocument();
+    });
+
+    const ring = screen.getByTestId("toast-countdown-ring");
+    expect(ring).toHaveAttribute("data-animated", "false");
+  });
+
+  it("marks a timed toast's ring data-animated=true", async () => {
+    render(
+      <ToastProvider>
+        <FiresToast duration={5000} message="Timed" />
+      </ToastProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Timed")).toBeInTheDocument();
+    });
+
+    const ring = screen.getByTestId("toast-countdown-ring");
+    expect(ring).toHaveAttribute("data-animated", "true");
+  });
+});
+
+describe("the countdown ring is the close control", () => {
+  it("carries the caller-supplied accessible name and dismisses the toast on click", async () => {
+    const user = userEvent.setup();
+    render(
+      <ToastProvider>
+        <FiresToast duration={null} message="Dismiss me" />
+      </ToastProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Dismiss me")).toBeInTheDocument();
+    });
+
+    // Base UI's `Toast.Close` renders `aria-hidden={!expanded}` — hidden from
+    // the accessibility tree until the stack is hovered/focused (base-ui:
+    // toast/close/ToastClose.js). Per the ARIA accessible-name computation
+    // (the "Hidden Not Referenced" rule the dom-accessibility-api this
+    // package's role queries run on implements), an `aria-hidden="true"`
+    // element's computed name is empty regardless of its own `aria-label` —
+    // so `getByRole(..., { name: "Dismiss" })` cannot find it in this
+    // (collapsed, unhovered) state. That's real ARIA semantics, not a bug in
+    // this component: `{ hidden: true }` surfaces the button anyway (a mouse
+    // click still works on an aria-hidden element — only assistive tech is
+    // affected), and the `dismissLabel` this package promises to carry is
+    // asserted directly off the DOM attribute instead of through the
+    // (here, necessarily empty) accessible-name computation.
+    const closeButton = screen.getByRole("button", { hidden: true });
+    expect(closeButton.tagName).toBe("BUTTON");
+    expect(closeButton).toHaveAttribute("aria-label", "Dismiss");
+
+    await user.click(closeButton);
+
+    await waitFor(() => {
+      expect(screen.queryByText("Dismiss me")).not.toBeInTheDocument();
+    });
   });
 });
