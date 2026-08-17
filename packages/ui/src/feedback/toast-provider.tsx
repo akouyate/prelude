@@ -84,6 +84,14 @@ function ToastStack() {
             "pointer-events-auto flex w-full items-start justify-between gap-3 shadow-[0_16px_44px_rgba(20,18,12,0.16)]",
             toneClasses[tone],
           )}
+          // `Toast.Viewport` already renders role="region" aria-live="polite"
+          // aria-relevant="additions text" (base-ui: toast/viewport/ToastViewport.js) —
+          // it is the sole announcer for this stack. `Toast`'s own role="status"
+          // is spread-overridable (toast.tsx applies {...props} after the
+          // hardcoded role), so it is overridden here to avoid nesting a second
+          // live region inside the first, which is the WAI-ARIA anti-pattern
+          // that made VoiceOver double-announce.
+          role="presentation"
         >
           <BaseToast.Description className="min-w-0 flex-1">
             {entry.description}
@@ -103,16 +111,69 @@ function ToastStack() {
 export function useToast() {
   const manager = BaseToast.useToastManager();
 
+  // `manager` is a NEW object every render whose identity is tied to Base
+  // UI's `toasts` array (`useToastManager` is memoised on
+  // `[toasts, add, close, update, promise]`), and `toasts` gets a new array
+  // reference on every add/close/update ANYWHERE toasts are used in the app.
+  // Consumers legitimately put `toast` in a `useEffect` dependency array —
+  // "announce this outcome once" is exactly an effect's job — so `toast`'s
+  // own identity must not ride along with that churn: an unstable `toast`
+  // reference re-runs every effect that depends on it every time ANY toast
+  // fires anywhere, including its own, which fires another toast, which
+  // changes the reference again — an infinite loop (reproduced: 27 toasts in
+  // 100ms from a single mount before this fix). `managerRef` always holds the
+  // latest manager, updated during render (safe — it happens before any
+  // effect or callback can read it); `toast`/`dismiss` are empty-deps
+  // `useCallback`s that read it at call time, so their own identity never
+  // changes.
+  const managerRef = React.useRef(manager);
+  managerRef.current = manager;
+
   const toast = React.useCallback(
-    ({ tone = "info", message, duration, dismissLabel }: ToastOptions) =>
-      manager.add<ToastData>({
-        data: { dismissLabel },
-        description: message,
-        timeout: duration === null ? 0 : (duration ?? DEFAULT_DURATION_MS),
-        type: tone,
-      }),
-    [manager],
+    ({ tone = "info", message, duration, dismissLabel }: ToastOptions) => {
+      // Every real call site fires this from a useEffect (an outcome arriving,
+      // a copy succeeding, an invite being created) — never a render body. That
+      // still isn't safe to call synchronously: React keeps CommitContext on
+      // the stack for the whole passive-effect flush, and the new toast's
+      // Toast.Root measures itself in a layout effect that calls
+      // ReactDOM.flushSync (base-ui: toast/root/ToastRoot.js's
+      // `recalculateHeight`) as soon as it mounts. Calling `add` in the same
+      // tick re-enters that still-active context — "flushSync was called from
+      // inside a lifecycle method" — and once two toasts overlap, the height
+      // recalculation on each mount can retrigger the next before React
+      // settles, which contributed to the "Maximum update depth exceeded"
+      // crash observed here (the referential-instability fix above removes
+      // the other, larger contributor). Queuing the add as a microtask lets
+      // the effect flush's call stack unwind first, so base-ui's own
+      // flushSync lands as a fresh top-level update instead of a nested one.
+      //
+      // What this does NOT reach: under React StrictMode (on by default for
+      // the app router since Next 13.5.1 — apps/console does not override
+      // it), React double-invokes every layout effect in dev, so
+      // `recalculateHeight` itself still fires twice per toast and each
+      // invocation's flushSync still warns — a bounded, non-growing pair per
+      // toast, confirmed by firing multiple toasts in a row and watching the
+      // count stay exactly 2-per-toast, never compounding. That pair lives
+      // entirely inside base-ui's own layout effect, not in any code this
+      // file calls synchronously, doesn't happen in production (StrictMode's
+      // double-invoke is dev-only), and doesn't happen in this file's own
+      // test below (no StrictMode wrapper there) — so there is nothing left
+      // on this side of the call to defer further.
+      queueMicrotask(() => {
+        managerRef.current.add<ToastData>({
+          data: { dismissLabel },
+          description: message,
+          timeout: duration === null ? 0 : (duration ?? DEFAULT_DURATION_MS),
+          type: tone,
+        });
+      });
+    },
+    [],
   );
 
-  return { dismiss: manager.close, toast };
+  const dismiss = React.useCallback((id: string) => {
+    managerRef.current.close(id);
+  }, []);
+
+  return { dismiss, toast };
 }
