@@ -243,13 +243,22 @@ describe("createCreditCheckoutSession", () => {
       line_items: [{ price: "price_hiring", quantity: 1 }],
       automatic_tax: { enabled: true },
       tax_id_collection: { enabled: true },
-      // No `invoice_data` — pinned deliberately. Amendment 15 wants the expiry on
-      // the invoice, but the live account runs Managed Payments, which rejects
-      // `invoice_creation[invoice_data]` outright and would break every purchase.
-      // Re-adding it here must be a conscious act taken together with the
-      // merchant-of-record decision (see the comment in `stripe-purchase.ts`).
-      invoice_creation: { enabled: true },
-      customer_update: { address: "auto" },
+      // Amendment 15, live since Managed Payments was disabled on the account
+      // (HireCall is now the merchant of record): the expiry travels on the
+      // invoice the buyer keeps and forwards to their finance team. Exact string —
+      // 2026-08-15 + PAID_CREDIT_EXPIRY_DAYS.
+      invoice_creation: {
+        enabled: true,
+        invoice_data: {
+          description:
+            "100 HireCall interview credits — valid until 2027-08-15 (12 months from the purchase date).",
+        },
+      },
+      // `name: "auto"` is not decoration: classic Stripe refuses
+      // `tax_id_collection` on an existing Customer without it ("Tax ID
+      // collection requires updating business name on the customer"). Managed
+      // Payments used to hide that requirement.
+      customer_update: { address: "auto", name: "auto" },
       client_reference_id: "org_1",
       metadata: {
         organizationId: "org_1",
@@ -486,34 +495,70 @@ describe("createCreditCheckoutSession", () => {
   });
 
   /**
-   * Amendment 15's invoice line, kept whole and tested while it cannot be sent.
-   *
-   * The live Stripe account has Managed Payments enabled, which rejects
-   * `invoice_creation[invoice_data]` and would fail every checkout — verified
-   * against the real test account, both ways. Turning Managed Payments off makes
-   * us the merchant of record, which is a VAT decision rather than a code one, so
-   * the copy waits here instead of being deleted and rewritten from memory later.
+   * Amendment 15's invoice wording, on its own. The date is the lot's real
+   * `expiresAt` (purchase + `PAID_CREDIT_EXPIRY_DAYS`), computed from the same
+   * constant the ledger stamps on the row — not a hand-written "+1 year" that
+   * could drift from what the database actually promises.
    */
-  it("keeps the invoice wording ready: credits plus the lot's real expiry date", () => {
-    // The date is the lot's real `expiresAt` (purchase + PAID_CREDIT_EXPIRY_DAYS),
-    // computed from the same constant the ledger uses — not a hand-written "+1 year".
+  it("states the credits and their real expiry date, in an unambiguous ISO date", () => {
     expect(creditInvoiceDescription(1000, new Date("2026-12-31T23:00:00.000Z"))).toBe(
       "1000 HireCall interview credits — valid until 2027-12-31 (12 months from the purchase date).",
     );
     expect(creditInvoiceDescription(25, new Date("2026-08-15T09:00:00.000Z"))).toBe(
       "25 HireCall interview credits — valid until 2027-08-15 (12 months from the purchase date).",
     );
+    // A leap year is where a naive "+365 days" and a calendar year diverge; the
+    // constant is days, so this pins what the buyer is actually promised.
+    expect(creditInvoiceDescription(25, new Date("2027-03-01T00:00:00.000Z"))).toBe(
+      "25 HireCall interview credits — valid until 2028-02-29 (12 months from the purchase date).",
+    );
   });
 
-  it("sends no invoice_data at all, because Managed Payments rejects the whole session when it is present", async () => {
+  /**
+   * The deliberate re-add the absence-pinning test was there to gate. Managed
+   * Payments is now off on the account (HireCall is the merchant of record), which
+   * is what makes `invoice_creation[invoice_data]` legal — it fails the whole
+   * session while MP is on. If anyone re-enables MP, this test is the alarm.
+   */
+  it("puts the invoice description on the session, interpolated from THIS pack and THIS purchase date", async () => {
+    const { db } = fakeDb({
+      packs: [pack({ id: "volume_1000", creditsGranted: 1000, visibility: "quiet" })],
+    });
+    const stripe = fakeStripe();
+
+    await createCreditCheckoutSession(db, {
+      ...checkoutInput({ packId: "volume_1000", now: new Date("2026-12-31T23:00:00.000Z") }),
+      stripe,
+    });
+
+    const [params] = stripe.checkout.sessions.create.mock.calls[0] as [
+      { invoice_creation: Record<string, unknown> },
+    ];
+    // Exact object: an extra key here is a parameter nobody reviewed, and a
+    // missing `invoice_data` is amendment 15 silently regressing.
+    expect(params.invoice_creation).toEqual({
+      enabled: true,
+      invoice_data: {
+        description:
+          "1000 HireCall interview credits — valid until 2027-12-31 (12 months from the purchase date).",
+      },
+    });
+  });
+
+  it("collects the buyer's business name, without which classic Stripe refuses tax-id collection", async () => {
     const { db } = fakeDb();
     const stripe = fakeStripe();
 
     await createCreditCheckoutSession(db, { ...checkoutInput(), stripe });
 
-    const [params] = stripe.checkout.sessions.create.mock.calls[0] as [
-      { invoice_creation: Record<string, unknown> },
-    ];
-    expect(params.invoice_creation).toEqual({ enabled: true });
+    // Both legs matter: `address` feeds Stripe Tax and the invoice's mandatory
+    // customer address, `name` is what `tax_id_collection` requires on an
+    // existing Customer. Dropping either breaks a real session, not a test.
+    expect(stripe.checkout.sessions.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customer_update: { address: "auto", name: "auto" },
+        tax_id_collection: { enabled: true },
+      }),
+    );
   });
 });
