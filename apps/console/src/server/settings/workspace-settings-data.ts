@@ -175,6 +175,7 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
     notificationPreferences: preferences.notifications,
     organization: {
       companySize: organization.companySize,
+      country: organization.country,
       defaultInterviewMode: organization.defaultInterviewMode,
       hiringFocus: organization.hiringFocus,
       name: organization.name,

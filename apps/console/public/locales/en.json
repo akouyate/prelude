@@ -557,6 +557,19 @@
         "companySizeOptions": {
           "notSet": "Not set"
         },
+        "country": "Country",
+        "countryOptions": {
+          "notSet": "Not set",
+          "fr": "France",
+          "be": "Belgique",
+          "ch": "Suisse",
+          "lu": "Luxembourg",
+          "gb": "United Kingdom",
+          "us": "United States",
+          "ca": "Canada",
+          "otherEu": "Other (EU)",
+          "otherNonEu": "Other (non-EU)"
+        },
         "residency": "Data residency",
         "residencyDescription": "Where candidate data and recordings are stored.",
         "euResidency": "European Union",

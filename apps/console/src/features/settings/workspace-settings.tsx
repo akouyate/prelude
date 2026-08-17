@@ -229,6 +229,24 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
     { label: "501-1000", value: "501-1000" },
     { label: "1000+", value: "1000+" },
   ];
+  // No pre-selection from the browser locale, deliberately: null must keep
+  // meaning "nobody told us" (plan 2026-08-17, rule 3) — the select always
+  // opens on "Not set" regardless of where the recruiter is browsing from.
+  const countryOptions = [
+    { label: t("settings.workspace.countryOptions.notSet"), value: "" },
+    { label: t("settings.workspace.countryOptions.fr"), value: "FR" },
+    { label: t("settings.workspace.countryOptions.be"), value: "BE" },
+    { label: t("settings.workspace.countryOptions.ch"), value: "CH" },
+    { label: t("settings.workspace.countryOptions.lu"), value: "LU" },
+    { label: t("settings.workspace.countryOptions.gb"), value: "GB" },
+    { label: t("settings.workspace.countryOptions.us"), value: "US" },
+    { label: t("settings.workspace.countryOptions.ca"), value: "CA" },
+    { label: t("settings.workspace.countryOptions.otherEu"), value: "OTHER_EU" },
+    {
+      label: t("settings.workspace.countryOptions.otherNonEu"),
+      value: "OTHER_NON_EU",
+    },
+  ];
 
   return (
     <form
@@ -279,6 +297,12 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
             name="companySize"
             options={companySizeOptions}
             value={data.organization.companySize ?? ""}
+          />
+          <SettingsSelectField
+            label={t("settings.workspace.country")}
+            name="country"
+            options={countryOptions}
+            value={data.organization.country ?? ""}
           />
         </div>
       </SettingsPanel>

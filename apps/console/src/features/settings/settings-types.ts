@@ -67,6 +67,11 @@ export type WorkspaceSettingsData = {
   notificationPreferences: SettingsNotificationPreferences;
   organization: {
     companySize: string | null;
+    // Declared jurisdiction hint (organizationCountrySchema in
+    // @prelude/contracts). This settings form is the field's only
+    // reader/writer this phase — see the wall comment in
+    // workspace-settings-actions.ts (plan 2026-08-17, rule 1).
+    country: string | null;
     defaultInterviewMode: string | null;
     hiringFocus: string | null;
     name: string;

@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { organizationCountrySchema } from "@prelude/contracts";
 import { prisma, type Prisma } from "@prelude/db";
 import type { OrganizationRole } from "@prelude/types";
 
@@ -27,6 +28,7 @@ export async function updateWorkspaceSettingsAction(formData: FormData) {
   const name = cleanText(formData.get("name"), 80);
   const hiringFocus = cleanOptionalText(formData.get("hiringFocus"), 80);
   const companySize = cleanOptionalText(formData.get("companySize"), 20);
+  const country = cleanDeclaredCountry(formData.get("country"));
 
   if (!name) {
     return;
@@ -37,6 +39,11 @@ export async function updateWorkspaceSettingsAction(formData: FormData) {
       companySize: allowedCompanySizes.has(companySize ?? "")
         ? companySize || null
         : null,
+      // Organization.country is a declared jurisdiction hint. This form is its
+      // only reader/writer this phase; any PR adding another reader must name
+      // this wall and justify that the reader is not fiscal and not currency
+      // (plan 2026-08-17, rule 1).
+      country,
       hiringFocus,
       name,
     },
@@ -147,6 +154,17 @@ function cleanOptionalText(
   const text = cleanText(value, maxLength);
 
   return text ? text : null;
+}
+
+// "Not set" (the select's blank option) and any value outside the curated
+// enum both resolve to an explicit `null` — never an unvalidated string, and
+// never a key left off the update (Prisma silently drops `undefined`, which
+// would leave a stale value in place instead of clearing it).
+function cleanDeclaredCountry(value: FormDataEntryValue | null) {
+  const text = cleanText(value, 20);
+  const result = organizationCountrySchema.safeParse(text ? text : null);
+
+  return result.success ? result.data : null;
 }
 
 function readBooleanField(formData: FormData, name: string) {
