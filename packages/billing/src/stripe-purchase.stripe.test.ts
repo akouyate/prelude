@@ -237,13 +237,19 @@ describe.skipIf(!sandboxKey || !databaseUrl)("Stripe purchase path (sandbox)", (
     // back onto the Customer the invoice will be issued to.
     expect(session.automatic_tax.enabled).toBe(true);
     expect(session.tax_id_collection?.enabled).toBe(true);
+    // Amendment 17: read back from Stripe, because `customer_update.address:
+    // "auto"` can only persist what Checkout collects, and the default is the
+    // country alone — an invoice with no street is one a French DAF refuses.
+    expect(session.billing_address_collection).toBe("required");
 
     // The parameter that only exists because Managed Payments is DISABLED: with
     // it enabled Stripe rejects the whole session, so this assertion is the
     // alarm for someone flipping that account setting back on.
     expect(session.invoice_creation?.enabled).toBe(true);
+    // Singular, and this pack is why the ternary exists: the live fixture really
+    // does sell one credit.
     expect(session.invoice_creation?.invoice_data?.description).toContain(
-      "1 HireCall interview credits",
+      "1 HireCall interview credit —",
     );
     expect(session.invoice_creation?.invoice_data?.description).toContain("valid until");
 

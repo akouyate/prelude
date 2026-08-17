@@ -214,6 +214,13 @@ export async function createCreditCheckoutSession(
     line_items: [{ price: pricing.priceId, quantity: 1 }],
     automatic_tax: { enabled: true },
     tax_id_collection: { enabled: true },
+    // Amendment 17 — a compliant French invoice carries the buyer's full address,
+    // and `customer_update.address: "auto"` can only persist what Checkout actually
+    // collected. Stripe's default is `"auto"`, which for a card payment means the
+    // COUNTRY alone (plus a postal code where the network requires one): enough for
+    // Stripe Tax, not enough for an invoice a DAF will accept. `"required"` is what
+    // makes the street, city and postcode exist to be persisted.
+    billing_address_collection: "required",
     // Amendment 15 — the balance is never a bare number, and neither is the
     // receipt. The invoice is the one artefact the buyer keeps and forwards to
     // their finance team, so the expiry travels on it: a customer who discovers
@@ -274,11 +281,21 @@ export async function createCreditCheckoutSession(
  * The date is computed from `PAID_CREDIT_EXPIRY_DAYS` — the same constant the
  * ledger stamps onto the lot — so the promise on the invoice and the row in the
  * database can never drift apart.
+ *
+ * Timestamp basis: this line is computed from the SESSION-CREATION time, while the
+ * lot's `expiresAt` is stamped at fulfilment. The drift is bounded by how long the
+ * buyer spends in Checkout (minutes, or a deferred method's few days) and always
+ * runs the same way — the invoice promises the earlier date, the wallet honours the
+ * later one — so it can only ever favour the customer.
  */
 export function creditInvoiceDescription(credits: number, now: Date): string {
   const expiresAt = new Date(now.getTime() + PAID_CREDIT_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
   const expiryDate = expiresAt.toISOString().slice(0, 10);
-  return `${credits} HireCall interview credits — valid until ${expiryDate} (12 months from the purchase date).`;
+  // No pack sells a single credit today, but this string is customer-facing invoice
+  // text on an artefact their finance team keeps — "1 credits" is not a typo worth
+  // shipping the day a 1-credit top-up exists.
+  const creditLabel = credits === 1 ? "credit" : "credits";
+  return `${credits} HireCall interview ${creditLabel} — valid until ${expiryDate} (12 months from the purchase date).`;
 }
 
 type PackPricing = { priceId: string; amountCents: number; amountCentsUsd: number | null };

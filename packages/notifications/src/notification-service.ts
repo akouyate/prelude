@@ -493,7 +493,12 @@ function resolveCandidateDetailUrl(candidateSessionId: string) {
 }
 
 function resolveBillingSettingsUrl() {
-  return `${resolveConsoleBaseUrl()}/settings`;
+  // `?view=billing` is load-bearing, not decoration: the settings page selects its
+  // panel from that query param (`useQueryState("view", …)` in
+  // `workspace-settings.tsx`), so a bare `/settings` lands the recipient on the
+  // default panel with no credit balance in sight — after an email that just told
+  // them their credits are blocked. Every other billing path carries it.
+  return `${resolveConsoleBaseUrl()}/settings?view=billing`;
 }
 
 function resolveConsoleBaseUrl() {

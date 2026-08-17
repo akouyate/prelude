@@ -243,6 +243,10 @@ describe("createCreditCheckoutSession", () => {
       line_items: [{ price: "price_hiring", quantity: 1 }],
       automatic_tax: { enabled: true },
       tax_id_collection: { enabled: true },
+      // Amendment 17: Stripe's default collects the country alone, which is enough
+      // for Stripe Tax and not enough for an invoice a French finance team accepts.
+      // `customer_update.address: "auto"` can only persist what was collected.
+      billing_address_collection: "required",
       // Amendment 15, live since Managed Payments was disabled on the account
       // (HireCall is now the merchant of record): the expiry travels on the
       // invoice the buyer keeps and forwards to their finance team. Exact string —
@@ -512,6 +516,11 @@ describe("createCreditCheckoutSession", () => {
     expect(creditInvoiceDescription(25, new Date("2027-03-01T00:00:00.000Z"))).toBe(
       "25 HireCall interview credits — valid until 2028-02-29 (12 months from the purchase date).",
     );
+    // No pack sells one credit today, but the line is customer-facing invoice text:
+    // "1 credits" is the sort of thing a finance team screenshots.
+    expect(creditInvoiceDescription(1, new Date("2026-08-15T09:00:00.000Z"))).toBe(
+      "1 HireCall interview credit — valid until 2027-08-15 (12 months from the purchase date).",
+    );
   });
 
   /**
@@ -558,6 +567,10 @@ describe("createCreditCheckoutSession", () => {
       expect.objectContaining({
         customer_update: { address: "auto", name: "auto" },
         tax_id_collection: { enabled: true },
+        // Amendment 17 — `address: "auto"` persists only what Checkout collected,
+        // and the default collection is country-only. Without this the Customer
+        // `invoice_creation` bills keeps a country and no street.
+        billing_address_collection: "required",
       }),
     );
   });
