@@ -320,3 +320,62 @@ describe("the countdown ring is the close control", () => {
     });
   });
 });
+
+/**
+ * Rule 1's fourth pause condition, added after review: window blur pauses
+ * Base UI's real dismissal timer (`toast/viewport/ToastViewport.js`'s
+ * `handleWindowBlur` calls `pauseTimers()`) without ever touching
+ * `hovering`/`focused`, so `data-expanded` alone cannot see it — confirmed
+ * live in a real browser (`animationPlayState` stayed `"running"` while
+ * `data-expanded` stayed absent, for a `window` `blur` event). `ToastProvider`
+ * closes that gap with its own `window` blur/focus listener pair, toggling
+ * `data-toast-window-blurred` on `<html>`. jsdom cannot compute whether a CSS
+ * animation is actually paused (no rendering engine — the same limitation
+ * noted above for `data-animated`), so this pins what IS observable here: the
+ * attribute itself appears on blur, disappears on focus, and — critically —
+ * does NOT leak past this provider's own lifetime (removed on unmount, so an
+ * unrelated later `ToastProvider`/test never inherits a stuck attribute).
+ * `apps/console/app/globals.css`'s
+ * `:root[data-toast-window-blurred] .toast-countdown-ring[data-animated="true"]`
+ * rule is what actually reads it; the live `animationPlayState` proof for
+ * this exact condition is in the redesign report's browser-proof section
+ * (jsdom can't run that check — no layout/paint engine).
+ */
+describe("countdown ring: pauses on window blur, not just hover/focus", () => {
+  afterEach(() => {
+    // Belt-and-suspenders: the provider's own unmount cleanup already does
+    // this (asserted below), but a failed assertion mid-test would otherwise
+    // leave `<html>` blurred for every later test in this file.
+    document.documentElement.removeAttribute("data-toast-window-blurred");
+  });
+
+  it("sets data-toast-window-blurred on <html> when the window blurs, and clears it on focus", () => {
+    render(
+      <ToastProvider>
+        <div />
+      </ToastProvider>,
+    );
+
+    expect(document.documentElement).not.toHaveAttribute("data-toast-window-blurred");
+
+    window.dispatchEvent(new Event("blur"));
+    expect(document.documentElement).toHaveAttribute("data-toast-window-blurred", "");
+
+    window.dispatchEvent(new Event("focus"));
+    expect(document.documentElement).not.toHaveAttribute("data-toast-window-blurred");
+  });
+
+  it("removes the attribute on unmount, even while the window is still blurred", () => {
+    const { unmount } = render(
+      <ToastProvider>
+        <div />
+      </ToastProvider>,
+    );
+
+    window.dispatchEvent(new Event("blur"));
+    expect(document.documentElement).toHaveAttribute("data-toast-window-blurred", "");
+
+    unmount();
+    expect(document.documentElement).not.toHaveAttribute("data-toast-window-blurred");
+  });
+});

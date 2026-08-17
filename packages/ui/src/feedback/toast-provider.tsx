@@ -12,10 +12,14 @@ import { Toast } from "./toast";
  * primitive (already a dependency here — see `dialog.tsx`/`drawer.tsx` for
  * the same pattern) and this package's own `Toast` card. Base UI supplies the
  * mechanics that are easy to get subtly wrong by hand: the auto-dismiss timer
- * (paused on hover/focus/window-blur for free), the portal, and an ARIA live
- * region that announces toasts to screen readers independently of what is
- * visually rendered. This file supplies none of that logic itself — only the
- * visual tones and the small `useToast()` call-site ergonomics.
+ * itself (paused on hover/focus/touch-swipe/window-blur for free), the
+ * portal, and an ARIA live region that announces toasts to screen readers
+ * independently of what is visually rendered. This file supplies almost none
+ * of that logic itself — only the visual tones, the small `useToast()`
+ * call-site ergonomics, and (in `ToastProvider`) one `window` blur/focus
+ * listener pair that mirrors, for the countdown ring's CSS, a pause condition
+ * Base UI's own `data-expanded` attribute doesn't cover — see
+ * `CountdownClose`'s doc comment.
  */
 
 export type ToastTone = "danger" | "info" | "success" | "warning";
@@ -69,6 +73,33 @@ type ToastData = { dismissLabel: string };
 const DEFAULT_DURATION_MS = 6000;
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
+  // Base UI's dismissal timer has a fourth pause condition beyond
+  // hover/focus/touch-swipe: window blur. It pauses the REAL timer
+  // (`toast/viewport/ToastViewport.js`'s `handleWindowBlur` calls
+  // `pauseTimers()`), but does it via a native `blur` listener that never
+  // touches `hovering`/`focused` — so `data-expanded` never appears for this
+  // condition, and a ring driven only by `data-expanded` would keep sweeping
+  // to empty while the real timer sits frozen. This effect closes that gap
+  // the same way Base UI closes it for the timer itself: one listener pair,
+  // added once here (not per toast, not per ring), toggling a single
+  // document-level attribute that `apps/console/app/globals.css`'s countdown
+  // rule also watches. `document.hidden`/`visibilitychange` would NOT catch
+  // this — a window can lose OS focus (Alt-Tab) without the tab ever being
+  // hidden, so this listens to `window`'s own `blur`/`focus`, not the
+  // Document's visibility state.
+  React.useEffect(() => {
+    const root = document.documentElement;
+    const onWindowBlur = () => root.setAttribute("data-toast-window-blurred", "");
+    const onWindowFocus = () => root.removeAttribute("data-toast-window-blurred");
+    window.addEventListener("blur", onWindowBlur);
+    window.addEventListener("focus", onWindowFocus);
+    return () => {
+      window.removeEventListener("blur", onWindowBlur);
+      window.removeEventListener("focus", onWindowFocus);
+      root.removeAttribute("data-toast-window-blurred");
+    };
+  }, []);
+
   return (
     <BaseToast.Provider timeout={DEFAULT_DURATION_MS}>
       {children}
@@ -143,21 +174,21 @@ function ToastStack() {
  * `apps/console/app/globals.css`, not here — this component only supplies the
  * per-instance geometry/duration as data):
  *
- * 1. It must pause exactly when the dismissal timer pauses. Base UI's
- *    `Toast.Root` carries `data-expanded` for exactly three of its four pause
- *    conditions — hover, focus, and a touch-swipe start, all of which flow
- *    through the shared `expanded = hovering || focused` state
- *    (toast/provider/ToastProvider.js) that both `Toast.Root` and
- *    `Toast.Viewport` render as `data-expanded`. The fourth — window blur —
- *    calls `pauseTimers()` directly from a `blur` listener
- *    (toast/viewport/ToastViewport.js's `handleWindowBlur`) without touching
- *    `hovering`/`focused` or any other state, so it triggers no re-render and
- *    sets no attribute. That pause is real but **not observable from CSS** —
- *    the ring keeps sweeping while the window is blurred and the real timer
- *    is frozen. Shipping a ring that silently drifts from the timer for the
- *    other three conditions would be worse than no ring; this gap is
- *    documented rather than hidden, and is the one case this component cannot
- *    honestly represent.
+ * 1. It must pause exactly when the dismissal timer pauses, for all four of
+ *    Base UI's pause conditions. Three of them — hover, focus, and a
+ *    touch-swipe start — flow through the shared `expanded = hovering ||
+ *    focused` state (toast/provider/ToastProvider.js) that `Toast.Root`
+ *    renders as `data-expanded`; the CSS rule in
+ *    `apps/console/app/globals.css` reads that directly. The fourth — window
+ *    blur — pauses the real timer via a native `blur` listener
+ *    (toast/viewport/ToastViewport.js's `handleWindowBlur` calling
+ *    `pauseTimers()`) that never touches `hovering`/`focused`, so
+ *    `data-expanded` alone cannot see it. `ToastProvider` above closes that
+ *    gap itself: one `window` `blur`/`focus` listener pair, added once (not
+ *    per toast), toggling `data-toast-window-blurred` on the document root,
+ *    which the same CSS rule also watches. `document.hidden`/
+ *    `visibilitychange` would not have worked here — losing window focus
+ *    (Alt-Tab) does not hide the tab.
  * 2. A persistent toast (`durationMs === null`) renders the same ring
  *    geometry, fully "complete" (`stroke-dashoffset: 0`, a solid tone-colour
  *    circle) and marked `data-animated="false"` — never the depleting

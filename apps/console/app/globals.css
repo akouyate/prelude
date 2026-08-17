@@ -129,25 +129,26 @@ h3 {
 
 /*
  * Base UI's `Toast.Root` (and `Toast.Viewport`) carry `data-expanded` for
- * exactly the pause conditions that flow through its `hovering`/`focused`
- * state — hover, focus, and a touch-swipe start
+ * three of the dismissal timer's four pause conditions — hover, focus, and a
+ * touch-swipe start — all flowing through its `hovering`/`focused` state
  * (@base-ui-components/react/toast: provider/ToastProvider.js's
  * `expanded = hovering || focused`; root/ToastRoot.js and
- * viewport/ToastViewport.js both render it as `data-expanded`). Pausing the
- * ring here keeps it in phase with the real dismissal timer for those three.
+ * viewport/ToastViewport.js both render it as `data-expanded`).
  *
- * The timer's fourth pause condition — the browser window losing focus — is
- * NOT covered: `viewport/ToastViewport.js`'s `handleWindowBlur` calls
- * `pauseTimers()` straight from a `blur` listener without touching
- * `hovering`/`focused` or setting any other state, so it triggers no
- * re-render and no attribute changes. The ring keeps sweeping while the
- * window is blurred even though the real timer is frozen — confirmed by
- * reading Base UI's source, not an oversight here. A ring that silently
- * disagreed with the timer for hover/focus/swipe would be worse than no ring
- * at all, which is why those three are wired up; this fourth case is the one
- * gap CSS cannot close.
+ * The fourth pause condition — the browser window losing focus — pauses the
+ * real timer too (`viewport/ToastViewport.js`'s `handleWindowBlur` calls
+ * `pauseTimers()`) but via a native `blur` listener that never touches
+ * `hovering`/`focused`, so `data-expanded` alone can't see it.
+ * `packages/ui/src/feedback/toast-provider.tsx`'s `ToastProvider` closes that
+ * gap itself: a `window` `blur`/`focus` listener pair (added once, not per
+ * toast) toggles `data-toast-window-blurred` on `<html>` — not
+ * `document.hidden`/`visibilitychange`, which would miss a window that loses
+ * OS focus (Alt-Tab) without the tab ever being hidden. Both selectors below
+ * pause the same rule; between them, all four conditions keep the ring in
+ * phase with the real dismissal timer.
  */
-[data-expanded] .toast-countdown-ring[data-animated="true"] {
+[data-expanded] .toast-countdown-ring[data-animated="true"],
+:root[data-toast-window-blurred] .toast-countdown-ring[data-animated="true"] {
   animation-play-state: paused;
 }
 
