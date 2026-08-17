@@ -28,6 +28,7 @@ export {
   availableInLot,
   compareLotsForConsumption,
   computeWalletTotals,
+  isLotClockActive,
   isLotEligible,
   selectLotForReservation,
   type CreditLotSnapshot,
