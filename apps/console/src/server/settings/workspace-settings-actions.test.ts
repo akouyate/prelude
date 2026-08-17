@@ -69,27 +69,39 @@ describe("updateWorkspaceSettingsAction — country", () => {
     });
   });
 
-  // The undefined-filter footgun: `country: undefined` in a Prisma update data
-  // object is silently dropped rather than clearing the column. "Not set" must
-  // always resolve to an explicit `null`, never an omitted key.
-  it("accepts an absent country and writes an explicit null, not a skipped key", async () => {
-    await updateWorkspaceSettingsAction(formData({ name: "Acme" }));
+  // The undefined-filter footgun, used deliberately in the SAFE direction here:
+  // the blank "Not set" sentinel (absent field or explicit "") is the only
+  // input that means "clear it" and must always resolve to an explicit `null`,
+  // never an omitted key.
+  it.each([
+    ["an absent", {}],
+    ["a blank", { country: "" }],
+  ])(
+    "writes an explicit null for %s country — the deliberate 'Not set' sentinel",
+    async (_label, extraFields) => {
+      await updateWorkspaceSettingsAction(
+        formData({ name: "Acme", ...extraFields }),
+      );
 
-    const call = prismaMock.organization.update.mock.calls[0]?.[0];
-    expect(call.data).toHaveProperty("country", null);
-  });
+      const call = prismaMock.organization.update.mock.calls[0]?.[0];
+      expect(call.data).toHaveProperty("country", null);
+    },
+  );
 
-  it.each(["DE", "fr", ""])(
-    "rejects %j — falls back to an explicit null rather than persisting it",
+  // "reject ≠ clear": a non-blank value that fails organizationCountrySchema
+  // (a stale/tampered/non-browser submission — the select never produces one)
+  // must never silently overwrite a previously declared country with null.
+  // The key is left off the update entirely, so Prisma's undefined-drop does
+  // "leave unchanged" on purpose, instead of "leave unchanged" by accident.
+  it.each(["DE", "fr"])(
+    "leaves country out of the update entirely for invalid input %j",
     async (rawCountry) => {
       await updateWorkspaceSettingsAction(
         formData({ country: rawCountry, name: "Acme" }),
       );
 
-      expect(prismaMock.organization.update).toHaveBeenCalledWith({
-        data: expect.objectContaining({ country: null }),
-        where: { id: "org_123" },
-      });
+      const call = prismaMock.organization.update.mock.calls[0]?.[0];
+      expect(call.data).not.toHaveProperty("country");
     },
   );
 
@@ -114,5 +126,17 @@ describe("updateWorkspaceSettingsAction — country", () => {
       data: expect.objectContaining({ country: null }),
       where: { id: "org_123" },
     });
+  });
+
+  it("a prior FR survives an invalid resubmission — schema failure is never a silent clear", async () => {
+    await updateWorkspaceSettingsAction(formData({ country: "FR", name: "Acme" }));
+    expect(prismaMock.organization.update).toHaveBeenNthCalledWith(1, {
+      data: expect.objectContaining({ country: "FR" }),
+      where: { id: "org_123" },
+    });
+
+    await updateWorkspaceSettingsAction(formData({ country: "DE", name: "Acme" }));
+    const secondCall = prismaMock.organization.update.mock.calls[1]?.[0];
+    expect(secondCall.data).not.toHaveProperty("country");
   });
 });

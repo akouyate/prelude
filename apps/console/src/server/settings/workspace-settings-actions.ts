@@ -43,7 +43,15 @@ export async function updateWorkspaceSettingsAction(formData: FormData) {
       // only reader/writer this phase; any PR adding another reader must name
       // this wall and justify that the reader is not fiscal and not currency
       // (plan 2026-08-17, rule 1).
-      country,
+      //
+      // "reject ≠ clear": `country` is only spread in when cleanDeclaredCountry
+      // returned something other than `undefined`. A schema failure on a
+      // non-blank value can only come from a stale/tampered/non-browser
+      // caller, never a deliberate clear — so it must never silently overwrite
+      // a previously declared country. Leaving the key off the update object
+      // uses Prisma's undefined-drop footgun in the SAFE direction on purpose:
+      // no key means "leave this column alone."
+      ...(country !== undefined ? { country } : {}),
       hiringFocus,
       name,
     },
@@ -156,15 +164,26 @@ function cleanOptionalText(
   return text ? text : null;
 }
 
-// "Not set" (the select's blank option) and any value outside the curated
-// enum both resolve to an explicit `null` — never an unvalidated string, and
-// never a key left off the update (Prisma silently drops `undefined`, which
-// would leave a stale value in place instead of clearing it).
+// "Not set" (the select's blank option, or an absent field) is the only
+// input that means "clear it," and resolves to an explicit `null` — never an
+// omitted key (Prisma silently drops `undefined`, which would leave a stale
+// value in place instead of clearing it).
+//
+// Any NON-blank value that fails organizationCountrySchema is a different
+// case: it cannot come from a deliberate clear (that path is blank/null), so
+// it resolves to `undefined` instead of `null`. The caller uses `undefined`
+// to mean "omit this key," which leaves the previously declared value
+// untouched rather than silently wiping it on a stale or tampered submission.
 function cleanDeclaredCountry(value: FormDataEntryValue | null) {
   const text = cleanText(value, 20);
-  const result = organizationCountrySchema.safeParse(text ? text : null);
 
-  return result.success ? result.data : null;
+  if (!text) {
+    return null;
+  }
+
+  const result = organizationCountrySchema.safeParse(text);
+
+  return result.success ? result.data : undefined;
 }
 
 function readBooleanField(formData: FormData, name: string) {
