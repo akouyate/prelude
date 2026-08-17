@@ -20,6 +20,7 @@ import {
   SelectField,
   StatusBadge,
   TextField,
+  useToast,
 } from "@prelude/ui";
 import type { OrganizationRole } from "@prelude/types";
 
@@ -399,27 +400,29 @@ function TeamSection({ data }: { data: WorkspaceSettingsData }) {
 function InviteTeammatePanel() {
   const { t } = useTranslation();
   const roleName = useRoleName();
+  const { toast } = useToast();
   const [email, setEmail] = React.useState("");
   const [role, setRole] = React.useState<OrganizationRole>("recruiter");
-  const [feedback, setFeedback] = React.useState<{
-    message: string;
-    tone: "error" | "success";
-  } | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setFeedback(null);
+    setError(null);
     startTransition(async () => {
       const result = await inviteTeamMemberAction({ email, role });
       if (result.ok) {
         setEmail("");
-        setFeedback({
+        // The pending-invitations panel below is the durable proof this
+        // succeeded, so the toast can carry the wording on its default
+        // auto-dismiss rather than staying pinned inline.
+        toast({
+          dismissLabel: t("toast.dismiss"),
           message: t("settings.team.inviteSent", { email }),
           tone: "success",
         });
       } else {
-        setFeedback({ message: result.error, tone: "error" });
+        setError(result.error);
       }
     });
   }
@@ -465,12 +468,9 @@ function InviteTeammatePanel() {
           {pending ? t("settings.team.sending") : t("settings.team.sendInvite")}
         </Button>
       </form>
-      {feedback ? (
-        <Notice
-          className="mt-3"
-          tone={feedback.tone === "error" ? "danger" : "success"}
-        >
-          {feedback.message}
+      {error ? (
+        <Notice className="mt-3" tone="danger">
+          {error}
         </Notice>
       ) : null}
     </SettingsPanel>

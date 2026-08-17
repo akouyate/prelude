@@ -10,6 +10,7 @@ import {
   Pill,
   Surface,
   TextField,
+  useToast,
   type PillProps,
 } from "@prelude/ui";
 import type { CandidateInvitationSummary } from "../../server/interviews/candidate-invitations";
@@ -35,6 +36,7 @@ export function CandidateInvitationsPanel({
   roleTitle: string;
 }) {
   const { i18n, t } = useTranslation();
+  const { toast } = useToast();
   const [state, formAction, pending] = React.useActionState(
     createCandidateInvitationAction,
     { error: null, fieldErrors: {}, ok: false },
@@ -56,6 +58,21 @@ export function CandidateInvitationsPanel({
       setDraft({ candidateEmail: "", candidateName: "", expiresAt: "" });
     }
   }, [state.ok]);
+
+  // Keyed on `state` itself, not `state.ok`: the action returns a fresh
+  // `{ ok: true, ... }` object on every successful submit, so two
+  // consecutive invitations must each announce — a boolean dependency would
+  // miss the second one because it never stops being `true`.
+  React.useEffect(() => {
+    if (!state.ok) {
+      return;
+    }
+    toast({
+      dismissLabel: t("toast.dismiss"),
+      message: t("interviewDetail.inviteCreated"),
+      tone: "success",
+    });
+  }, [state, t, toast]);
 
   return (
     <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]">
@@ -130,11 +147,6 @@ export function CandidateInvitationsPanel({
 
           {state.error ? (
             <Notice tone="danger">{state.error}</Notice>
-          ) : null}
-          {state.ok ? (
-            <Notice tone="success">
-              {t("interviewDetail.inviteCreated")}
-            </Notice>
           ) : null}
 
           <Button
