@@ -975,6 +975,57 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
       await expectReconciled(organizationId);
     });
 
+    it("parks a dispute on a lot the customer consumed to the last credit", async () => {
+      // The prepaid-carding pattern, and the exact mirror of the refund ruling
+      // above: a stolen card buys 25 interviews, every one is consumed, then the
+      // real cardholder charges it back. An `active`-only guard answers
+      // `already_applied` → `processed` → HTTP 200, so nobody is told and nothing
+      // reaches the admin queue — while a dispute's evidence window is days.
+      const { organizationId, stripePaymentIntentId } = await organizationWithPaidLot("carded");
+      for (let index = 0; index < PACK_CREDITS; index += 1) {
+        const candidateSessionId = `carded_all_${organizationId}_${index}`;
+        await reserveCreditForSession(db, { organizationId, candidateSessionId, now });
+        await captureReservationForSession(db, { organizationId, candidateSessionId, now });
+      }
+      // Reached through the ordinary capture path, never forced.
+      expect(
+        await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } }),
+      ).toMatchObject({ status: "exhausted", creditsConsumed: PACK_CREDITS });
+
+      const dispute = { stripePaymentIntentId, stripeEventId: `evt_carded_${organizationId}`, now };
+      const first = await freezeLotForDispute(db, dispute);
+      expect(first).toMatchObject({
+        outcome: "needs_admin",
+        organizationId,
+        reason: "dispute_after_consumption",
+      });
+
+      // Stripe delivers `charge.dispute.created` more than once. The park is
+      // terminal for the ledger as well as for the archive status: a second
+      // delivery decides the same thing and still writes nothing.
+      const second = await freezeLotForDispute(db, dispute);
+      expect(second).toMatchObject({ outcome: "needs_admin", reason: "dispute_after_consumption" });
+
+      // Nothing was written: no freeze delta, no status change, no `frozenAt`.
+      const lot = await db.creditLot.findUniqueOrThrow({ where: { stripePaymentIntentId } });
+      expect(lot).toMatchObject({ status: "exhausted", frozenAt: null });
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "dispute_freeze" } }),
+      ).toBe(0);
+      expect(await walletOf(organizationId)).toMatchObject({ availableCredits: 0 });
+      await expectReconciled(organizationId);
+
+      // The `created` event is the alarm; the closing event on a lot the freeze
+      // never touched is a settled replay, exactly as on the refund path.
+      expect(
+        await resolveDisputeOnLot(db, { stripePaymentIntentId, disposition: "lost", now }),
+      ).toMatchObject({ outcome: "already_applied", status: "exhausted" });
+      expect(
+        await db.creditLedgerEntry.count({ where: { organizationId, type: "dispute_release" } }),
+      ).toBe(0);
+      await expectReconciled(organizationId);
+    });
+
     it("reports a payment intent no lot was ever granted for", async () => {
       expect(
         await freezeLotForDispute(db, { stripePaymentIntentId: `pi_unknown_${Date.now()}`, now }),

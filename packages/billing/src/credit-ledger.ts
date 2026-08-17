@@ -577,9 +577,20 @@ export async function grantPurchasedCreditLot(
  * re-granted exactly once, by `resolveDisputeOnLot(won)` recomputing the figure
  * at resolve time.
  *
- * Any status other than `active` returns `already_applied` and writes nothing —
+ * `exhausted` is the exception, and it mirrors the refund ruling in
+ * `revokeUnconsumedLot`: a chargeback on a lot spent to the last credit is the
+ * prepaid-carding pattern (stolen card, 25 interviews consumed, then the real
+ * cardholder disputes). There is nothing left to freeze, so it parks for an
+ * operator — `needs_admin`, reason `dispute_after_consumption` — instead of
+ * answering `already_applied` → `processed` → HTTP 200 and alerting nobody while
+ * the evidence window runs. It writes NOTHING, and deliberately sends no
+ * notification: the freeze email says "N credits are blocked", which at N=0 would
+ * be a lie. `needs_admin` (and this log) is the channel.
+ *
+ * Any other status than `active` returns `already_applied` and writes nothing —
  * Stripe replays events, and a second `dispute_freeze` would be an unaudited
- * second write-off.
+ * second write-off. `charge.dispute.closed` on a parked lot lands there too: the
+ * `created` event is the alarm, and the close is a settled replay.
  */
 export async function freezeLotForDispute(
   db: PrismaClient,
@@ -588,6 +599,21 @@ export async function freezeLotForDispute(
   const { stripePaymentIntentId, stripeEventId, now } = input;
 
   return withLockedLotForPayment(db, stripePaymentIntentId, async (tx, lot) => {
+    // Checked BEFORE the general non-`active` guard, for the reason spelled out
+    // on the refund path: `exhausted` is the one non-`active` status that means
+    // "consumed", not "already settled", and an `active`-only guard is exactly
+    // what would wave it through.
+    if (lot.status === "exhausted") {
+      const reason = "dispute_after_consumption";
+      console.error("[credit-ledger] dispute parked for an operator", {
+        stripePaymentIntentId,
+        lotId: lot.id,
+        organizationId: lot.organizationId,
+        reason,
+        creditsConsumed: lot.creditsConsumed,
+      });
+      return { outcome: "needs_admin", organizationId: lot.organizationId, lotId: lot.id, reason };
+    }
     if (lot.status !== "active") {
       return { outcome: "already_applied", organizationId: lot.organizationId, lotId: lot.id, status: lot.status };
     }

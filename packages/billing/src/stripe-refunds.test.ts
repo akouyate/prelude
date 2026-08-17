@@ -374,6 +374,27 @@ describe("handleDisputeEvent", () => {
     expect(notifyDisputeFrozen).not.toHaveBeenCalled();
   });
 
+  it("parks a dispute the ledger refuses to freeze, and tells nobody but the operator", async () => {
+    // The fully-consumed lot: the ledger parks it (`dispute_after_consumption`)
+    // and the archive must carry that through to `needs_admin`, or the carding
+    // pattern answers 200 and disappears. No email either — the freeze copy says
+    // "N credits are blocked", which at N=0 would be a lie; `needs_admin` is the
+    // channel.
+    freeze.mockResolvedValue({
+      outcome: "needs_admin",
+      organizationId: "org_1",
+      lotId: "lot_1",
+      reason: "dispute_after_consumption",
+    });
+    const { stripe } = fakeStripe();
+    const notifyDisputeFrozen = vi.fn(async () => {});
+
+    expect(
+      await handleDisputeEvent(db, disputeCreated, { stripe, now, notifyDisputeFrozen }),
+    ).toBe("needs_admin");
+    expect(notifyDisputeFrozen).not.toHaveBeenCalled();
+  });
+
   it("unfreezes on a won dispute, reading the disposition from the API", async () => {
     const { stripe } = fakeStripe({ dispute: { status: "won" } });
 
