@@ -25,6 +25,7 @@ import {
   Textarea,
   cn,
   selectionCardClasses,
+  useToast,
 } from "@prelude/ui";
 import {
   Attachment as Paperclip,
@@ -58,6 +59,7 @@ import {
   candidateAppUrl,
   candidateLinkLabel as formatCandidateLinkLabel,
 } from "../../libs/candidate-app-url";
+import { copyTextToClipboard } from "../../libs/clipboard";
 import {
   addInterviewQuestionAction,
   generateInterviewDraftAction,
@@ -1796,6 +1798,7 @@ function CandidateLinkActions({
   roleTitle: string;
 }) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const [copied, setCopied] = React.useState(false);
 
   const candidateUrl = candidateAppUrl(candidatePath);
@@ -1804,14 +1807,27 @@ function CandidateLinkActions({
     if (!candidateUrl) {
       return;
     }
-    try {
-      await navigator.clipboard?.writeText(candidateUrl);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard unavailable (permissions/older browser) — no-op.
+
+    const copiedOk = await copyTextToClipboard(candidateUrl);
+    if (!copiedOk) {
+      toast({
+        dismissLabel: t("toast.dismiss"),
+        message: t("toast.copyLinkFailed"),
+        tone: "danger",
+      });
+      return;
     }
-  }, [candidateUrl]);
+
+    // The Copy→Check label swap below stays — the toast adds
+    // discoverability, it does not replace that tight local loop.
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 2000);
+    toast({
+      dismissLabel: t("toast.dismiss"),
+      message: t("toast.copyLinkCopied"),
+      tone: "success",
+    });
+  }, [candidateUrl, t, toast]);
 
   const mailtoHref = candidateUrl
     ? buildCandidateInviteMailto(

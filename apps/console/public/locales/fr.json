@@ -720,7 +720,9 @@
       }
     },
     "toast": {
-      "dismiss": "Ignorer"
+      "dismiss": "Ignorer",
+      "copyLinkCopied": "Lien copié",
+      "copyLinkFailed": "Impossible de copier le lien. Copiez-le manuellement."
     }
   }
 }

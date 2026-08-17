@@ -3,9 +3,10 @@
 import * as React from "react";
 import { Check, Copy } from "iconoir-react";
 import { useTranslation } from "react-i18next";
-import { Button, cn } from "@prelude/ui";
+import { Button, cn, useToast } from "@prelude/ui";
 
 import { candidateAppUrl } from "../../libs/candidate-app-url";
+import { copyTextToClipboard } from "../../libs/clipboard";
 
 export function CopyCandidateLinkButton({
   candidatePath,
@@ -17,13 +18,30 @@ export function CopyCandidateLinkButton({
   className?: string;
 }) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const [copied, setCopied] = React.useState(false);
 
   const handleCopy = React.useCallback(async () => {
-    await navigator.clipboard?.writeText(candidateAppUrl(candidatePath));
+    const copiedOk = await copyTextToClipboard(candidateAppUrl(candidatePath));
+    if (!copiedOk) {
+      toast({
+        dismissLabel: t("toast.dismiss"),
+        message: t("toast.copyLinkFailed"),
+        tone: "danger",
+      });
+      return;
+    }
+
+    // The Copy→Check icon/label swap below stays — the toast adds
+    // discoverability, it does not replace that tight local loop.
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1600);
-  }, [candidatePath]);
+    toast({
+      dismissLabel: t("toast.dismiss"),
+      message: t("toast.copyLinkCopied"),
+      tone: "success",
+    });
+  }, [candidatePath, t, toast]);
 
   return (
     <Button

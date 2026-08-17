@@ -19,9 +19,11 @@ import {
   SegmentedTabs,
   StatusBadge,
   cn,
+  useToast,
 } from "@prelude/ui";
 
 import { candidateAppUrl } from "../../libs/candidate-app-url";
+import { copyTextToClipboard } from "../../libs/clipboard";
 
 export type RoleScreenState =
   | "candidate_started"
@@ -54,6 +56,7 @@ export function RolesList({
   roles: RoleListItem[];
 }) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const [filter, setFilter] = React.useState<RoleFilter>("all");
   const [query, setQuery] = React.useState("");
   const [sort, setSort] = React.useState<RoleSort>("recent");
@@ -82,15 +85,38 @@ export function RolesList({
       .sort((left, right) => sortRoles(left, right, sort));
   }, [filter, query, roles, sort, t]);
 
-  const handleCopy = React.useCallback(async (role: RoleListItem) => {
-    if (!role.candidatePath) {
-      return;
-    }
+  const handleCopy = React.useCallback(
+    async (role: RoleListItem) => {
+      if (!role.candidatePath) {
+        return;
+      }
 
-    await navigator.clipboard?.writeText(candidateAppUrl(role.candidatePath));
-    setCopiedId(role.id);
-    window.setTimeout(() => setCopiedId(null), 1600);
-  }, []);
+      const copiedOk = await copyTextToClipboard(
+        candidateAppUrl(role.candidatePath),
+      );
+      if (!copiedOk) {
+        toast({
+          dismissLabel: t("toast.dismiss"),
+          message: t("toast.copyLinkFailed"),
+          tone: "danger",
+        });
+        return;
+      }
+
+      // This icon-only button has no visible label, so the aria-label swap
+      // below is the only in-place affordance — the toast is the real
+      // feedback here (unlike the copy buttons in interview-detail/the
+      // builder, which also swap their icon/text in place).
+      setCopiedId(role.id);
+      window.setTimeout(() => setCopiedId(null), 1600);
+      toast({
+        dismissLabel: t("toast.dismiss"),
+        message: t("toast.copyLinkCopied"),
+        tone: "success",
+      });
+    },
+    [t, toast],
+  );
 
   return (
     <div>
