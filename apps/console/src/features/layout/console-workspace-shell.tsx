@@ -5,7 +5,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Xmark } from "iconoir-react";
 import { useTranslation } from "react-i18next";
-import { EnterpriseShell, type EnterpriseNavCounts } from "@prelude/ui";
+import {
+  EnterpriseShell,
+  type EnterpriseNavCounts,
+  type EnterpriseNavCredits,
+} from "@prelude/ui";
 import type { OrganizationUserContext } from "@prelude/types";
 
 const sidebarStorageKey = "prelude:workspace-sidebar-collapsed";
@@ -20,11 +24,13 @@ export function ConsoleWorkspaceShell({
   account,
   accountActions,
   children,
+  credits,
   navCounts,
 }: {
   account: OrganizationUserContext;
   accountActions?: React.ReactNode;
   children: React.ReactNode;
+  credits?: EnterpriseNavCredits | null;
   navCounts?: EnterpriseNavCounts;
 }) {
   const { t } = useTranslation();
@@ -64,6 +70,7 @@ export function ConsoleWorkspaceShell({
       accountActions={accountActions}
       activePath={pathname}
       collapsed={isCollapsed}
+      credits={credits}
       navCounts={navCounts}
       onCollapsedChange={handleCollapsedChange}
     >
