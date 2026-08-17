@@ -722,7 +722,9 @@
     "toast": {
       "dismiss": "Dismiss",
       "copyLinkCopied": "Link copied",
-      "copyLinkFailed": "Could not copy the link. Copy it manually."
+      "copyLinkFailed": "Could not copy the link. Copy it manually.",
+      "draftSaved": "Draft saved",
+      "rolePublished": "Role screen published"
     }
   }
 }

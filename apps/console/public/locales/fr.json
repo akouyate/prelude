@@ -722,7 +722,9 @@
     "toast": {
       "dismiss": "Ignorer",
       "copyLinkCopied": "Lien copié",
-      "copyLinkFailed": "Impossible de copier le lien. Copiez-le manuellement."
+      "copyLinkFailed": "Impossible de copier le lien. Copiez-le manuellement.",
+      "draftSaved": "Brouillon enregistré",
+      "rolePublished": "Entretien de poste publié"
     }
   }
 }
