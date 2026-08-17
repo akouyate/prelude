@@ -143,10 +143,19 @@ export async function createCreditCheckoutSession(
     packId: string;
     origin: string;
     now: Date;
+    /**
+     * Checkout's own UI language — the acting user's coerced console locale
+     * (`getAuthenticatedUserLocale`), not Stripe Tax or invoicing, which this
+     * does not touch. Optional and omitted (never defaulted to `"en"`) when
+     * absent: Stripe's own browser/Accept-Language auto-detect already covers
+     * that case, and forcing English here would override it for every caller
+     * that has no locale to offer.
+     */
+    locale?: "fr" | "en";
     stripe?: StripePurchaseClient;
   },
 ): Promise<CreditCheckoutResult> {
-  const { organizationId, organizationName, packId, origin, now } = input;
+  const { organizationId, organizationName, packId, origin, now, locale } = input;
 
   if (!isCreditBillingEnabled() || !isStripePurchaseConfigured()) {
     return { ok: false, error: "not_configured" };
@@ -212,6 +221,11 @@ export async function createCreditCheckoutSession(
     mode: "payment",
     customer: stripeCustomerId,
     line_items: [{ price: pricing.priceId, quantity: 1 }],
+    // T7 — omitted rather than sent as `undefined`: Stripe's SDK still sends an
+    // explicit-`undefined` key to the API as if the caller asked for nothing in
+    // particular, but the intent here is stronger — never let this default to
+    // `"en"` and silently override Stripe's own auto-detect.
+    ...(locale ? { locale } : {}),
     automatic_tax: { enabled: true },
     tax_id_collection: { enabled: true },
     // Amendment 17 — a compliant French invoice carries the buyer's full address,

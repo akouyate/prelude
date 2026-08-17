@@ -202,6 +202,9 @@ describe.skipIf(!sandboxKey || !databaseUrl)("Stripe purchase path (sandbox)", (
       packId,
       origin: "http://localhost:3000",
       now,
+      // T7 — proof the param is accepted by the real API, not just sent: a fake
+      // would happily echo back whatever string this test handed it.
+      locale: "fr",
       stripe,
     });
 
@@ -232,6 +235,9 @@ describe.skipIf(!sandboxKey || !databaseUrl)("Stripe purchase path (sandbox)", (
     });
     expect(session.client_reference_id).toBe(organizationId);
     expect(session.mode).toBe("payment");
+    // T7 — read back from Stripe: proof the SDK accepted `"fr"` on this
+    // account/API version, not merely that we sent it.
+    expect(session.locale).toBe("fr");
 
     // Stripe Tax on, VAT number collectable, and the collected identity written
     // back onto the Customer the invoice will be issued to.
@@ -264,5 +270,54 @@ describe.skipIf(!sandboxKey || !databaseUrl)("Stripe purchase path (sandbox)", (
     // runs off the webhook that says otherwise.
     expect(session.status).toBe("open");
     expect(session.payment_status).toBe("unpaid");
+  }, 60_000);
+
+  /**
+   * T7 — the currency-fallback claim, checked instead of inferred.
+   *
+   * The design doc's working assumption was "a buyer with no EU/US signal pays
+   * the Price's default currency (EUR)". Nobody had actually created a session
+   * and read back what Stripe resolved. This test does that.
+   *
+   * Mechanism, and its honest limit: there is no way to hand Stripe a buyer IP
+   * or country from a server-to-server API call — Checkout Sessions are created
+   * here exactly the way `createCreditCheckoutSession` creates them in
+   * production, and production never has a client IP to forward either. So
+   * this is not a simulation of "a shopper browsing from a third country"; it
+   * is the actual zero-signal case: the throwaway customer above has no
+   * `address` (nothing in this suite ever pays, and `customer_update` only
+   * persists what Checkout collects at payment time), so this session reaches
+   * Stripe with no customer country and no IP.
+   *
+   * OBSERVED against the sandbox (`sk_test_…`, live API call, not a fake):
+   * `session.currency` is populated immediately at creation — Stripe resolves
+   * it synchronously, it does not defer to the hosted payment page — and with
+   * no location signal at all it comes back `"eur"`, the Price's base
+   * currency. That is the fallback claim, now a recorded fact rather than an
+   * inference. (Had it instead come back `null` here, that would have been the
+   * finding to record instead: "currency is unresolved until the payment page
+   * renders, so the fallback claim is untestable server-side" — this test
+   * would then assert `session.currency === null` as the actual observable
+   * invariant. That did not happen; `"eur"` did.)
+   */
+  it("records what Stripe resolves for session.currency with no customer country signal", async () => {
+    const result = await createCreditCheckoutSession(db, {
+      organizationId,
+      organizationName: `Smoke org ${runId}`,
+      packId,
+      origin: "http://localhost:3000",
+      now: new Date(),
+      stripe,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    const sessions = await stripe.checkout.sessions.list({ customer: customerId, limit: 1 });
+    const session = sessions.data[0];
+    expect(session).toBeDefined();
+    if (!session) return;
+
+    expect(session.currency).toBe("eur");
   }, 60_000);
 });
