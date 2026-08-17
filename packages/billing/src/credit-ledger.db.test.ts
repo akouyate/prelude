@@ -589,6 +589,52 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
       expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
     });
 
+    // Task 6 (plan rule 7): `billingCountry` is the buyer-entered, tax-grade
+    // observation fulfilment reads off `session.customer_details.address.country`
+    // — recorded on the lot, never on `Organization.country`. This suite only
+    // proves the ledger writes and preserves what it is handed; `stripe-fulfilment`
+    // owns extracting it from the session.
+    it("records the observed billing country on the lot when the caller supplies one", async () => {
+      const organizationId = await organizationWithoutWallet("billing-country");
+      const granted = await grantPurchasedCreditLot(db, {
+        organizationId,
+        packId: "hiring_100",
+        creditsGranted: 100,
+        unitAmountCents: 34900,
+        currency: "EUR",
+        billingCountry: "FR",
+        stripePaymentIntentId: `pi_country_${organizationId}`,
+        stripeCheckoutSessionId: `cs_country_${organizationId}`,
+        now,
+      });
+      expect(granted.outcome).toBe("granted");
+
+      const lot = await db.creditLot.findFirstOrThrow({
+        where: { organizationId, source: "pack_purchase" },
+      });
+      expect(lot.billingCountry).toBe("FR");
+    });
+
+    it("leaves billingCountry null when the caller has no observed country to report", async () => {
+      const organizationId = await organizationWithoutWallet("billing-country-absent");
+      const granted = await grantPurchasedCreditLot(db, {
+        organizationId,
+        packId: "hiring_100",
+        creditsGranted: 100,
+        unitAmountCents: 34900,
+        currency: "EUR",
+        stripePaymentIntentId: `pi_country_absent_${organizationId}`,
+        stripeCheckoutSessionId: `cs_country_absent_${organizationId}`,
+        now,
+      });
+      expect(granted.outcome).toBe("granted");
+
+      const lot = await db.creditLot.findFirstOrThrow({
+        where: { organizationId, source: "pack_purchase" },
+      });
+      expect(lot.billingCountry).toBeNull();
+    });
+
     it("keeps the 30-day First Five clock when the wallet predates the purchase", async () => {
       // The mirror case of the alignment above: this organization met billing at
       // its first admission, so its free grant has been ticking since then and a

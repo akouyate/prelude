@@ -135,6 +135,11 @@ export class InvalidCreditPurchaseAmountError extends Error {
  * `stripeCheckoutSessionId` is optional because Checkout is one way to be paid,
  * not the definition of being paid: a payment intent charged against a stored
  * mandate carries no session.
+ *
+ * `billingCountry` (plan 2026-08-17, rule 7) is the buyer-entered, tax-grade
+ * observation from `session.customer_details.address.country` — optional
+ * because `fulfillPaidPaymentIntent`'s operator-recovery callers have no
+ * Checkout session to read one from. Absent means null, never a guess.
  */
 export type GrantPurchasedCreditLotInput = {
   organizationId: string;
@@ -142,6 +147,7 @@ export type GrantPurchasedCreditLotInput = {
   creditsGranted: number;
   unitAmountCents: number;
   currency: string;
+  billingCountry?: string | null;
   stripePaymentIntentId: string;
   stripeCheckoutSessionId?: string;
   stripeInvoiceId?: string;
@@ -488,6 +494,7 @@ export async function grantPurchasedCreditLot(
     creditsGranted,
     unitAmountCents,
     currency,
+    billingCountry,
     stripePaymentIntentId,
     stripeCheckoutSessionId,
     stripeInvoiceId,
@@ -587,6 +594,12 @@ export async function grantPurchasedCreditLot(
           // Nothing here converts an amount — the lot records the purchase as
           // it was paid, and reporting converts at read time.
           currency: incomingCurrency,
+          // Observed, never copied to Organization.country (plan 2026-08-17,
+          // rule 7). `billingCountry` is Stripe's buyer-entered tax-grade fact
+          // from the session, kept separate forever from the recruiter's
+          // declared `Organization.country` — the two are different authorities
+          // and neither may overwrite the other.
+          billingCountry: billingCountry ?? null,
           status: "active",
           grantedAt: now,
           expiresAt: new Date(now.getTime() + PAID_CREDIT_EXPIRY_DAYS * DAY_MS),
