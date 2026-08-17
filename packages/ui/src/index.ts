@@ -75,6 +75,12 @@ export {
 } from "./components/underline-tabs";
 export { Toast } from "./feedback/toast";
 export {
+  ToastProvider,
+  useToast,
+  type ToastOptions,
+  type ToastTone,
+} from "./feedback/toast-provider";
+export {
   CandidateMonoPill,
   CandidateScreenHeader,
   CandidateShell,
