@@ -561,8 +561,8 @@
         "countryOptions": {
           "notSet": "Not set",
           "fr": "France",
-          "be": "Belgique",
-          "ch": "Suisse",
+          "be": "Belgium",
+          "ch": "Switzerland",
           "lu": "Luxembourg",
           "gb": "United Kingdom",
           "us": "United States",
