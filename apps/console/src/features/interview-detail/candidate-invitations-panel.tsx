@@ -59,14 +59,23 @@ export function CandidateInvitationsPanel({
     }
   }, [state.ok]);
 
-  // Keyed on `state` itself, not `state.ok`: the action returns a fresh
-  // `{ ok: true, ... }` object on every successful submit, so two
-  // consecutive invitations must each announce — a boolean dependency would
-  // miss the second one because it never stops being `true`.
+  // Review fix: depending on `[state, t, toast]` alone re-announces the same
+  // settle whenever ANYTHING in that array changes identity for a reason
+  // that isn't a new settle — `t` from react-i18next is not stable across a
+  // language switch, and with `state.ok` stuck at `true` a locale change
+  // would silently re-fire this toast for an invitation already announced.
+  // `announcedInviteStateRef` dedupes on the SETTLE'S OWN IDENTITY instead:
+  // the action returns a fresh `{ ok: true, ... }` object literal on every
+  // successful submit (confirmed in candidate-invitation-actions.ts), so a
+  // new `state` reference is exactly "a new invite was created" and nothing
+  // else can produce one — making this effect safe to re-run for any reason
+  // (language switch, a parent re-render, anything) without double-announcing.
+  const announcedInviteStateRef = React.useRef<typeof state | null>(null);
   React.useEffect(() => {
-    if (!state.ok) {
+    if (!state.ok || announcedInviteStateRef.current === state) {
       return;
     }
+    announcedInviteStateRef.current = state;
     toast({
       dismissLabel: t("toast.dismiss"),
       message: t("interviewDetail.inviteCreated"),
