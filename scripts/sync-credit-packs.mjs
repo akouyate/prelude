@@ -93,9 +93,37 @@ const overridesRaw = process.env.PACK_PRICE_OVERRIDES;
 // `{"packId": <eurCents>}` shape left USD silently pinned to the static
 // mirror while EUR moved, minting a mispriced pair — refuse it outright
 // and name the new shape rather than guess a USD amount.
+//
+// Two shapes of nonsense fail loudly rather than no-op, on the same
+// discipline: an override that does not name a real pack, and an override
+// that is not an object of packs at all. Both used to end in a full sync at
+// the UNCHANGED prices with a zero exit code — the one outcome an operator
+// rotating a price will not check for, because the script said it worked.
 function validateOverrides(rawOverrides) {
+  // `null` would throw a raw TypeError out of `Object.entries`, and `[]` / `42`
+  // would iterate to nothing and pass for "no overrides" — a silent
+  // no-op where an operator asked for a price change.
+  if (typeof rawOverrides !== "object" || rawOverrides === null || Array.isArray(rawOverrides)) {
+    fail(
+      `PACK_PRICE_OVERRIDES must be a JSON object keyed by pack id: ` +
+        `{"hiring_100":{"eur":<cents>,"usd":<cents>}}. Got: ` +
+        `${JSON.stringify(rawOverrides)}.`,
+    );
+  }
+
+  const knownPackIds = PACKS.map((pack) => pack.id);
   const validated = {};
   for (const [packId, value] of Object.entries(rawOverrides)) {
+    // A typo'd or retired pack id used to be a silent no-op: `overrides[pack.id]`
+    // never matched, every pack synced at its unchanged price, and the run exited
+    // 0. Amendment 2's discipline is that a price the operator asked to move and
+    // that did not move is a failure, not a shrug.
+    if (!knownPackIds.includes(packId)) {
+      fail(
+        `PACK_PRICE_OVERRIDES names an unknown pack id "${packId}". ` +
+          `Known packs: ${knownPackIds.join(", ")}.`,
+      );
+    }
     if (typeof value === "number") {
       fail(
         `PACK_PRICE_OVERRIDES["${packId}"] uses the old flat-number format ` +

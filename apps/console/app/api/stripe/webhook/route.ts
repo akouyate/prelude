@@ -77,7 +77,25 @@ export async function POST(request: NextRequest) {
     // Retrying it would pile up attempts on a payment no retry can fix.
     return Response.json(result);
   } catch (error) {
-    console.error("[stripe-webhook] dispatch failed", event.type, event.id, error);
+    // MESSAGE ONLY, for the same reason as the 400 path above — one try/catch
+    // further down, and with a verified event rather than an unverified body.
+    // The dispatcher's first act is to archive the whole event as
+    // `StripeWebhookEvent.payload`, so a Prisma error raised on that upsert
+    // carries the rejected `data` argument — the entire event, `customer_details`
+    // included — hanging off the error. `console.error` inspects own properties
+    // recursively, so handing it the OBJECT publishes all of it.
+    //
+    // The stack is dropped with it rather than kept: for a Prisma validation
+    // error the args are rendered into the message itself, which the stack's
+    // first line repeats. The event type and id below are what identify the
+    // failure, and the dispatcher already archived the same message in
+    // `firstError` / `lastError` before rethrowing.
+    console.error(
+      "[stripe-webhook] dispatch failed",
+      event.type,
+      event.id,
+      error instanceof Error ? error.message : String(error),
+    );
     // 500 asks Stripe to redeliver. The dispatcher archived the failure before
     // rethrowing, and fulfilment is idempotent, so a retry is safe.
     return new Response("Webhook dispatch failed", { status: 500 });

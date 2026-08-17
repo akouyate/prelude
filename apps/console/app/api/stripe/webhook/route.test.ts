@@ -1,3 +1,5 @@
+import { inspect } from "node:util";
+
 import { handleStripeWebhookEvent } from "@prelude/billing";
 import { prisma } from "@prelude/db";
 import Stripe from "stripe";
@@ -195,6 +197,57 @@ describe("POST /api/stripe/webhook", () => {
     const response = await POST(post(payload, sign(payload)));
 
     expect(response.status).toBe(500);
+  });
+
+  /**
+   * The same discipline as the 400 path, one try/catch further down. The archive
+   * upsert writes the whole verified event as `payload`, so a Prisma error raised
+   * on that call carries the event — `customer_details` and all — hanging off the
+   * error. Handing the OBJECT to `console.error` publishes it: a JSON log pipeline
+   * serialises own properties. The message names the failure; the object is the leak.
+   */
+  it("never logs the event payload when the dispatcher throws", async () => {
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Shaped like `PrismaClientValidationError` on the archive upsert: a message
+    // that names the call, and the rejected `data` argument attached to the error.
+    const prismaish = Object.assign(
+      new Error("Invalid `prisma.stripeWebhookEvent.upsert()` invocation"),
+      {
+        clientVersion: "6.1.0",
+        data: {
+          payload: {
+            id: "evt_1",
+            data: {
+              object: {
+                id: "cs_1",
+                customer_details: { email: "candidate@example.com", name: "Jane Candidate" },
+              },
+            },
+          },
+        },
+      },
+    );
+    dispatch.mockRejectedValue(prismaish);
+
+    const response = await POST(post(payload, sign(payload)));
+    expect(response.status).toBe(500);
+
+    // `inspect(depth: null)` is what `console.error` actually does to a non-string
+    // argument: it walks own properties recursively. Serialising any other way
+    // would be a test that agrees with itself rather than with the log pipeline.
+    const logged = errorLog.mock.calls
+      .flat()
+      .map((arg) => (typeof arg === "string" ? arg : inspect(arg, { depth: null })))
+      .join(" ");
+
+    expect(logged).not.toContain("candidate@example.com");
+    expect(logged).not.toContain("Jane Candidate");
+    // Still reports the failure, and still says which event it was — the fix is to
+    // log less, not to go silent.
+    expect(logged).toContain("dispatch failed");
+    expect(logged).toContain("checkout.session.completed");
+    expect(logged).toContain("evt_1");
+    expect(logged).toContain("prisma.stripeWebhookEvent.upsert()");
   });
 
   it("reads the raw body — a re-serialised payload would break the signature", async () => {
