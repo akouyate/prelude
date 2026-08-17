@@ -87,6 +87,12 @@ export type StripeWebhookDeps = {
  * comment): `firstError` is written once on the first failure and never
  * overwritten — the forensic record — while `lastError` tracks the most recent
  * failure and is cleared when a replay finally settles, with the clear logged.
+ *
+ * Deliberately NOT gated on `isCreditBillingEnabled()`, and neither are the refund
+ * and dispute handlers it routes to: the flag governs whether the product SELLS
+ * credits, never whether credits already sold are honoured. An environment that
+ * flips it off still owes a refund its write-off and a chargeback its freeze — the
+ * same rationale the expiry sweep documents (`billing-sweep/route.ts`).
  */
 export async function handleStripeWebhookEvent(
   db: PrismaClient,

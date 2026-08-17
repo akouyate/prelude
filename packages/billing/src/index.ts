@@ -19,13 +19,6 @@ export {
 } from "./billing-policy";
 export { isCreditBillingEnabled } from "./credit-billing-flag";
 export {
-  constructStripeEvent,
-  getStripeClient,
-  isStripePurchaseConfigured,
-  MissingStripeConfigError,
-  MissingStripeWebhookSecretError,
-} from "./stripe-client";
-export {
   captureReservationForSession,
   ensureWallet,
   expireDueLots,
@@ -59,6 +52,13 @@ export {
   type ReserveCreditResult,
   type WalletReconciliation,
 } from "./credit-ledger";
+export {
+  constructStripeEvent,
+  getStripeClient,
+  isStripePurchaseConfigured,
+  MissingStripeConfigError,
+  MissingStripeWebhookSecretError,
+} from "./stripe-client";
 export {
   handleDisputeEvent,
   handleRefundEvent,
