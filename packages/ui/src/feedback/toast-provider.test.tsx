@@ -191,4 +191,34 @@ describe("dedupe on settle identity, not on every dependency's stability", () =>
       expect(screen.getAllByText("Invited")).toHaveLength(2);
     });
   });
+
+  // The guard writes its ref BEFORE calling `toast()`, which is what makes it
+  // survive React's development double-invocation of effects. Next enables
+  // StrictMode by default for the app router, so this is the mode the console
+  // actually runs in — asserting it here turns that ordering from a reasoned
+  // claim into a proven one. (The RED case above is deliberately NOT wrapped:
+  // under StrictMode the naive pattern announces twice on mount alone, which
+  // would document a different, larger bug than the one it exists to show.)
+  it("announces once per settle even when StrictMode double-invokes the effect", async () => {
+    const settle = { ok: true };
+    render(
+      <React.StrictMode>
+        <ToastProvider>
+          <AnnouncesSettleOncePerIdentity label="Invited" settle={settle} />
+        </ToastProvider>
+      </React.StrictMode>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("Invited")).toHaveLength(1);
+    });
+
+    // `toast()` defers its `manager.add`, so a double-invoked effect would
+    // land its second announcement a task later — wait past that before
+    // asserting the count never grew.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100);
+    });
+    expect(screen.getAllByText("Invited")).toHaveLength(1);
+  });
 });

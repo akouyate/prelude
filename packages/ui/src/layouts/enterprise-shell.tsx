@@ -466,7 +466,7 @@ function CreditMeter({
       className={cn(
         "mb-2.5 flex flex-col gap-2 rounded-2xl border px-3 py-2.5 transition hover:bg-ink-900/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300",
         credits.low && "border-[#eccfc2] bg-[#fffaf7]",
-        !credits.low && "border-[#e7e2d8]",
+        !credits.low && "border-[#e7e2d8] bg-white",
       )}
       href={credits.topUpHref}
     >
