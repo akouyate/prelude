@@ -517,55 +517,63 @@ export async function grantPurchasedCreditLot(
       // intent would run the currency check against whatever the wallet's
       // `settlementCurrency` happens to be *right now* — normally unaffected by
       // that, but the guard must hold even when the wallet's locked currency
-      // changed between the original grant and the replay. A collision
-      // belonging to ANOTHER organization is deliberately not special-cased
-      // here: it falls through to the `create` below, which raises the same
-      // P2002 the catch beneath this transaction already resolves, and every
-      // write above it — including a currency lock — rolls back with the rest
-      // of the transaction.
+      // changed between the original grant and the replay.
       const existingForPayment = await tx.creditLot.findUnique({
         where: { stripePaymentIntentId },
       });
-      if (existingForPayment && existingForPayment.organizationId === organizationId) {
+      if (existingForPayment?.organizationId === organizationId) {
         return { outcome: "already_granted" as const };
       }
 
       // Stripe reports currencies lower-cased; the column (and the wallet's
-      // lock) is upper-case.
+      // lock) is upper-case. Computed unconditionally — it is a pure string
+      // op, and the `create` below needs it whichever branch runs.
       const incomingCurrency = currency.toUpperCase();
-      const wallet = await tx.creditWallet.findUniqueOrThrow({ where: { organizationId } });
 
-      if (wallet.settlementCurrency === null) {
-        // A null `settlementCurrency` with an existing paid lot is the
-        // pre-migration shape (design constraint 2): a wallet that took a paid
-        // grant before this column existed. Such a wallet may already be
-        // ambiguous — more than one currency could have been accepted before
-        // this lock existed — so a disagreement parks for an operator instead
-        // of either side being silently adopted. Free lots never carry a
-        // `kind` of `"paid"`, so this scan cannot see them and never blocks on
-        // one.
-        const existingPaidLots = await tx.creditLot.findMany({
-          where: { organizationId, kind: "paid" },
-          select: { currency: true },
-        });
-        const conflicting = existingPaidLots.find((lot) => lot.currency !== incomingCurrency);
-        if (conflicting) {
+      // A lot for this payment exists but is NOT ours: the cross-org tripwire
+      // keeps priority over the currency gate. Skip the currency check-and-set
+      // entirely and fall straight to the `create` below, which raises the
+      // same P2002 the catch beneath this transaction already resolves
+      // (re-read, confirm the owner, rethrow). Letting the currency gate run
+      // first here would let a wallet that merely happens to disagree on
+      // currency answer `currency_mismatch` → `needs_admin` → HTTP 200 for a
+      // payment this organization was never credited for — silencing the
+      // exact alarm the P2002 rethrow below exists to raise.
+      if (existingForPayment === null) {
+        const wallet = await tx.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+
+        if (wallet.settlementCurrency === null) {
+          // A null `settlementCurrency` with an existing paid lot is the
+          // pre-migration shape (design constraint 2): a wallet that took a
+          // paid grant before this column existed. Such a wallet may already
+          // be ambiguous — more than one currency could have been accepted
+          // before this lock existed — so a disagreement parks for an
+          // operator instead of either side being silently adopted. Free lots
+          // never carry a `kind` of `"paid"`, so this scan cannot see them
+          // and never blocks on one.
+          const existingPaidLots = await tx.creditLot.findMany({
+            where: { organizationId, kind: "paid" },
+            select: { currency: true },
+          });
+          const conflicting = existingPaidLots.find((lot) => lot.currency !== incomingCurrency);
+          if (conflicting) {
+            return {
+              outcome: "currency_mismatch" as const,
+              walletCurrency: conflicting.currency,
+              sessionCurrency: incomingCurrency,
+            };
+          }
+          await tx.creditWallet.update({
+            where: { organizationId },
+            data: { settlementCurrency: incomingCurrency },
+          });
+        } else if (wallet.settlementCurrency !== incomingCurrency) {
           return {
             outcome: "currency_mismatch" as const,
-            walletCurrency: conflicting.currency,
+            walletCurrency: wallet.settlementCurrency,
             sessionCurrency: incomingCurrency,
           };
         }
-        await tx.creditWallet.update({
-          where: { organizationId },
-          data: { settlementCurrency: incomingCurrency },
-        });
-      } else if (wallet.settlementCurrency !== incomingCurrency) {
-        return {
-          outcome: "currency_mismatch" as const,
-          walletCurrency: wallet.settlementCurrency,
-          sessionCurrency: incomingCurrency,
-        };
       }
 
       const lot = await tx.creditLot.create({

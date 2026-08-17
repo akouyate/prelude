@@ -736,6 +736,11 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
       expect(strangerWallet).toMatchObject({
         availableCredits: FIRST_FIVE_CREDITS,
         reservedCredits: 0,
+        // The currency-lock write this refused attempt tried to make rolled
+        // back with the rest of the transaction — pinned explicitly so a
+        // regression here can't hide behind a `toMatchObject` that never
+        // looks at the field.
+        settlementCurrency: null,
       });
       const buyerWallet = await db.creditWallet.findUniqueOrThrow({
         where: { organizationId: buyer },
@@ -1184,6 +1189,72 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
         expect(wallet.availableCredits).toBe(25 + FIRST_FIVE_CREDITS);
         expect(await db.creditLot.count({ where: { organizationId, source: "pack_purchase" } })).toBe(1);
         expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+      });
+
+      it("keeps the cross-org P2002 tripwire ahead of the currency gate", async () => {
+        // Design-review fix: the currency gate must never pre-empt the
+        // cross-org collision guard. If it did, a payment intent that
+        // belongs to another organization would park as `currency_mismatch`
+        // → `needs_admin` → HTTP 200 whenever the mis-resolved organization's
+        // wallet happened to disagree on currency — instead of the P2002 that
+        // keeps Stripe retrying a payment nobody was credited for.
+        const buyer = await organizationWithoutWallet("tripwire-buyer");
+        const stranger = await organizationWithoutWallet("tripwire-stranger");
+        const stripePaymentIntentId = `pi_tripwire_${buyer}`;
+
+        const granted = await grantPurchasedCreditLot(db, {
+          organizationId: buyer,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "EUR",
+          stripePaymentIntentId,
+          now,
+        });
+        expect(granted.outcome).toBe("granted");
+
+        // Lock the stranger's wallet to a currency that DISAGREES with the
+        // buyer's payment, through its own legitimate, unrelated purchase —
+        // this is the condition that used to let the currency gate answer
+        // first.
+        await grantPurchasedCreditLot(db, {
+          organizationId: stranger,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "USD",
+          stripePaymentIntentId: `pi_tripwire_stranger_${stranger}`,
+          now,
+        });
+
+        // Stranger replays the buyer's exact payment intent (a mis-resolved
+        // organization, or an attacker). Must fail loudly with P2002 — not
+        // `currency_mismatch`, and not `already_granted`.
+        await expect(
+          grantPurchasedCreditLot(db, {
+            organizationId: stranger,
+            packId: "starter_25",
+            creditsGranted: 25,
+            unitAmountCents: 9900,
+            currency: "EUR",
+            stripePaymentIntentId,
+            now,
+          }),
+        ).rejects.toMatchObject({ code: "P2002" });
+
+        // Nothing about the stranger's own, legitimate USD lot changed.
+        expect(
+          await db.creditLot.count({ where: { organizationId: stranger, source: "pack_purchase" } }),
+        ).toBe(1);
+        const strangerWallet = await db.creditWallet.findUniqueOrThrow({
+          where: { organizationId: stranger },
+        });
+        expect(strangerWallet).toMatchObject({
+          settlementCurrency: "USD",
+          availableCredits: 25 + FIRST_FIVE_CREDITS,
+        });
+        expect((await reconcileWallet(db, { organizationId: stranger })).consistent).toBe(true);
+        expect((await reconcileWallet(db, { organizationId: buyer })).consistent).toBe(true);
       });
     });
   });
