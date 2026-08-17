@@ -547,6 +547,7 @@
       "workspace": {
         "title": "Espace de travail",
         "description": "Les informations générales de votre organisation dans HireCall.",
+        "forbidden": "Vous n'avez pas les droits pour modifier ces réglages.",
         "uploadLogo": "Importer un logo",
         "logoHint": "L'import de logo n'est pas encore disponible en V1. Les initiales de l'espace sont utilisées pour l'instant.",
         "name": "Nom de l'espace",

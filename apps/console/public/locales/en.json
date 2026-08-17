@@ -547,6 +547,7 @@
       "workspace": {
         "title": "Workspace",
         "description": "General details for your organization on HireCall.",
+        "forbidden": "Only owners and admins can update workspace settings.",
         "uploadLogo": "Upload logo",
         "logoHint": "Logo upload is not available in V1 yet. Workspace initials are used for now.",
         "name": "Workspace name",

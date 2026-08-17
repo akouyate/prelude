@@ -14,8 +14,22 @@ vi.mock("@prelude/db", () => ({ prisma: prismaMock }));
 vi.mock("../organizations/organization-scope", () => scopeMock);
 vi.mock("next/cache", () => revalidateMock);
 vi.mock("server-only", () => ({}));
+// Same test-double convention as interview-actions.test.ts: the server-side
+// locale resolution is not what this suite is about, so it is pinned to a
+// deterministic identity translator instead of loading the real catalogs.
+vi.mock("../users/user-locale", () => ({
+  getAuthenticatedUserLocale: vi.fn(async () => "en"),
+}));
+vi.mock("../../libs/i18n-server", () => ({
+  getServerT: () => (key: string) => key,
+}));
 
-import { updateWorkspaceSettingsAction } from "./workspace-settings-actions";
+import {
+  updateWorkspaceSettingsAction,
+  type WorkspaceSettingsActionState,
+} from "./workspace-settings-actions";
+
+const IDLE_STATE: WorkspaceSettingsActionState = { error: null, ok: false };
 
 function scope(role: string) {
   return {
@@ -61,7 +75,10 @@ afterEach(() => {
 
 describe("updateWorkspaceSettingsAction — country", () => {
   it.each(CURATED_COUNTRIES)("accepts %s and writes it verbatim", async (country) => {
-    await updateWorkspaceSettingsAction(formData({ country, name: "Acme" }));
+    await updateWorkspaceSettingsAction(
+      IDLE_STATE,
+      formData({ country, name: "Acme" }),
+    );
 
     expect(prismaMock.organization.update).toHaveBeenCalledWith({
       data: expect.objectContaining({ country }),
@@ -80,6 +97,7 @@ describe("updateWorkspaceSettingsAction — country", () => {
     "writes an explicit null for %s country — the deliberate 'Not set' sentinel",
     async (_label, extraFields) => {
       await updateWorkspaceSettingsAction(
+        IDLE_STATE,
         formData({ name: "Acme", ...extraFields }),
       );
 
@@ -97,6 +115,7 @@ describe("updateWorkspaceSettingsAction — country", () => {
     "leaves country out of the update entirely for invalid input %j",
     async (rawCountry) => {
       await updateWorkspaceSettingsAction(
+        IDLE_STATE,
         formData({ country: rawCountry, name: "Acme" }),
       );
 
@@ -105,23 +124,39 @@ describe("updateWorkspaceSettingsAction — country", () => {
     },
   );
 
-  it("refuses a non-managing role and never touches the database", async () => {
-    scopeMock.getCompletedOrganizationScope.mockResolvedValue(scope("recruiter"));
+  // Re-derived from T3: this used to assert `rejects.toThrow()` (an unhandled
+  // exception — QA T8 finding B.6/Finding 2). A non-manager submit must now
+  // resolve to the section's standard `{ error, ok }` action-state shape
+  // instead of throwing, so the form can render an inline message rather than
+  // crash. "viewer" matches the QA repro's MOCK_CLERK_ORG_ROLE=viewer exactly.
+  it("refuses a non-managing role with the standard error shape, and never touches the database", async () => {
+    scopeMock.getCompletedOrganizationScope.mockResolvedValue(scope("viewer"));
 
-    await expect(
-      updateWorkspaceSettingsAction(formData({ country: "FR", name: "Acme" })),
-    ).rejects.toThrow();
+    const result = await updateWorkspaceSettingsAction(
+      IDLE_STATE,
+      formData({ country: "FR", name: "Acme" }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(typeof result.error).toBe("string");
+    expect(result.error).not.toHaveLength(0);
     expect(prismaMock.organization.update).not.toHaveBeenCalled();
   });
 
   it("round-trips: setting FR then unsetting writes FR, then an explicit null", async () => {
-    await updateWorkspaceSettingsAction(formData({ country: "FR", name: "Acme" }));
+    await updateWorkspaceSettingsAction(
+      IDLE_STATE,
+      formData({ country: "FR", name: "Acme" }),
+    );
     expect(prismaMock.organization.update).toHaveBeenNthCalledWith(1, {
       data: expect.objectContaining({ country: "FR" }),
       where: { id: "org_123" },
     });
 
-    await updateWorkspaceSettingsAction(formData({ country: "", name: "Acme" }));
+    await updateWorkspaceSettingsAction(
+      IDLE_STATE,
+      formData({ country: "", name: "Acme" }),
+    );
     expect(prismaMock.organization.update).toHaveBeenNthCalledWith(2, {
       data: expect.objectContaining({ country: null }),
       where: { id: "org_123" },
@@ -129,13 +164,19 @@ describe("updateWorkspaceSettingsAction — country", () => {
   });
 
   it("a prior FR survives an invalid resubmission — schema failure is never a silent clear", async () => {
-    await updateWorkspaceSettingsAction(formData({ country: "FR", name: "Acme" }));
+    await updateWorkspaceSettingsAction(
+      IDLE_STATE,
+      formData({ country: "FR", name: "Acme" }),
+    );
     expect(prismaMock.organization.update).toHaveBeenNthCalledWith(1, {
       data: expect.objectContaining({ country: "FR" }),
       where: { id: "org_123" },
     });
 
-    await updateWorkspaceSettingsAction(formData({ country: "DE", name: "Acme" }));
+    await updateWorkspaceSettingsAction(
+      IDLE_STATE,
+      formData({ country: "DE", name: "Acme" }),
+    );
     const secondCall = prismaMock.organization.update.mock.calls[1]?.[0];
     expect(secondCall.data).not.toHaveProperty("country");
   });

@@ -6,8 +6,9 @@ import { prisma, type Prisma } from "@prelude/db";
 import type { OrganizationRole } from "@prelude/types";
 
 import { canManageTeam } from "../../domain/organization-permissions";
-import { coerceConsoleLocale } from "../../libs/i18n-server";
+import { coerceConsoleLocale, getServerT } from "../../libs/i18n-server";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
+import { getAuthenticatedUserLocale } from "../users/user-locale";
 import { parseOrganizationSettings } from "./workspace-settings-data";
 
 const allowedCompanySizes = new Set([
@@ -21,9 +22,35 @@ const allowedCompanySizes = new Set([
 ]);
 const allowedVoices = new Set(["maya", "noah", "lea"]);
 
-export async function updateWorkspaceSettingsAction(formData: FormData) {
+// The section's standard action-state shape for a native `<form action=...>`
+// bound via `useActionState` (matches `CandidateInvitationActionState` in
+// candidate-invitation-actions.ts and the schedule-call-dialog action): `ok`
+// tells the form whether the last submit landed, `error` is the message (already
+// localized) to render near the save control, or `null` when there is nothing
+// to show.
+export type WorkspaceSettingsActionState = {
+  error: string | null;
+  ok: boolean;
+};
+
+export async function updateWorkspaceSettingsAction(
+  _state: WorkspaceSettingsActionState,
+  formData: FormData,
+): Promise<WorkspaceSettingsActionState> {
   const scope = await getCompletedOrganizationScope();
-  assertCanEditSettings(scope.role);
+
+  // A non-manager (viewer/recruiter) submitting this form must fail
+  // gracefully, not crash the page: QA T8 finding B.6 caught this action
+  // propagating assertCanEditSettings's throw as an unhandled exception. The
+  // check itself stays shared with the sibling settings actions (interview
+  // preferences, notifications) — only this call site is taught to catch it
+  // and answer with the section's standard error shape instead of throwing.
+  try {
+    assertCanEditSettings(scope.role);
+  } catch {
+    const t = getServerT(await getAuthenticatedUserLocale(scope.userId));
+    return { error: t("settings.workspace.forbidden"), ok: false };
+  }
 
   const name = cleanText(formData.get("name"), 80);
   const hiringFocus = cleanOptionalText(formData.get("hiringFocus"), 80);
@@ -31,7 +58,7 @@ export async function updateWorkspaceSettingsAction(formData: FormData) {
   const country = cleanDeclaredCountry(formData.get("country"));
 
   if (!name) {
-    return;
+    return { error: null, ok: false };
   }
 
   await prisma.organization.update({
@@ -59,6 +86,8 @@ export async function updateWorkspaceSettingsAction(formData: FormData) {
   });
 
   revalidateSettings();
+
+  return { error: null, ok: true };
 }
 
 export async function updateInterviewPreferencesAction(formData: FormData) {
