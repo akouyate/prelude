@@ -685,6 +685,7 @@
           "opening": "Opening…",
           "checkoutFailed": "We could not open the payment page. Please try again, or contact us if it keeps failing.",
           "currencyLabel": "Display currency",
+          "usdUnavailable": "USD prices unavailable for some packs",
           "volumeGate": "Need more than 500 interviews? Get volume pricing",
           "nonManagerHint": "Only an owner or admin can buy credits for this workspace.",
           "purchaseNotAllowed": "Only an owner or admin can buy credits for this workspace. Ask one of them to complete this purchase.",

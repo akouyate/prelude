@@ -13,6 +13,7 @@ import { computeWalletTotals, type CreditLotSnapshot } from "@prelude/core";
 import { prisma, type Prisma } from "@prelude/db";
 import { readWorkspaceNotificationPreferences } from "@prelude/notifications/preferences";
 import type { OrganizationRole } from "@prelude/types";
+import { headers } from "next/headers";
 
 import {
   canManageTeam,
@@ -21,6 +22,7 @@ import {
 import { getConsoleAuthIdentity } from "../auth/console-auth-provider";
 import { clerkOrganizationDirectory } from "../organizations/clerk-organization-directory";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
+import { resolveDisplayCurrencyFromRequest } from "../../features/settings/settings-billing-helpers";
 import type {
   SettingsInterviewPreferences,
   SettingsNotificationPreferences,
@@ -245,6 +247,14 @@ async function loadCreditBilling({
     return null;
   }
 
+  // Plan rule 4: resolved from THIS request's headers, not from
+  // `Organization.country` (never read here or anywhere in this file) and not
+  // from the browser — the client seeds its toggle from this value instead of
+  // reading `navigator.language` after hydration, which is what killed the
+  // currency-symbol flash on first paint.
+  const requestHeaders = await headers();
+  const initialDisplayCurrency = resolveDisplayCurrencyFromRequest(requestHeaders);
+
   const [lots, packs] = await Promise.all([
     prisma.creditLot.findMany({
       select: {
@@ -276,7 +286,10 @@ async function loadCreditBilling({
     }),
   ]);
 
-  return toWorkspaceCreditBilling({ lots, packs, now: new Date(), role });
+  return {
+    ...toWorkspaceCreditBilling({ lots, packs, now: new Date(), role }),
+    initialDisplayCurrency,
+  };
 }
 
 /**
@@ -284,6 +297,11 @@ async function loadCreditBilling({
  * ledger uses, so the settings page and the reservation path can never disagree
  * about what "available" means) plus the catalogue split into what may be listed
  * and what may only be linked.
+ *
+ * Deliberately currency-agnostic: `initialDisplayCurrency` (plan rule 4) is a
+ * per-REQUEST signal resolved by the async caller (`loadCreditBilling`, which
+ * has to await `headers()`), not something this pure function — driven only by
+ * lots/packs/role — should need to thread through.
  */
 export function toWorkspaceCreditBilling({
   lots,
@@ -312,7 +330,7 @@ export function toWorkspaceCreditBilling({
   }>;
   now: Date;
   role: OrganizationRole;
-}): WorkspaceCreditBilling {
+}): Omit<WorkspaceCreditBilling, "initialDisplayCurrency"> {
   const totals = computeWalletTotals(lots as CreditLotSnapshot[], now);
   const sellable = [...packs]
     .filter((pack) => pack.enabled)

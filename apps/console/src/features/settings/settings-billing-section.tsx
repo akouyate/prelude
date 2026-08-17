@@ -17,8 +17,8 @@ import type {
 import {
   billingStateDescriptionKey,
   billingStateTranslationKey,
+  canOfferUsd,
   creditPackAmountCents,
-  defaultDisplayCurrency,
   formatCreditPrice,
   purchaseBannerFor,
   usagePercentage,
@@ -181,13 +181,23 @@ function CreditPurchasePanel({
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [pathname, router, searchParams]);
 
-  // Starts on the catalogue default and moves to the browser's currency after
-  // hydration. Reading `navigator` during render would make the server and the
-  // client disagree on the first paint.
-  const [currency, setCurrency] = React.useState<DisplayCurrency>("EUR");
-  React.useEffect(() => {
-    setCurrency(defaultDisplayCurrency(navigator.language));
-  }, []);
+  // Plan rule 4's chain: explicit user toggle > server-resolved request
+  // geography > EUR. The geography link is resolved server-side, in the
+  // settings loader (`resolveDisplayCurrencyFromRequest`, from
+  // `x-vercel-ip-country`/`Accept-Language`), and arrives here as
+  // `creditBilling.initialDisplayCurrency` — so the very first server-rendered
+  // paint already carries the right symbol. There is no client-side correction
+  // after hydration (the old `navigator.language` effect is gone): the server
+  // and the client never disagree, because the client starts from what the
+  // server already resolved.
+  //
+  // Clamped to EUR when `usdAvailable` is false so a server-resolved "USD" can
+  // never seed a state the ladder cannot actually show in full (rule 4's
+  // display-integrity guard — see `canOfferUsd`).
+  const usdAvailable = canOfferUsd(creditBilling.packs);
+  const [currency, setCurrency] = React.useState<DisplayCurrency>(() =>
+    usdAvailable ? creditBilling.initialDisplayCurrency : "EUR",
+  );
 
   const [pendingPackId, setPendingPackId] = React.useState<string | null>(null);
   const [checkoutFailed, setCheckoutFailed] = React.useState(false);
@@ -228,7 +238,11 @@ function CreditPurchasePanel({
             {t("settings.billing.credits.description")}
           </p>
         </div>
-        <CurrencyToggle currency={currency} onChange={setCurrency} />
+        <CurrencyToggle
+          currency={currency}
+          onChange={setCurrency}
+          usdAvailable={usdAvailable}
+        />
       </div>
 
       {banner ? (
@@ -378,9 +392,11 @@ function CreditPackCard({
 function CurrencyToggle({
   currency,
   onChange,
+  usdAvailable,
 }: {
   currency: DisplayCurrency;
   onChange: (currency: DisplayCurrency) => void;
+  usdAvailable: boolean;
 }) {
   const { t } = useTranslation();
 
@@ -390,24 +406,40 @@ function CurrencyToggle({
       className="flex shrink-0 items-center gap-1 rounded-full border border-ink-100 p-1"
       role="group"
     >
-      {(["EUR", "USD"] as const).map((option) => (
-        <button
-          aria-pressed={currency === option}
-          className={cn(
-            "cursor-pointer rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors",
-            currency === option
-              ? "bg-ink-900 text-white"
-              : "text-ink-500 hover:text-ink-800",
-          )}
-          key={option}
-          onClick={() => {
-            onChange(option);
-          }}
-          type="button"
-        >
-          {option}
-        </button>
-      ))}
+      {(["EUR", "USD"] as const).map((option) => {
+        // Rule 4's display-integrity guard: offering USD when the catalogue
+        // cannot fully price in dollars would let the ladder mix € and $ rows
+        // under a toggle that claims one currency. Disabled rather than hidden,
+        // with a title explaining why, so the option's absence reads as a fact
+        // about this catalogue and not a bug.
+        const disabled = option === "USD" && !usdAvailable;
+
+        return (
+          <button
+            aria-pressed={currency === option}
+            className={cn(
+              "cursor-pointer rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors",
+              currency === option
+                ? "bg-ink-900 text-white"
+                : "text-ink-500 hover:text-ink-800",
+              disabled && "cursor-not-allowed opacity-40 hover:text-ink-500",
+            )}
+            disabled={disabled}
+            key={option}
+            onClick={() => {
+              onChange(option);
+            }}
+            title={
+              disabled
+                ? t("settings.billing.credits.usdUnavailable")
+                : undefined
+            }
+            type="button"
+          >
+            {option}
+          </button>
+        );
+      })}
     </div>
   );
 }

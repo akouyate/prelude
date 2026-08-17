@@ -685,6 +685,7 @@
           "opening": "Ouverture…",
           "checkoutFailed": "Impossible d'ouvrir la page de paiement. Réessayez, ou contactez-nous si le problème persiste.",
           "currencyLabel": "Devise affichée",
+          "usdUnavailable": "Prix en dollars indisponibles pour certains packs",
           "volumeGate": "Besoin de plus de 500 entretiens ? Obtenez un tarif volume",
           "nonManagerHint": "Seul un propriétaire ou un administrateur peut acheter des crédits pour cet espace de travail.",
           "purchaseNotAllowed": "Seul un propriétaire ou un administrateur peut acheter des crédits pour cet espace de travail. Demandez-lui de finaliser cet achat.",

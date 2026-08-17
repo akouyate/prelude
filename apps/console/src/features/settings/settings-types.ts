@@ -112,6 +112,12 @@ export type WorkspaceCreditBilling = {
   // "need more than 500 interviews?" line gets its id here rather than hardcoding
   // a catalogue slug in a component. `null` when nothing quiet is on sale.
   volumePackId: string | null;
+  // Plan rule 4: the display currency chain's server link. Resolved in the
+  // loader from the live request's headers (`resolveDisplayCurrencyFromRequest`
+  // in `settings-billing-helpers.ts`) — never from `Organization.country` — so
+  // the client can seed its toggle's initial state and render the right symbol
+  // on FIRST paint, with no `navigator`-driven correction after hydration.
+  initialDisplayCurrency: "EUR" | "USD";
 };
 
 export type WorkspaceCreditPack = {
