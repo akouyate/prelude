@@ -12,6 +12,21 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
   // Svix-signed Clerk webhook — authenticated by signature, not a Clerk session.
   "/api/clerk/webhook(.*)",
+  // Machine callers. None of these has a Clerk session and none can acquire one,
+  // so `auth.protect()` does not "secure" them — it makes them unreachable, and
+  // silently: it answers 307-to-sign-in or 404 depending on the request shape, both
+  // of which look like an application bug rather than an auth refusal.
+  //
+  // Verified against this middleware, not assumed. Before this entry:
+  //   POST /api/stripe/webhook          → 307 …accounts.dev/sign-in?redirect_url=…
+  //   POST /api/internal/billing-sweep  → 404
+  //
+  // Each carries its own, stronger authentication, applied inside the handler:
+  // Stripe signs its payload with an HMAC (`STRIPE_WEBHOOK_SECRET`), and the sweep
+  // requires a constant-time bearer match against `BILLING_SWEEP_SECRET` and fails
+  // closed with 503 while that secret is unset.
+  "/api/stripe/webhook(.*)",
+  "/api/internal/billing-sweep(.*)",
 ]);
 
 export default isConsoleAuthClerkEnabled
