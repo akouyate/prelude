@@ -40,9 +40,11 @@ VOICE_SMOKE_VOICE ?=
 VOICE_SMOKE_MAX_SECONDS ?= 240
 VOICE_SMOKE_PYTHON ?= 3.13
 BILLING_SWEEP_URL ?= http://localhost:3000/api/internal/billing-sweep
-# Must exceed the route's SWEEP_TIME_BUDGET_MS (25s) plus the bounded Stripe
-# listing, so a healthy sweep never looks like a timeout.
-BILLING_SWEEP_MAX_TIME ?= 60
+# Strictly above the route's LOCK_TRANSACTION_TIMEOUT_MS (60s), which is itself
+# above SWEEP_TIME_BUDGET_MS + ENTRY_PASS_TIME_BUDGET_MS (25s + 10s). See the
+# ordering invariant documented in the route: a client that gives up before the
+# server does reports failure for work that actually succeeded.
+BILLING_SWEEP_MAX_TIME ?= 90
 BILLING_SWEEP_LIMIT ?=
 BILLING_SWEEP_CURSOR ?=
 BILLING_ADMIN_QUEUE_LIMIT ?=

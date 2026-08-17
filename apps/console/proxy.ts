@@ -6,7 +6,15 @@ import {
   isConsoleAuthClerkEnabled,
 } from "./src/server/auth/clerk-config";
 
-const isPublicRoute = createRouteMatcher([
+/**
+ * Exported so `proxy.test.ts` can pin it. This list is the ONLY thing standing
+ * between a machine caller and a 307-to-sign-in, and the Clerk branch that consumes
+ * it never runs in tests or in CI (console tests default to `CONSOLE_AUTH_PROVIDER=mock`,
+ * which takes the pass-through branch below). Without a test, a regression here is
+ * invisible until Stripe stops fulfilling purchases in production — which is exactly
+ * how `/api/stripe/webhook` came to be missing from it.
+ */
+export const publicRoutePatterns = [
   "/about(.*)",
   "/login(.*)",
   "/sign-up(.*)",
@@ -27,7 +35,11 @@ const isPublicRoute = createRouteMatcher([
   // closed with 503 while that secret is unset.
   "/api/stripe/webhook(.*)",
   "/api/internal/billing-sweep(.*)",
-]);
+] as const;
+
+// Spread into a mutable copy: `createRouteMatcher` takes a mutable array, and the
+// export stays `readonly` so no caller can quietly add a route to the public list.
+const isPublicRoute = createRouteMatcher([...publicRoutePatterns]);
 
 export default isConsoleAuthClerkEnabled
   ? clerkMiddleware(async (auth, request) => {

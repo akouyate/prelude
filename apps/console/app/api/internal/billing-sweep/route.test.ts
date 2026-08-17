@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -355,6 +356,154 @@ describe("POST /api/internal/billing-sweep — pagination and time budget", () =
       organizationId: "org_3",
     });
   });
+
+  /**
+   * FORWARD PROGRESS — the property that makes the paginated chain terminate.
+   *
+   * The entry passes share the same budget clock, so on an entry call they can
+   * legitimately leave none of it. If the loop checked the budget before its first
+   * attempt, this invocation would sweep zero organizations and answer `hasMore: true`
+   * with the cursor it was handed — and the scheduler would follow that cursor into
+   * the identical response forever, releasing not one hold.
+   */
+  it("still attempts one organization when the entry passes exhausted the budget", async () => {
+    prismaMock.creditWallet.findMany.mockResolvedValue(walletPage("org_1", "org_2", "org_3"));
+    let clock = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    // The Stripe listing alone blows the whole per-invocation budget.
+    billingMock.isStripePurchaseConfigured.mockReturnValue(true);
+    billingMock.getStripeClient.mockReturnValue({
+      events: {
+        list: vi.fn().mockImplementation(async () => {
+          clock += 60_000;
+          return { data: [] };
+        }),
+      },
+    });
+
+    const response = await POST(sweepRequest());
+
+    expect(response.status).toBe(200);
+    const body = await bodyOf(response);
+    // Exactly one attempt: index 0 is unconditional, index 1 sees the spent budget.
+    expect(body).toMatchObject({ hasMore: true, nextCursor: "org_1", organizationsSwept: 1 });
+    expect(billingMock.releaseExpiredReservations).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The invariant the test above protects, stated directly: `hasMore: true` with a
+   * null cursor is a scheduler that can never advance, so it must be unreachable
+   * across every shape of page.
+   */
+  it("never answers hasMore without a cursor to resume from", async () => {
+    const clockCases = [0, 60_000];
+    for (const perOrgCost of clockCases) {
+      for (const page of [[], ["org_1"], ["org_1", "org_2"], ["org_1", "org_2", "org_3"]]) {
+        for (const limit of [1, 2]) {
+          prismaMock.creditWallet.findMany.mockResolvedValue(walletPage(...page));
+          let clock = 0;
+          vi.spyOn(Date, "now").mockImplementation(() => clock);
+          billingMock.releaseExpiredReservations.mockImplementation(async () => {
+            clock += perOrgCost;
+            return { releasedCount: 0 };
+          });
+
+          const body = await bodyOf(await POST(sweepRequest({ query: `?limit=${limit}` })));
+
+          if (body.hasMore === true) {
+            expect(body.nextCursor).not.toBeNull();
+          }
+        }
+      }
+    }
+  });
+});
+
+describe("POST /api/internal/billing-sweep — entry-pass time budget", () => {
+  /**
+   * The missed-event pass yields PARTWAY rather than running to the end of Stripe's
+   * page. Each iteration is a session read plus a possible ledger write, so a hundred
+   * of them is not a bounded cost in wall time — and it must not spend the budget the
+   * per-organization sweep exists to use.
+   */
+  it("yields partway through the Stripe page and reports how far it got", async () => {
+    let clock = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    billingMock.isStripePurchaseConfigured.mockReturnValue(true);
+    billingMock.getStripeClient.mockReturnValue({
+      events: {
+        list: vi.fn().mockResolvedValue({
+          data: ["cs_1", "cs_2", "cs_3", "cs_4"].map((id, index) => ({
+            data: { object: { id } },
+            id: `evt_${index + 1}`,
+            type: "checkout.session.completed",
+          })),
+        }),
+      },
+    });
+    // 4s per event against a 10s entry-pass budget: three fit, the fourth does not.
+    billingMock.fulfillCreditCheckout.mockImplementation(async () => {
+      clock += 4_000;
+      return { lotId: "lot_x", outcome: "granted" };
+    });
+
+    const response = await POST(sweepRequest());
+
+    await expect(bodyOf(response)).resolves.toMatchObject({
+      missedEvents: { granted: 3, scanned: 3, skipped: null, yieldedToBudget: true },
+    });
+    expect(billingMock.fulfillCreditCheckout).toHaveBeenCalledTimes(3);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining("yielded to the time budget"),
+      { scanned: 3 },
+    );
+  });
+
+  it("does not run the reprocess pass when the budget is already spent", async () => {
+    let clock = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    // The auth + parse path burns the entry-pass budget before the sweep begins.
+    prismaMock.$transaction.mockImplementation(
+      async (run: (tx: typeof txMock) => Promise<unknown>) => {
+        clock += 30_000;
+        return run(txMock);
+      },
+    );
+
+    const response = await POST(sweepRequest());
+
+    expect(billingMock.reprocessIgnoredStripeEvents).not.toHaveBeenCalled();
+    await expect(bodyOf(response)).resolves.toMatchObject({
+      reprocessedIgnoredEvents: { failed: 0, reprocessed: 0 },
+    });
+  });
+
+  it("reports scanned counts truthfully — a yield never claims an unprocessed event", async () => {
+    let clock = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+    billingMock.isStripePurchaseConfigured.mockReturnValue(true);
+    billingMock.getStripeClient.mockReturnValue({
+      events: {
+        list: vi.fn().mockImplementation(async () => {
+          // The listing itself consumes the whole entry-pass budget.
+          clock += 20_000;
+          return {
+            data: [
+              { data: { object: { id: "cs_1" } }, id: "evt_1", type: "checkout.session.completed" },
+            ],
+          };
+        }),
+      },
+    });
+
+    const response = await POST(sweepRequest());
+
+    // Zero scanned, not one: the check precedes the work.
+    await expect(bodyOf(response)).resolves.toMatchObject({
+      missedEvents: { granted: 0, scanned: 0, yieldedToBudget: true },
+    });
+    expect(billingMock.fulfillCreditCheckout).not.toHaveBeenCalled();
+  });
 });
 
 describe("POST /api/internal/billing-sweep — mutual exclusion", () => {
@@ -379,12 +528,114 @@ describe("POST /api/internal/billing-sweep — mutual exclusion", () => {
     await POST(sweepRequest());
 
     expect(prismaMock.$transaction).toHaveBeenCalledTimes(1);
-    const [, options] = prismaMock.$transaction.mock.calls[0] as [unknown, { timeout: number }];
-    // A transaction that times out before the work does would drop the lock
-    // mid-sweep and let a second scheduler in.
-    expect(options.timeout).toBeGreaterThan(25_000);
     const [sql] = txMock.$queryRaw.mock.calls[0] as [{ raw?: string[] } | string[]];
     expect(JSON.stringify(sql)).toContain("pg_try_advisory_xact_lock");
+  });
+
+  /**
+   * The ordering invariant, asserted rather than commented.
+   *
+   * If the lock's transaction times out first, Prisma rolls it back and RELEASES the
+   * advisory lock while this invocation is still writing on the pooled client — the
+   * work is deliberately outside the transaction, so it survives the lock's death and
+   * a second scheduler walks straight in. The margin must also cover the one
+   * operation already in flight when a budget check trips.
+   */
+  it("keeps the lock transaction strictly longer than every budget it must outlast", async () => {
+    await POST(sweepRequest());
+
+    const [, options] = prismaMock.$transaction.mock.calls[0] as [
+      unknown,
+      { maxWait: number; timeout: number },
+    ];
+    const SWEEP_TIME_BUDGET_MS = 25_000;
+    const ENTRY_PASS_TIME_BUDGET_MS = 10_000;
+
+    expect(ENTRY_PASS_TIME_BUDGET_MS).toBeLessThan(SWEEP_TIME_BUDGET_MS);
+    expect(options.timeout).toBeGreaterThan(SWEEP_TIME_BUDGET_MS + ENTRY_PASS_TIME_BUDGET_MS);
+    expect(options.maxWait).toBeLessThan(options.timeout);
+  });
+
+  /**
+   * The OUTERMOST leg of the same invariant, and the only one that lives outside
+   * TypeScript. Both schedulers must give the server longer than its own lock
+   * transaction, so this reads the two files rather than trusting a comment to keep
+   * them in step — the failure it prevents (curl abandoning a sweep that then keeps
+   * the lock, and a retry reading the resulting `skipped` as an anomaly) is invisible
+   * from inside the route.
+   */
+  it("keeps both schedulers' --max-time strictly above the lock transaction timeout", async () => {
+    await POST(sweepRequest());
+    const [, options] = prismaMock.$transaction.mock.calls[0] as [unknown, { timeout: number }];
+    const lockTimeoutSeconds = options.timeout / 1000;
+
+    const repoRoot = new URL("../../../../../../", import.meta.url);
+    const makefile = readFileSync(new URL("Makefile", repoRoot), "utf8");
+    const workflow = readFileSync(new URL(".github/workflows/billing-sweep.yml", repoRoot), "utf8");
+
+    const makeMaxTime = Number(/^BILLING_SWEEP_MAX_TIME \?= (\d+)$/m.exec(makefile)?.[1]);
+    const workflowMaxTime = Number(/^\s*CURL_MAX_TIME: "(\d+)"$/m.exec(workflow)?.[1]);
+
+    expect(makeMaxTime).toBeGreaterThan(lockTimeoutSeconds);
+    expect(workflowMaxTime).toBeGreaterThan(lockTimeoutSeconds);
+  });
+});
+
+describe("POST /api/internal/billing-sweep — failure modes", () => {
+  /**
+   * Postgres unreachable, pool exhausted (P2024), lock transaction timed out (P2028).
+   * Next's default would be an opaque HTML error page: the scheduler logs "500" with
+   * no cause, and `--fail-with-body` pastes a stack trace into the job output.
+   */
+  it("answers a logged JSON 500 when the sweep cannot run at all", async () => {
+    prismaMock.$transaction.mockRejectedValue(new Error("Can't reach database server"));
+
+    const response = await POST(sweepRequest());
+
+    expect(response.status).toBe(500);
+    await expect(bodyOf(response)).resolves.toMatchObject({ error: "sweep_failed" });
+    expect(response.headers.get("content-type")).toContain("application/json");
+    expect(console.error).toHaveBeenCalledWith(
+      "[billing-sweep] the sweep could not run",
+      expect.objectContaining({ error: expect.stringContaining("database") }),
+    );
+  });
+
+  /**
+   * Prisma's keyset pagination needs the cursor ROW to locate the boundary, so a
+   * wallet deleted between two pages silently truncates the rest of the chain. It
+   * must not look like "there was nothing to do".
+   */
+  it("logs when a resume cursor no longer resolves to a page", async () => {
+    prismaMock.creditWallet.findMany.mockResolvedValue([]);
+
+    const response = await POST(sweepRequest({ query: "?cursor=org_deleted" }));
+
+    expect(response.status).toBe(200);
+    expect(console.warn).toHaveBeenCalledWith(
+      expect.stringContaining("resume cursor returned no page"),
+      { cursor: "org_deleted" },
+    );
+  });
+
+  it("does not log a missing-cursor warning for an empty entry call", async () => {
+    prismaMock.creditWallet.findMany.mockResolvedValue([]);
+
+    await POST(sweepRequest());
+
+    expect(console.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining("resume cursor returned no page"),
+      expect.anything(),
+    );
+  });
+
+  it("names only the limit in the 400, since the cursor is not validated", async () => {
+    const response = await POST(sweepRequest({ query: "?limit=0" }));
+
+    expect(response.status).toBe(400);
+    const text = await response.text();
+    expect(text).toContain("limit");
+    expect(text.toLowerCase()).not.toContain("cursor");
   });
 });
 
@@ -490,7 +741,7 @@ describe("POST /api/internal/billing-sweep — missed Stripe events", () => {
     expect(billingMock.getStripeClient).not.toHaveBeenCalled();
     expect(billingMock.fulfillCreditCheckout).not.toHaveBeenCalled();
     await expect(bodyOf(response)).resolves.toMatchObject({
-      missedEvents: { granted: 0, scanned: 0, skipped: true },
+      missedEvents: { granted: 0, scanned: 0, skipped: "unconfigured" },
     });
   });
 
@@ -531,7 +782,7 @@ describe("POST /api/internal/billing-sweep — missed Stripe events", () => {
       stripeEventId: "evt_2",
     });
     await expect(bodyOf(response)).resolves.toMatchObject({
-      missedEvents: { failed: 0, granted: 2, scanned: 2, skipped: false },
+      missedEvents: { failed: 0, granted: 2, scanned: 2, skipped: null },
     });
   });
 
@@ -559,7 +810,7 @@ describe("POST /api/internal/billing-sweep — missed Stripe events", () => {
 
     expect(billingMock.fulfillCreditCheckout).not.toHaveBeenCalled();
     await expect(bodyOf(response)).resolves.toMatchObject({
-      missedEvents: { granted: 0, scanned: 2, skipped: false },
+      missedEvents: { granted: 0, scanned: 2, skipped: null },
     });
   });
 
@@ -575,7 +826,7 @@ describe("POST /api/internal/billing-sweep — missed Stripe events", () => {
     const response = await POST(sweepRequest());
 
     await expect(bodyOf(response)).resolves.toMatchObject({
-      missedEvents: { failed: 1, granted: 1, scanned: 2, skipped: false },
+      missedEvents: { failed: 1, granted: 1, scanned: 2, skipped: null },
     });
   });
 
@@ -594,7 +845,7 @@ describe("POST /api/internal/billing-sweep — missed Stripe events", () => {
 
     expect(response.status).toBe(200);
     await expect(bodyOf(response)).resolves.toMatchObject({
-      missedEvents: { failed: 1, scanned: 0, skipped: false },
+      missedEvents: { failed: 1, scanned: 0, skipped: null },
       organizationsSwept: 1,
     });
   });

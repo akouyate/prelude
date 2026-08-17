@@ -53,9 +53,12 @@ jobs:
         env:
           BILLING_SWEEP_SECRET: ${{ secrets.BILLING_SWEEP_SECRET }}
           BILLING_SWEEP_URL: ${{ vars.BILLING_SWEEP_URL }}
-          # Must exceed the route's SWEEP_TIME_BUDGET_MS (25s) plus the bounded
-          # Stripe listing, or a healthy sweep would look like a timeout.
-          CURL_MAX_TIME: "60"
+          # Strictly above the route's LOCK_TRANSACTION_TIMEOUT_MS (60s), which is
+          # itself above SWEEP_TIME_BUDGET_MS + ENTRY_PASS_TIME_BUDGET_MS (25s + 10s).
+          # See the ordering invariant in route.ts: giving up before the server does
+          # reports failure for work that succeeded, and sends a retry at an endpoint
+          # still holding the advisory lock.
+          CURL_MAX_TIME: "90"
           # The endpoint is paginated; one invocation sweeps at most `limit`
           # organizations and hands back a cursor. This bounds how far one scheduled
           # run will follow that chain, so a pathological dataset cannot turn an
@@ -110,6 +113,24 @@ jobs:
             failed_orgs="$(echo "${body}" | jq -r '.organizationsFailed')"
             if [ "${failed_orgs}" != "0" ]; then
               echo "::warning::${failed_orgs} organization(s) failed to sweep; see the console logs"
+            fi
+
+            # The two MONEY counters. A re-fulfilment that keeps failing is the
+            # paid-but-never-credited case: Stripe took the customer's money, the
+            # webhook never landed, and the recovery pass cannot close the gap either.
+            # A reprocess failure is its chargeback/refund equivalent — a frozen or
+            # revoked lot that was never applied. Neither can be left to a 200 body
+            # nobody reads.
+            missed_failed="$(echo "${body}" | jq -r '.missedEvents.failed')"
+            if [ "${missed_failed}" != "0" ]; then
+              echo "::warning::${missed_failed} undelivered Stripe checkout event(s) failed to re-fulfil — possible paid-but-uncredited purchase"
+            fi
+            reprocess_failed="$(echo "${body}" | jq -r '.reprocessedIgnoredEvents.failed')"
+            if [ "${reprocess_failed}" != "0" ]; then
+              echo "::warning::${reprocess_failed} archived Stripe event(s) failed to reprocess — refund/dispute may be unapplied (make billing-admin-queue)"
+            fi
+            if [ "$(echo "${body}" | jq -r '.missedEvents.yieldedToBudget')" = "true" ]; then
+              echo "::notice::the missed-event pass yielded to the time budget; the next run continues from Stripe's listing"
             fi
 
             if [ "$(echo "${body}" | jq -r '.hasMore')" != "true" ]; then
