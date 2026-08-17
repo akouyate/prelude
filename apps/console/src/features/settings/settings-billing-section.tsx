@@ -3,7 +3,7 @@
 import * as React from "react";
 import { useClerk } from "@clerk/nextjs";
 import { ArrowUpRight } from "iconoir-react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import { Button, Notice, StatusBadge, cn } from "@prelude/ui";
 
@@ -156,8 +156,30 @@ function CreditPurchasePanel({
 }) {
   const { i18n, t } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language;
+  const pathname = usePathname();
+  const router = useRouter();
   const searchParams = useSearchParams();
-  const banner = purchaseBannerFor(searchParams.get("purchase"));
+
+  // Read once, on mount, and keep it in state — because the effect below then
+  // removes the parameter from the URL. Without that, "credits added" is
+  // immortal: it replays on every reload, survives a bookmark, and reappears
+  // days later on a page that is no longer describing anything that just
+  // happened. `replace` rather than `push` so Back does not walk into the stale
+  // banner, and the other parameters (notably `view=billing`) are preserved so
+  // the section does not jump back to Profile.
+  const [banner] = React.useState(() =>
+    purchaseBannerFor(searchParams.get("purchase")),
+  );
+
+  React.useEffect(() => {
+    if (!searchParams.has("purchase")) {
+      return;
+    }
+    const remaining = new URLSearchParams(searchParams);
+    remaining.delete("purchase");
+    const query = remaining.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   // Starts on the catalogue default and moves to the browser's currency after
   // hydration. Reading `navigator` during render would make the server and the
@@ -186,8 +208,13 @@ function CreditPurchasePanel({
       setCheckoutFailed(true);
     } catch {
       setCheckoutFailed(true);
+    } finally {
+      // Runs on the success path too, `return` notwithstanding. `assign` only
+      // *starts* a navigation — if it is blocked or fails, an unreset pending id
+      // would leave every buy button disabled until a manual reload. When the
+      // navigation does happen the page unloads before this repaint is visible.
+      setPendingPackId(null);
     }
-    setPendingPackId(null);
   }, []);
 
   return (

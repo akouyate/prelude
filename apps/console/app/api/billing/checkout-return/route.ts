@@ -58,9 +58,50 @@ async function resolveReturnOutcome(sessionId: string | null): Promise<PurchaseB
     return "error";
   }
 
-  // Throws for an unauthenticated or un-onboarded caller — the same guard every
-  // console loader relies on, and the reason this route can trust the org below.
-  const scope = await getCompletedOrganizationScope();
+  // A hosted Checkout page sits open for minutes while a card is entered, so the
+  // console session can be gone by the time Stripe sends the buyer back here.
+  // Letting the scope resolution throw would render the application error page —
+  // with `?session_id=cs_…` still in the address bar — at the exact moment the
+  // customer just paid. That is the worst screen we could possibly show, and the
+  // money is never at stake: the webhook and the missed-event sweep fulfil this
+  // same session, so a failed browser return costs a banner, not credits.
+  //
+  // Why `/settings` rather than a hand-rolled sign-in redirect carrying a
+  // return-to back here — measured against the real Clerk setup, not assumed:
+  //
+  //  1. An unauthenticated return NEVER REACHES THIS CODE. `proxy.ts` runs
+  //     `auth.protect()` on every non-public route, so Clerk answers first, and it
+  //     already carries the return-to this fix was asked for:
+  //
+  //       GET /api/billing/checkout-return?session_id=cs_1   (no session)
+  //       → 307 …/v1/client/handshake?redirect_url=
+  //           http%3A%2F%2Flocalhost%3A3000%2Fapi%2Fbilling%2Fcheckout-return
+  //           %3Fsession_id%3Dcs_1
+  //
+  //     The session id survives the round trip, so after re-authentication the
+  //     buyer lands back here and the fulfilment/banner path completes. A
+  //     hand-rolled sign-in redirect would duplicate that — badly, and in the one
+  //     place where getting auth wrong is most expensive.
+  //
+  //  2. What remains for this catch is therefore the AUTHENTICATED but
+  //     un-onboarded caller (and any transient scope failure). Sign-in is the
+  //     wrong destination for them — they already have a session — and a
+  //     return-to pointing back at this route would bounce them through
+  //     sign-in → here → throw → sign-in forever. A redirect loop is strictly
+  //     worse than the 500 it replaced. `/settings` is protected and behind the
+  //     onboarding guard, so it routes them wherever they actually need to go.
+  //
+  // The redirect shape is identical to every other failure, so the security
+  // contract is untouched: fulfilment is unreachable and nothing is distinguishable.
+  let scope;
+  try {
+    scope = await getCompletedOrganizationScope();
+  } catch (error) {
+    console.error("[credit-checkout-return] no usable console session on return", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return "error";
+  }
 
   // The same owner/admin line the buy action draws, applied on the way back too.
   // Nothing is lost by refusing here: the webhook and the missed-event sweep

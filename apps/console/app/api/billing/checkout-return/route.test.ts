@@ -132,12 +132,37 @@ describe("GET /api/billing/checkout-return — ownership", () => {
     expect(redirectedTo()).toBe("/settings?view=billing&purchase=granted");
   });
 
-  it("requires an authenticated console session before touching Stripe", async () => {
-    scopeMock.getCompletedOrganizationScope.mockRejectedValue(
-      new Error("Completed onboarding is required."),
-    );
+  /**
+   * A hosted Checkout page sits open for minutes while a card is entered, so the
+   * console session can be gone by the time Stripe sends the buyer back. An
+   * unhandled throw here would render the application error page — with
+   * `?session_id=cs_…` still in the address bar — at the exact moment the
+   * customer just paid. It must be a redirect, never a 500.
+   */
+  it("redirects instead of 500ing when the console session is gone or un-onboarded", async () => {
+    for (const reason of [
+      "Completed onboarding is required.",
+      "Authenticated user is required.",
+    ]) {
+      navigationMock.redirect.mockReset();
+      scopeMock.getCompletedOrganizationScope.mockRejectedValue(new Error(reason));
 
-    await expect(GET(requestFor("?session_id=cs_1"))).rejects.toThrow(/onboarding/i);
+      await GET(requestFor("?session_id=cs_1"));
+
+      // `/settings` is itself a protected route, so Clerk's middleware owns the
+      // re-authentication and carries its own return-to. Landing there gives the
+      // buyer a real page either way, and the same redirect shape as every other
+      // failure — so the security contract is untouched.
+      expect(redirectedTo()).toBe("/settings?view=billing&purchase=error");
+      expect(billingMock.fulfillCreditCheckout).not.toHaveBeenCalled();
+    }
+  });
+
+  it("never lets an auth failure reach Stripe or the ledger", async () => {
+    scopeMock.getCompletedOrganizationScope.mockRejectedValue(new Error("boom"));
+
+    await GET(requestFor("?session_id=cs_1"));
+
     expect(billingMock.fulfillCreditCheckout).not.toHaveBeenCalled();
   });
 });
