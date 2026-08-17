@@ -1,7 +1,11 @@
 import type { PrismaClient } from "@prelude/db";
 import type Stripe from "stripe";
 
-import { grantPurchasedCreditLot, type GrantPurchasedCreditLotInput } from "./credit-ledger";
+import {
+  grantPurchasedCreditLot,
+  type GrantPurchasedCreditLotInput,
+  type GrantPurchasedCreditLotResult,
+} from "./credit-ledger";
 import { getStripeClient } from "./stripe-client";
 
 /**
@@ -62,6 +66,11 @@ export type CreditCheckoutFulfilment =
   | { outcome: "no_payment_intent" }
   | { outcome: "amount_mismatch" }
   | { outcome: "foreign_session" }
+  // Task 5: the ledger's `currency_mismatch` carries `{ walletCurrency,
+  // sessionCurrency }` for the log line below; the outcome that leaves this
+  // module is bare, matching `unknown_pack` / `amount_mismatch` — the specific
+  // currencies are an operator's business, not this outcome's caller's.
+  | { outcome: "currency_mismatch" }
   | { outcome: "needs_admin"; reason: "missing_metadata" | "no_payment_required" };
 
 /** Currencies a lot can be denominated in — amendment 22, lower-cased as Stripe reports them. */
@@ -88,7 +97,7 @@ const EXPECTED_AMOUNT_METADATA_KEY: Record<FulfillableCurrency, string> = {
 export async function fulfillPaidPaymentIntent(
   db: PrismaClient,
   input: GrantPurchasedCreditLotInput,
-): Promise<{ outcome: "granted"; lotId: string } | { outcome: "already_granted" }> {
+): Promise<GrantPurchasedCreditLotResult> {
   return grantPurchasedCreditLot(db, input);
 }
 
@@ -263,7 +272,7 @@ export async function fulfillCreditCheckout(
   // Stripe's (what was actually charged, in the currency it was charged in). A
   // price rotation between session creation and fulfilment must not rewrite
   // history, and a USD purchase must never be filed as EUR (amendments 3 + 22).
-  return fulfillPaidPaymentIntent(db, {
+  const grant = await fulfillPaidPaymentIntent(db, {
     organizationId,
     packId: pack.id,
     creditsGranted: pack.creditsGranted,
@@ -275,6 +284,23 @@ export async function fulfillCreditCheckout(
     stripeEventId,
     now,
   });
+
+  // Task 5's outcome: the wallet is locked to a different currency than this
+  // session settled in. The specific currencies are logged here — the one place
+  // that still has them — and the outcome that leaves this module is bare, like
+  // every other parked reason.
+  if (grant.outcome === "currency_mismatch") {
+    console.error("[stripe-fulfilment] settlement currency mismatch — parked for an operator", {
+      checkoutSessionId: session.id,
+      organizationId,
+      packId,
+      walletCurrency: grant.walletCurrency,
+      sessionCurrency: grant.sessionCurrency,
+    });
+    return { outcome: "currency_mismatch" };
+  }
+
+  return grant;
 }
 
 /**

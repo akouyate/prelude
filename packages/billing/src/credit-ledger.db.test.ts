@@ -849,6 +849,343 @@ describe.skipIf(!databaseUrl)("credit ledger (Postgres)", () => {
       expect(wallet.availableCredits).toBe(25 + 25 + FIRST_FIVE_CREDITS);
       expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
     });
+
+    // Task 5 — the wallet locks to the currency of its first paid lot, and any
+    // later purchase in a different currency is refused rather than converted.
+    describe("settlement currency lock", () => {
+      it("locks the wallet to the first paid lot's currency", async () => {
+        const organizationId = await organizationWithoutWallet("lock-first");
+        const granted = await grantPurchasedCreditLot(db, {
+          organizationId,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "eur",
+          stripePaymentIntentId: `pi_lock_first_${organizationId}`,
+          now,
+        });
+        expect(granted.outcome).toBe("granted");
+
+        const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+        expect(wallet.settlementCurrency).toBe("EUR");
+        expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+      });
+
+      it("accepts a second grant in the same currency and lets the wallet accumulate", async () => {
+        const organizationId = await organizationWithoutWallet("lock-same");
+        await grantPurchasedCreditLot(db, {
+          organizationId,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "EUR",
+          stripePaymentIntentId: `pi_lock_same_a_${organizationId}`,
+          now,
+        });
+
+        const second = await grantPurchasedCreditLot(db, {
+          organizationId,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "EUR",
+          stripePaymentIntentId: `pi_lock_same_b_${organizationId}`,
+          now,
+        });
+        expect(second.outcome).toBe("granted");
+
+        const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+        expect(wallet).toMatchObject({
+          settlementCurrency: "EUR",
+          availableCredits: 25 + 25 + FIRST_FIVE_CREDITS,
+        });
+        expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+      });
+
+      it("parks a second grant in a different currency: zero new rows, wallet untouched", async () => {
+        const organizationId = await organizationWithoutWallet("lock-cross");
+        await grantPurchasedCreditLot(db, {
+          organizationId,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "EUR",
+          stripePaymentIntentId: `pi_lock_cross_a_${organizationId}`,
+          now,
+        });
+
+        const before = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+        const lotsBefore = await db.creditLot.count({ where: { organizationId } });
+        const entriesBefore = await db.creditLedgerEntry.count({ where: { organizationId } });
+
+        const result = await grantPurchasedCreditLot(db, {
+          organizationId,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "USD",
+          stripePaymentIntentId: `pi_lock_cross_b_${organizationId}`,
+          now,
+        });
+        expect(result).toEqual({
+          outcome: "currency_mismatch",
+          walletCurrency: "EUR",
+          sessionCurrency: "USD",
+        });
+
+        // Zero ledger writes, zero lot, wallet untouched — a refusal, not a
+        // partial write the caller has to clean up.
+        const after = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+        expect(after).toEqual(before);
+        expect(await db.creditLot.count({ where: { organizationId } })).toBe(lotsBefore);
+        expect(await db.creditLedgerEntry.count({ where: { organizationId } })).toBe(entriesBefore);
+        expect(
+          await db.creditLot.findUnique({
+            where: { stripePaymentIntentId: `pi_lock_cross_b_${organizationId}` },
+          }),
+        ).toBeNull();
+        expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+      });
+
+      it("free grants neither check nor set the settlement currency", async () => {
+        // A paid grant locks the wallet to USD...
+        const organizationId = await organizationWithoutWallet("free-untouched");
+        await grantPurchasedCreditLot(db, {
+          organizationId,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "USD",
+          stripePaymentIntentId: `pi_free_untouched_${organizationId}`,
+          now,
+        });
+        const locked = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+        expect(locked.settlementCurrency).toBe("USD");
+
+        // ...and a free grant against that same (already USD-locked) wallet
+        // succeeds without consulting the lock at all — `ensureWallet` is a
+        // pure no-op on an existing wallet, currency included.
+        await ensureWallet(db, { organizationId, now });
+        const relocked = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+        expect(relocked.settlementCurrency).toBe("USD");
+        expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+
+        // A wallet that has only ever received free lots keeps its settlement
+        // currency null: nothing paid has happened yet to lock it to anything.
+        const freeOnlyOrganizationId = await organizationWithoutWallet("free-only");
+        await ensureWallet(db, { organizationId: freeOnlyOrganizationId, now });
+        const freeOnlyWallet = await db.creditWallet.findUniqueOrThrow({
+          where: { organizationId: freeOnlyOrganizationId },
+        });
+        expect(freeOnlyWallet.settlementCurrency).toBeNull();
+        expect(
+          (await reconcileWallet(db, { organizationId: freeOnlyOrganizationId })).consistent,
+        ).toBe(true);
+      });
+
+      it("parks a null-settlement wallet whose existing paid lot disagrees with the incoming currency", async () => {
+        // The pre-migration shape (amendment constraint 2): a wallet whose
+        // `settlementCurrency` is still null but which already carries a paid
+        // lot, because it was granted before this column existed. Created
+        // directly rather than through `grantPurchasedCreditLot`, which is
+        // exactly the point — this state must be producible by something OTHER
+        // than this code path for the test to mean anything.
+        const organizationId = await grantedOrganization();
+        const legacyLot = await db.creditLot.create({
+          data: {
+            organizationId,
+            kind: "paid",
+            source: "pack_purchase",
+            packId: "legacy_pack",
+            creditsGranted: 10,
+            unitAmountCents: 5000,
+            currency: "EUR",
+            status: "active",
+            grantedAt: now,
+            expiresAt: new Date(now.getTime() + PAID_CREDIT_EXPIRY_DAYS * DAY_MS),
+            stripePaymentIntentId: `pi_legacy_${organizationId}`,
+          },
+        });
+        await db.creditLedgerEntry.create({
+          data: {
+            organizationId,
+            lotId: legacyLot.id,
+            type: "pack_purchase",
+            delta: 10,
+            actorKind: "system",
+            reason: "legacy_fixture",
+          },
+        });
+        await db.creditWallet.update({
+          where: { organizationId },
+          data: { availableCredits: { increment: 10 } },
+        });
+        const beforeWallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+        expect(beforeWallet.settlementCurrency).toBeNull();
+        expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+
+        const result = await grantPurchasedCreditLot(db, {
+          organizationId,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "USD",
+          stripePaymentIntentId: `pi_legacy_new_${organizationId}`,
+          now,
+        });
+        expect(result).toEqual({
+          outcome: "currency_mismatch",
+          walletCurrency: "EUR",
+          sessionCurrency: "USD",
+        });
+
+        const afterWallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+        expect(afterWallet).toEqual(beforeWallet);
+        expect(
+          await db.creditLot.count({ where: { organizationId, stripePaymentIntentId: `pi_legacy_new_${organizationId}` } }),
+        ).toBe(0);
+        expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+      });
+
+      it("sets the currency from the incoming purchase when a null-settlement wallet's existing paid lots all agree", async () => {
+        const organizationId = await grantedOrganization();
+        const legacyLot = await db.creditLot.create({
+          data: {
+            organizationId,
+            kind: "paid",
+            source: "pack_purchase",
+            packId: "legacy_pack",
+            creditsGranted: 10,
+            unitAmountCents: 5000,
+            currency: "EUR",
+            status: "active",
+            grantedAt: now,
+            expiresAt: new Date(now.getTime() + PAID_CREDIT_EXPIRY_DAYS * DAY_MS),
+            stripePaymentIntentId: `pi_legacy_ok_${organizationId}`,
+          },
+        });
+        await db.creditLedgerEntry.create({
+          data: {
+            organizationId,
+            lotId: legacyLot.id,
+            type: "pack_purchase",
+            delta: 10,
+            actorKind: "system",
+            reason: "legacy_fixture",
+          },
+        });
+        await db.creditWallet.update({
+          where: { organizationId },
+          data: { availableCredits: { increment: 10 } },
+        });
+
+        const result = await grantPurchasedCreditLot(db, {
+          organizationId,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "EUR",
+          stripePaymentIntentId: `pi_legacy_ok_new_${organizationId}`,
+          now,
+        });
+        expect(result.outcome).toBe("granted");
+
+        const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+        expect(wallet.settlementCurrency).toBe("EUR");
+        expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+      });
+
+      it("keeps a replay idempotent even when the wallet currency was mutated after the original grant", async () => {
+        // Design constraint 4: the idempotency guard must resolve BEFORE the
+        // currency check. Proven the hard way — flip the wallet's locked
+        // currency by hand after the original grant, then replay the exact
+        // same payment intent. A currency check that ran first would park this
+        // as a mismatch; it must instead still answer `already_granted`.
+        const organizationId = await organizationWithoutWallet("replay-mutate");
+        const stripePaymentIntentId = `pi_replay_mutate_${organizationId}`;
+        const first = await grantPurchasedCreditLot(db, {
+          organizationId,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "EUR",
+          stripePaymentIntentId,
+          now,
+        });
+        expect(first.outcome).toBe("granted");
+
+        await db.creditWallet.update({
+          where: { organizationId },
+          data: { settlementCurrency: "USD" },
+        });
+
+        const replay = await grantPurchasedCreditLot(db, {
+          organizationId,
+          packId: "starter_25",
+          creditsGranted: 25,
+          unitAmountCents: 9900,
+          currency: "EUR",
+          stripePaymentIntentId,
+          now,
+        });
+        expect(replay).toEqual({ outcome: "already_granted" });
+
+        expect(
+          await db.creditLot.count({ where: { organizationId, stripePaymentIntentId } }),
+        ).toBe(1);
+        const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+        // Untouched by the replay — the mutation, not this call, is why it reads USD.
+        expect(wallet.settlementCurrency).toBe("USD");
+        expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+      });
+
+      it("under concurrency: two simultaneous first purchases in different currencies — exactly one locks the wallet, the other parks", async () => {
+        const organizationId = await organizationWithoutWallet("lock-race");
+
+        const [eurResult, usdResult] = await Promise.all([
+          grantPurchasedCreditLot(db, {
+            organizationId,
+            packId: "starter_25",
+            creditsGranted: 25,
+            unitAmountCents: 9900,
+            currency: "EUR",
+            stripePaymentIntentId: `pi_lock_race_eur_${organizationId}`,
+            now,
+          }),
+          grantPurchasedCreditLot(db, {
+            organizationId,
+            packId: "starter_25",
+            creditsGranted: 25,
+            unitAmountCents: 9900,
+            currency: "USD",
+            stripePaymentIntentId: `pi_lock_race_usd_${organizationId}`,
+            now,
+          }),
+        ]);
+
+        const outcomes = [eurResult.outcome, usdResult.outcome].sort();
+        expect(outcomes).toEqual(["currency_mismatch", "granted"]);
+
+        // Whichever one won decides the wallet's locked currency, and the loser's
+        // mismatch payload must name it correctly rather than a hard-coded guess.
+        const winner = eurResult.outcome === "granted" ? eurResult : usdResult;
+        const loser = eurResult.outcome === "granted" ? usdResult : eurResult;
+        const winnerCurrency = eurResult.outcome === "granted" ? "EUR" : "USD";
+        const loserCurrency = eurResult.outcome === "granted" ? "USD" : "EUR";
+        expect(winner).toEqual({ outcome: "granted", lotId: expect.any(String) });
+        expect(loser).toEqual({
+          outcome: "currency_mismatch",
+          walletCurrency: winnerCurrency,
+          sessionCurrency: loserCurrency,
+        });
+
+        const wallet = await db.creditWallet.findUniqueOrThrow({ where: { organizationId } });
+        expect(wallet.settlementCurrency).toBe(winnerCurrency);
+        expect(wallet.availableCredits).toBe(25 + FIRST_FIVE_CREDITS);
+        expect(await db.creditLot.count({ where: { organizationId, source: "pack_purchase" } })).toBe(1);
+        expect((await reconcileWallet(db, { organizationId })).consistent).toBe(true);
+      });
+    });
   });
 
   // ---------------------------------------------------------------------------

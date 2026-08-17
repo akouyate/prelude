@@ -268,6 +268,10 @@ function archiveStatusForFulfilment(outcome: CreditCheckoutFulfilment): StripeWe
       return "processed";
     case "unknown_pack":
     case "amount_mismatch":
+    // Task 5: money landed and the wallet's locked currency disagreed with it.
+    // No credits were granted, so this is the same operational bucket as
+    // `unknown_pack` / `amount_mismatch` — a human decides.
+    case "currency_mismatch":
     // Unreachable from here — `foreign_session` requires an
     // `expectedOrganizationId`, which only the browser-return route passes and
     // this dispatcher never does. Listed rather than defaulted so the `never` arm

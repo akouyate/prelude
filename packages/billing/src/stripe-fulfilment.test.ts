@@ -210,6 +210,31 @@ describe("fulfillPaidPaymentIntent", () => {
       }),
     ).rejects.toBeInstanceOf(InvalidCreditPurchaseAmountError);
   });
+
+  it("passes a currency mismatch through untouched", async () => {
+    grant.mockResolvedValue({
+      outcome: "currency_mismatch",
+      walletCurrency: "EUR",
+      sessionCurrency: "USD",
+    });
+    const { db } = fakeDb();
+
+    await expect(
+      fulfillPaidPaymentIntent(db, {
+        organizationId: "org_1",
+        packId: "hiring_100",
+        creditsGranted: 100,
+        unitAmountCents: 37900,
+        currency: "usd",
+        stripePaymentIntentId: "pi_1",
+        now,
+      }),
+    ).resolves.toEqual({
+      outcome: "currency_mismatch",
+      walletCurrency: "EUR",
+      sessionCurrency: "USD",
+    });
+  });
 });
 
 describe("fulfillCreditCheckout", () => {
@@ -464,6 +489,29 @@ describe("fulfillCreditCheckout", () => {
       lotId: "lot_1",
     });
     expect(grant).toHaveBeenCalledWith(db, expect.objectContaining({ stripeInvoiceId: undefined }));
+  });
+
+  it("maps a currency mismatch to a parked outcome and logs the wallet/session currencies", async () => {
+    grant.mockResolvedValue({
+      outcome: "currency_mismatch",
+      walletCurrency: "EUR",
+      sessionCurrency: "USD",
+    });
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe({ currency: "usd", amountSubtotal: 37900 });
+
+    await expect(fulfillCreditCheckout(db, { checkoutSessionId: "cs_1", now, stripe })).resolves.toEqual({
+      outcome: "currency_mismatch",
+    });
+    expect(console.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        checkoutSessionId: "cs_1",
+        organizationId: "org_1",
+        walletCurrency: "EUR",
+        sessionCurrency: "USD",
+      }),
+    );
   });
 });
 
