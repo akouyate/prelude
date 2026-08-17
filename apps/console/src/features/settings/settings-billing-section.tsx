@@ -5,7 +5,7 @@ import { useClerk } from "@clerk/nextjs";
 import { ArrowUpRight } from "iconoir-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslation } from "react-i18next";
-import { Button, Notice, StatusBadge, cn, useToast } from "@prelude/ui";
+import { Button, Notice, StatusBadge, cn, useToastOnce } from "@prelude/ui";
 
 import { startCreditPackCheckout } from "../../server/billing/credit-checkout-action";
 import { SettingsPanel } from "./settings-primitives";
@@ -159,7 +159,7 @@ function CreditPurchasePanel({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { toast } = useToast();
+  const { toastOnce } = useToastOnce();
 
   // Read once, on mount, and keep it in state — because the effect below then
   // removes the parameter from the URL. Without that, "credits added" is
@@ -182,23 +182,24 @@ function CreditPurchasePanel({
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [pathname, router, searchParams]);
 
-  // Fires exactly once per mount, guarded by the ref rather than by removing
-  // `purchaseToast` from the dependency array: `t`'s identity can change (e.g.
-  // a language switch) and re-running this effect after the toast is already
-  // showing must be a no-op, not a second toast.
-  const purchaseToastFiredRef = React.useRef(false);
+  // Fires exactly once per mount, via `toastOnce` keyed on `purchaseToast`
+  // itself rather than a boolean ref: `purchaseToast` was already computed
+  // once, in the lazy `useState` initializer above, so its identity is
+  // already stable for the life of the mount — keying on it reproduces
+  // "fire once, ever, for this mount" without a separate flag. `t`'s
+  // identity can change (e.g. a language switch) and re-running this effect
+  // after the toast is already showing must be a no-op, not a second toast.
   React.useEffect(() => {
-    if (!purchaseToast || purchaseToastFiredRef.current) {
+    if (!purchaseToast) {
       return;
     }
-    purchaseToastFiredRef.current = true;
-    toast({
+    toastOnce(purchaseToast, {
       dismissLabel: t("toast.dismiss"),
       duration: purchaseToast.duration,
       message: t(purchaseToast.key),
       tone: purchaseToast.tone,
     });
-  }, [purchaseToast, t, toast]);
+  }, [purchaseToast, t, toastOnce]);
 
   // Plan rule 4's chain: explicit user toggle > server-resolved request
   // geography > EUR. The geography link is resolved server-side, in the

@@ -3,7 +3,7 @@ import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { ToastProvider, useToast } from "./toast-provider";
+import { ToastProvider, useToast, useToastOnce } from "./toast-provider";
 
 // Nothing in this file's vitest config registers RTL's auto-cleanup (that
 // needs `test.globals: true`, which this package doesn't set), so without
@@ -79,10 +79,17 @@ describe("useToast referential stability", () => {
  * `environment: "jsdom"`, exercised above); `apps/console` has none. Rather
  * than adding jsdom there for one test, this reproduces the console call
  * site's exact shape here, against the real `ToastProvider`/`useToast`
- * exports, and pins the fix: dedupe on the SETTLE'S IDENTITY (a ref holding
- * the last settle object actually announced, compared by reference), which
- * is independent of whether any other dependency — `t`, or `toast` itself —
- * is stable.
+ * exports, and pins the fix: dedupe on the SETTLE'S IDENTITY, which is
+ * independent of whether any other dependency — `t`, or `toast` itself — is
+ * stable.
+ *
+ * The GREEN and StrictMode cases below exercise the real exported
+ * `useToastOnce` (see `toast-provider.tsx`) rather than a local demo of the
+ * ref-guard idiom: the guarantee they pin is "one tested implementation
+ * behaves this way", not "everyone who hand-writes the guard remembered to
+ * get it right" — `candidate-invitations-panel.tsx` and
+ * `settings-billing-section.tsx` both now call this hook instead of
+ * reimplementing it.
  */
 function AnnouncesSettleNaively({
   label,
@@ -113,16 +120,14 @@ function AnnouncesSettleOncePerIdentity({
   label: string;
   settle: { ok: boolean };
 }) {
-  const { toast } = useToast();
-  const announcedRef = React.useRef<typeof settle | null>(null);
+  const { toastOnce } = useToastOnce();
 
   React.useEffect(() => {
-    if (!settle.ok || announcedRef.current === settle) {
+    if (!settle.ok) {
       return;
     }
-    announcedRef.current = settle;
-    toast({ dismissLabel: "Dismiss", message: label, tone: "success" });
-  }, [settle, label, toast]);
+    toastOnce(settle, { dismissLabel: "Dismiss", message: label, tone: "success" });
+  }, [settle, label, toastOnce]);
 
   return null;
 }

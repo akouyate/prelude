@@ -10,7 +10,7 @@ import {
   Pill,
   Surface,
   TextField,
-  useToast,
+  useToastOnce,
   type PillProps,
 } from "@prelude/ui";
 import type { CandidateInvitationSummary } from "../../server/interviews/candidate-invitations";
@@ -36,7 +36,7 @@ export function CandidateInvitationsPanel({
   roleTitle: string;
 }) {
   const { i18n, t } = useTranslation();
-  const { toast } = useToast();
+  const { toastOnce } = useToastOnce();
   const [state, formAction, pending] = React.useActionState(
     createCandidateInvitationAction,
     { error: null, fieldErrors: {}, ok: false },
@@ -64,24 +64,22 @@ export function CandidateInvitationsPanel({
   // that isn't a new settle — `t` from react-i18next is not stable across a
   // language switch, and with `state.ok` stuck at `true` a locale change
   // would silently re-fire this toast for an invitation already announced.
-  // `announcedInviteStateRef` dedupes on the SETTLE'S OWN IDENTITY instead:
-  // the action returns a fresh `{ ok: true, ... }` object literal on every
-  // successful submit (confirmed in candidate-invitation-actions.ts), so a
-  // new `state` reference is exactly "a new invite was created" and nothing
-  // else can produce one — making this effect safe to re-run for any reason
-  // (language switch, a parent re-render, anything) without double-announcing.
-  const announcedInviteStateRef = React.useRef<typeof state | null>(null);
+  // `toastOnce` dedupes on the SETTLE'S OWN IDENTITY instead: the action
+  // returns a fresh `{ ok: true, ... }` object literal on every successful
+  // submit (confirmed in candidate-invitation-actions.ts), so a new `state`
+  // reference is exactly "a new invite was created" and nothing else can
+  // produce one — making this effect safe to re-run for any reason (language
+  // switch, a parent re-render, anything) without double-announcing.
   React.useEffect(() => {
-    if (!state.ok || announcedInviteStateRef.current === state) {
+    if (!state.ok) {
       return;
     }
-    announcedInviteStateRef.current = state;
-    toast({
+    toastOnce(state, {
       dismissLabel: t("toast.dismiss"),
       message: t("interviewDetail.inviteCreated"),
       tone: "success",
     });
-  }, [state, t, toast]);
+  }, [state, t, toastOnce]);
 
   return (
     <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,0.86fr)_minmax(0,1.14fr)]">

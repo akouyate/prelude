@@ -329,3 +329,55 @@ export function useToast() {
 
   return { dismiss, toast };
 }
+
+/**
+ * "Announce this outcome once" as a tested primitive, not a hand-written ref
+ * guard repeated at every call site. Two real call sites
+ * (`candidate-invitations-panel.tsx`, `settings-billing-section.tsx`) each
+ * wrote their own copy of this — same shape, same comment about `toast`'s
+ * consumer-visible stability not being enough on its own, independently
+ * arrived at. See the "dedupe on settle identity" tests below for why a plain
+ * `[toast]`-only guard (or the referential stability `useToast` already
+ * provides) isn't sufficient: a consumer's effect can legitimately re-run for
+ * a reason that has nothing to do with a new outcome to announce — a
+ * translation function's identity changing on a locale switch, most
+ * commonly — and `toastOnce` must not re-announce the same one.
+ *
+ * `toastOnce(key, options)` fires `toast(options)` only when `key` differs,
+ * by reference (`===`), from the last key it announced — never on a call
+ * with the same key twice in a row, however many times the effect calling it
+ * re-runs in between. One primitive serves two different call-site shapes
+ * this way, because "the same outcome" means different things at each:
+ *   - A settle from `useActionState` (candidate invitations): pass the
+ *     settle object itself. A new submit produces a genuinely new object
+ *     (confirmed in `candidate-invitation-actions.ts`), so `key` changing is
+ *     exactly "a new invite was created" — and nothing else can produce a
+ *     new key.
+ *   - A value read once on mount and held in state (the purchase toast):
+ *     pass that same state value. Its identity is already stable for the
+ *     life of the mount (it was computed once, via `useState`'s lazy
+ *     initializer), so passing it as the key reproduces "fires once per
+ *     mount" without a separate boolean flag — the first call announces and
+ *     remembers it; every later call carries the identical reference and is
+ *     therefore a no-op.
+ * A call site whose "same outcome" test genuinely isn't captured by any
+ * single value's identity would not be honestly served by this — none of the
+ * real call sites are in that position.
+ */
+export function useToastOnce() {
+  const { toast } = useToast();
+  const announcedKeyRef = React.useRef<unknown>(undefined);
+
+  const toastOnce = React.useCallback(
+    (key: unknown, options: ToastOptions): void => {
+      if (key === announcedKeyRef.current) {
+        return;
+      }
+      announcedKeyRef.current = key;
+      toast(options);
+    },
+    [toast],
+  );
+
+  return { toastOnce };
+}
