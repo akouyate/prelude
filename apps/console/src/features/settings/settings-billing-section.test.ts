@@ -214,6 +214,27 @@ describe("resolveDisplayCurrencyFromRequest", () => {
       ),
     ).toBe("USD");
   });
+
+  /**
+   * Review fix: a browser is free to attach `;q=` straight onto the FIRST
+   * token too (RFC 9110 doesn't require a comma before it), not just on later
+   * ones. Splitting only on "," left that quality value stuck to the region
+   * ("US;q=0.9"), which `defaultDisplayCurrency` doesn't recognise as "US" and
+   * silently falls to EUR — reproduced live against :3000 with exactly these
+   * two header values before the fix.
+   */
+  it("strips an inline quality value off the first locale before reading its region", () => {
+    expect(
+      resolveDisplayCurrencyFromRequest(
+        new Headers({ "accept-language": "en-US;q=0.9,fr;q=0.5" }),
+      ),
+    ).toBe("USD");
+    expect(
+      resolveDisplayCurrencyFromRequest(
+        new Headers({ "accept-language": "en-US;q=1.0" }),
+      ),
+    ).toBe("USD");
+  });
 });
 
 /**

@@ -150,8 +150,16 @@ export function resolveDisplayCurrencyFromRequest(
     return displayCurrencyForCountry(ipCountry);
   }
 
+  // Each comma-separated entry may carry its own `;q=` quality value (RFC 9110
+  // §12.5.4) — including the first one, with no comma in front of it — so that
+  // has to be stripped before the region is readable at all: `"en-US;q=0.9"`
+  // split only on "," would try to parse "US;q=0.9" as a region and silently
+  // land on EUR.
   const acceptLanguage = headers.get("accept-language");
-  const firstLocale = acceptLanguage?.split(",")[0]?.trim();
+  const firstLocale = acceptLanguage
+    ?.split(",")[0]
+    ?.split(";")[0]
+    ?.trim();
 
   return defaultDisplayCurrency(firstLocale);
 }
