@@ -57,6 +57,17 @@ describe("settleCandidateSessionCredit", () => {
         where: { sessionId: "is_1", type: "question_completed" },
       }),
     );
+    // The written trace that backs a billing dispute: the counts that
+    // justified the charge, plus the outcome so the console can render the
+    // opposite copy without re-deriving it from a reservation row.
+    expect(database.candidateSession.update).toHaveBeenCalledWith({
+      data: {
+        billedAnsweredCount: 3,
+        billedOutcome: "captured",
+        billedRequiredCount: 3,
+      },
+      where: { id: "cs_1" },
+    });
   });
 
   it("reads the written fallback's own payload casing", async () => {
@@ -104,6 +115,16 @@ describe("settleCandidateSessionCredit", () => {
       reason: "below_billable_threshold",
     });
     expect(deps.capture).not.toHaveBeenCalled();
+    // Released-below-threshold writes the same trace shape as a capture: the
+    // counts that justified NOT charging, plus the outcome.
+    expect(database.candidateSession.update).toHaveBeenCalledWith({
+      data: {
+        billedAnsweredCount: 1,
+        billedOutcome: "released",
+        billedRequiredCount: 3,
+      },
+      where: { id: "cs_1" },
+    });
   });
 
   it("releases an abandoned session without reading the event store", async () => {
@@ -121,6 +142,9 @@ describe("settleCandidateSessionCredit", () => {
       expect.objectContaining({ reason: "abandoned" }),
     );
     expect(database.liveInterviewEvent.findMany).not.toHaveBeenCalled();
+    // Non-completed kinds never write the billing trace — there was no
+    // billable-completion decision to record.
+    expect(database.candidateSession.update).not.toHaveBeenCalled();
   });
 
   it("releases a failed session without reading the event store", async () => {
@@ -208,6 +232,16 @@ describe("settleCandidateSessionCredit", () => {
     );
     expect(deps.capture).not.toHaveBeenCalled();
     expect(database.liveInterviewEvent.findMany).not.toHaveBeenCalled();
+    // No runtime evidence still writes a trace: 0 answered against the
+    // required count derived from the plan, recorded as not billed.
+    expect(database.candidateSession.update).toHaveBeenCalledWith({
+      data: {
+        billedAnsweredCount: 0,
+        billedOutcome: "released",
+        billedRequiredCount: 3,
+      },
+      where: { id: "cs_1" },
+    });
   });
 
   it("drops question_completed rows that name no question", async () => {
@@ -332,6 +366,34 @@ describe("settleCandidateSessionCredit", () => {
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });
+
+  it("never lets a failure to persist the billed counts break the candidate flow", async () => {
+    // Must stay billable so the code path reaches the trace write at all.
+    const database = fakeDatabase({
+      events: [
+        questionCompleted(1, { question_id: "q1", completion_reason: "answered" }),
+        questionCompleted(2, { question_id: "q2", completion_reason: "answered" }),
+        questionCompleted(3, { question_id: "q3", completion_reason: "answered" }),
+      ],
+    });
+    database.candidateSession.update.mockRejectedValueOnce(
+      new Error("column write failed"),
+    );
+    const deps = dependencies();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      settleCandidateSessionCredit(
+        database as never,
+        { kind: "completed", now, sessionId: "cs_1" },
+        deps,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(deps.capture).toHaveBeenCalledTimes(1);
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
 });
 
 function fakeSession({
@@ -367,6 +429,7 @@ function fakeDatabase({
   return {
     candidateSession: {
       findUnique: vi.fn(async () => session),
+      update: vi.fn(async () => ({})),
     },
     liveInterviewEvent: {
       // The fake orders rows the way Postgres would, so that dropping the

@@ -460,7 +460,9 @@
       "criterionUnassigned": "Question non rattachée",
       "criterionNoQuestion": "Aucune question n'est encore associée à ce critère.",
       "roleBriefExpand": "Afficher tout le brief",
-      "roleBriefCollapse": "Réduire le brief"
+      "roleBriefCollapse": "Réduire le brief",
+      "billedCountLine": "Facturé : {{answered}} réponses sur {{required}}",
+      "notBilledCountLine": "Non facturé : {{answered}} réponses sur {{required}} requises"
     },
     "candidates": {
       "headerEyebrow": "{{organizationName}} · Entretiens candidats",

@@ -460,7 +460,9 @@
       "criterionUnassigned": "Unassigned question",
       "criterionNoQuestion": "No question is mapped to this criterion yet.",
       "roleBriefExpand": "Show the full brief",
-      "roleBriefCollapse": "Collapse the brief"
+      "roleBriefCollapse": "Collapse the brief",
+      "billedCountLine": "Billed: {{answered}} of {{required}} answered",
+      "notBilledCountLine": "Not billed: {{answered}} of {{required}} required"
     },
     "candidates": {
       "headerEyebrow": "{{organizationName}} · Candidate screens",

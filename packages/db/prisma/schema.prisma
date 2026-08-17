@@ -333,6 +333,19 @@ model CandidateSession {
   reviewNoteUpdatedById   String?
   startedAt               DateTime?
   completedAt             DateTime?
+  // Phase 2 (#140, amendment 18): the billing trace for this session's
+  // settlement. Written once by `settleCandidateSessionCredit` — only when
+  // `CREDIT_BILLING_ENABLED` is on and the terminal kind is `completed` — and
+  // never touched for any other kind (abandoned/failed/expired/superseded).
+  // `billedOutcome` ("captured" | "released") is the honest signal for
+  // billed-vs-not: a `CreditReservation` row can change status for reasons
+  // unrelated to this settlement (e.g. a later TTL sweep), so it is not a
+  // reliable historical record. These three columns are the written trace
+  // that backs a billing dispute; they hold whatever justified the decision,
+  // charged or not.
+  billedAnsweredCount     Int?
+  billedRequiredCount     Int?
+  billedOutcome           String?
   createdAt               DateTime                      @default(now())
   updatedAt               DateTime                      @updatedAt
   organization            Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
