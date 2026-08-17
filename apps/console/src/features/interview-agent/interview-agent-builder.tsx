@@ -59,7 +59,7 @@ import {
   candidateAppUrl,
   candidateLinkLabel as formatCandidateLinkLabel,
 } from "../../libs/candidate-app-url";
-import { copyTextToClipboard } from "../../libs/clipboard";
+import { useCopyLinkFeedback } from "../../libs/use-copy-link-feedback";
 import {
   addInterviewQuestionAction,
   generateInterviewDraftAction,
@@ -470,15 +470,6 @@ export function InterviewAgentBuilder({
     });
   }, [t, toast]);
 
-  const saveAndShare = React.useCallback(async () => {
-    const saved = await saveCurrentDraft();
-
-    if (saved) {
-      announceDraftSaved();
-      goToStep("share");
-    }
-  }, [announceDraftSaved, goToStep, saveCurrentDraft]);
-
   const saveCurrentDraftAndAnnounce = React.useCallback(async () => {
     const saved = await saveCurrentDraft();
 
@@ -488,6 +479,14 @@ export function InterviewAgentBuilder({
 
     return saved;
   }, [announceDraftSaved, saveCurrentDraft]);
+
+  const saveAndShare = React.useCallback(async () => {
+    const saved = await saveCurrentDraftAndAnnounce();
+
+    if (saved) {
+      goToStep("share");
+    }
+  }, [goToStep, saveCurrentDraftAndAnnounce]);
 
   const publishCurrentDraft = React.useCallback(
     async (override?: { justification: string }) => {
@@ -1842,36 +1841,20 @@ function CandidateLinkActions({
   roleTitle: string;
 }) {
   const { t } = useTranslation();
-  const { toast } = useToast();
-  const [copied, setCopied] = React.useState(false);
+  const { copiedKey, copy } = useCopyLinkFeedback();
 
   const candidateUrl = candidateAppUrl(candidatePath);
+  // The Copy→Check label swap below stays — the toast adds
+  // discoverability, it does not replace that tight local loop.
+  const copied = copiedKey === candidatePath;
 
   const copyLink = React.useCallback(async () => {
     if (!candidateUrl) {
       return;
     }
 
-    const copiedOk = await copyTextToClipboard(candidateUrl);
-    if (!copiedOk) {
-      toast({
-        dismissLabel: t("toast.dismiss"),
-        message: t("toast.copyLinkFailed"),
-        tone: "danger",
-      });
-      return;
-    }
-
-    // The Copy→Check label swap below stays — the toast adds
-    // discoverability, it does not replace that tight local loop.
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
-    toast({
-      dismissLabel: t("toast.dismiss"),
-      message: t("toast.copyLinkCopied"),
-      tone: "success",
-    });
-  }, [candidateUrl, t, toast]);
+    await copy(candidateUrl, candidatePath);
+  }, [candidateUrl, candidatePath, copy]);
 
   const mailtoHref = candidateUrl
     ? buildCandidateInviteMailto(

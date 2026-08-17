@@ -19,11 +19,10 @@ import {
   SegmentedTabs,
   StatusBadge,
   cn,
-  useToast,
 } from "@prelude/ui";
 
 import { candidateAppUrl } from "../../libs/candidate-app-url";
-import { copyTextToClipboard } from "../../libs/clipboard";
+import { useCopyLinkFeedback } from "../../libs/use-copy-link-feedback";
 
 export type RoleScreenState =
   | "candidate_started"
@@ -56,11 +55,10 @@ export function RolesList({
   roles: RoleListItem[];
 }) {
   const { t } = useTranslation();
-  const { toast } = useToast();
   const [filter, setFilter] = React.useState<RoleFilter>("all");
   const [query, setQuery] = React.useState("");
   const [sort, setSort] = React.useState<RoleSort>("recent");
-  const [copiedId, setCopiedId] = React.useState<string | null>(null);
+  const { copiedKey: copiedId, copy } = useCopyLinkFeedback();
 
   const counts = React.useMemo(() => getCounts(roles), [roles]);
   const rows = React.useMemo(() => {
@@ -91,31 +89,9 @@ export function RolesList({
         return;
       }
 
-      const copiedOk = await copyTextToClipboard(
-        candidateAppUrl(role.candidatePath),
-      );
-      if (!copiedOk) {
-        toast({
-          dismissLabel: t("toast.dismiss"),
-          message: t("toast.copyLinkFailed"),
-          tone: "danger",
-        });
-        return;
-      }
-
-      // This icon-only button has no visible label, so the aria-label swap
-      // below is the only in-place affordance — the toast is the real
-      // feedback here (unlike the copy buttons in interview-detail/the
-      // builder, which also swap their icon/text in place).
-      setCopiedId(role.id);
-      window.setTimeout(() => setCopiedId(null), 1600);
-      toast({
-        dismissLabel: t("toast.dismiss"),
-        message: t("toast.copyLinkCopied"),
-        tone: "success",
-      });
+      await copy(candidateAppUrl(role.candidatePath), role.id);
     },
-    [t, toast],
+    [copy],
   );
 
   return (
@@ -331,6 +307,11 @@ function RoleRow({
         </span>
         <span className="flex items-center gap-1.5">
           {role.candidatePath ? (
+            // This icon-only button has no visible label, so the aria-label
+            // swap here is the only in-place affordance — the toast is the
+            // real feedback here (unlike the copy buttons in
+            // interview-detail/the builder, which also swap their icon/text
+            // in place).
             <IconButton
               aria-label={
                 copied ? t("roles.copyLinkCopied") : t("roles.copyLink")
