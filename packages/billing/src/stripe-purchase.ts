@@ -250,6 +250,18 @@ export async function createCreditCheckoutSession(
     // `customer_update[name]` to `auto`" — because a VAT number is only meaningful
     // against the legal name it was issued to. Managed Payments used to collect
     // the identity itself and hid the requirement.
+    //
+    // Accepted trade-off (observed in the T10 smoke): a buyer who skips
+    // Checkout's "purchasing as a business" box pays as an individual, and
+    // `name: "auto"` then overwrites the Customer's name with the CARDHOLDER
+    // name on the invoice being issued. The buyer who ticks the box enters the
+    // legal business name the VAT number validates — the compliant B2B case —
+    // and that is what gets persisted. We deliberately do NOT restore the
+    // organization name after fulfilment: the invoice is finalized at payment,
+    // before fulfilment runs, so a later write can never fix the invoice that
+    // matters, and it would fight the name-to-tax-ID linkage Stripe just
+    // established. The fix for a wrong name on an issued invoice is operator
+    // action in the dashboard, not automated overwrites.
     customer_update: { address: "auto", name: "auto" },
     client_reference_id: organizationId,
     metadata,
