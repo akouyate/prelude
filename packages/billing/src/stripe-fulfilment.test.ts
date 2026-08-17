@@ -94,6 +94,14 @@ type SessionFixture = {
    * request, so the narrowing in the reader has to be real rather than decorative.
    */
   unexpanded?: boolean;
+  /**
+   * Plan 2026-08-17 rule 7's source field, not expandable — Checkout returns it
+   * on every retrieve, unlike `payment_intent`/`invoice` above. Defaults to
+   * `null` (billing address collection off, or the field simply absent) so every
+   * test that does not care about it stays honest about the common case rather
+   * than a fixture inventing a country nobody asked for.
+   */
+  customerDetails?: { address: { country: string | null } | null } | null;
 };
 
 function fakeStripe(fixture: SessionFixture = {}) {
@@ -111,6 +119,7 @@ function fakeStripe(fixture: SessionFixture = {}) {
     paymentIntentId = "pi_1",
     invoiceId = "in_1",
     unexpanded = false,
+    customerDetails = null,
   } = fixture;
 
   const retrieve = vi.fn(async (_id: string, params?: Stripe.Checkout.SessionRetrieveParams) => {
@@ -132,6 +141,7 @@ function fakeStripe(fixture: SessionFixture = {}) {
       metadata,
       payment_intent: link("payment_intent", paymentIntentId),
       invoice: link("invoice", invoiceId),
+      customer_details: customerDetails,
     };
   });
 
@@ -210,6 +220,31 @@ describe("fulfillPaidPaymentIntent", () => {
       }),
     ).rejects.toBeInstanceOf(InvalidCreditPurchaseAmountError);
   });
+
+  it("passes a currency mismatch through untouched", async () => {
+    grant.mockResolvedValue({
+      outcome: "currency_mismatch",
+      walletCurrency: "EUR",
+      sessionCurrency: "USD",
+    });
+    const { db } = fakeDb();
+
+    await expect(
+      fulfillPaidPaymentIntent(db, {
+        organizationId: "org_1",
+        packId: "hiring_100",
+        creditsGranted: 100,
+        unitAmountCents: 37900,
+        currency: "usd",
+        stripePaymentIntentId: "pi_1",
+        now,
+      }),
+    ).resolves.toEqual({
+      outcome: "currency_mismatch",
+      walletCurrency: "EUR",
+      sessionCurrency: "USD",
+    });
+  });
 });
 
 describe("fulfillCreditCheckout", () => {
@@ -234,6 +269,8 @@ describe("fulfillCreditCheckout", () => {
       creditsGranted: 100,
       unitAmountCents: 34900,
       currency: "eur",
+      // No customer_details on this fixture (the common case) — absent, not fabricated.
+      billingCountry: null,
       stripePaymentIntentId: "pi_1",
       stripeCheckoutSessionId: "cs_1",
       stripeInvoiceId: "in_1",
@@ -464,6 +501,85 @@ describe("fulfillCreditCheckout", () => {
       lotId: "lot_1",
     });
     expect(grant).toHaveBeenCalledWith(db, expect.objectContaining({ stripeInvoiceId: undefined }));
+  });
+
+  it("maps a currency mismatch to a parked outcome and logs the wallet/session currencies", async () => {
+    grant.mockResolvedValue({
+      outcome: "currency_mismatch",
+      walletCurrency: "EUR",
+      sessionCurrency: "USD",
+    });
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe({ currency: "usd", amountSubtotal: 37900 });
+
+    await expect(fulfillCreditCheckout(db, { checkoutSessionId: "cs_1", now, stripe })).resolves.toEqual({
+      outcome: "currency_mismatch",
+    });
+    expect(console.error).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        checkoutSessionId: "cs_1",
+        organizationId: "org_1",
+        walletCurrency: "EUR",
+        sessionCurrency: "USD",
+      }),
+    );
+  });
+});
+
+/**
+ * Plan 2026-08-17 rule 7. `billingCountry` is Stripe's buyer-entered, tax-grade
+ * observation from `session.customer_details.address.country` — recorded on the
+ * lot for reporting, NEVER copied to `Organization.country` (the recruiter's
+ * self-declared answer is a separate authority forever, enforced by a comment at
+ * the ledger write site rather than by anything these tests can see). Absent data
+ * at any level of the nesting must resolve to `null`, never an error and never a
+ * guessed value.
+ */
+describe("fulfillCreditCheckout observed billing country", () => {
+  it("passes the buyer's Checkout billing country to the ledger", async () => {
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe({ customerDetails: { address: { country: "FR" } } });
+
+    await fulfillCreditCheckout(db, { checkoutSessionId: "cs_1", now, stripe });
+
+    expect(grant).toHaveBeenCalledWith(db, expect.objectContaining({ billingCountry: "FR" }));
+  });
+
+  it("upper-cases and trims incidental whitespace without otherwise normalising", async () => {
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe({ customerDetails: { address: { country: " fr " } } });
+
+    await fulfillCreditCheckout(db, { checkoutSessionId: "cs_1", now, stripe });
+
+    expect(grant).toHaveBeenCalledWith(db, expect.objectContaining({ billingCountry: "FR" }));
+  });
+
+  it("records null when the session has no customer_details at all", async () => {
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe({ customerDetails: null });
+
+    await fulfillCreditCheckout(db, { checkoutSessionId: "cs_1", now, stripe });
+
+    expect(grant).toHaveBeenCalledWith(db, expect.objectContaining({ billingCountry: null }));
+  });
+
+  it("records null when customer_details carries no address", async () => {
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe({ customerDetails: { address: null } });
+
+    await fulfillCreditCheckout(db, { checkoutSessionId: "cs_1", now, stripe });
+
+    expect(grant).toHaveBeenCalledWith(db, expect.objectContaining({ billingCountry: null }));
+  });
+
+  it("records null when the address carries no country", async () => {
+    const { db } = fakeDb();
+    const { stripe } = fakeStripe({ customerDetails: { address: { country: null } } });
+
+    await fulfillCreditCheckout(db, { checkoutSessionId: "cs_1", now, stripe });
+
+    expect(grant).toHaveBeenCalledWith(db, expect.objectContaining({ billingCountry: null }));
   });
 });
 

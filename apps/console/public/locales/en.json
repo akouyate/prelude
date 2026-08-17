@@ -547,6 +547,7 @@
       "workspace": {
         "title": "Workspace",
         "description": "General details for your organization on HireCall.",
+        "forbidden": "Only owners and admins can update workspace settings.",
         "uploadLogo": "Upload logo",
         "logoHint": "Logo upload is not available in V1 yet. Workspace initials are used for now.",
         "name": "Workspace name",
@@ -556,6 +557,19 @@
         "companySize": "Company size",
         "companySizeOptions": {
           "notSet": "Not set"
+        },
+        "country": "Country",
+        "countryOptions": {
+          "notSet": "Not set",
+          "fr": "France",
+          "be": "Belgium",
+          "ch": "Switzerland",
+          "lu": "Luxembourg",
+          "gb": "United Kingdom",
+          "us": "United States",
+          "ca": "Canada",
+          "otherEu": "Other (EU)",
+          "otherNonEu": "Other (non-EU)"
         },
         "residency": "Data residency",
         "residencyDescription": "Where candidate data and recordings are stored.",
@@ -685,6 +699,7 @@
           "opening": "Opening…",
           "checkoutFailed": "We could not open the payment page. Please try again, or contact us if it keeps failing.",
           "currencyLabel": "Display currency",
+          "usdUnavailable": "USD prices unavailable for some packs",
           "volumeGate": "Need more than 500 interviews? Get volume pricing",
           "nonManagerHint": "Only an owner or admin can buy credits for this workspace.",
           "purchaseNotAllowed": "Only an owner or admin can buy credits for this workspace. Ask one of them to complete this purchase.",

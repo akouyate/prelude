@@ -10,6 +10,8 @@ import {
   Text,
 } from "react-email";
 
+import type { NotificationLocale } from "./locale";
+
 export function CandidateInterviewCompletedEmail({
   companyName,
   roleTitle,
@@ -31,6 +33,9 @@ export function CandidateInterviewCompletedEmail({
   );
 }
 
+// `locale` is accepted so the recipient's resolved locale reaches this
+// render call end-to-end; the body still renders the current EN copy — the
+// notifications-i18n ticket is the one that does the translation work.
 export function RecruiterBriefReadyEmail({
   candidateLabel,
   detailUrl,
@@ -38,6 +43,7 @@ export function RecruiterBriefReadyEmail({
 }: {
   candidateLabel: string;
   detailUrl: string;
+  locale: NotificationLocale;
   roleTitle: string;
 }) {
   return (
@@ -56,6 +62,9 @@ export function RecruiterBriefReadyEmail({
   );
 }
 
+// `locale` is accepted so the recipient's resolved locale reaches this
+// render call end-to-end; the body still renders the current EN copy — the
+// notifications-i18n ticket is the one that does the translation work.
 export function RecruiterBriefNeedsAttentionEmail({
   candidateLabel,
   detailUrl,
@@ -63,6 +72,7 @@ export function RecruiterBriefNeedsAttentionEmail({
 }: {
   candidateLabel: string;
   detailUrl: string;
+  locale: NotificationLocale;
   roleTitle: string;
 }) {
   return (
@@ -91,6 +101,10 @@ export function RecruiterBriefNeedsAttentionEmail({
  * knows yet whether the dispute is a fraud signal, a bank error or a
  * misremembered line on a statement, and the freeze is reversed in full if it is
  * won.
+ *
+ * `locale` is accepted so the recipient's resolved locale reaches this
+ * render call end-to-end; the body still renders the current EN copy — the
+ * notifications-i18n ticket is the one that does the translation work.
  */
 export function CreditDisputeFrozenEmail({
   billingUrl,
@@ -98,6 +112,7 @@ export function CreditDisputeFrozenEmail({
 }: {
   billingUrl: string;
   frozenCredits: number;
+  locale: NotificationLocale;
 }) {
   return (
     <EmailFrame preview={`${frozenCredits} interview credits are temporarily blocked`}>

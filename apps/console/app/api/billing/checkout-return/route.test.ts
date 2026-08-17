@@ -196,6 +196,7 @@ describe("GET /api/billing/checkout-return — outcomes", () => {
     for (const outcome of [
       { outcome: "unknown_pack" },
       { outcome: "amount_mismatch" },
+      { outcome: "currency_mismatch" },
       { outcome: "no_payment_intent" },
       { outcome: "needs_admin", reason: "missing_metadata" },
     ]) {

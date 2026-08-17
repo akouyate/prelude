@@ -220,6 +220,20 @@ function ProfileSection({ data }: { data: WorkspaceSettingsData }) {
 
 function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
   const { t } = useTranslation();
+  // Same envelope as candidate-invitations-panel.tsx / schedule-call-dialog.tsx:
+  // a native `<form action={...}>` bound through `useActionState` so a
+  // non-throwing action failure (a non-manager's permission refusal) can be
+  // rendered inline instead of surfacing as an unhandled exception.
+  const [state, formAction, pending] = React.useActionState(
+    updateWorkspaceSettingsAction,
+    { error: null, ok: false },
+  );
+  // `canManageTeam` already gates this exact action server-side
+  // (assertCanEditSettings delegates to the same predicate), and the loader
+  // already exposes it to every other section of this form (see TeamSection) —
+  // so disabling the fields for a role that cannot save is free: no new
+  // loader field, just reusing the bit that's already on `data`.
+  const canEdit = data.canManageTeam;
   const companySizeOptions = [
     { label: t("settings.workspace.companySizeOptions.notSet"), value: "" },
     { label: "1-10", value: "1-10" },
@@ -229,12 +243,27 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
     { label: "501-1000", value: "501-1000" },
     { label: "1000+", value: "1000+" },
   ];
+  // No pre-selection from the browser locale, deliberately: null must keep
+  // meaning "nobody told us" (plan 2026-08-17, rule 3) — the select always
+  // opens on "Not set" regardless of where the recruiter is browsing from.
+  const countryOptions = [
+    { label: t("settings.workspace.countryOptions.notSet"), value: "" },
+    { label: t("settings.workspace.countryOptions.fr"), value: "FR" },
+    { label: t("settings.workspace.countryOptions.be"), value: "BE" },
+    { label: t("settings.workspace.countryOptions.ch"), value: "CH" },
+    { label: t("settings.workspace.countryOptions.lu"), value: "LU" },
+    { label: t("settings.workspace.countryOptions.gb"), value: "GB" },
+    { label: t("settings.workspace.countryOptions.us"), value: "US" },
+    { label: t("settings.workspace.countryOptions.ca"), value: "CA" },
+    { label: t("settings.workspace.countryOptions.otherEu"), value: "OTHER_EU" },
+    {
+      label: t("settings.workspace.countryOptions.otherNonEu"),
+      value: "OTHER_NON_EU",
+    },
+  ];
 
   return (
-    <form
-      action={updateWorkspaceSettingsAction}
-      className="flex flex-col gap-[18px]"
-    >
+    <form action={formAction} className="flex flex-col gap-[18px]">
       <SettingsPanel>
         <SettingsPanelHeading
           description={t("settings.workspace.description")}
@@ -256,6 +285,7 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
 
         <div className="mt-5 grid gap-[18px] sm:grid-cols-2">
           <SettingsField
+            disabled={!canEdit}
             label={t("settings.workspace.name")}
             maxLength={80}
             name="name"
@@ -268,6 +298,7 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
             value={slugFor(data.organization.name)}
           />
           <SettingsField
+            disabled={!canEdit}
             label={t("settings.workspace.hiringFocus")}
             maxLength={80}
             name="hiringFocus"
@@ -275,10 +306,18 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
             value={data.organization.hiringFocus ?? ""}
           />
           <SettingsSelectField
+            disabled={!canEdit}
             label={t("settings.workspace.companySize")}
             name="companySize"
             options={companySizeOptions}
             value={data.organization.companySize ?? ""}
+          />
+          <SettingsSelectField
+            disabled={!canEdit}
+            label={t("settings.workspace.country")}
+            name="country"
+            options={countryOptions}
+            value={data.organization.country ?? ""}
           />
         </div>
       </SettingsPanel>
@@ -300,7 +339,8 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
           />
         </div>
       </SettingsPanel>
-      <SettingsActionRow />
+      {state.error ? <Notice tone="danger">{state.error}</Notice> : null}
+      <SettingsActionRow disabled={pending || !canEdit} />
     </form>
   );
 }

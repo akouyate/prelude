@@ -14,9 +14,12 @@ const billingMock = vi.hoisted(() => ({
 
 const headersMock = vi.hoisted(() => ({ headers: vi.fn() }));
 
+const userLocaleMock = vi.hoisted(() => ({ getAuthenticatedUserLocale: vi.fn() }));
+
 vi.mock("@prelude/db", () => ({ prisma: prismaMock }));
 vi.mock("@prelude/billing", () => billingMock);
 vi.mock("../organizations/organization-scope", () => scopeMock);
+vi.mock("../users/user-locale", () => userLocaleMock);
 vi.mock("next/headers", () => headersMock);
 
 import { startCreditPackCheckout } from "./credit-checkout-action";
@@ -41,6 +44,8 @@ beforeEach(() => {
   });
   billingMock.isCreditBillingEnabled.mockReturnValue(true);
   billingMock.isStripePurchaseConfigured.mockReturnValue(true);
+  userLocaleMock.getAuthenticatedUserLocale.mockReset();
+  userLocaleMock.getAuthenticatedUserLocale.mockResolvedValue("en");
   headersMock.headers.mockReset();
   headersMock.headers.mockResolvedValue(
     requestHeaders({ host: "app.hirecall.test", "x-forwarded-proto": "https" }),
@@ -66,7 +71,26 @@ describe("startCreditPackCheckout", () => {
       packId: "hiring_100",
       origin: "https://app.hirecall.test",
       now: expect.any(Date),
+      locale: "en",
     });
+  });
+
+  /**
+   * T7 — Checkout speaks the buyer's language. `getAuthenticatedUserLocale` is
+   * the same canonical server-side locale read the rest of the console already
+   * trusts (dashboard, interview drafts); this proves it is threaded by the
+   * acting user's id, not left to Stripe's browser/IP auto-detect.
+   */
+  it("threads the acting user's coerced console locale onto the Checkout session", async () => {
+    userLocaleMock.getAuthenticatedUserLocale.mockResolvedValue("fr");
+
+    await startCreditPackCheckout("hiring_100");
+
+    expect(userLocaleMock.getAuthenticatedUserLocale).toHaveBeenCalledWith("user_1");
+    expect(billingMock.createCreditCheckoutSession).toHaveBeenCalledWith(
+      prismaMock,
+      expect.objectContaining({ locale: "fr" }),
+    );
   });
 
   it("sells the quiet pack — the action gates nothing that only listing gates", async () => {

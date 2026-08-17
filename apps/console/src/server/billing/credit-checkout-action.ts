@@ -10,6 +10,7 @@ import { headers } from "next/headers";
 
 import { canPurchaseCredits } from "../../domain/organization-permissions";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
+import { getAuthenticatedUserLocale } from "../users/user-locale";
 
 /**
  * What the settings buy buttons call. The whole input surface is a pack id:
@@ -51,12 +52,17 @@ export async function startCreditPackCheckout(
   }
 
   try {
+    // Same canonical server-side read the rest of the console uses for
+    // recruiter-facing locale (dashboard, interview drafts): Checkout gets the
+    // buyer's actual UI language rather than guessing from the browser/IP.
+    const locale = await getAuthenticatedUserLocale(scope.userId);
     const result = await createCreditCheckoutSession(prisma, {
       organizationId: scope.organizationId,
       organizationName: scope.organizationName,
       packId: requestedPackId,
       origin: await consoleOrigin(),
       now: new Date(),
+      locale,
     });
 
     return result.ok ? { url: result.url } : { error: result.error };

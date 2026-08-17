@@ -159,6 +159,7 @@ function bannerOutcomeFor(result: CreditCheckoutFulfilment): PurchaseBannerOutco
     case "unknown_pack":
     case "no_payment_intent":
     case "amount_mismatch":
+    case "currency_mismatch":
     case "needs_admin":
       return "error";
     default: {

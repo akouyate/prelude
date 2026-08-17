@@ -267,6 +267,7 @@ describe("handleStripeWebhookEvent — checkout fulfilment", () => {
     [{ outcome: "no_payment_intent" }, "processed"],
     [{ outcome: "unknown_pack" }, "needs_admin"],
     [{ outcome: "amount_mismatch" }, "needs_admin"],
+    [{ outcome: "currency_mismatch" }, "needs_admin"],
     [{ outcome: "needs_admin", reason: "missing_metadata" }, "needs_admin"],
     [{ outcome: "needs_admin", reason: "no_payment_required" }, "needs_admin"],
   ])("maps fulfilment %o onto archive status %s", async (outcome, expected) => {

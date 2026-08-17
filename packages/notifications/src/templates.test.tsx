@@ -26,6 +26,7 @@ describe("notification templates", () => {
     const props = {
       candidateLabel: "Ada Martin",
       detailUrl: "https://console.hirecall.ai/interviews/cs_123",
+      locale: "en" as const,
       roleTitle: "Customer Success Manager",
     };
 
@@ -35,5 +36,24 @@ describe("notification templates", () => {
     await expect(
       render(<RecruiterBriefNeedsAttentionEmail {...props} />),
     ).resolves.toContain("Review candidate");
+  });
+
+  // T4 threads a `locale` prop into these templates for the audit trail, but
+  // the copy stays English until the notifications-i18n ticket translates it
+  // — a "fr" recipient must render byte-identical body copy to "en" today.
+  it("keeps rendering English copy regardless of the recipient's locale", async () => {
+    const baseProps = {
+      candidateLabel: "Ada Martin",
+      detailUrl: "https://console.hirecall.ai/interviews/cs_123",
+      roleTitle: "Customer Success Manager",
+    };
+
+    const [enHtml, frHtml] = await Promise.all([
+      render(<RecruiterBriefReadyEmail {...baseProps} locale="en" />),
+      render(<RecruiterBriefReadyEmail {...baseProps} locale="fr" />),
+    ]);
+
+    expect(frHtml).toEqual(enHtml);
+    expect(frHtml).toContain("Screen ready for review");
   });
 });

@@ -234,13 +234,20 @@ describe("createCreditCheckoutSession", () => {
     const { db, spies } = fakeDb();
     const stripe = fakeStripe();
 
-    const result = await createCreditCheckoutSession(db, { ...checkoutInput(), stripe });
+    const result = await createCreditCheckoutSession(db, {
+      ...checkoutInput({ locale: "fr" }),
+      stripe,
+    });
 
     expect(result).toEqual({ ok: true, url: "https://checkout.stripe.test/cs_1" });
     expect(stripe.checkout.sessions.create).toHaveBeenCalledWith({
       mode: "payment",
       customer: "cus_1",
       line_items: [{ price: "price_hiring", quantity: 1 }],
+      // Checkout's own UI language, threaded from the acting user's coerced
+      // console locale (T7) — distinct from Stripe Tax / invoicing, which are
+      // unaffected by this field.
+      locale: "fr",
       automatic_tax: { enabled: true },
       tax_id_collection: { enabled: true },
       // Amendment 17: Stripe's default collects the country alone, which is enough
@@ -281,6 +288,21 @@ describe("createCreditCheckoutSession", () => {
     expect(stripe.prices.retrieve).toHaveBeenCalledWith("price_hiring");
     expect(stripe.prices.list).not.toHaveBeenCalled();
     expect(spies.creditPack.update).not.toHaveBeenCalled();
+  });
+
+  it("omits `locale` entirely when the caller has none, instead of defaulting to English", async () => {
+    const { db } = fakeDb();
+    const stripe = fakeStripe();
+
+    // `checkoutInput()` carries no `locale` — the shape a caller with no
+    // resolvable user session (or an old test double) sends. Forcing `"en"`
+    // here would override Stripe's own browser/Accept-Language auto-detect,
+    // which is the behaviour that works today for a caller who never had a
+    // locale to send in the first place.
+    await createCreditCheckoutSession(db, { ...checkoutInput(), stripe });
+
+    const [params] = stripe.checkout.sessions.create.mock.calls[0]!;
+    expect(Object.hasOwn(params, "locale")).toBe(false);
   });
 
   it("re-resolves the price and refreshes the cached amounts when another sync deactivated the stored one", async () => {

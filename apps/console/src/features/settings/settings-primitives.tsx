@@ -39,6 +39,7 @@ export function SettingsPanelHeading({
 }
 
 export function SettingsField({
+  disabled = false,
   label,
   maxLength,
   name,
@@ -47,6 +48,7 @@ export function SettingsField({
   required = false,
   value,
 }: {
+  disabled?: boolean;
   label: string;
   maxLength?: number;
   name?: string;
@@ -63,6 +65,7 @@ export function SettingsField({
 
   return (
     <TextField
+      disabled={disabled}
       label={label}
       maxLength={maxLength}
       name={name}
@@ -99,11 +102,13 @@ export function SettingsUrlField({
 }
 
 export function SettingsSelectField({
+  disabled = false,
   label,
   name,
   options,
   value,
 }: {
+  disabled?: boolean;
   label: string;
   name: string;
   options: Array<{ label: string; value: string }>;
@@ -117,6 +122,7 @@ export function SettingsSelectField({
 
   return (
     <SelectField
+      disabled={disabled}
       label={label}
       name={name}
       onValueChange={(nextValue) => {

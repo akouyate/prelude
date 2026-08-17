@@ -1,7 +1,11 @@
 import type { PrismaClient } from "@prelude/db";
 import type Stripe from "stripe";
 
-import { grantPurchasedCreditLot, type GrantPurchasedCreditLotInput } from "./credit-ledger";
+import {
+  grantPurchasedCreditLot,
+  type GrantPurchasedCreditLotInput,
+  type GrantPurchasedCreditLotResult,
+} from "./credit-ledger";
 import { getStripeClient } from "./stripe-client";
 
 /**
@@ -34,6 +38,11 @@ export type StripeFulfilmentClient = {
         metadata: { [key: string]: string | undefined } | null;
         payment_intent: string | { id: string } | null;
         invoice: string | { id: string } | null;
+        // Not expandable — Checkout returns it on every retrieve. Plan
+        // 2026-08-17 rule 7: the buyer-entered, tax-grade billing address
+        // Stripe collected at Checkout, read for `CreditLot.billingCountry`
+        // only — never for `Organization.country`.
+        customer_details: { address: { country: string | null } | null } | null;
       }>;
     };
   };
@@ -62,6 +71,11 @@ export type CreditCheckoutFulfilment =
   | { outcome: "no_payment_intent" }
   | { outcome: "amount_mismatch" }
   | { outcome: "foreign_session" }
+  // Task 5: the ledger's `currency_mismatch` carries `{ walletCurrency,
+  // sessionCurrency }` for the log line below; the outcome that leaves this
+  // module is bare, matching `unknown_pack` / `amount_mismatch` — the specific
+  // currencies are an operator's business, not this outcome's caller's.
+  | { outcome: "currency_mismatch" }
   | { outcome: "needs_admin"; reason: "missing_metadata" | "no_payment_required" };
 
 /** Currencies a lot can be denominated in — amendment 22, lower-cased as Stripe reports them. */
@@ -88,7 +102,7 @@ const EXPECTED_AMOUNT_METADATA_KEY: Record<FulfillableCurrency, string> = {
 export async function fulfillPaidPaymentIntent(
   db: PrismaClient,
   input: GrantPurchasedCreditLotInput,
-): Promise<{ outcome: "granted"; lotId: string } | { outcome: "already_granted" }> {
+): Promise<GrantPurchasedCreditLotResult> {
   return grantPurchasedCreditLot(db, input);
 }
 
@@ -263,18 +277,42 @@ export async function fulfillCreditCheckout(
   // Stripe's (what was actually charged, in the currency it was charged in). A
   // price rotation between session creation and fulfilment must not rewrite
   // history, and a USD purchase must never be filed as EUR (amendments 3 + 22).
-  return fulfillPaidPaymentIntent(db, {
+  //
+  // Plan 2026-08-17 rule 7: `billingCountry` is the buyer-entered, tax-grade
+  // observation Stripe collected at Checkout — recorded on the lot for
+  // reporting, never copied to `Organization.country` (the recruiter's
+  // self-declared answer is a different authority, and this write site never
+  // touches it).
+  const grant = await fulfillPaidPaymentIntent(db, {
     organizationId,
     packId: pack.id,
     creditsGranted: pack.creditsGranted,
     unitAmountCents: paidAmountCents,
     currency: expected.currency,
+    billingCountry: resolveObservedBillingCountry(session.customer_details),
     stripePaymentIntentId,
     stripeCheckoutSessionId: session.id,
     stripeInvoiceId: idOf(session.invoice),
     stripeEventId,
     now,
   });
+
+  // Task 5's outcome: the wallet is locked to a different currency than this
+  // session settled in. The specific currencies are logged here — the one place
+  // that still has them — and the outcome that leaves this module is bare, like
+  // every other parked reason.
+  if (grant.outcome === "currency_mismatch") {
+    console.error("[stripe-fulfilment] settlement currency mismatch — parked for an operator", {
+      checkoutSessionId: session.id,
+      organizationId,
+      packId,
+      walletCurrency: grant.walletCurrency,
+      sessionCurrency: grant.sessionCurrency,
+    });
+    return { outcome: "currency_mismatch" };
+  }
+
+  return grant;
 }
 
 /**
@@ -299,6 +337,27 @@ function resolveExpectedPayment(
   }
 
   return { currency: settled, amountCents: Number(raw) };
+}
+
+/**
+ * The buyer-entered billing country Stripe collected at Checkout, or `null` when
+ * there is nothing to observe — plan 2026-08-17 rule 7. `customer_details` can be
+ * null (session not yet associated with a customer), its `address` can be null
+ * (billing address collection off), and `address.country` can itself be null.
+ * Every one of those is absent data, not an error: this function never throws and
+ * never fabricates a value. The only normalisation is upper-case + trim — Stripe
+ * already reports ISO alpha-2 upper-case, so this exists to survive incidental
+ * whitespace, not to reshape the value.
+ */
+function resolveObservedBillingCountry(
+  customerDetails: { address: { country: string | null } | null } | null,
+): string | null {
+  const country = customerDetails?.address?.country;
+  if (!country) {
+    return null;
+  }
+  const normalized = country.trim().toUpperCase();
+  return normalized === "" ? null : normalized;
 }
 
 /** Expandable fields arrive as an id or as the object; `undefined` keeps optional inputs absent. */

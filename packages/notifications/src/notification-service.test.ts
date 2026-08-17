@@ -84,6 +84,28 @@ describe("notification dispatcher", () => {
     });
   });
 
+  // Candidate language follows the interview, never the workspace, so this
+  // notification's locale resolution stays out of scope here — the delivery
+  // row records no locale rather than fabricating one.
+  it("leaves the candidate confirmation's delivery locale null", async () => {
+    const provider = fakeProvider();
+    provider.send.mockResolvedValue({
+      providerMessageId: "email_123",
+      status: "sent",
+    });
+
+    await createNotificationDispatcher({
+      now: () => now,
+      provider,
+    }).notifyCandidateInterviewCompleted({ candidateSessionId: "cs_123" });
+
+    expect(prismaMock.notificationDelivery.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ locale: null }),
+      }),
+    );
+  });
+
   it("does not resend a terminal delivery", async () => {
     prismaMock.notificationDelivery.upsert.mockResolvedValue({
       attemptedAt: now,
@@ -199,6 +221,69 @@ describe("notification dispatcher", () => {
     );
   });
 
+  it("records each recruiter recipient's own coerced locale on the brief delivery", async () => {
+    prismaMock.candidateSession.findUnique.mockResolvedValue({
+      ...completedSession(),
+      organization: {
+        memberships: [
+          { user: { email: "owner@example.com", preferredLanguage: "fr" } },
+          {
+            user: { email: "recruiter@example.com", preferredLanguage: "de" },
+          },
+        ],
+        name: "Acme Talent",
+        settings: { notifications: { screensReadyForReview: true } },
+      },
+    });
+    prismaMock.notificationDelivery.upsert
+      .mockResolvedValueOnce({
+        attemptedAt: null,
+        id: "delivery_1",
+        status: "pending",
+      })
+      .mockResolvedValueOnce({
+        attemptedAt: null,
+        id: "delivery_2",
+        status: "pending",
+      });
+    prismaMock.notificationDelivery.findUniqueOrThrow
+      .mockResolvedValueOnce({ attemptCount: 1, id: "delivery_1" })
+      .mockResolvedValueOnce({ attemptCount: 1, id: "delivery_2" });
+    const provider = fakeProvider();
+    provider.send.mockResolvedValue({
+      providerMessageId: "email_123",
+      status: "sent",
+    });
+
+    await createNotificationDispatcher({
+      provider,
+    }).notifyCandidateBrief({
+      candidateSessionId: "cs_123",
+      status: "completed",
+    });
+
+    expect(prismaMock.notificationDelivery.upsert).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        create: expect.objectContaining({
+          locale: "fr",
+          recipientEmail: "owner@example.com",
+        }),
+      }),
+    );
+    // "de" is not a supported console locale, so it coerces to "en" — the
+    // same rule apps/console/src/libs/i18n-server.ts applies.
+    expect(prismaMock.notificationDelivery.upsert).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        create: expect.objectContaining({
+          locale: "en",
+          recipientEmail: "recruiter@example.com",
+        }),
+      }),
+    );
+  });
+
   /**
    * Amendment 16 of the prepaid-credit plan: a bank dispute freezes credits
    * immediately, and a workspace that discovers the block through its candidates
@@ -260,6 +345,66 @@ describe("notification dispatcher", () => {
         .dedupeKey as string;
       expect(key).toContain("credit_dispute_frozen");
       expect(key).toContain("evt_dispute_1");
+    });
+
+    it("records each billing recipient's own coerced locale on the freeze delivery", async () => {
+      prismaMock.organization.findUnique.mockResolvedValue({
+        id: "org_123",
+        memberships: [
+          { user: { email: "owner@example.com", preferredLanguage: "fr" } },
+          { user: { email: "admin@example.com", preferredLanguage: null } },
+        ],
+        name: "Acme Talent",
+      });
+      prismaMock.notificationDelivery.upsert
+        .mockResolvedValueOnce({
+          attemptedAt: null,
+          id: "delivery_1",
+          status: "pending",
+        })
+        .mockResolvedValueOnce({
+          attemptedAt: null,
+          id: "delivery_2",
+          status: "pending",
+        });
+      prismaMock.notificationDelivery.findUniqueOrThrow
+        .mockResolvedValueOnce({ attemptCount: 1, id: "delivery_1" })
+        .mockResolvedValueOnce({ attemptCount: 1, id: "delivery_2" });
+      const provider = fakeProvider();
+      provider.send.mockResolvedValue({
+        providerMessageId: "email_dispute",
+        status: "sent",
+      });
+
+      await createNotificationDispatcher({
+        now: () => now,
+        provider,
+      }).notifyCreditDisputeFrozen({
+        frozenCredits: 24,
+        organizationId: "org_123",
+        stripeEventId: "evt_dispute_1",
+      });
+
+      expect(prismaMock.notificationDelivery.upsert).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          create: expect.objectContaining({
+            locale: "fr",
+            recipientEmail: "owner@example.com",
+          }),
+        }),
+      );
+      // A missing preferredLanguage coerces to "en" rather than staying null —
+      // only the untouched candidate notification records a null locale.
+      expect(prismaMock.notificationDelivery.upsert).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          create: expect.objectContaining({
+            locale: "en",
+            recipientEmail: "admin@example.com",
+          }),
+        }),
+      );
     });
 
     it("stays silent, and does not throw, for a workspace it cannot find", async () => {

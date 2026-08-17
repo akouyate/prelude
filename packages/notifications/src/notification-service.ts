@@ -13,6 +13,7 @@ import {
   type NotificationEmailMessage,
   type NotificationEmailProvider,
 } from "./email-provider";
+import { coerceNotificationLocale, type NotificationLocale } from "./locale";
 import { readWorkspaceNotificationPreferences } from "./preferences";
 import {
   CandidateInterviewCompletedEmail,
@@ -66,7 +67,9 @@ export function createNotificationDispatcher({
           organization: {
             include: {
               memberships: {
-                include: { user: { select: { email: true } } },
+                include: {
+                  user: { select: { email: true, preferredLanguage: true } },
+                },
                 where: {
                   role: { in: recruiterRoles },
                   status: "active",
@@ -96,14 +99,12 @@ export function createNotificationDispatcher({
           ? "candidate_brief_ready"
           : "candidate_brief_needs_attention";
       const detailUrl = resolveCandidateDetailUrl(session.id);
-      const recipients = uniqueEmails(
-        session.organization.memberships.map(
-          (membership) => membership.user.email,
-        ),
+      const recipients = uniqueLocalizedRecipients(
+        session.organization.memberships.map((membership) => membership.user),
       );
 
       return Promise.all(
-        recipients.map((recipientEmail) =>
+        recipients.map(({ email: recipientEmail, locale }) =>
           dispatchDelivery({
             candidateSessionId: session.id,
             dedupeSubject: session.id,
@@ -111,12 +112,14 @@ export function createNotificationDispatcher({
             forceSkipReason: preferences.screensReadyForReview
               ? null
               : "review_notifications_disabled",
+            locale,
             message:
               status === "completed"
                 ? {
                     react: createElement(RecruiterBriefReadyEmail, {
                       candidateLabel,
                       detailUrl,
+                      locale,
                       roleTitle: session.interview.roleTitle,
                     }),
                     subject: `Screen ready: ${candidateLabel} · ${session.interview.roleTitle}`,
@@ -126,6 +129,7 @@ export function createNotificationDispatcher({
                     react: createElement(RecruiterBriefNeedsAttentionEmail, {
                       candidateLabel,
                       detailUrl,
+                      locale,
                       roleTitle: session.interview.roleTitle,
                     }),
                     subject: `Screen needs attention: ${candidateLabel} · ${session.interview.roleTitle}`,
@@ -226,7 +230,9 @@ export function createNotificationDispatcher({
       const organization = await prisma.organization.findUnique({
         include: {
           memberships: {
-            include: { user: { select: { email: true } } },
+            include: {
+              user: { select: { email: true, preferredLanguage: true } },
+            },
             where: { role: { in: billingRoles }, status: "active" },
           },
         },
@@ -238,22 +244,24 @@ export function createNotificationDispatcher({
       }
 
       const billingUrl = resolveBillingSettingsUrl();
-      const recipients = uniqueEmails(
-        organization.memberships.map((membership) => membership.user.email),
+      const recipients = uniqueLocalizedRecipients(
+        organization.memberships.map((membership) => membership.user),
       );
       const creditLabel = frozenCredits === 1 ? "credit" : "credits";
 
       return Promise.all(
-        recipients.map((recipientEmail) =>
+        recipients.map(({ email: recipientEmail, locale }) =>
           dispatchDelivery({
             candidateSessionId: null,
             dedupeSubject: stripeEventId,
             eventType: "credit_dispute_frozen",
             forceSkipReason: null,
+            locale,
             message: {
               react: createElement(CreditDisputeFrozenEmail, {
                 billingUrl,
                 frozenCredits,
+                locale,
               }),
               subject: `Action needed: a bank dispute has frozen ${frozenCredits} interview ${creditLabel}`,
               text: `A bank dispute was opened on one of your HireCall credit purchases, so ${frozenCredits} interview ${creditLabel} ${frozenCredits === 1 ? "is" : "are"} temporarily blocked while it is resolved. Interviews already under way are not interrupted, and the credits are released in full if the dispute is resolved in your favour. Billing settings: ${billingUrl}`,
@@ -274,6 +282,7 @@ async function dispatchDelivery({
   dedupeSubject,
   eventType,
   forceSkipReason,
+  locale = null,
   message,
   now,
   organizationId,
@@ -291,6 +300,14 @@ async function dispatchDelivery({
   dedupeSubject: string;
   eventType: NotificationEventType;
   forceSkipReason: string | null;
+  /**
+   * The recipient's resolved locale, recorded for audit alongside
+   * `User.preferredLanguage`. Only the notifications this task threads a
+   * locale through pass one; every other caller leaves it null rather than
+   * fabricating a value (see `notifyCandidateInterviewCompleted`, whose
+   * locale follows the interview, not the workspace).
+   */
+  locale?: NotificationLocale | null;
   message: Pick<NotificationEmailMessage, "react" | "subject" | "text">;
   now: () => Date;
   organizationId: string;
@@ -308,6 +325,7 @@ async function dispatchDelivery({
       candidateSessionId,
       dedupeKey,
       eventType,
+      locale,
       organizationId,
       recipientEmail,
     },
@@ -513,14 +531,28 @@ function normalizeEmail(value: string | null | undefined) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(normalized) ? normalized : null;
 }
 
-function uniqueEmails(values: string[]) {
-  return [
-    ...new Set(
-      values
-        .map(normalizeEmail)
-        .filter((value): value is string => Boolean(value)),
-    ),
-  ];
+/**
+ * Dedupes recipients by normalized email (a user can hold more than one
+ * active membership) while coercing each one's own `preferredLanguage` — the
+ * per-recipient locale a fan-out notification needs, not the workspace's.
+ */
+function uniqueLocalizedRecipients(
+  users: { email: string; preferredLanguage: string | null | undefined }[],
+): { email: string; locale: NotificationLocale }[] {
+  const localeByEmail = new Map<string, NotificationLocale>();
+
+  for (const user of users) {
+    const email = normalizeEmail(user.email);
+    if (!email || localeByEmail.has(email)) {
+      continue;
+    }
+    localeByEmail.set(email, coerceNotificationLocale(user.preferredLanguage));
+  }
+
+  return [...localeByEmail.entries()].map(([email, locale]) => ({
+    email,
+    locale,
+  }));
 }
 
 function summarizeProviderError(error: unknown) {
