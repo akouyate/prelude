@@ -52,6 +52,7 @@
     "@types/yauzl": "^3.4.0",
     "eslint": "^9.39.2",
     "eslint-config-next": "^16.2.9",
+    "stripe": "^22.5.0",
     "tailwindcss": "^4.3.1",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"

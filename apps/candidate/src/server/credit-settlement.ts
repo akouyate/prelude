@@ -83,6 +83,10 @@ export async function settleCandidateSessionCredit(
       return;
     }
 
+    const plannedQuestionCount = Array.isArray(session.interview.questions)
+      ? session.interview.questions.length
+      : 0;
+
     if (!session.realtimeSessionId) {
       // A completion with no runtime session has no evidence anyone can bill
       // against, and on money the burden of proof sits with the charge. This
@@ -97,12 +101,21 @@ export async function settleCandidateSessionCredit(
         organizationId: session.organizationId,
         reason: "no_billable_evidence",
       });
+      // The trace still records what the plan required, against zero
+      // evidence — the honest "why" behind the release.
+      const { requiredCount } = evaluateBillableCompletion({
+        outcomes: [],
+        plannedQuestionCount,
+      });
+      await recordBilledCounts(db, {
+        answeredCount: 0,
+        outcome: "released",
+        requiredCount,
+        sessionId: input.sessionId,
+      });
       return;
     }
 
-    const plannedQuestionCount = Array.isArray(session.interview.questions)
-      ? session.interview.questions.length
-      : 0;
     const decision = evaluateBillableCompletion({
       outcomes: await loadQuestionOutcomes(db, session.realtimeSessionId),
       plannedQuestionCount,
@@ -114,6 +127,12 @@ export async function settleCandidateSessionCredit(
         now: input.now,
         organizationId: session.organizationId,
       });
+      await recordBilledCounts(db, {
+        answeredCount: decision.answeredCount,
+        outcome: "captured",
+        requiredCount: decision.requiredCount,
+        sessionId: input.sessionId,
+      });
       return;
     }
 
@@ -123,6 +142,12 @@ export async function settleCandidateSessionCredit(
       organizationId: session.organizationId,
       reason: "below_billable_threshold",
     });
+    await recordBilledCounts(db, {
+      answeredCount: decision.answeredCount,
+      outcome: "released",
+      requiredCount: decision.requiredCount,
+      sessionId: input.sessionId,
+    });
   } catch (error) {
     console.error("[credit-settlement] failed to settle a candidate session", {
       error,
@@ -130,6 +155,31 @@ export async function settleCandidateSessionCredit(
       sessionId: input.sessionId,
     });
   }
+}
+
+// The written trace that wins a billing dispute (amendment 18): whatever the
+// billable-completion decision was, these are the counts and outcome that
+// justified it — charged or not. Called from inside `settleCandidateSession
+// Credit`'s existing try block, so a write failure here is caught by the same
+// never-throw guarantee as everything else in that function; it must never
+// itself become the reason a candidate-facing call fails.
+async function recordBilledCounts(
+  db: CreditSettlementDatabase,
+  input: {
+    answeredCount: number;
+    outcome: "captured" | "released";
+    requiredCount: number;
+    sessionId: string;
+  },
+): Promise<void> {
+  await db.candidateSession.update({
+    data: {
+      billedAnsweredCount: input.answeredCount,
+      billedOutcome: input.outcome,
+      billedRequiredCount: input.requiredCount,
+    },
+    where: { id: input.sessionId },
+  });
 }
 
 async function loadQuestionOutcomes(

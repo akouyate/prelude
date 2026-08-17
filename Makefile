@@ -39,10 +39,19 @@ VOICE_SMOKE_INTERVIEW_PLAN_ID ?= interview_e2e_livekit-upgrade
 VOICE_SMOKE_VOICE ?=
 VOICE_SMOKE_MAX_SECONDS ?= 240
 VOICE_SMOKE_PYTHON ?= 3.13
+BILLING_SWEEP_URL ?= http://localhost:3000/api/internal/billing-sweep
+# Strictly above the route's LOCK_TRANSACTION_TIMEOUT_MS (60s), which is itself
+# above SWEEP_TIME_BUDGET_MS + ENTRY_PASS_TIME_BUDGET_MS (25s + 10s). See the
+# ordering invariant documented in the route: a client that gives up before the
+# server does reports failure for work that actually succeeded.
+BILLING_SWEEP_MAX_TIME ?= 90
+BILLING_SWEEP_LIMIT ?=
+BILLING_SWEEP_CURSOR ?=
+BILLING_ADMIN_QUEUE_LIMIT ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell role-intake-env-up role-intake-worker db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke dev
+.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell role-intake-env-up role-intake-worker db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke billing-packs-sync billing-sweep billing-admin-queue dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "HireCall local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -307,6 +316,30 @@ e2e-voice-smoke: ## Drive a full live interview as a synthetic candidate (TTS po
 		uv_with="$$uv_with --with pocket-tts==2.1.0"; \
 	fi; \
 	cd services/interviewer-agent && PYTHONPATH=. uv run --python $(VOICE_SMOKE_PYTHON) $$uv_with python -m app.synthetic_candidate $$harness_args
+
+billing-packs-sync: ## Upsert the credit pack catalogue; creates Stripe Products/Prices when STRIPE_SECRET_KEY is set.
+	@$(LOAD_ENV); node scripts/sync-credit-packs.mjs
+
+billing-sweep: ## Release expired credit holds, expire due lots, reconcile wallets (needs console running + BILLING_SWEEP_SECRET).
+	@$(LOAD_ENV); \
+	if [ -z "$$BILLING_SWEEP_SECRET" ]; then \
+		printf 'BILLING_SWEEP_SECRET is not set; the endpoint answers 503 without it.\nGenerate one with: openssl rand -hex 32\n' >&2; \
+		exit 1; \
+	fi; \
+	url="$(BILLING_SWEEP_URL)"; \
+	query=""; \
+	if [ -n "$(BILLING_SWEEP_LIMIT)" ]; then query="limit=$(BILLING_SWEEP_LIMIT)"; fi; \
+	if [ -n "$(BILLING_SWEEP_CURSOR)" ]; then query="$${query:+$$query&}cursor=$(BILLING_SWEEP_CURSOR)"; fi; \
+	if [ -n "$$query" ]; then url="$$url?$$query"; fi; \
+	curl -sS --fail-with-body --max-time $(BILLING_SWEEP_MAX_TIME) -X POST \
+		-H "Authorization: Bearer $$BILLING_SWEEP_SECRET" "$$url" \
+		| node -e 'let b="";process.stdin.on("data",c=>{b+=c}).on("end",()=>{try{console.log(JSON.stringify(JSON.parse(b),null,2))}catch{console.log(b)}})'
+
+billing-admin-queue: ## List Stripe webhook events parked for an operator (needs_admin / failed).
+	@$(LOAD_ENV); \
+	DATABASE_URL="$${DATABASE_URL:-$(DATABASE_URL)}" \
+	BILLING_ADMIN_QUEUE_LIMIT="$(BILLING_ADMIN_QUEUE_LIMIT)" \
+	node scripts/billing-admin-queue.mjs
 
 dev: env-up ## Start local infrastructure, app dev stack, and role-intake worker.
 	@$(LOAD_ENV); \

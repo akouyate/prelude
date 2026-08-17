@@ -16,7 +16,8 @@
   "dependencies": {
     "@clerk/backend": "3.8.2",
     "@prelude/core": "workspace:*",
-    "@prelude/db": "workspace:*"
+    "@prelude/db": "workspace:*",
+    "stripe": "^22.5.0"
   },
   "devDependencies": {
     "@prelude/config": "workspace:*",

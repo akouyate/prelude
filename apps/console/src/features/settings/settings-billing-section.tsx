@@ -1,16 +1,28 @@
 "use client";
 
+import * as React from "react";
 import { useClerk } from "@clerk/nextjs";
 import { ArrowUpRight } from "iconoir-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslation } from "react-i18next";
-import { Button, StatusBadge, cn } from "@prelude/ui";
+import { Button, Notice, StatusBadge, cn } from "@prelude/ui";
 
+import { startCreditPackCheckout } from "../../server/billing/credit-checkout-action";
 import { SettingsPanel } from "./settings-primitives";
-import type { WorkspaceSettingsData } from "./settings-types";
+import type {
+  WorkspaceCreditBilling,
+  WorkspaceCreditPack,
+  WorkspaceSettingsData,
+} from "./settings-types";
 import {
   billingStateDescriptionKey,
   billingStateTranslationKey,
+  creditPackAmountCents,
+  defaultDisplayCurrency,
+  formatCreditPrice,
+  purchaseBannerFor,
   usagePercentage,
+  type DisplayCurrency,
 } from "./settings-billing-helpers";
 
 const billingStateTones = {
@@ -28,8 +40,10 @@ const billingStateTones = {
 
 export function BillingSection({
   billing,
+  creditBilling,
 }: {
   billing: WorkspaceSettingsData["billing"];
+  creditBilling: WorkspaceSettingsData["creditBilling"];
 }) {
   const { i18n, t } = useTranslation();
   const locale = i18n.resolvedLanguage ?? i18n.language;
@@ -40,82 +54,375 @@ export function BillingSection({
   );
 
   return (
+    <div className="flex flex-col gap-[18px]">
+      <SettingsPanel>
+        <div className="flex flex-wrap items-start justify-between gap-5">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-500">
+                {t("settings.billing.currentPlan")}
+              </p>
+              <StatusBadge tone={billingStateTones[billing.state]}>
+                {t(billingStateTranslationKey(billing.state))}
+              </StatusBadge>
+            </div>
+            <h2 className="mt-2 text-2xl font-semibold tracking-[-0.015em] text-ink-950">
+              {billing.planName}
+            </h2>
+            <p className="mt-2 max-w-[52ch] text-[13.5px] leading-5 text-ink-600">
+              {t(billingStateDescriptionKey(billing.state))}
+            </p>
+            {period ? (
+              <p className="mt-3 text-xs text-ink-500">
+                <span className="font-medium text-ink-700">
+                  {t("settings.billing.period")}
+                </span>{" "}
+                {period}
+              </p>
+            ) : null}
+          </div>
+
+          {billing.canManageBilling ? (
+            <ManageBillingButton />
+          ) : (
+            <DisabledBillingButton
+              hint={t(
+                billing.manageBillingUnavailableReason === "local_mock"
+                  ? "settings.billing.localMockManageHint"
+                  : billing.manageBillingUnavailableReason === "not_configured"
+                    ? "settings.billing.unconfiguredManageHint"
+                    : "settings.billing.nonOwnerManageHint",
+              )}
+            />
+          )}
+        </div>
+
+        <div className="mt-6 grid gap-5 border-t border-ink-100 pt-5 sm:grid-cols-2">
+          <BillingUsageMeter
+            label={t("settings.billing.candidateInterviews")}
+            limit={billing.limits.candidateInterviews}
+            usage={billing.usage.candidateInterviews}
+          />
+          <BillingUsageMeter
+            label={t("settings.billing.publishedRoles")}
+            limit={billing.limits.publishedRoles}
+            usage={billing.usage.publishedRoles}
+          />
+        </div>
+
+        <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-ink-100 pt-4">
+          <div>
+            <p className="text-sm font-semibold text-ink-950">
+              {t("settings.billing.recording")}
+            </p>
+            <p className="mt-1 text-xs leading-5 text-ink-500">
+              {t("settings.billing.recordingDescription")}
+            </p>
+          </div>
+          <StatusBadge
+            tone={billing.entitlements.recording ? "success" : "muted"}
+          >
+            {t(
+              billing.entitlements.recording
+                ? "settings.billing.included"
+                : "settings.billing.notIncluded",
+            )}
+          </StatusBadge>
+        </div>
+      </SettingsPanel>
+
+      {/*
+        Flag-gated (#140): `creditBilling` is null whenever the credit kill
+        switch is off or Stripe is unconfigured, and the whole buy surface then
+        never renders — no prices the console has no way to charge.
+      */}
+      {creditBilling ? <CreditPurchasePanel creditBilling={creditBilling} /> : null}
+    </div>
+  );
+}
+
+/**
+ * The prepaid buy surface: what the workspace holds, what it can buy, and what
+ * just happened if the recruiter came back from Stripe.
+ *
+ * Everything it shows is a display cache. Checkout re-reads the Stripe Price and
+ * resolves the buyer's currency from their location (amendment 22), so the toggle
+ * below decides which cached amount is PRINTED and nothing else.
+ */
+function CreditPurchasePanel({
+  creditBilling,
+}: {
+  creditBilling: WorkspaceCreditBilling;
+}) {
+  const { i18n, t } = useTranslation();
+  const locale = i18n.resolvedLanguage ?? i18n.language;
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Read once, on mount, and keep it in state — because the effect below then
+  // removes the parameter from the URL. Without that, "credits added" is
+  // immortal: it replays on every reload, survives a bookmark, and reappears
+  // days later on a page that is no longer describing anything that just
+  // happened. `replace` rather than `push` so Back does not walk into the stale
+  // banner, and the other parameters (notably `view=billing`) are preserved so
+  // the section does not jump back to Profile.
+  const [banner] = React.useState(() =>
+    purchaseBannerFor(searchParams.get("purchase")),
+  );
+
+  React.useEffect(() => {
+    if (!searchParams.has("purchase")) {
+      return;
+    }
+    const remaining = new URLSearchParams(searchParams);
+    remaining.delete("purchase");
+    const query = remaining.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  // Starts on the catalogue default and moves to the browser's currency after
+  // hydration. Reading `navigator` during render would make the server and the
+  // client disagree on the first paint.
+  const [currency, setCurrency] = React.useState<DisplayCurrency>("EUR");
+  React.useEffect(() => {
+    setCurrency(defaultDisplayCurrency(navigator.language));
+  }, []);
+
+  const [pendingPackId, setPendingPackId] = React.useState<string | null>(null);
+  const [checkoutFailed, setCheckoutFailed] = React.useState(false);
+
+  const openCheckout = React.useCallback(async (packId: string) => {
+    setCheckoutFailed(false);
+    setPendingPackId(packId);
+    try {
+      const result = await startCreditPackCheckout(packId);
+      if (result.url) {
+        // A full navigation, not a router push: the destination is Stripe's
+        // domain, which the Next router cannot own.
+        window.location.assign(result.url);
+        return;
+      }
+      // Every refusal reads the same to the recruiter. The distinctions
+      // (`unknown_pack`, `not_configured`, …) are ours to act on, not theirs.
+      setCheckoutFailed(true);
+    } catch {
+      setCheckoutFailed(true);
+    } finally {
+      // Runs on the success path too, `return` notwithstanding. `assign` only
+      // *starts* a navigation — if it is blocked or fails, an unreset pending id
+      // would leave every buy button disabled until a manual reload. When the
+      // navigation does happen the page unloads before this repaint is visible.
+      setPendingPackId(null);
+    }
+  }, []);
+
+  return (
     <SettingsPanel>
       <div className="flex flex-wrap items-start justify-between gap-5">
         <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-ink-500">
-              {t("settings.billing.currentPlan")}
-            </p>
-            <StatusBadge tone={billingStateTones[billing.state]}>
-              {t(billingStateTranslationKey(billing.state))}
-            </StatusBadge>
-          </div>
-          <h2 className="mt-2 text-2xl font-semibold tracking-[-0.015em] text-ink-950">
-            {billing.planName}
+          <h2 className="text-lg font-semibold tracking-[-0.015em] text-ink-950">
+            {t("settings.billing.credits.title")}
           </h2>
-          <p className="mt-2 max-w-[52ch] text-[13.5px] leading-5 text-ink-600">
-            {t(billingStateDescriptionKey(billing.state))}
+          <p className="mt-1.5 max-w-[52ch] text-[13.5px] leading-5 text-ink-600">
+            {t("settings.billing.credits.description")}
           </p>
-          {period ? (
-            <p className="mt-3 text-xs text-ink-500">
-              <span className="font-medium text-ink-700">
-                {t("settings.billing.period")}
-              </span>{" "}
-              {period}
-            </p>
-          ) : null}
         </div>
+        <CurrencyToggle currency={currency} onChange={setCurrency} />
+      </div>
 
-        {billing.canManageBilling ? (
-          <ManageBillingButton />
-        ) : (
-          <DisabledBillingButton
-            hint={t(
-              billing.manageBillingUnavailableReason === "local_mock"
-                ? "settings.billing.localMockManageHint"
-                : billing.manageBillingUnavailableReason === "not_configured"
-                  ? "settings.billing.unconfiguredManageHint"
-                  : "settings.billing.nonOwnerManageHint",
-            )}
+      {banner ? (
+        <Notice className="mt-4" role="status" tone={banner.tone}>
+          {t(banner.key)}
+        </Notice>
+      ) : null}
+
+      {/*
+        Amendment 15 — never a bare number. The split says what was actually paid
+        for (the First Five are a one-off, not an allowance) and the expiry line
+        says what is about to be lost, so nobody discovers the 12-month clock the
+        day their balance shrinks.
+      */}
+      <div className="mt-5 border-t border-ink-100 pt-4">
+        <p className="text-2xl font-semibold tracking-[-0.015em] text-ink-950">
+          {t("settings.billing.credits.balancePaid", {
+            count: creditBilling.paidAvailable,
+          })}
+          <span className="text-ink-400"> · </span>
+          {t("settings.billing.credits.balanceFree", {
+            count: creditBilling.freeAvailable,
+          })}
+        </p>
+        <p className="mt-1.5 text-xs leading-5 text-ink-500">
+          {creditBilling.nextExpiry
+            ? t("settings.billing.credits.nextExpiry", {
+                count: creditBilling.nextExpiry.credits,
+                date: formatExpiryDate(
+                  creditBilling.nextExpiry.expiresAt,
+                  locale,
+                ),
+              })
+            : t("settings.billing.credits.expiryNote")}
+        </p>
+      </div>
+
+      {/*
+        The catalogue stays visible to everyone — knowing what a pack costs is not
+        a privilege — but only a manager gets the controls. The server refuses a
+        non-manager anyway (`canPurchaseCredits`, re-derived from the session in
+        both the action and the return route); this flag is what stops the console
+        offering a button whose only possible answer is "not allowed".
+      */}
+      <div className="mt-5 grid gap-3 border-t border-ink-100 pt-5 sm:grid-cols-3">
+        {creditBilling.packs.map((pack) => (
+          <CreditPackCard
+            canPurchase={creditBilling.canPurchase}
+            currency={currency}
+            key={pack.id}
+            locale={locale}
+            onBuy={openCheckout}
+            pack={pack}
+            pending={pendingPackId === pack.id}
+            pendingElsewhere={pendingPackId !== null && pendingPackId !== pack.id}
           />
-        )}
+        ))}
       </div>
 
-      <div className="mt-6 grid gap-5 border-t border-ink-100 pt-5 sm:grid-cols-2">
-        <BillingUsageMeter
-          label={t("settings.billing.candidateInterviews")}
-          limit={billing.limits.candidateInterviews}
-          usage={billing.usage.candidateInterviews}
-        />
-        <BillingUsageMeter
-          label={t("settings.billing.publishedRoles")}
-          limit={billing.limits.publishedRoles}
-          usage={billing.usage.publishedRoles}
-        />
-      </div>
-
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-ink-100 pt-4">
-        <div>
-          <p className="text-sm font-semibold text-ink-950">
-            {t("settings.billing.recording")}
-          </p>
-          <p className="mt-1 text-xs leading-5 text-ink-500">
-            {t("settings.billing.recordingDescription")}
-          </p>
-        </div>
-        <StatusBadge
-          tone={billing.entitlements.recording ? "success" : "muted"}
+      {/*
+        Amendment 20 — the quiet pack's gate. `visibility: "quiet"` keeps
+        `volume_1000` off the ladder above, but it stays fully purchasable: this
+        line opens the same checkout, through the same action, and is gated by the
+        same role (visibility was never an authorization boundary).
+      */}
+      {creditBilling.volumePackId && creditBilling.canPurchase ? (
+        <button
+          className="mt-4 cursor-pointer text-left text-[12.5px] font-medium text-olive-900 underline underline-offset-4 hover:text-olive-800 disabled:pointer-events-none disabled:opacity-50"
+          disabled={pendingPackId !== null}
+          onClick={() => {
+            void openCheckout(creditBilling.volumePackId as string);
+          }}
+          type="button"
         >
-          {t(
-            billing.entitlements.recording
-              ? "settings.billing.included"
-              : "settings.billing.notIncluded",
-          )}
-        </StatusBadge>
-      </div>
+          {t("settings.billing.credits.volumeGate")}
+        </button>
+      ) : null}
+
+      {creditBilling.canPurchase ? null : (
+        <p className="mt-4 text-xs leading-5 text-ink-500">
+          {t("settings.billing.credits.nonManagerHint")}
+        </p>
+      )}
+
+      {checkoutFailed ? (
+        <Notice className="mt-4" role="alert" tone="warning">
+          {t("settings.billing.credits.checkoutFailed")}
+        </Notice>
+      ) : null}
     </SettingsPanel>
   );
+}
+
+function CreditPackCard({
+  canPurchase,
+  currency,
+  locale,
+  onBuy,
+  pack,
+  pending,
+  pendingElsewhere,
+}: {
+  canPurchase: boolean;
+  currency: DisplayCurrency;
+  locale: string;
+  onBuy: (packId: string) => Promise<void>;
+  pack: WorkspaceCreditPack;
+  pending: boolean;
+  pendingElsewhere: boolean;
+}) {
+  const { t } = useTranslation();
+  const price = creditPackAmountCents(pack, currency);
+
+  return (
+    <div className="flex flex-col items-start gap-3 rounded-2xl border border-ink-100 bg-white/60 p-4">
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-ink-950">
+          {t("settings.billing.credits.packCredits", {
+            count: pack.creditsGranted,
+          })}
+        </p>
+        <p className="mt-1 text-xl font-semibold tracking-[-0.015em] text-ink-950">
+          {formatCreditPrice(price.amountCents, price.currency, locale)}
+        </p>
+      </div>
+      {canPurchase ? (
+        <Button
+          className="w-full"
+          disabled={pending || pendingElsewhere}
+          onClick={() => {
+            void onBuy(pack.id);
+          }}
+          type="button"
+          variant="secondary"
+        >
+          {t(
+            pending
+              ? "settings.billing.credits.opening"
+              : "settings.billing.credits.buy",
+          )}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+function CurrencyToggle({
+  currency,
+  onChange,
+}: {
+  currency: DisplayCurrency;
+  onChange: (currency: DisplayCurrency) => void;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <div
+      aria-label={t("settings.billing.credits.currencyLabel")}
+      className="flex shrink-0 items-center gap-1 rounded-full border border-ink-100 p-1"
+      role="group"
+    >
+      {(["EUR", "USD"] as const).map((option) => (
+        <button
+          aria-pressed={currency === option}
+          className={cn(
+            "cursor-pointer rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors",
+            currency === option
+              ? "bg-ink-900 text-white"
+              : "text-ink-500 hover:text-ink-800",
+          )}
+          key={option}
+          onClick={() => {
+            onChange(option);
+          }}
+          type="button"
+        >
+          {option}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function formatExpiryDate(value: string, locale: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(locale, {
+    day: "numeric",
+    month: "numeric",
+    year: "numeric",
+  }).format(date);
 }
 
 function DisabledBillingButton({ hint }: { hint: string }) {

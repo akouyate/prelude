@@ -120,6 +120,13 @@ export type InterviewDetailData =
 
 export type CandidateSessionSummary = {
   analysisStatus: LiveAnalysisStatus;
+  // The billing trace (amendment 18) — null together unless a `completed`
+  // settlement ran with `CREDIT_BILLING_ENABLED` on. `billedOutcome` is
+  // "captured" | "released" | null; kept as `string | null` here to mirror
+  // the nullable Prisma column without importing a domain type into a loader.
+  billedAnsweredCount: number | null;
+  billedOutcome: string | null;
+  billedRequiredCount: number | null;
   candidateLabel: string;
   completedAt: string | null;
   eventCount: number;
@@ -439,6 +446,9 @@ function toCandidateSessionSummary({
   liveStatusById: Map<string, string>;
   questionCount: number;
   session: {
+    billedAnsweredCount: number | null;
+    billedOutcome: string | null;
+    billedRequiredCount: number | null;
     candidateBrief?: {
       candidateSessionId: string;
       limitations: unknown;
@@ -475,6 +485,9 @@ function toCandidateSessionSummary({
       eventStats,
       session.candidateBrief?.status,
     ),
+    billedAnsweredCount: session.billedAnsweredCount,
+    billedOutcome: session.billedOutcome,
+    billedRequiredCount: session.billedRequiredCount,
     candidateLabel:
       session.candidateName ??
       session.candidateEmail ??

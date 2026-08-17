@@ -8,8 +8,27 @@ import {
   canManageRoles,
   canManageMember,
   canManageTeam,
+  canPurchaseCredits,
   canRemoveMember,
 } from "./organization-permissions";
+
+describe("credit purchase permission", () => {
+  it("lets only owner and admin spend the organization's money", () => {
+    expect(canPurchaseCredits("owner")).toBe(true);
+    expect(canPurchaseCredits("admin")).toBe(true);
+    // A recruiter runs interviews; committing the company to €2,790 is not part
+    // of that job, and neither is a viewer's.
+    expect(canPurchaseCredits("recruiter")).toBe(false);
+    expect(canPurchaseCredits("viewer")).toBe(false);
+  });
+
+  it("uses the same manager set as the rest of the workspace, not a parallel one", () => {
+    // A second, drifting definition of "manager" is how permission bugs are born.
+    for (const role of ["owner", "admin", "recruiter", "viewer"] as const) {
+      expect(canPurchaseCredits(role)).toBe(canManageTeam(role));
+    }
+  });
+});
 
 describe("organization permissions (Standard matrix)", () => {
   it("lets only owner and admin manage the team", () => {

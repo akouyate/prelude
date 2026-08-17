@@ -7,6 +7,9 @@ const prismaMock = vi.hoisted(() => ({
   candidateSession: {
     findUnique: vi.fn(),
   },
+  organization: {
+    findUnique: vi.fn(),
+  },
   notificationAttempt: {
     create: vi.fn(),
   },
@@ -46,6 +49,11 @@ describe("notification dispatcher", () => {
     prismaMock.candidateSession.findUnique.mockResolvedValue(
       completedSession(),
     );
+    prismaMock.organization.findUnique.mockResolvedValue({
+      id: "org_123",
+      memberships: [{ user: { email: "owner@example.com" } }],
+      name: "Acme Talent",
+    });
   });
 
   it("sends exactly one consented candidate confirmation and persists its attempt", async () => {
@@ -189,6 +197,86 @@ describe("notification dispatcher", () => {
       2,
       expect.objectContaining({ to: "recruiter@example.com" }),
     );
+  });
+
+  /**
+   * Amendment 16 of the prepaid-credit plan: a bank dispute freezes credits
+   * immediately, and a workspace that discovers the block through its candidates
+   * is the churn scenario. This notice is workspace-scoped, not candidate-scoped,
+   * which is why it is the one delivery with no candidate session behind it.
+   */
+  describe("credit dispute freeze", () => {
+    it("tells the workspace how many credits a dispute just blocked", async () => {
+      const provider = fakeProvider();
+      provider.send.mockResolvedValue({
+        providerMessageId: "email_dispute",
+        status: "sent",
+      });
+
+      const outcomes = await createNotificationDispatcher({
+        now: () => now,
+        provider,
+      }).notifyCreditDisputeFrozen({
+        frozenCredits: 24,
+        organizationId: "org_123",
+        stripeEventId: "evt_dispute_1",
+      });
+
+      expect(outcomes).toHaveLength(1);
+      expect(outcomes[0]).toMatchObject({ status: "sent" });
+      expect(provider.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject: "Action needed: a bank dispute has frozen 24 interview credits",
+          to: "owner@example.com",
+        }),
+      );
+      // No candidate session behind it — the column is nullable precisely so a
+      // workspace-level delivery does not have to invent one.
+      expect(prismaMock.notificationDelivery.upsert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          create: expect.objectContaining({
+            candidateSessionId: null,
+            eventType: "credit_dispute_frozen",
+            organizationId: "org_123",
+          }),
+        }),
+      );
+    });
+
+    it("keys the dedupe on the Stripe event, so a replay sends nothing new", async () => {
+      const provider = fakeProvider();
+      provider.send.mockResolvedValue({
+        providerMessageId: "email_dispute",
+        status: "sent",
+      });
+
+      await createNotificationDispatcher({ provider }).notifyCreditDisputeFrozen({
+        frozenCredits: 24,
+        organizationId: "org_123",
+        stripeEventId: "evt_dispute_1",
+      });
+
+      const key = prismaMock.notificationDelivery.upsert.mock.calls[0]?.[0].where
+        .dedupeKey as string;
+      expect(key).toContain("credit_dispute_frozen");
+      expect(key).toContain("evt_dispute_1");
+    });
+
+    it("stays silent, and does not throw, for a workspace it cannot find", async () => {
+      prismaMock.organization.findUnique.mockResolvedValue(null);
+      const provider = fakeProvider();
+
+      const outcomes = await createNotificationDispatcher({
+        provider,
+      }).notifyCreditDisputeFrozen({
+        frozenCredits: 24,
+        organizationId: "org_missing",
+        stripeEventId: "evt_dispute_1",
+      });
+
+      expect(outcomes).toEqual([]);
+      expect(provider.send).not.toHaveBeenCalled();
+    });
   });
 });
 

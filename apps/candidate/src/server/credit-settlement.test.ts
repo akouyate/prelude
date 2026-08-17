@@ -22,13 +22,18 @@ afterEach(() => {
 
 describe("settleCandidateSessionCredit", () => {
   it("captures a live session that met the billable threshold", async () => {
+    // 6 planned / 3 answered: clears both the 50% ratio (ceil(6*0.5)=3) and the
+    // 3-answer floor, so this pins the ordinary billable path above the floor.
     const database = fakeDatabase({
       events: [
         questionCompleted(1, { question_id: "q1", completion_reason: "answered" }),
         questionCompleted(2, { question_id: "q2", completion_reason: "answered" }),
-        questionCompleted(3, { question_id: "q3", completion_reason: "skipped" }),
+        questionCompleted(3, { question_id: "q3", completion_reason: "answered" }),
         questionCompleted(4, { question_id: "q4", completion_reason: "skipped" }),
+        questionCompleted(5, { question_id: "q5", completion_reason: "skipped" }),
+        questionCompleted(6, { question_id: "q6", completion_reason: "skipped" }),
       ],
+      session: fakeSession({ questionCount: 6 }),
     });
     const deps = dependencies();
 
@@ -52,15 +57,29 @@ describe("settleCandidateSessionCredit", () => {
         where: { sessionId: "is_1", type: "question_completed" },
       }),
     );
+    // The written trace that backs a billing dispute: the counts that
+    // justified the charge, plus the outcome so the console can render the
+    // opposite copy without re-deriving it from a reservation row.
+    expect(database.candidateSession.update).toHaveBeenCalledWith({
+      data: {
+        billedAnsweredCount: 3,
+        billedOutcome: "captured",
+        billedRequiredCount: 3,
+      },
+      where: { id: "cs_1" },
+    });
   });
 
   it("reads the written fallback's own payload casing", async () => {
+    // 3 planned / 3 answered clears the floor (requiredCount 3); the point under
+    // test is the camelCase payload keys, not the threshold arithmetic.
     const database = fakeDatabase({
       events: [
         questionCompleted(3, { questionId: "q1", completionReason: "answered" }),
-        questionCompleted(6, { questionId: "q2", completionReason: "skipped" }),
+        questionCompleted(6, { questionId: "q2", completionReason: "answered" }),
+        questionCompleted(9, { questionId: "q3", completionReason: "answered" }),
       ],
-      session: fakeSession({ questionCount: 2 }),
+      session: fakeSession({ questionCount: 3 }),
     });
     const deps = dependencies();
 
@@ -96,6 +115,16 @@ describe("settleCandidateSessionCredit", () => {
       reason: "below_billable_threshold",
     });
     expect(deps.capture).not.toHaveBeenCalled();
+    // Released-below-threshold writes the same trace shape as a capture: the
+    // counts that justified NOT charging, plus the outcome.
+    expect(database.candidateSession.update).toHaveBeenCalledWith({
+      data: {
+        billedAnsweredCount: 1,
+        billedOutcome: "released",
+        billedRequiredCount: 3,
+      },
+      where: { id: "cs_1" },
+    });
   });
 
   it("releases an abandoned session without reading the event store", async () => {
@@ -113,6 +142,9 @@ describe("settleCandidateSessionCredit", () => {
       expect.objectContaining({ reason: "abandoned" }),
     );
     expect(database.liveInterviewEvent.findMany).not.toHaveBeenCalled();
+    // Non-completed kinds never write the billing trace — there was no
+    // billable-completion decision to record.
+    expect(database.candidateSession.update).not.toHaveBeenCalled();
   });
 
   it("releases a failed session without reading the event store", async () => {
@@ -158,12 +190,17 @@ describe("settleCandidateSessionCredit", () => {
   it("keeps the last outcome recorded for a question", async () => {
     const database = fakeDatabase({
       // Handed over newest-first: only a query that asks for ascending sequence
-      // sees the correction as the question's final word.
+      // sees the correction as the question's final word. q2 and q3 are answered
+      // outright so the fixture clears the 3-answer floor on q1's corrected
+      // outcome alone — a dedupe bug that picked the first write instead of the
+      // last would leave q1 "skipped" and drop the session below the floor.
       events: [
         questionCompleted(7, { question_id: "q1", completion_reason: "answered" }),
         questionCompleted(2, { question_id: "q1", completion_reason: "skipped" }),
+        questionCompleted(3, { question_id: "q2", completion_reason: "answered" }),
+        questionCompleted(4, { question_id: "q3", completion_reason: "answered" }),
       ],
-      session: fakeSession({ questionCount: 2 }),
+      session: fakeSession({ questionCount: 3 }),
     });
     const deps = dependencies();
 
@@ -195,6 +232,16 @@ describe("settleCandidateSessionCredit", () => {
     );
     expect(deps.capture).not.toHaveBeenCalled();
     expect(database.liveInterviewEvent.findMany).not.toHaveBeenCalled();
+    // No runtime evidence still writes a trace: 0 answered against the
+    // required count derived from the plan, recorded as not billed.
+    expect(database.candidateSession.update).toHaveBeenCalledWith({
+      data: {
+        billedAnsweredCount: 0,
+        billedOutcome: "released",
+        billedRequiredCount: 3,
+      },
+      where: { id: "cs_1" },
+    });
   });
 
   it("drops question_completed rows that name no question", async () => {
@@ -269,10 +316,13 @@ describe("settleCandidateSessionCredit", () => {
   });
 
   it("settles a session that never held a reservation as a no-op", async () => {
+    // Must stay billable (>= 3 answered) so the overridden `capture` below is the
+    // dependency actually exercised, not `release`.
     const database = fakeDatabase({
       events: [
         questionCompleted(1, { question_id: "q1", completion_reason: "answered" }),
         questionCompleted(2, { question_id: "q2", completion_reason: "answered" }),
+        questionCompleted(3, { question_id: "q3", completion_reason: "answered" }),
       ],
     });
     const deps = dependencies({
@@ -289,10 +339,13 @@ describe("settleCandidateSessionCredit", () => {
   });
 
   it("never lets a billing failure break the candidate flow", async () => {
+    // Must stay billable (>= 3 answered) so the overridden `capture` below — the
+    // one that throws — is the dependency actually exercised.
     const database = fakeDatabase({
       events: [
         questionCompleted(1, { question_id: "q1", completion_reason: "answered" }),
         questionCompleted(2, { question_id: "q2", completion_reason: "answered" }),
+        questionCompleted(3, { question_id: "q3", completion_reason: "answered" }),
       ],
     });
     const deps = dependencies({
@@ -310,6 +363,34 @@ describe("settleCandidateSessionCredit", () => {
       ),
     ).resolves.toBeUndefined();
 
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it("never lets a failure to persist the billed counts break the candidate flow", async () => {
+    // Must stay billable so the code path reaches the trace write at all.
+    const database = fakeDatabase({
+      events: [
+        questionCompleted(1, { question_id: "q1", completion_reason: "answered" }),
+        questionCompleted(2, { question_id: "q2", completion_reason: "answered" }),
+        questionCompleted(3, { question_id: "q3", completion_reason: "answered" }),
+      ],
+    });
+    database.candidateSession.update.mockRejectedValueOnce(
+      new Error("column write failed"),
+    );
+    const deps = dependencies();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(
+      settleCandidateSessionCredit(
+        database as never,
+        { kind: "completed", now, sessionId: "cs_1" },
+        deps,
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(deps.capture).toHaveBeenCalledTimes(1);
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
   });
@@ -348,6 +429,7 @@ function fakeDatabase({
   return {
     candidateSession: {
       findUnique: vi.fn(async () => session),
+      update: vi.fn(async () => ({})),
     },
     liveInterviewEvent: {
       // The fake orders rows the way Postgres would, so that dropping the

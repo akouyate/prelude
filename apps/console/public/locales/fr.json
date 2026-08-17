@@ -460,7 +460,9 @@
       "criterionUnassigned": "Question non rattachée",
       "criterionNoQuestion": "Aucune question n'est encore associée à ce critère.",
       "roleBriefExpand": "Afficher tout le brief",
-      "roleBriefCollapse": "Réduire le brief"
+      "roleBriefCollapse": "Réduire le brief",
+      "billedCountLine": "Facturé : {{answered}} réponses sur {{required}}",
+      "notBilledCountLine": "Non facturé : {{answered}} réponses sur {{required}} requises"
     },
     "candidates": {
       "headerEyebrow": "{{organizationName}} · Entretiens candidats",
@@ -667,6 +669,30 @@
         "recordingDescription": "L'accès à l'enregistrement suit le forfait de cet espace.",
         "included": "Inclus",
         "notIncluded": "Non inclus",
+        "credits": {
+          "title": "Crédits d'entretien",
+          "description": "Un crédit couvre un entretien candidat terminé. Achetez-les à l'avance, utilisez-les au rythme de vos recrutements.",
+          "balancePaid_one": "{{count}} crédit payé",
+          "balancePaid_other": "{{count}} crédits payés",
+          "balanceFree_one": "{{count}} offert",
+          "balanceFree_other": "{{count}} offerts",
+          "nextExpiry_one": "{{count}} crédit expire le {{date}}",
+          "nextExpiry_other": "{{count}} crédits expirent le {{date}}",
+          "expiryNote": "Les crédits achetés sont valables 12 mois.",
+          "packCredits_one": "{{count}} entretien",
+          "packCredits_other": "{{count}} entretiens",
+          "buy": "Acheter",
+          "opening": "Ouverture…",
+          "checkoutFailed": "Impossible d'ouvrir la page de paiement. Réessayez, ou contactez-nous si le problème persiste.",
+          "currencyLabel": "Devise affichée",
+          "volumeGate": "Besoin de plus de 500 entretiens ? Obtenez un tarif volume",
+          "nonManagerHint": "Seul un propriétaire ou un administrateur peut acheter des crédits pour cet espace de travail.",
+          "purchaseNotAllowed": "Seul un propriétaire ou un administrateur peut acheter des crédits pour cet espace de travail. Demandez-lui de finaliser cet achat.",
+          "purchaseGranted": "Paiement reçu — vos crédits ont été ajoutés à cet espace de travail et sont valables 12 mois.",
+          "purchaseProcessing": "Le paiement est encore en cours de traitement par votre banque. Vos crédits apparaîtront dès qu'il sera confirmé.",
+          "purchaseCancelled": "Paiement annulé. Aucun montant n'a été débité.",
+          "purchaseFailed": "Nous n'avons pas pu confirmer cet achat. Si vous avez été débité, contactez-nous et nous régularisons."
+        },
         "states": {
           "active": "Actif",
           "canceled": "Annulé",

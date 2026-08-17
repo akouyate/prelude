@@ -1,0 +1,146 @@
+# The scheduler for POST /api/internal/billing-sweep.
+#
+# Why a GitHub Actions workflow: the credit ledger's three maintenance transitions
+# (release expired holds, expire due lots, reconcile wallets) plus the missed-Stripe-
+# event recovery are only correct if something calls them on a clock, and this repo
+# deploys nowhere yet — there is no Vercel project and no Railway service whose cron
+# we could configure. Actions is the one scheduler that already exists here, so it
+# ships as the real, working default rather than a TODO.
+#
+# It is a stopgap by design and easy to retire: the endpoint is a plain
+# authenticated POST, so a platform cron (Vercel Cron, Railway Cron, a k8s CronJob)
+# replaces this file without touching a line of application code. GitHub's schedule
+# is also best-effort and can be delayed under load, and it disables cron on repos
+# with no activity for 60 days — acceptable for a sweep whose every operation is
+# idempotent, NOT acceptable as a permanent production dependency.
+#
+# ── Enabling it ───────────────────────────────────────────────────────────────────
+#
+# Disabled by default. To turn it on for an environment:
+#   gh variable set BILLING_SWEEP_ENABLED --body true
+#   gh variable set BILLING_SWEEP_URL --body https://<host>/api/internal/billing-sweep
+#   gh secret   set BILLING_SWEEP_SECRET      # same value as the console's env var
+#
+# Generate the secret with `openssl rand -hex 32`. Until it is set, the endpoint
+# answers 503 and this job fails loudly rather than sweeping nothing quietly.
+name: Billing sweep
+
+on:
+  schedule:
+    # Hourly. Offset from :00 because GitHub's shared cron queue is busiest on the
+    # hour, and a sweep delayed 20 minutes is a sweep that ran late for no reason.
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+# The endpoint already refuses concurrent sweeps with a Postgres advisory lock, so
+# this is belt-and-braces: it stops a manual run from racing the schedule and
+# burning a pointless `{ "skipped": true }`.
+concurrency:
+  group: billing-sweep
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  sweep:
+    # The disable switch. A repository variable rather than commenting out the
+    # schedule, so enabling it in one environment is a one-liner and never a commit.
+    if: vars.BILLING_SWEEP_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Sweep expired holds, due lots and undelivered Stripe events
+        env:
+          BILLING_SWEEP_SECRET: ${{ secrets.BILLING_SWEEP_SECRET }}
+          BILLING_SWEEP_URL: ${{ vars.BILLING_SWEEP_URL }}
+          # Strictly above the route's LOCK_TRANSACTION_TIMEOUT_MS (60s), which is
+          # itself above SWEEP_TIME_BUDGET_MS + ENTRY_PASS_TIME_BUDGET_MS (25s + 10s).
+          # See the ordering invariant in route.ts: giving up before the server does
+          # reports failure for work that succeeded, and sends a retry at an endpoint
+          # still holding the advisory lock.
+          CURL_MAX_TIME: "90"
+          # The endpoint is paginated; one invocation sweeps at most `limit`
+          # organizations and hands back a cursor. This bounds how far one scheduled
+          # run will follow that chain, so a pathological dataset cannot turn an
+          # hourly job into an endless one — the next hour resumes from the top.
+          MAX_PAGES: "20"
+        run: |
+          set -euo pipefail
+
+          if [ -z "${BILLING_SWEEP_SECRET}" ] || [ -z "${BILLING_SWEEP_URL}" ]; then
+            echo "::error::BILLING_SWEEP_ENABLED is true but BILLING_SWEEP_SECRET or BILLING_SWEEP_URL is missing"
+            exit 1
+          fi
+
+          cursor=""
+          page=0
+          while [ "${page}" -lt "${MAX_PAGES}" ]; do
+            page=$((page + 1))
+            url="${BILLING_SWEEP_URL}"
+            if [ -n "${cursor}" ]; then
+              url="${url}?cursor=${cursor}"
+            fi
+
+            # --fail-with-body, not -f: a 503 (secret unset) or 401 (secret rotated
+            # on one side only) must fail the job AND show what the server said.
+            # The bearer goes in a header, never in the URL, so it stays out of any
+            # proxy or server access log.
+            body="$(curl -sS --fail-with-body --max-time "${CURL_MAX_TIME}" \
+              -X POST \
+              -H "Authorization: Bearer ${BILLING_SWEEP_SECRET}" \
+              "${url}")"
+
+            echo "--- page ${page}"
+            echo "${body}" | jq .
+
+            if [ "$(echo "${body}" | jq -r '.skipped // false')" = "true" ]; then
+              echo "::notice::another sweep already holds the lock; nothing to do"
+              exit 0
+            fi
+
+            # Drift is a report, not a failure: the endpoint answers 200 on purpose,
+            # so surfacing it is this job's responsibility. Same for the operator
+            # queue — a growing needs_admin count means money landed that nobody has
+            # reconciled, and it must not sit silently in a JSON body.
+            drift="$(echo "${body}" | jq -r '.driftDetected | length')"
+            if [ "${drift}" != "0" ]; then
+              echo "::warning::${drift} wallet(s) do not reconcile: $(echo "${body}" | jq -c '.driftDetected')"
+            fi
+            needs_admin="$(echo "${body}" | jq -r '.needsAdminCount')"
+            if [ "${needs_admin}" != "0" ]; then
+              echo "::warning::${needs_admin} Stripe event(s) are parked for an operator (make billing-admin-queue)"
+            fi
+            failed_orgs="$(echo "${body}" | jq -r '.organizationsFailed')"
+            if [ "${failed_orgs}" != "0" ]; then
+              echo "::warning::${failed_orgs} organization(s) failed to sweep; see the console logs"
+            fi
+
+            # The two MONEY counters. A re-fulfilment that keeps failing is the
+            # paid-but-never-credited case: Stripe took the customer's money, the
+            # webhook never landed, and the recovery pass cannot close the gap either.
+            # A reprocess failure is its chargeback/refund equivalent — a frozen or
+            # revoked lot that was never applied. Neither can be left to a 200 body
+            # nobody reads.
+            missed_failed="$(echo "${body}" | jq -r '.missedEvents.failed')"
+            if [ "${missed_failed}" != "0" ]; then
+              echo "::warning::${missed_failed} undelivered Stripe checkout event(s) failed to re-fulfil — possible paid-but-uncredited purchase"
+            fi
+            reprocess_failed="$(echo "${body}" | jq -r '.reprocessedIgnoredEvents.failed')"
+            if [ "${reprocess_failed}" != "0" ]; then
+              echo "::warning::${reprocess_failed} archived Stripe event(s) failed to reprocess — refund/dispute may be unapplied (make billing-admin-queue)"
+            fi
+            if [ "$(echo "${body}" | jq -r '.missedEvents.yieldedToBudget')" = "true" ]; then
+              echo "::notice::the missed-event pass yielded to the time budget; the next run continues from Stripe's listing"
+            fi
+
+            if [ "$(echo "${body}" | jq -r '.hasMore')" != "true" ]; then
+              exit 0
+            fi
+            cursor="$(echo "${body}" | jq -r '.nextCursor')"
+            if [ -z "${cursor}" ] || [ "${cursor}" = "null" ]; then
+              echo "::error::hasMore was true but no cursor was returned; refusing to loop"
+              exit 1
+            fi
+          done
+
+          echo "::warning::stopped after ${MAX_PAGES} pages with work remaining; the next scheduled run resumes"

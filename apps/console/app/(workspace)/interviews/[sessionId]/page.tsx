@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { type CandidateBriefDto } from "@prelude/contracts";
 import { Card, IconButton } from "@prelude/ui";
+import type { TFunction } from "i18next";
 import {
   ArrowLeft,
   NavArrowLeft,
@@ -11,6 +12,8 @@ import {
 } from "iconoir-react";
 
 import { getConsoleAuthContext } from "../../../../src/server/auth/console-auth";
+import { getServerT } from "../../../../src/libs/i18n-server";
+import { getAuthenticatedUserLocale } from "../../../../src/server/users/user-locale";
 import { AutoGenerateBrief } from "../../../../src/features/interview-detail/auto-generate-brief";
 import { shouldAutoGenerateBrief } from "../../../../src/features/interview-detail/brief-auto-generation";
 import {
@@ -82,7 +85,7 @@ export default async function InterviewDetailPage({
     redirect(`/roles/${detail.interview.id}`);
   }
 
-  const [calendarConnectionStatus, siblings] = await Promise.all([
+  const [calendarConnectionStatus, siblings, locale] = await Promise.all([
     getConnectedAccountCapabilityStatus({
       capability: connectedAccountCapabilityCalendar,
       organizationId: account.organizationId,
@@ -94,7 +97,9 @@ export default async function InterviewDetailPage({
       interviewId: detail.candidateSession.interviewId,
       organizationId: account.organizationId,
     }),
+    getAuthenticatedUserLocale(account.userId),
   ]);
+  const t = getServerT(locale);
 
   return (
     <CandidateSessionReview
@@ -103,6 +108,7 @@ export default async function InterviewDetailPage({
       calendarConnectionStatus={calendarConnectionStatus}
       session={detail.candidateSession}
       siblings={siblings}
+      t={t}
     />
   );
 }
@@ -113,10 +119,12 @@ function CandidateSessionReview({
   calendarConnectionStatus,
   session,
   siblings,
+  t,
 }: {
   canDelete: boolean;
   canManageReview: boolean;
   siblings: CandidateSessionSiblings;
+  t: TFunction;
   calendarConnectionStatus:
     | "connected"
     | "connecting"
@@ -127,6 +135,12 @@ function CandidateSessionReview({
     | "revoked";
   session: {
     analysisStatus: LiveAnalysisStatus;
+    // The billing trace (amendment 18): both null unless a `completed`
+    // settlement ran with credit billing on. `billedOutcome` is
+    // "captured" | "released" | null.
+    billedAnsweredCount: number | null;
+    billedOutcome: string | null;
+    billedRequiredCount: number | null;
     brief: CandidateBriefDto | null;
     candidateEmail: string | null;
     candidateLabel: string;
@@ -340,6 +354,20 @@ function CandidateSessionReview({
             {session.realtimeSessionId ? (
               <span className="block break-all">
                 Session {session.realtimeSessionId}.
+              </span>
+            ) : null}
+            {session.billedAnsweredCount !== null &&
+            session.billedRequiredCount !== null ? (
+              <span className="block">
+                {session.billedOutcome === "captured"
+                  ? t("interviewDetail.billedCountLine", {
+                      answered: session.billedAnsweredCount,
+                      required: session.billedRequiredCount,
+                    })
+                  : t("interviewDetail.notBilledCountLine", {
+                      answered: session.billedAnsweredCount,
+                      required: session.billedRequiredCount,
+                    })}
               </span>
             ) : null}
           </p>
