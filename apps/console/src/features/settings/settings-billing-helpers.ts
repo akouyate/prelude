@@ -37,13 +37,22 @@ export function billingStateDescriptionKey(state: BillingState) {
 
 export type DisplayCurrency = "EUR" | "USD";
 
-export type PurchaseBanner = {
-  tone: "info" | "success" | "warning";
+/**
+ * The toast auto-dismisses after this long by default. An outcome the buyer
+ * must actually read (see the catch-all branch below) overrides it with
+ * `duration: null` instead.
+ */
+export const PURCHASE_TOAST_DEFAULT_DURATION_MS = 6000;
+
+export type PurchaseToast = {
+  tone: "danger" | "info" | "success" | "warning";
   key: string;
+  /** Milliseconds before auto-dismiss, or `null` to stay until dismissed by hand. */
+  duration: number | null;
 };
 
 /**
- * Translates `?purchase=` into a banner.
+ * Translates `?purchase=` into a toast.
  *
  * The parameter is in the address bar, so a recruiter can put anything in it.
  * Everything that is not one of the four words `/api/billing/checkout-return`
@@ -51,7 +60,7 @@ export type PurchaseBanner = {
  * because it would be meaningless to the reader and because a query string is
  * not a string this app should ever echo back onto the page.
  */
-export function purchaseBannerFor(value: string | null): PurchaseBanner | null {
+export function purchaseToastFor(value: string | null): PurchaseToast | null {
   if (!value) {
     return null;
   }
@@ -59,13 +68,18 @@ export function purchaseBannerFor(value: string | null): PurchaseBanner | null {
   if (value === "granted" || value === "already") {
     // "already" means the webhook fulfilled the session before the browser came
     // back. The credits are there; the distinction is ours, not the buyer's.
-    return { tone: "success", key: "settings.billing.credits.purchaseGranted" };
+    return {
+      tone: "success",
+      key: "settings.billing.credits.purchaseGranted",
+      duration: PURCHASE_TOAST_DEFAULT_DURATION_MS,
+    };
   }
 
   if (value === "processing") {
     return {
       tone: "info",
       key: "settings.billing.credits.purchaseProcessing",
+      duration: PURCHASE_TOAST_DEFAULT_DURATION_MS,
     };
   }
 
@@ -73,6 +87,7 @@ export function purchaseBannerFor(value: string | null): PurchaseBanner | null {
     return {
       tone: "info",
       key: "settings.billing.credits.purchaseCancelled",
+      duration: PURCHASE_TOAST_DEFAULT_DURATION_MS,
     };
   }
 
@@ -83,10 +98,19 @@ export function purchaseBannerFor(value: string | null): PurchaseBanner | null {
     return {
       tone: "warning",
       key: "settings.billing.credits.purchaseNotAllowed",
+      duration: PURCHASE_TOAST_DEFAULT_DURATION_MS,
     };
   }
 
-  return { tone: "warning", key: "settings.billing.credits.purchaseFailed" };
+  // The catch-all: an unrecognised value is a failed/unconfirmed purchase.
+  // `duration: null` — unlike every branch above, this is not something the
+  // buyer can shrug off if they miss it in 6 seconds; it stays on screen until
+  // they dismiss it themselves.
+  return {
+    tone: "danger",
+    key: "settings.billing.credits.purchaseFailed",
+    duration: null,
+  };
 }
 
 /**

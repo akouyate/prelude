@@ -5,7 +5,7 @@ import { useClerk } from "@clerk/nextjs";
 import { ArrowUpRight } from "iconoir-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTranslation } from "react-i18next";
-import { Button, Notice, StatusBadge, cn } from "@prelude/ui";
+import { Button, Notice, StatusBadge, cn, useToast } from "@prelude/ui";
 
 import { startCreditPackCheckout } from "../../server/billing/credit-checkout-action";
 import { SettingsPanel } from "./settings-primitives";
@@ -20,7 +20,7 @@ import {
   canOfferUsd,
   creditPackAmountCents,
   formatCreditPrice,
-  purchaseBannerFor,
+  purchaseToastFor,
   usagePercentage,
   type DisplayCurrency,
 } from "./settings-billing-helpers";
@@ -159,16 +159,17 @@ function CreditPurchasePanel({
   const pathname = usePathname();
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { toast } = useToast();
 
   // Read once, on mount, and keep it in state — because the effect below then
   // removes the parameter from the URL. Without that, "credits added" is
   // immortal: it replays on every reload, survives a bookmark, and reappears
   // days later on a page that is no longer describing anything that just
   // happened. `replace` rather than `push` so Back does not walk into the stale
-  // banner, and the other parameters (notably `view=billing`) are preserved so
+  // toast, and the other parameters (notably `view=billing`) are preserved so
   // the section does not jump back to Profile.
-  const [banner] = React.useState(() =>
-    purchaseBannerFor(searchParams.get("purchase")),
+  const [purchaseToast] = React.useState(() =>
+    purchaseToastFor(searchParams.get("purchase")),
   );
 
   React.useEffect(() => {
@@ -180,6 +181,24 @@ function CreditPurchasePanel({
     const query = remaining.toString();
     router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }, [pathname, router, searchParams]);
+
+  // Fires exactly once per mount, guarded by the ref rather than by removing
+  // `purchaseToast` from the dependency array: `t`'s identity can change (e.g.
+  // a language switch) and re-running this effect after the toast is already
+  // showing must be a no-op, not a second toast.
+  const purchaseToastFiredRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!purchaseToast || purchaseToastFiredRef.current) {
+      return;
+    }
+    purchaseToastFiredRef.current = true;
+    toast({
+      dismissLabel: t("toast.dismiss"),
+      duration: purchaseToast.duration,
+      message: t(purchaseToast.key),
+      tone: purchaseToast.tone,
+    });
+  }, [purchaseToast, t, toast]);
 
   // Plan rule 4's chain: explicit user toggle > server-resolved request
   // geography > EUR. The geography link is resolved server-side, in the
@@ -244,12 +263,6 @@ function CreditPurchasePanel({
           usdAvailable={usdAvailable}
         />
       </div>
-
-      {banner ? (
-        <Notice className="mt-4" role="status" tone={banner.tone}>
-          {t(banner.key)}
-        </Notice>
-      ) : null}
 
       {/*
         Amendment 15 — never a bare number. The split says what was actually paid

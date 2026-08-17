@@ -718,6 +718,9 @@
           "unconfigured": "Non configuré"
         }
       }
+    },
+    "toast": {
+      "dismiss": "Ignorer"
     }
   }
 }
