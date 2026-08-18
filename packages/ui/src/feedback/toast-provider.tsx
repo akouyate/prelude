@@ -138,7 +138,54 @@ function ToastStack() {
         // This is the element `data-expanded` lands on (see `CountdownClose`'s
         // doc comment) — `apps/console/app/globals.css`'s
         // `[data-expanded] .toast-countdown-ring` rule reads it from here.
-        className="w-[min(380px,88vw)] transition-all duration-200 ease-out data-[ending-style]:opacity-0 data-[starting-style]:translate-y-2 data-[starting-style]:opacity-0 motion-reduce:transition-none"
+        //
+        // `transition-[opacity,translate]`, not `transition-all`: the entry/exit
+        // motion only ever touches `opacity` and the vertical offset (see the
+        // `data-[starting-style]`/`data-[ending-style]` classes below) — both
+        // compositor-friendly, so the browser can animate them off the main
+        // thread. `transition-all` armed a transition on every animatable
+        // property, which forced the browser onto the non-compositable path.
+        // It's `translate`, not `transform`: Tailwind 4 compiles `translate-y-*`
+        // to the standalone CSS `translate` property (confirmed against the
+        // generated stylesheet), so listing `transform` here — the more
+        // familiar name — would silently drop the slide from the transition
+        // instead of narrowing it, leaving only the fade.
+        //
+        // Duration 300ms / distance 12px (`translate-y-3`), not 200ms / 8px:
+        // frame-level measurement (see
+        // `.superpowers/sdd/2026-08-18-toast-motion/report.md`) traced the
+        // actual "saccadé" cause to base-ui's own mount-time `flushSync`
+        // (`toast/root/ToastRoot.js`'s `recalculateHeight`) — a forced
+        // synchronous layout that blocks the very first paint of the entry
+        // transition for ~45ms, during which the toast sits fully invisible.
+        // That stall is fixed and not ours to remove (it's base-ui's own
+        // layout-effect, not code this file calls). Disabling the countdown
+        // ring or `backdrop-blur-md` outright, or adding `will-change`, moved
+        // the measured stall by nothing (see the report) — none of them were
+        // ever competing for the frame — so none of that is applied here. The
+        // one honest lever left is proportion: at the original 200ms, a fixed
+        // ~45ms freeze is ~22% of the animation sitting still, and — because
+        // `ease-out` is steepest right where the freeze ends — the recovery
+        // reads as a snap. 300ms/12px keeps the same average speed (px/ms)
+        // while shrinking that stall to ~15% of the total.
+        //
+        // `ease-in-out` (cubic-bezier(0.4,0,0.2,1)), not `ease-out`: this is
+        // the one deliberate departure from the usual convention that
+        // entrances decelerate (fast start, soft landing) while exits
+        // accelerate. That convention assumes the motion starts the instant
+        // the element exists — true for most entrances, false for this one
+        // (the flushSync stall above happens first). Working the bezier's
+        // own control points out by hand: `ease-out`'s first control point
+        // sits at (0,0), so its initial slope is dominated by the *second*
+        // point and comes out steep (~5x) — a fast pop right where the stall
+        // ends, the opposite of what a freeze needs. `ease-in-out`'s first
+        // control point is (0.4,0): the y-value stays 0 to first order, so
+        // its initial slope is genuinely ~0 — a true standing start — while
+        // the same (0.2,1) second point still decelerates it into an
+        // identical soft landing. Confirmed against the rendered
+        // `getComputedStyle().translate`/`.opacity` samples in the report,
+        // not assumed from the curve's name.
+        className="w-[min(380px,88vw)] transition-[opacity,translate] duration-300 ease-in-out data-[ending-style]:opacity-0 data-[starting-style]:translate-y-3 data-[starting-style]:opacity-0 motion-reduce:transition-none"
         key={entry.id}
         toast={entry}
       >
