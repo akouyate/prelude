@@ -373,22 +373,51 @@ async function upsertOnboardingMembership(
     userId: string;
   },
 ) {
-  return tx.organizationMembership.upsert({
+  const existing = await tx.organizationMembership.findUnique({
     where: {
       organizationId_userId: {
         organizationId: input.organizationId,
         userId: input.userId,
       },
     },
-    update: {
-      onboardingRole: input.onboardingRole || null,
-      role: input.authContext.role,
-      status: "active",
-    },
-    create: {
+  });
+
+  if (existing) {
+    // A second onboarding pass (a progress save, or completing onboarding
+    // again) must never touch an already-provisioned role. Clerk's coarse
+    // orgRole (`input.authContext.role`) is never a promotion signal here —
+    // deriving from it on update is exactly how an owner got silently
+    // demoted back to "admin" before this fix. Role CHANGES after initial
+    // provisioning are the Clerk webhook sync's job
+    // (`clerk-role-sync.ts`), not onboarding's.
+    return tx.organizationMembership.update({
+      where: { id: existing.id },
+      data: {
+        onboardingRole: input.onboardingRole || null,
+        status: "active",
+      },
+    });
+  }
+
+  // Clerk makes an org's creator `org:admin`, never `owner`
+  // (`console-auth-provider.ts` maps that down to our "admin" role) — so
+  // deriving the FIRST member's role from Clerk would mean nobody is ever
+  // owner, and ownership could never be granted to anyone. The first person
+  // to be provisioned into a brand-new organization IS its creator, so they
+  // become owner explicitly. Anyone provisioned afterward (a rarer path:
+  // onboarding running for a member of an org that already has members) is
+  // not the creator and keeps the Clerk-derived role.
+  const membershipCount = await tx.organizationMembership.count({
+    where: { organizationId: input.organizationId },
+  });
+  const role: OrganizationRole =
+    membershipCount === 0 ? "owner" : input.authContext.role;
+
+  return tx.organizationMembership.create({
+    data: {
       organizationId: input.organizationId,
       onboardingRole: input.onboardingRole || null,
-      role: input.authContext.role,
+      role,
       status: "active",
       userId: input.userId,
     },
