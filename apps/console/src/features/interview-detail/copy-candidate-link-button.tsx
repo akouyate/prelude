@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import { Button, cn } from "@prelude/ui";
 
 import { candidateAppUrl } from "../../libs/candidate-app-url";
+import { useCopyLinkFeedback } from "../../libs/use-copy-link-feedback";
 
 export function CopyCandidateLinkButton({
   candidatePath,
@@ -17,13 +18,14 @@ export function CopyCandidateLinkButton({
   className?: string;
 }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = React.useState(false);
+  const { copiedKey, copy } = useCopyLinkFeedback();
+  // The Copy→Check icon/label swap below stays — the toast adds
+  // discoverability, it does not replace that tight local loop.
+  const copied = copiedKey === candidatePath;
 
   const handleCopy = React.useCallback(async () => {
-    await navigator.clipboard?.writeText(candidateAppUrl(candidatePath));
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1600);
-  }, [candidatePath]);
+    await copy(candidateAppUrl(candidatePath), candidatePath);
+  }, [candidatePath, copy]);
 
   return (
     <Button

@@ -6,7 +6,8 @@ import {
   creditPackAmountCents,
   defaultDisplayCurrency,
   formatCreditPrice,
-  purchaseBannerFor,
+  purchaseToastFor,
+  PURCHASE_TOAST_DEFAULT_DURATION_MS,
   resolveDisplayCurrencyFromRequest,
   usagePercentage,
 } from "./settings-billing-helpers";
@@ -45,56 +46,67 @@ describe("billing state copy", () => {
 });
 
 /**
- * The `?purchase=` banner. The route handler already collapsed fulfilment's
+ * The `?purchase=` toast. The route handler already collapsed fulfilment's
  * vocabulary into four words, and this is the second line of the same defence:
  * whatever ends up in the query string, the recruiter reads a translated
  * sentence, never a raw outcome token.
+ *
+ * `duration` is part of the mapping, not an afterthought: every recoverable
+ * outcome auto-dismisses on the provider's default, but a failed purchase
+ * (the catch-all branch) gets `null` — the buyer must actually read that one,
+ * so it stays until they dismiss it themselves.
  */
-describe("purchase outcome banner", () => {
+describe("purchase outcome toast", () => {
   it("congratulates a granted purchase and a purchase the webhook already booked", () => {
-    expect(purchaseBannerFor("granted")).toEqual({
+    expect(purchaseToastFor("granted")).toEqual({
       tone: "success",
       key: "settings.billing.credits.purchaseGranted",
+      duration: PURCHASE_TOAST_DEFAULT_DURATION_MS,
     });
-    expect(purchaseBannerFor("already")).toEqual({
+    expect(purchaseToastFor("already")).toEqual({
       tone: "success",
       key: "settings.billing.credits.purchaseGranted",
+      duration: PURCHASE_TOAST_DEFAULT_DURATION_MS,
     });
   });
 
   it("explains a deferred payment instead of calling it a failure", () => {
-    expect(purchaseBannerFor("processing")).toEqual({
+    expect(purchaseToastFor("processing")).toEqual({
       tone: "info",
       key: "settings.billing.credits.purchaseProcessing",
+      duration: PURCHASE_TOAST_DEFAULT_DURATION_MS,
     });
   });
 
   it("says nothing dramatic about a checkout the recruiter simply abandoned", () => {
-    expect(purchaseBannerFor("cancelled")).toEqual({
+    expect(purchaseToastFor("cancelled")).toEqual({
       tone: "info",
       key: "settings.billing.credits.purchaseCancelled",
+      duration: PURCHASE_TOAST_DEFAULT_DURATION_MS,
     });
   });
 
   it("names the permission refusal, because that one IS actionable", () => {
-    expect(purchaseBannerFor("not_allowed")).toEqual({
+    expect(purchaseToastFor("not_allowed")).toEqual({
       tone: "warning",
       key: "settings.billing.credits.purchaseNotAllowed",
+      duration: PURCHASE_TOAST_DEFAULT_DURATION_MS,
     });
   });
 
-  it("renders one generic line for anything else — never the token itself", () => {
+  it("renders one generic line for anything else — never the token itself — and never auto-dismisses it", () => {
     for (const value of ["error", "needs_admin", "foreign_session", "<script>", "42"]) {
-      expect(purchaseBannerFor(value)).toEqual({
-        tone: "warning",
+      expect(purchaseToastFor(value)).toEqual({
+        tone: "danger",
         key: "settings.billing.credits.purchaseFailed",
+        duration: null,
       });
     }
   });
 
-  it("shows no banner at all when the page was not reached from a checkout", () => {
-    expect(purchaseBannerFor(null)).toBeNull();
-    expect(purchaseBannerFor("")).toBeNull();
+  it("shows no toast at all when the page was not reached from a checkout", () => {
+    expect(purchaseToastFor(null)).toBeNull();
+    expect(purchaseToastFor("")).toBeNull();
   });
 });
 

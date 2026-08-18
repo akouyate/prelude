@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ToastProvider } from "@prelude/ui";
 
 import { ConsoleWorkspaceShell } from "../../src/features/layout/console-workspace-shell";
 import { I18nProvider } from "../../src/providers/i18n-provider";
@@ -23,9 +24,14 @@ export default async function WorkspaceLayout({
 
   return (
     <I18nProvider preferredLanguage={preferredLanguage}>
-      <ConsoleWorkspaceShell account={account} credits={credits} navCounts={navCounts}>
-        {children}
-      </ConsoleWorkspaceShell>
+      {/* Split: transient announcements (e.g. purchase results) render as
+          toasts via this provider; contextual/blocking errors (form
+          validation, action failures) stay inline next to what they describe. */}
+      <ToastProvider>
+        <ConsoleWorkspaceShell account={account} credits={credits} navCounts={navCounts}>
+          {children}
+        </ConsoleWorkspaceShell>
+      </ToastProvider>
     </I18nProvider>
   );
 }

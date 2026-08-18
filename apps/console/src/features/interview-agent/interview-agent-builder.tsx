@@ -25,6 +25,7 @@ import {
   Textarea,
   cn,
   selectionCardClasses,
+  useToast,
 } from "@prelude/ui";
 import {
   Attachment as Paperclip,
@@ -58,6 +59,7 @@ import {
   candidateAppUrl,
   candidateLinkLabel as formatCandidateLinkLabel,
 } from "../../libs/candidate-app-url";
+import { useCopyLinkFeedback } from "../../libs/use-copy-link-feedback";
 import {
   addInterviewQuestionAction,
   generateInterviewDraftAction,
@@ -82,6 +84,7 @@ import {
   InterviewBuilderStepRail,
 } from "./interview-builder-layout";
 import { buildCandidateInviteMailto } from "./candidate-invite";
+import { nextDraftSaveStatus, type DraftSaveStatus } from "./draft-save-status";
 
 type StepId = "brief" | "calibrate" | "questions" | "evaluation" | "share";
 type QuestionAction = "sharper" | "replace";
@@ -211,6 +214,8 @@ export function InterviewAgentBuilder({
   initialSourceUrl,
 }: InterviewAgentBuilderProps) {
   const router = useRouter();
+  const { t } = useTranslation();
+  const { toast } = useToast();
   const [currentStep, setCurrentStep] = React.useState<StepId>(
     initialDraft ? "questions" : "brief",
   );
@@ -261,7 +266,11 @@ export function InterviewAgentBuilder({
   const [workingQuestionId, setWorkingQuestionId] = React.useState<string>();
   const [isSavingDraft, setIsSavingDraft] = React.useState(false);
   const [isPublishingDraft, setIsPublishingDraft] = React.useState(false);
-  const [saveMessage, setSaveMessage] = React.useState<string>();
+  // N16: the persistent saved/published marker — a dirty-bit readout, not a
+  // transient message. `nextDraftSaveStatus` is the single source of truth
+  // for its transitions (save / publish / clear-on-edit); see
+  // `draft-save-status.ts` for the invariant this encodes.
+  const [saveStatus, setSaveStatus] = React.useState<DraftSaveStatus>();
   const [saveError, setSaveError] = React.useState<string>();
   // N9: provenance of the generated draft. `usedDeterministicFallback` drives a
   // non-blocking recruiter notice when AI tailoring was unavailable.
@@ -311,7 +320,7 @@ export function InterviewAgentBuilder({
     setSelectedQuestionId(undefined);
     setPublishedInterview(undefined);
     setComplianceReview(undefined);
-    setSaveMessage(undefined);
+    setSaveStatus(nextDraftSaveStatus("clear"));
     setSaveError(undefined);
     setGeneratorProvider(result.provider);
     setGeneratorModel(result.modelName);
@@ -341,7 +350,7 @@ export function InterviewAgentBuilder({
   // Centralized so every edit path (questions, criteria, brief fields, and the
   // calibrate toggles) drops the stale "saved" state consistently.
   const markDraftDirty = React.useCallback(() => {
-    setSaveMessage(undefined);
+    setSaveStatus(nextDraftSaveStatus("clear"));
     setPublishedInterview(undefined);
     // N6b: editing the plan invalidates any pending override review — the next
     // publish re-classifies the new content from scratch.
@@ -417,7 +426,12 @@ export function InterviewAgentBuilder({
 
       setJobId(result.jobId);
       setPersistedDraftId(result.draftId);
-      setSaveMessage("Draft saved");
+      // The persistent marker (STATE) updates unconditionally on every
+      // successful save — including the implicit saves that precede publish
+      // and preview. The TOAST (EVENT) is a separate, narrower decision made
+      // by each call site below: it fires only where "a save just happened"
+      // is the thing the recruiter actually asked for.
+      setSaveStatus(nextDraftSaveStatus("save"));
       router.replace(`/roles/new?draftId=${result.draftId}`, {
         scroll: false,
       });
@@ -442,13 +456,37 @@ export function InterviewAgentBuilder({
     ],
   );
 
-  const saveAndShare = React.useCallback(async () => {
+  // The EVENT half of the save affordance: an explicit "Save" toast, fired
+  // only where saving is what the recruiter actually asked for (this
+  // handler and the Share step's own Save button below) — not from every
+  // internal call to `saveCurrentDraft` (publish and preview also save as a
+  // prerequisite, and neither should announce "Draft saved" on top of their
+  // own outcome).
+  const announceDraftSaved = React.useCallback(() => {
+    toast({
+      dismissLabel: t("toast.dismiss"),
+      message: t("toast.draftSaved"),
+      tone: "success",
+    });
+  }, [t, toast]);
+
+  const saveCurrentDraftAndAnnounce = React.useCallback(async () => {
     const saved = await saveCurrentDraft();
+
+    if (saved) {
+      announceDraftSaved();
+    }
+
+    return saved;
+  }, [announceDraftSaved, saveCurrentDraft]);
+
+  const saveAndShare = React.useCallback(async () => {
+    const saved = await saveCurrentDraftAndAnnounce();
 
     if (saved) {
       goToStep("share");
     }
-  }, [goToStep, saveCurrentDraft]);
+  }, [goToStep, saveCurrentDraftAndAnnounce]);
 
   const publishCurrentDraft = React.useCallback(
     async (override?: { justification: string }) => {
@@ -496,10 +534,19 @@ export function InterviewAgentBuilder({
 
       setComplianceReview(undefined);
       setPublishedInterview(result);
-      setSaveMessage("Role screen published");
+      setSaveStatus(nextDraftSaveStatus("publish"));
+      // Publish's own internal `saveCurrentDraft()` call above does not
+      // toast (see `saveCurrentDraft`) — only this outcome does, so a
+      // publish never stacks a "Draft saved" toast under "Role screen
+      // published".
+      toast({
+        dismissLabel: t("toast.dismiss"),
+        message: t("toast.rolePublished"),
+        tone: "success",
+      });
       router.refresh();
     },
-    [router, saveCurrentDraft],
+    [router, saveCurrentDraft, t, toast],
   );
 
   const previewCurrentDraft = React.useCallback(async () => {
@@ -838,7 +885,7 @@ export function InterviewAgentBuilder({
     <>
       <main className="relative z-10 mx-auto grid w-full max-w-[1060px] min-w-0 gap-[clamp(24px,4vw,56px)] px-4 pb-20 pt-[clamp(22px,3.5vw,36px)] sm:px-7 lg:grid-cols-[212px_minmax(0,1fr)]">
         <InterviewBuilderBreadcrumb
-          isSaved={Boolean(saveMessage || persistedDraftId)}
+          isSaved={Boolean(saveStatus || persistedDraftId)}
           roleTitle={trimmedJobTitle || "New role"}
         />
         <InterviewBuilderStepRail currentStep={currentStep} steps={steps} />
@@ -952,7 +999,7 @@ export function InterviewAgentBuilder({
               roleBrief={jobDescription}
               roleTitle={jobTitle}
               saveError={saveError}
-              saveMessage={saveMessage}
+              saveStatus={saveStatus}
               onDismissReview={() => setComplianceReview(undefined)}
               onEditDraft={() => goToStep("questions")}
               onOverride={(justification) =>
@@ -960,7 +1007,7 @@ export function InterviewAgentBuilder({
               }
               onPreview={() => void previewCurrentDraft()}
               onPublish={() => void publishCurrentDraft()}
-              onSave={() => void saveCurrentDraft()}
+              onSave={() => void saveCurrentDraftAndAnnounce()}
             />
           ) : null}
 
@@ -980,10 +1027,8 @@ export function InterviewAgentBuilder({
             </p>
           ) : null}
 
-          {saveMessage && currentStep !== "share" ? (
-            <p className="mt-5 rounded-2xl border border-meadow-200 bg-meadow-50 px-4 py-3 text-sm font-medium text-meadow-800">
-              {saveMessage}
-            </p>
+          {currentStep !== "share" ? (
+            <DraftSaveStatusBadge className="mt-5" status={saveStatus} />
           ) : null}
 
           <InterviewBuilderFooter
@@ -1796,22 +1841,20 @@ function CandidateLinkActions({
   roleTitle: string;
 }) {
   const { t } = useTranslation();
-  const [copied, setCopied] = React.useState(false);
+  const { copiedKey, copy } = useCopyLinkFeedback();
 
   const candidateUrl = candidateAppUrl(candidatePath);
+  // The Copy→Check label swap below stays — the toast adds
+  // discoverability, it does not replace that tight local loop.
+  const copied = copiedKey === candidatePath;
 
   const copyLink = React.useCallback(async () => {
     if (!candidateUrl) {
       return;
     }
-    try {
-      await navigator.clipboard?.writeText(candidateUrl);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard unavailable (permissions/older browser) — no-op.
-    }
-  }, [candidateUrl]);
+
+    await copy(candidateUrl, candidatePath);
+  }, [candidateUrl, candidatePath, copy]);
 
   const mailtoHref = candidateUrl
     ? buildCandidateInviteMailto(
@@ -1851,7 +1894,7 @@ function ShareStep({
   roleBrief,
   roleTitle,
   saveError,
-  saveMessage,
+  saveStatus,
   onDismissReview,
   onEditDraft,
   onOverride,
@@ -1870,7 +1913,7 @@ function ShareStep({
   roleBrief: string;
   roleTitle: string;
   saveError?: string;
-  saveMessage?: string;
+  saveStatus: DraftSaveStatus;
   onDismissReview: () => void;
   onEditDraft: () => void;
   onOverride: (justification: string) => void;
@@ -1975,11 +2018,7 @@ function ShareStep({
         </div>
       ) : null}
 
-      {saveMessage ? (
-        <div className="rounded-2xl border border-meadow-200 bg-meadow-50 p-4 text-sm font-medium text-meadow-700">
-          {saveMessage}
-        </div>
-      ) : null}
+      <DraftSaveStatusBadge status={saveStatus} />
 
       <div className="flex flex-wrap gap-2">
         <Button
@@ -2191,5 +2230,43 @@ function SummaryMetric({ label, value }: { label: string; value: string }) {
         {value}
       </p>
     </div>
+  );
+}
+
+// N16: the ONE persistent saved/published marker, rendered at both the main
+// flow's step body (:currentStep !== "share") and the Share step. Splitting
+// this out killed the two-site duplication that let the indicator's text and
+// clearing behavior silently drift apart — there is now exactly one place
+// that renders it, and one place (`nextDraftSaveStatus`, draft-save-status.ts)
+// that decides what its state should be.
+//
+// This is the STATE affordance, not the EVENT one: a discreet "Saved" /
+// "Published" word, not a sentence, and it stays on screen for as long as
+// what's rendered still matches what's persisted (see the invariant in
+// draft-save-status.ts). The matching announcement ("Draft saved" / "Role
+// screen published") fires once, as a toast, from the save/publish handlers
+// above — two different jobs, two different affordances.
+function DraftSaveStatusBadge({
+  className,
+  status,
+}: {
+  className?: string;
+  status: DraftSaveStatus;
+}) {
+  if (!status) {
+    return null;
+  }
+
+  return (
+    <p
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded-2xl border border-meadow-200 bg-meadow-50 px-4 py-3 text-sm font-medium text-meadow-800",
+        className,
+      )}
+      role="status"
+    >
+      <Check aria-hidden="true" className="h-3.5 w-3.5" />
+      {status === "saved" ? "Saved" : "Published"}
+    </p>
   );
 }
