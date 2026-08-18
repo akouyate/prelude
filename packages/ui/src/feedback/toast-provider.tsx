@@ -167,8 +167,11 @@ function ToastStack() {
  * The circular countdown IS the close control: a real `<button>`
  * (`BaseToast.Close`, which already carries `close(toast.id)` on click and
  * `aria-hidden={!expanded}` for screen readers — base-ui:
- * toast/close/ToastClose.js) wrapping an SVG ring plus a centred `×` that
- * fades in on hover/focus.
+ * toast/close/ToastClose.js) wrapping an SVG ring plus a centred `×` that is
+ * always visible — hovering only tints the button. The `×` used to fade in on
+ * hover, which meant the toast never looked closable until the cursor was
+ * already on the control; the ring carries the remaining time, the `×` carries
+ * the affordance, and both have to read at rest.
  *
  * Two correctness rules govern the ring itself (both enforced in CSS, in
  * `apps/console/app/globals.css`, not here — this component only supplies the
@@ -206,7 +209,7 @@ function CountdownClose({
   return (
     <BaseToast.Close
       aria-label={dismissLabel}
-      className="group relative grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-full text-ink-50 outline-none focus-visible:ring-2 focus-visible:ring-ink-50 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-900"
+      className="group relative grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-full text-ink-50 outline-none transition-colors hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-ink-50 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-900"
     >
       <svg
         aria-hidden="true"
@@ -242,10 +245,14 @@ function CountdownClose({
           }
         />
       </svg>
-      <Xmark
-        aria-hidden="true"
-        className="absolute h-3.5 w-3.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-visible:opacity-100"
-      />
+      {/*
+       * Always visible, never hover-revealed. A dismiss affordance that only
+       * appears once the cursor is already on it cannot be discovered: the
+       * reader has no way to learn the toast is closable, and has to guess
+       * where to aim. The ring carries the remaining time; this carries the
+       * "you can close me", and both have to be readable at rest.
+       */}
+      <Xmark aria-hidden="true" className="absolute h-3.5 w-3.5" />
     </BaseToast.Close>
   );
 }
