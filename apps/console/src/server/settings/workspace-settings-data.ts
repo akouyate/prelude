@@ -107,7 +107,7 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
       },
     }),
     prisma.user.findUnique({
-      select: { preferredLanguage: true },
+      select: { name: true, preferredLanguage: true },
       where: { id: scope.userId },
     }),
     loadPendingInvitations(canManage, scope.clerkOrganizationId),
@@ -133,7 +133,18 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
   return {
     account: {
       email: identity.value.userEmail,
-      name: identity.value.userName,
+      // DEVIATION (plan 2026-08-18, Part 1): this used to always read the
+      // identity layer's own name (Clerk's `currentUser()`, or the static
+      // MOCK_CLERK_USER_NAME env default under mock) rather than the DB
+      // mirror `updateProfileNameAction` writes to. That's harmless under
+      // real Clerk once a save succeeds (both stay in sync), but under mock
+      // there is no live provider to read back from — the identity name
+      // never changes no matter what gets saved, so the newly-editable name
+      // field appeared to revert on every page load. `User.name` (the
+      // mirror both providers write through) is the honest source for what
+      // was actually saved; the identity layer's name is only a fallback
+      // for a user row that predates having one.
+      name: user?.name || identity.value.userName,
       preferredLanguage: coerceConsoleLocale(user?.preferredLanguage),
       role: scope.role,
     },
