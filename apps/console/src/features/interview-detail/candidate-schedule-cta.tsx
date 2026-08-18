@@ -1,6 +1,7 @@
 "use client";
 
 import { ArrowRight } from "iconoir-react";
+import { useTranslation } from "react-i18next";
 
 import { decisionCtaClassName } from "./candidate-decision-bar";
 import { ScheduleCallDialog } from "./schedule-call-dialog";
@@ -10,6 +11,8 @@ import { ScheduleCallDialog } from "./schedule-call-dialog";
 export function CandidateScheduleCta(
   props: Omit<React.ComponentProps<typeof ScheduleCallDialog>, "renderTrigger">,
 ) {
+  const { t } = useTranslation();
+
   return (
     <ScheduleCallDialog
       {...props}
@@ -20,7 +23,7 @@ export function CandidateScheduleCta(
           onClick={open}
           type="button"
         >
-          Schedule call
+          {t("candidateReview.scheduleCall")}
           <ArrowRight aria-hidden={true} className="h-[15px] w-[15px]" />
         </button>
       )}

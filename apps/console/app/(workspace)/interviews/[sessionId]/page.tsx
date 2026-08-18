@@ -221,8 +221,8 @@ function CandidateSessionReview({
         turn.speaker === "candidate"
           ? session.candidateLabel
           : turn.speaker === "interviewer"
-            ? "HireCall · interviewer"
-            : "System",
+            ? t("recording.speakerInterviewer")
+            : t("recording.speakerSystem"),
       text: turn.text,
       turnId: turn.turnId,
     }));
@@ -249,15 +249,21 @@ function CandidateSessionReview({
           </Link>
           <div className="hidden items-center gap-[9px] sm:flex">
             <span className="font-title text-[12.5px] font-medium text-ink-400">
-              {siblings.position} of {siblings.total}
+              {t("recording.siblingPosition", {
+                position: siblings.position,
+                total: siblings.total,
+              })}
             </span>
             <PagerButton
               href={siblings.previousHref}
-              label="Previous candidate"
+              label={t("recording.previousCandidate")}
             >
               <NavArrowLeft aria-hidden={true} className="h-4 w-4" />
             </PagerButton>
-            <PagerButton href={siblings.nextHref} label="Next candidate">
+            <PagerButton
+              href={siblings.nextHref}
+              label={t("recording.nextCandidate")}
+            >
               <NavArrowRight aria-hidden={true} className="h-4 w-4" />
             </PagerButton>
           </div>
@@ -275,7 +281,11 @@ function CandidateSessionReview({
               {[
                 session.jobTitle,
                 session.candidateEmail,
-                `interviewed ${formatDateCompact(session.completedAt ?? session.startedAt)}`,
+                t("recording.interviewedOn", {
+                  date: formatDateCompact(
+                    session.completedAt ?? session.startedAt,
+                  ),
+                }),
                 formatDurationLabel(replayDurationMs),
               ]
                 .filter(Boolean)

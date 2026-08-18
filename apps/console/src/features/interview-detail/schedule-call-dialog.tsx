@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 import {
   Calendar,
   CheckCircle,
@@ -74,6 +75,7 @@ export function ScheduleCallDialog({
   } | null;
   sessionId: string;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
 
   if (scheduledCall?.status === "scheduled") {
@@ -109,7 +111,7 @@ export function ScheduleCallDialog({
                 </Dialog.Description>
               </div>
               <button
-                aria-label="Close scheduling dialog"
+                aria-label={t("schedule.closeDialog")}
                 className="grid h-9 w-9 cursor-pointer place-items-center rounded-full text-ink-500 transition hover:bg-white hover:text-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
                 onClick={() => setOpen(false)}
                 type="button"
@@ -157,6 +159,7 @@ function ScheduleCallForm({
   roleTitle: string;
   sessionId: string;
 }) {
+  const { t } = useTranslation();
   const [state, formAction, pending] = React.useActionState(
     scheduleCandidateCallAction,
     initialScheduleCandidateCallState,
@@ -224,7 +227,7 @@ function ScheduleCallForm({
       <div className="grid gap-4 sm:grid-cols-[1fr_0.72fr]">
         <TextField
           disabled={pending}
-          label="Date and time"
+          label={t("schedule.dateTimeLabel")}
           min={minimumDateTimeValue()}
           onChange={(event) =>
             setDateTime((event.target as HTMLInputElement).value)
@@ -235,25 +238,25 @@ function ScheduleCallForm({
         />
         <SelectField
           disabled={pending}
-          label="Duration"
+          label={t("schedule.durationLabel")}
           name="durationMinutes"
           onValueChange={(value) => setDurationMinutes(value ?? "30")}
           options={[
-            { label: "15 minutes", value: "15" },
-            { label: "30 minutes", value: "30" },
-            { label: "45 minutes", value: "45" },
-            { label: "60 minutes", value: "60" },
+            ...[15, 30, 45, 60].map((minutes) => ({
+              label: t("schedule.durationOption", { count: minutes }),
+              value: String(minutes),
+            })),
           ]}
           value={durationMinutes}
         />
       </div>
 
       <TextField
-        description={`Time zone: ${timeZone}`}
+        description={t("schedule.timeZoneHint", { zone: timeZone })}
         disabled={pending}
-        label="Location (optional)"
+        label={t("schedule.locationLabel")}
         name="location"
-        placeholder="Office, phone number, or a short note"
+        placeholder={t("schedule.locationPlaceholder")}
       />
 
       <div className="space-y-3 rounded-[15px] border border-[#e7e2d8] bg-white p-4">
@@ -273,7 +276,7 @@ function ScheduleCallForm({
             </div>
           </div>
           <Switch
-            aria-label="Send candidate invitation"
+            aria-label={t("schedule.inviteCandidateLabel")}
             checked={inviteCandidate}
             disabled={pending || !candidateAddress.trim()}
             onCheckedChange={setInviteCandidate}
@@ -281,7 +284,7 @@ function ScheduleCallForm({
         </div>
         <TextField
           disabled={pending}
-          label="Candidate email"
+          label={t("schedule.candidateEmailLabel")}
           name="candidateEmail"
           onChange={(event) => {
             const value = (event.target as HTMLInputElement).value;
@@ -290,19 +293,19 @@ function ScheduleCallForm({
               setInviteCandidate(false);
             }
           }}
-          placeholder="candidate@example.com"
+          placeholder={t("schedule.candidateEmailPlaceholder")}
           type="email"
           value={candidateAddress}
         />
         <TextField
-          description="Separate addresses with commas. Guests receive the same calendar invitation."
+          description={t("schedule.guestsHint")}
           disabled={pending}
-          label="Additional guests (optional)"
+          label={t("schedule.guestsLabel")}
           name="guestEmails"
           onChange={(event) =>
             setGuestEmails((event.target as HTMLInputElement).value)
           }
-          placeholder="recruiter@example.com, manager@example.com"
+          placeholder={t("schedule.guestsPlaceholder")}
           type="text"
           value={guestEmails}
         />
@@ -323,7 +326,7 @@ function ScheduleCallForm({
           </div>
         </div>
         <Switch
-          aria-label="Add Google Meet"
+          aria-label={t("schedule.addMeetLabel")}
           checked={addConference}
           disabled={pending}
           onCheckedChange={setAddConference}
@@ -340,14 +343,19 @@ function ScheduleCallForm({
       ) : null}
       {confirming ? (
         <Notice tone="warning">
-          <span className="font-semibold">Ready to send the calendar event.</span>{" "}
+          <span className="font-semibold">{t("schedule.readyToSend")}</span>{" "}
           {dateTime
-            ? `${formatLocalPreview(dateTime, timeZone)} for ${durationMinutes} minutes.`
-            : "Choose a date and time before confirming."}{" "}
+            ? t("schedule.confirmSlot", {
+                minutes: durationMinutes,
+                slot: formatLocalPreview(dateTime, timeZone),
+              })
+            : t("schedule.confirmNoSlot")}{" "}
           {inviteCandidate && candidateAddress.trim()
-            ? `An invitation will be sent to ${candidateAddress.trim()}.`
-            : "No candidate invitation will be sent."}{" "}
-          {guestEmails.trim() ? "Additional guests will also receive it." : ""}
+            ? t("schedule.confirmInvitationTo", {
+                email: candidateAddress.trim(),
+              })
+            : t("schedule.confirmNoInvitation")}{" "}
+          {guestEmails.trim() ? t("schedule.confirmGuestsToo") : ""}
         </Notice>
       ) : null}
       <div className="flex flex-wrap justify-end gap-3 border-t border-[#e7e2d8] pt-5">
@@ -369,10 +377,10 @@ function ScheduleCallForm({
         >
           <Calendar aria-hidden={true} className="h-4 w-4" />
           {pending
-            ? "Scheduling…"
+            ? t("schedule.scheduling")
             : confirming
-              ? "Create and send invitation"
-              : "Review invitation"}
+              ? t("schedule.createAndSend")
+              : t("schedule.reviewInvitation")}
         </Button>
       </div>
     </form>
@@ -388,14 +396,15 @@ function CalendarConnectionRequired({
   isConnecting: boolean;
   isReconnect: boolean;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-5 px-6 py-6">
       <Notice tone="warning">
         {isConnecting
-          ? "Google Calendar is being connected. Complete the authorization, then return here to schedule the call."
+          ? t("schedule.connectPending")
           : isReconnect
-          ? "Your Google Calendar connection needs to be renewed before a call can be scheduled."
-          : "Connect Google Calendar to schedule this follow-up from HireCall."}
+            ? t("schedule.connectExpired")
+            : t("schedule.connectMissing")}
       </Notice>
       {!isConnecting ? <ReconnectCalendarButton detailPath={detailPath} isReconnect={isReconnect} /> : null}
     </div>
@@ -409,6 +418,7 @@ function ReconnectCalendarButton({
   detailPath: string;
   isReconnect?: boolean;
 }) {
+  const { t } = useTranslation();
   const [pending, startTransition] = React.useTransition();
 
   return (
@@ -427,10 +437,10 @@ function ReconnectCalendarButton({
     >
       <RefreshCircle aria-hidden={true} className="h-4 w-4" />
       {pending
-        ? "Opening Google…"
+        ? t("schedule.openingGoogle")
         : isReconnect
-          ? "Reconnect Google Calendar"
-          : "Connect Google Calendar"}
+          ? t("schedule.reconnectCalendar")
+          : t("schedule.connectCalendar")}
     </Button>
   );
 }
@@ -442,21 +452,29 @@ function ScheduledCallAction({
     React.ComponentProps<typeof ScheduleCallDialog>["scheduledCall"]
   >;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="mt-3 rounded-xl border border-[#d6e2c5] bg-[#f4f8ec] p-3">
       <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#38551a]">
         <CheckCircle aria-hidden={true} className="h-4 w-4" />
-        Next call scheduled
+        {t("schedule.nextCallScheduled")}
       </div>
       <p className="mt-1.5 text-[12px] leading-5 text-[#5a6846]">
-        {formatScheduledDate(scheduledCall.startsAt, scheduledCall.timeZone)}
-        {scheduledCall.invitationSent
-          ? " · Invitation sent"
-          : " · Private event"}
+        {t(
+          scheduledCall.invitationSent
+            ? "schedule.nextCallInvitationSent"
+            : "schedule.nextCallPrivateEvent",
+          {
+            date: formatScheduledDate(
+              scheduledCall.startsAt,
+              scheduledCall.timeZone,
+            ),
+          },
+        )}
       </p>
       {scheduledCall.conferencePending ? (
         <p className="mt-1 text-[12px] leading-5 text-[#5a6846]">
-          Google Meet link is still being prepared in Calendar.
+          {t("schedule.meetPreparing")}
         </p>
       ) : null}
       <ScheduledCallLinks scheduledCall={scheduledCall} />
@@ -471,6 +489,7 @@ function ScheduledCallResult({
     React.ComponentProps<typeof ScheduleCallDialog>["scheduledCall"]
   >;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-5 px-6 py-6">
       <div className="grid h-11 w-11 place-items-center rounded-full bg-[#eef0e3] text-olive-900">
@@ -478,15 +497,22 @@ function ScheduledCallResult({
       </div>
       <div>
         <Dialog.Title className="text-lg font-semibold text-ink-950">
-          Call scheduled
+          {t("schedule.callScheduled")}
         </Dialog.Title>
         <p className="mt-1 text-sm leading-6 text-ink-600">
-          {formatScheduledDate(scheduledCall.startsAt, scheduledCall.timeZone)}
-          {scheduledCall.invitationSent
-            ? ". Google Calendar sent the invitation."
-            : ". No candidate invitation was sent."}
+          {t(
+            scheduledCall.invitationSent
+              ? "schedule.resultWithInvitation"
+              : "schedule.resultWithoutInvitation",
+            {
+              date: formatScheduledDate(
+                scheduledCall.startsAt,
+                scheduledCall.timeZone,
+              ),
+            },
+          )}
           {scheduledCall.conferencePending
-            ? " Google Meet is still being prepared."
+            ? ` ${t("schedule.resultMeetPending")}`
             : ""}
         </p>
       </div>

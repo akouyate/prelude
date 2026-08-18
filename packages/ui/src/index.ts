@@ -100,6 +100,7 @@ export {
   EnterpriseShell,
   type EnterpriseNavCounts,
   type EnterpriseNavCredits,
+  type EnterpriseShellLabels,
 } from "./layouts/enterprise-shell";
 export { PageHeader } from "./layouts/page-header";
 export { StepShell, type StepShellProps } from "./layouts/step-shell";

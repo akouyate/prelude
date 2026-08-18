@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { Check, NavArrowDown } from "iconoir-react";
+import { useTranslation } from "react-i18next";
 
 import {
   reviewCriterionTone,
@@ -23,6 +24,7 @@ export function CandidateVerdictSection({
   criteria: ReviewCriterion[];
   summary: string | null;
 }) {
+  const { t } = useTranslation();
   const confirmed = criteria.filter(
     (criterion) => criterion.status === "strong",
   ).length;
@@ -33,14 +35,15 @@ export function CandidateVerdictSection({
       <div className="flex flex-wrap items-baseline gap-3">
         <h2 className="font-title text-[21px] font-semibold tracking-[-0.02em] text-ink-950">
           {criteria.length > 0
-            ? `${confirmed} of ${criteria.length} criteria confirmed`
-            : "No criteria evaluated yet"}
+            ? t("candidateReview.criteriaConfirmed", {
+                confirmed,
+                total: criteria.length,
+              })
+            : t("candidateReview.criteriaNoneEvaluated")}
         </h2>
         {openCount > 0 ? (
           <span className="text-[13px] text-ink-400">
-            {openCount === 1
-              ? "1 needs a second look"
-              : `${openCount} need a second look`}
+            {t("candidateReview.criteriaSecondLook", { count: openCount })}
           </span>
         ) : null}
       </div>
@@ -67,15 +70,19 @@ export function CandidateVerdictSection({
 }
 
 export function CandidateGapsSection({ criteria }: { criteria: ReviewCriterion[] }) {
+  const { t } = useTranslation();
+
   if (criteria.length === 0) {
     return null;
   }
 
   return (
     <section className="mt-[34px]">
-      <p className={`mb-1 ${sectionLabelClassName}`}>Needs a second look</p>
+      <p className={`mb-1 ${sectionLabelClassName}`}>
+        {t("candidateReview.needsSecondLook")}
+      </p>
       <p className="mb-3.5 text-[13.5px] text-[#8a8178]">
-        The criteria the conversation did not settle, and what to ask instead.
+        {t("candidateReview.gapsIntro")}
       </p>
       <div className="flex flex-col gap-3">
         {criteria.map((criterion) => {
@@ -93,7 +100,9 @@ export function CandidateGapsSection({ criteria }: { criteria: ReviewCriterion[]
                 <span
                   className={`inline-flex h-[22px] shrink-0 items-center rounded-lg px-2.5 font-title text-[10.5px] font-semibold uppercase tracking-[0.04em] ${tone.badgeClassName}`}
                 >
-                  {criterion.status === "partial" ? "Partial" : "No evidence"}
+                  {criterion.status === "partial"
+                    ? t("candidateReview.criterionPartial")
+                    : t("candidateReview.criterionNoEvidence")}
                 </span>
               </div>
               <p className="mt-2.5 max-w-[62ch] text-sm leading-[1.6] text-ink-700">

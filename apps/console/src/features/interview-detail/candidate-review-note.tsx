@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 
 import { candidateReviewNoteMaxLength } from "../../domain/candidate-review-policy";
 
@@ -17,6 +18,7 @@ export function CandidateReviewNote({
   onSave: (note: string) => Promise<void>;
   reviewNote: string | null;
 }) {
+  const { t } = useTranslation();
   const [saveState, setSaveState] = React.useState<SaveState>("idle");
   const timerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -45,13 +47,13 @@ export function CandidateReviewNote({
     <section className="mt-[30px]">
       <div className="mb-2.5 flex items-center justify-between gap-2.5">
         <p className="font-title text-[10px] font-semibold uppercase tracking-[0.1em] text-[#b3ac9d]">
-          Internal note
+          {t("candidateReview.internalNote")}
         </p>
         <span className="font-title text-[11.5px] font-medium text-ink-400">
           {saveState === "saving"
-            ? "Saving…"
+            ? t("candidateReview.noteSaving")
             : saveState === "saved"
-              ? "Saved"
+              ? t("candidateReview.noteSaved")
               : ""}
         </span>
       </div>
@@ -61,7 +63,7 @@ export function CandidateReviewNote({
         disabled={!canManageReview}
         maxLength={candidateReviewNoteMaxLength}
         onChange={(event) => handleChange(event.currentTarget.value)}
-        placeholder="Private to your team — saves as you type."
+        placeholder={t("candidateReview.notePlaceholder")}
       />
     </section>
   );

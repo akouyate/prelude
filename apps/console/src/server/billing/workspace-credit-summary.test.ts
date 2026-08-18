@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+import { getServerT } from "../../libs/i18n-server";
 import { toWorkspaceCreditSummary } from "./workspace-credit-summary";
+
+// The label is composed from the catalogue, so the test reads the real English
+// catalogue rather than asserting against a string literal built here.
+const t = getServerT("en");
 
 /**
  * The nav meter's pure half. `available` and the next-expiry figure are
@@ -46,6 +51,8 @@ describe("toWorkspaceCreditSummary", () => {
         lot({ id: "lot_frozen", status: "frozen", creditsGranted: 20 }),
       ],
       now,
+      t,
+      "en",
     );
 
     expect(result.totalGranted).toBe(80);
@@ -58,6 +65,8 @@ describe("toWorkspaceCreditSummary", () => {
     const result = toWorkspaceCreditSummary(
       [lot({ creditsGranted: 100, creditsConsumed: 10, creditsReserved: 30 })],
       now,
+      t,
+      "en",
     );
 
     expect(result.totalGranted).toBe(100);
@@ -68,10 +77,14 @@ describe("toWorkspaceCreditSummary", () => {
     const atBoundary = toWorkspaceCreditSummary(
       [lot({ creditsGranted: 100, creditsConsumed: 80 })],
       now,
+      t,
+      "en",
     );
     const justAbove = toWorkspaceCreditSummary(
       [lot({ creditsGranted: 100, creditsConsumed: 79 })],
       now,
+      t,
+      "en",
     );
 
     expect(atBoundary.low).toBe(true);
@@ -79,7 +92,7 @@ describe("toWorkspaceCreditSummary", () => {
   });
 
   it("reads an empty wallet as zero and low, with nothing to top up against", () => {
-    const result = toWorkspaceCreditSummary([], now);
+    const result = toWorkspaceCreditSummary([], now, t, "en");
 
     expect(result).toMatchObject({
       available: 0,
@@ -101,6 +114,8 @@ describe("toWorkspaceCreditSummary", () => {
         lot({ id: "lot_far", expiresAt: new Date("2027-06-01T09:00:00.000Z") }),
       ],
       now,
+      t,
+      "en",
     );
 
     expect(result.nextExpiryLabel).toBe("12 expiring Dec 1");
@@ -110,13 +125,15 @@ describe("toWorkspaceCreditSummary", () => {
     const result = toWorkspaceCreditSummary(
       [lot({ creditsConsumed: 100 })],
       now,
+      t,
+      "en",
     );
 
     expect(result.nextExpiryLabel).toBeNull();
   });
 
   it("points Top up at the billing view of Settings", () => {
-    const result = toWorkspaceCreditSummary([lot()], now);
+    const result = toWorkspaceCreditSummary([lot()], now, t, "en");
 
     expect(result.topUpHref).toBe("/settings?view=billing");
   });

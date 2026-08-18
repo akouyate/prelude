@@ -11,8 +11,11 @@ import {
 } from "@prelude/core";
 import { prisma } from "@prelude/db";
 import type { EnterpriseNavCredits } from "@prelude/ui";
+import type { TFunction } from "i18next";
 
+import { getServerT } from "../../libs/i18n-server";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
+import { getAuthenticatedUserLocale } from "../users/user-locale";
 
 const topUpHref = "/settings?view=billing";
 
@@ -33,6 +36,8 @@ export async function getWorkspaceCreditSummary(): Promise<EnterpriseNavCredits 
   }
 
   const scope = await getCompletedOrganizationScope();
+  const locale = await getAuthenticatedUserLocale();
+  const t = getServerT(locale);
   const lots = await prisma.creditLot.findMany({
     select: {
       id: true,
@@ -47,7 +52,7 @@ export async function getWorkspaceCreditSummary(): Promise<EnterpriseNavCredits 
     where: { organizationId: scope.organizationId },
   });
 
-  return toWorkspaceCreditSummary(lots, new Date());
+  return toWorkspaceCreditSummary(lots, new Date(), t, locale);
 }
 
 /**
@@ -75,6 +80,11 @@ export function toWorkspaceCreditSummary(
     expiresAt: Date;
   }>,
   now: Date,
+  // `t` and the locale are passed in rather than resolved here so this stays a
+  // pure function: it is unit-tested directly, and reading the request's user
+  // would drag an auth round trip into it.
+  t: TFunction,
+  locale: string,
 ): EnterpriseNavCredits {
   const snapshots = lots as CreditLotSnapshot[];
   const totals = computeWalletTotals(snapshots, now);
@@ -86,15 +96,20 @@ export function toWorkspaceCreditSummary(
     available: totals.available,
     low: totalGranted === 0 || totals.available / totalGranted <= 0.2,
     nextExpiryLabel: totals.nextExpiry
-      ? `${totals.nextExpiry.credits} expiring ${formatExpiryDate(totals.nextExpiry.expiresAt)}`
+      ? t("shell.creditsExpiring", {
+          count: totals.nextExpiry.credits,
+          date: formatExpiryDate(totals.nextExpiry.expiresAt, locale),
+        })
       : null,
     topUpHref,
     totalGranted,
   };
 }
 
-function formatExpiryDate(date: Date): string {
-  return new Intl.DateTimeFormat("en-US", {
+// Was pinned to "en-US", so a French recruiter read "Sep 14" in an otherwise
+// French sidebar. The locale now follows the reader.
+function formatExpiryDate(date: Date, locale: string): string {
+  return new Intl.DateTimeFormat(locale, {
     day: "numeric",
     month: "short",
   }).format(date);

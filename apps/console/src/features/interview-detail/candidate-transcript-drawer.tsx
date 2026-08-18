@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 import { PauseSolid, PlaySolid, Search, Sparks, Xmark } from "iconoir-react";
 import { Drawer } from "@prelude/ui";
 
@@ -25,6 +26,7 @@ export function CandidateTranscriptDrawer({
   candidateInitials: string;
   turns: TranscriptDrawerTurn[];
 }) {
+  const { t } = useTranslation();
   const { closeTranscript, transcriptOpen } = useInterviewReplay();
 
   return (
@@ -62,6 +64,7 @@ function TranscriptPanel({
   candidateInitials: string;
   turns: TranscriptDrawerTurn[];
 }) {
+  const { t } = useTranslation();
   const { closeTranscript, playRange, togglePlayback } = useInterviewReplay();
   const { elapsedMs, isPlaying, totalMs } = useReplayPlayback();
   const [query, setQuery] = React.useState("");
@@ -88,7 +91,7 @@ function TranscriptPanel({
             </Drawer.Description>
           </div>
           <button
-            aria-label="Close transcript"
+            aria-label={t("recording.closeTranscript")}
             className="grid h-[34px] w-[34px] shrink-0 cursor-pointer place-items-center rounded-full border border-[#e7e2d8] bg-white text-ink-600 transition hover:border-ink-900 hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
             onClick={closeTranscript}
             type="button"
@@ -104,7 +107,7 @@ function TranscriptPanel({
           <input
             className="min-w-0 flex-1 border-none bg-transparent text-[13px] text-ink-950 outline-none"
             onChange={(event) => setQuery(event.currentTarget.value)}
-            placeholder="Search the conversation"
+            placeholder={t("recording.searchConversation")}
             value={query}
           />
         </div>
@@ -112,7 +115,7 @@ function TranscriptPanel({
 
       <div className="flex shrink-0 items-center gap-3 border-b border-[#e7e2d8] bg-white px-[22px] py-3">
         <button
-          aria-label={isPlaying ? "Pause recording" : "Play recording"}
+          aria-label={isPlaying ? t("recording.pauseAria") : t("recording.playAria")}
           className="grid h-[34px] w-[34px] shrink-0 cursor-pointer place-items-center rounded-full bg-ink-900 text-white transition hover:bg-ink-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
           onClick={togglePlayback}
           type="button"
@@ -165,7 +168,7 @@ function TranscriptPanel({
                   startMs: turn.offsetMs,
                 })
               }
-              title="Play from here"
+              title={t("recording.playFromHere")}
               type="button"
             >
               {turn.speaker === "candidate" ? (

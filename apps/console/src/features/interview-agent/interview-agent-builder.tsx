@@ -50,6 +50,7 @@ import {
 import { useRouter } from "next/navigation";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 import {
   getInterviewPlanPublicationIssues,
@@ -95,54 +96,79 @@ type ResponseMode = InterviewResponseMode;
 // HireCall's built-in deterministic templates.
 const DETERMINISTIC_GENERATOR_PROVIDER = "deterministic";
 
-const steps: Array<{ id: StepId; label: string; title: string }> = [
-  { id: "brief", label: "Brief", title: "Start with the role" },
-  { id: "calibrate", label: "Calibrate", title: "Calibrate the role screen" },
-  { id: "questions", label: "Questions", title: "Shape the questions" },
+/*
+ * Every `value` here is either a persisted enum or a contract literal, so only
+ * the copy is translated — hence keys next to values rather than strings.
+ * `stepOrder` stays a plain array because the step machinery (indexOf, next,
+ * previous) is about identity, not display.
+ */
+const steps: Array<{ id: StepId; labelKey: string; titleKey: string }> = [
+  {
+    id: "brief",
+    labelKey: "interviewBuilder.stepBrief",
+    titleKey: "interviewBuilder.stepBriefTitle",
+  },
+  {
+    id: "calibrate",
+    labelKey: "interviewBuilder.stepCalibrate",
+    titleKey: "interviewBuilder.stepCalibrateTitle",
+  },
+  {
+    id: "questions",
+    labelKey: "interviewBuilder.stepQuestions",
+    titleKey: "interviewBuilder.stepQuestionsTitle",
+  },
   {
     id: "evaluation",
-    label: "Evaluation",
-    title: "Set the evaluation standard",
+    labelKey: "interviewBuilder.stepEvaluation",
+    titleKey: "interviewBuilder.stepEvaluationTitle",
   },
-  { id: "share", label: "Publish", title: "Publish the role screen" },
+  {
+    id: "share",
+    labelKey: "interviewBuilder.stepPublish",
+    titleKey: "interviewBuilder.stepPublishTitle",
+  },
 ];
 
 const focusOptions: Array<{
   value: InterviewFocus;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
 }> = [
   {
     value: "role_skills",
-    label: "Role skills",
-    description: "Evidence tied to the job responsibilities",
+    labelKey: "interviewBuilder.focusRoleSkills",
+    descriptionKey: "interviewBuilder.focusRoleSkillsDescription",
   },
   {
     value: "situational_judgment",
-    label: "Judgment",
-    description: "How the candidate handles realistic ambiguity",
+    labelKey: "interviewBuilder.focusJudgment",
+    descriptionKey: "interviewBuilder.focusJudgmentDescription",
   },
   {
     value: "motivation",
-    label: "Motivation",
-    description: "Why this role makes sense as a next step",
+    labelKey: "interviewBuilder.focusMotivation",
+    descriptionKey: "interviewBuilder.focusMotivationDescription",
   },
   {
     value: "communication",
-    label: "Communication",
-    description: "Clarity, structure, and audience awareness",
+    labelKey: "interviewBuilder.focusCommunication",
+    descriptionKey: "interviewBuilder.focusCommunicationDescription",
   },
 ];
 
-const seniorityOptions: Array<{ value: InterviewSeniority; label: string }> = [
-  { value: "junior", label: "Junior" },
-  { value: "mid", label: "Mid-level" },
-  { value: "senior", label: "Senior" },
+const seniorityOptions: Array<{
+  value: InterviewSeniority;
+  labelKey: string;
+}> = [
+  { value: "junior", labelKey: "interviewBuilder.seniorityJunior" },
+  { value: "mid", labelKey: "interviewBuilder.seniorityMid" },
+  { value: "senior", labelKey: "interviewBuilder.senioritySenior" },
 ];
 
-const responseModes: Array<{ value: ResponseMode; label: string }> = [
-  { value: "text", label: "Form" },
-  { value: "audio", label: "Audio" },
+const responseModes: Array<{ value: ResponseMode; labelKey: string }> = [
+  { value: "text", labelKey: "interviewBuilder.modeForm" },
+  { value: "audio", labelKey: "interviewBuilder.modeAudio" },
 ];
 const builderResponseModes = new Set<ResponseMode>(
   responseModes.map((mode) => mode.value),
@@ -153,12 +179,12 @@ const builderResponseModes = new Set<ResponseMode>(
 // single real async boundary, so all steps are shown in-progress until the
 // action resolves, then all complete together. GENERATION_STEP_COUNT is the
 // "everything done" sentinel for generationPhase.
-const generationSteps = [
-  "Reading the role and job description",
-  "Mapping your selected hiring signals",
-  "Writing questions that ask for real examples",
+const generationStepKeys = [
+  "interviewBuilder.generationStepReading",
+  "interviewBuilder.generationStepMapping",
+  "interviewBuilder.generationStepWriting",
 ] as const;
-const GENERATION_STEP_COUNT = generationSteps.length;
+const GENERATION_STEP_COUNT = generationStepKeys.length;
 
 type InterviewAgentBuilderProps = {
   companyName?: string;
@@ -183,16 +209,19 @@ type PersistedInterviewDraft = {
   draft: InterviewAgentDraft;
 };
 
-function getResponseModeSummary(modes: ResponseMode[]) {
-  const labels = modes.map((mode) => {
-    if (mode === "text") {
-      return "Form";
-    }
+// Was capitalising the enum value itself for anything but "text", which only
+// reads as a word by accident of English ("audio" -> "Audio"). Both modes now
+// come from the catalogue, like every other label.
+function getResponseModeSummary(modes: ResponseMode[], t: TFunction) {
+  const labels = modes.map((mode) =>
+    mode === "text"
+      ? t("interviewBuilder.modeForm")
+      : t("interviewBuilder.modeAudio"),
+  );
 
-    return mode[0]!.toUpperCase() + mode.slice(1);
-  });
-
-  return labels.length > 0 ? labels.join(" + ") : "Form";
+  return labels.length > 0
+    ? labels.join(" + ")
+    : t("interviewBuilder.modeForm");
 }
 
 function normalizeBuilderResponseModes(modes: ResponseMode[] | undefined) {
@@ -287,7 +316,19 @@ export function InterviewAgentBuilder({
     React.useState<ComplianceReviewPrompt>();
 
   const currentStepIndex = steps.findIndex((step) => step.id === currentStep);
-  const currentStepConfig = steps[currentStepIndex] ?? steps[0]!;
+  // The layout components are presentational: they take finished copy, not
+  // catalogue keys, so the translation happens here at the boundary.
+  const translatedSteps = React.useMemo(
+    () =>
+      steps.map((step) => ({
+        id: step.id,
+        label: t(step.labelKey),
+        title: t(step.titleKey),
+      })),
+    [t],
+  );
+  const currentStepConfig =
+    translatedSteps[currentStepIndex] ?? translatedSteps[0]!;
   const trimmedJobTitle = jobTitle.trim();
   const trimmedJobDescription = jobDescription.trim();
 
@@ -306,7 +347,7 @@ export function InterviewAgentBuilder({
       });
     } catch {
       setSaveError(
-        "HireCall could not generate the role screen right now. Please retry.",
+        t("interviewBuilder.errorGenerate"),
       );
       return null;
     }
@@ -383,7 +424,7 @@ export function InterviewAgentBuilder({
       draftToSave = draft,
     ): Promise<Extract<SaveInterviewDraftResult, { ok: true }> | null> => {
       if (!draftToSave) {
-        setSaveError("Generate questions before saving the draft.");
+        setSaveError(t("interviewBuilder.errorQuestionsBeforeSave"));
         return null;
       }
 
@@ -413,7 +454,7 @@ export function InterviewAgentBuilder({
         });
       } catch {
         setIsSavingDraft(false);
-        setSaveError("The draft could not be saved. Please try again.");
+        setSaveError(t("interviewBuilder.errorSaveDraft"));
         return null;
       }
 
@@ -511,7 +552,7 @@ export function InterviewAgentBuilder({
       } catch {
         setIsPublishingDraft(false);
         setSaveError(
-          "The role screen could not be published. Please try again.",
+          t("interviewBuilder.errorPublish"),
         );
         return;
       }
@@ -569,7 +610,7 @@ export function InterviewAgentBuilder({
       window.location.assign(result.previewUrl);
     } catch {
       setSaveError(
-        "The candidate preview could not be prepared. Please retry.",
+        t("interviewBuilder.errorPreview"),
       );
     } finally {
       setIsOpeningPreview(false);
@@ -644,7 +685,7 @@ export function InterviewAgentBuilder({
         setSelectedQuestionId(result.questionId);
         markDraftDirty();
       } catch {
-        setSaveError("HireCall could not refine that question. Please retry.");
+        setSaveError(t("interviewBuilder.errorRefine"));
       } finally {
         setWorkingQuestionId(undefined);
       }
@@ -719,7 +760,7 @@ export function InterviewAgentBuilder({
         markDraftDirty();
         return true;
       } catch {
-        setSaveError("HireCall could not add that question. Please retry.");
+        setSaveError(t("interviewBuilder.errorAddQuestion"));
         return false;
       } finally {
         setWorkingQuestionId(undefined);
@@ -829,13 +870,13 @@ export function InterviewAgentBuilder({
   const next = React.useCallback(() => {
     if (currentStep === "brief") {
       if (trimmedJobTitle.length < 2) {
-        setSaveError("Add a role title before calibrating the role screen.");
+        setSaveError(t("interviewBuilder.errorRoleTitleBeforeCalibrate"));
         return;
       }
 
       if (trimmedJobDescription.length < 40) {
         setSaveError(
-          "Add enough job context before calibrating the role screen.",
+          t("interviewBuilder.errorJobContextBeforeCalibrate"),
         );
         return;
       }
@@ -886,19 +927,22 @@ export function InterviewAgentBuilder({
       <main className="relative z-10 mx-auto grid w-full max-w-[1060px] min-w-0 gap-[clamp(24px,4vw,56px)] px-4 pb-20 pt-[clamp(22px,3.5vw,36px)] sm:px-7 lg:grid-cols-[212px_minmax(0,1fr)]">
         <InterviewBuilderBreadcrumb
           isSaved={Boolean(saveStatus || persistedDraftId)}
-          roleTitle={trimmedJobTitle || "New role"}
+          roleTitle={trimmedJobTitle || t("interviewBuilder.newRole")}
         />
-        <InterviewBuilderStepRail currentStep={currentStep} steps={steps} />
+        <InterviewBuilderStepRail
+          currentStep={currentStep}
+          steps={translatedSteps}
+        />
 
         <section className="min-w-0 w-full">
           <InterviewBuilderMobileProgress
             currentStep={currentStep}
-            steps={steps}
+            steps={translatedSteps}
           />
 
           <InterviewBuilderAgentCard
             isThinking={isGeneratingDraft}
-            message={getAgentMessage(currentStep, draft, isGeneratingDraft)}
+            message={getAgentMessage(currentStep, draft, isGeneratingDraft, t)}
           />
 
           <div className="mb-6">
@@ -906,9 +950,15 @@ export function InterviewAgentBuilder({
               badges={
                 draft ? (
                   <>
-                    <Badge>{draft.questions.length} questions</Badge>
                     <Badge>
-                      {attachmentName ? "Attachment-aware" : "Job brief only"}
+                      {t("interviewBuilder.badgeQuestions", {
+                        count: draft.questions.length,
+                      })}
+                    </Badge>
+                    <Badge>
+                      {attachmentName
+                        ? t("interviewBuilder.badgeAttachmentAware")
+                        : t("interviewBuilder.badgeBriefOnly")}
                     </Badge>
                   </>
                 ) : null
@@ -1046,25 +1096,22 @@ export function InterviewAgentBuilder({
 
 function getAgentMessage(
   step: StepId,
-  draft?: InterviewAgentDraft,
-  isGenerating = false,
+  draft: InterviewAgentDraft | undefined,
+  isGenerating: boolean,
+  t: TFunction,
 ) {
   if (isGenerating) {
-    return "Working through the role now — drafting questions tuned to your signals. This takes a few seconds.";
+    return t("interviewBuilder.agentThinking");
   }
 
   const messages: Record<StepId, string> = {
-    brief:
-      "Write the role title and context. I’ll pull the skills, judgment calls, and motivation signals worth screening for.",
-    calibrate:
-      "I found the strongest hiring signals for this role. Adjust anything before I draft the screen.",
-    questions:
-      draft?.rationale ??
-      "I drafted questions that ask for real examples, not generic self-assessments.",
-    evaluation:
-      "These criteria help reviewers compare candidates consistently after the screen.",
-    share:
-      "The draft is ready. Preview the candidate experience only if you want a final check before publishing.",
+    brief: t("interviewBuilder.agentBrief"),
+    calibrate: t("interviewBuilder.agentCalibrate"),
+    // The generator's own rationale wins when there is one: it is about THIS
+    // role, and it comes back in the language the draft was generated in.
+    questions: draft?.rationale ?? t("interviewBuilder.agentQuestions"),
+    evaluation: t("interviewBuilder.agentEvaluation"),
+    share: t("interviewBuilder.agentShare"),
   };
 
   return messages[step];
@@ -1081,6 +1128,7 @@ function GeneratingQuestionsStep({
   modes: ResponseMode[];
   seniority: InterviewSeniority;
 }) {
+  const { t } = useTranslation();
   const skeletonWidths = ["74%", "88%", "64%", "81%"];
   // N16: honest progress. The generate action is one async round trip, so every
   // labeled step is genuinely in flight together until the action resolves
@@ -1093,20 +1141,23 @@ function GeneratingQuestionsStep({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span className="inline-flex items-center gap-2.5 text-[13.5px] font-semibold text-ink-950">
           <span className="h-[15px] w-[15px] animate-spin rounded-full border-2 border-[#e2ddd2] border-t-olive-700" />
-          Drafting questions
+          {t("interviewBuilder.draftingQuestions")}
         </span>
         <span className="text-[12.5px] text-ink-400">
-          Tuned to {formatSeniorityLabel(seniority)} · {focusCount} signals ·{" "}
-          {getResponseModeSummary(modes)}
+          {t("interviewBuilder.tunedTo", {
+            count: focusCount,
+            modes: getResponseModeSummary(modes, t),
+            seniority: formatSeniorityLabel(seniority, t),
+          })}
         </span>
       </div>
 
       <div className="mt-5 flex flex-col gap-3">
-        {generationSteps.map((label) => {
+        {generationStepKeys.map((stepKey) => {
           const done = allComplete;
 
           return (
-            <div className="flex items-center gap-3" key={label}>
+            <div className="flex items-center gap-3" key={stepKey}>
               <span
                 className={`grid h-[22px] w-[22px] shrink-0 place-items-center rounded-full border ${
                   done
@@ -1121,7 +1172,7 @@ function GeneratingQuestionsStep({
                 )}
               </span>
               <span className="text-[13.5px] font-semibold text-ink-950">
-                {label}
+                {t(stepKey)}
               </span>
             </div>
           );
@@ -1147,16 +1198,12 @@ function GeneratingQuestionsStep({
   );
 }
 
-function formatSeniorityLabel(value: InterviewSeniority) {
-  if (value === "junior") {
-    return "Junior";
-  }
+// Same three labels as `seniorityOptions`, reached from a value rather than
+// from the list — so it reads the same keys rather than restating the words.
+function formatSeniorityLabel(value: InterviewSeniority, t: TFunction) {
+  const match = seniorityOptions.find((option) => option.value === value);
 
-  if (value === "senior") {
-    return "Senior";
-  }
-
-  return "Mid-level";
+  return t(match?.labelKey ?? "interviewBuilder.seniorityMid");
 }
 
 function BriefStep({
@@ -1186,10 +1233,11 @@ function BriefStep({
             <FileText aria-hidden={true} className="h-4 w-4" />
           </span>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-ink-950">Manual brief</p>
+            <p className="text-sm font-semibold text-ink-950">
+              {t("interviewBuilder.manualBriefTitle")}
+            </p>
             <p className="mt-1 max-w-[620px] text-sm leading-6 text-ink-500">
-              Add the role title and the job context. HireCall will use this
-              brief to draft focused first-screening questions.
+              {t("interviewBuilder.manualBriefBody")}
             </p>
           </div>
         </div>
@@ -1219,8 +1267,8 @@ function BriefStep({
         <div className="grid gap-5">
           <TextField
             controlClassName="h-12 rounded-[13px] border-[#ddd8cc] px-[15px] text-[15px] font-medium"
-            label="Role"
-            placeholder="Senior Product Designer"
+            label={t("interviewBuilder.roleLabel")}
+            placeholder={t("interviewBuilder.rolePlaceholder")}
             value={jobTitle}
             onChange={(event) =>
               onJobTitleChange((event.currentTarget as HTMLInputElement).value)
@@ -1229,16 +1277,16 @@ function BriefStep({
 
           <TextField
             controlClassName="h-12 rounded-[13px] border-[#ddd8cc] px-[15px] text-[15px] font-medium"
-            description="Where the role is based. Shown and searchable on your roles list."
-            label="Location"
-            placeholder="Paris, France · Remote · Hybrid (optional)"
+            description={t("interviewBuilder.locationHint")}
+            label={t("interviewBuilder.locationLabel")}
+            placeholder={t("interviewBuilder.locationPlaceholder")}
             value={location}
             onChange={(event) =>
               onLocationChange((event.currentTarget as HTMLInputElement).value)
             }
           />
 
-          <Field label="Job description">
+          <Field label={t("interviewBuilder.jobDescriptionLabel")}>
             <Textarea
               className="mt-2 min-h-[184px] w-full min-w-0 max-w-full rounded-[13px] border-[#ddd8cc] bg-white px-[15px] py-3.5 text-sm font-normal leading-[1.6] text-ink-700 focus:border-olive-700 focus:ring-[#e5e8d6]"
               placeholder="Paste the job description, responsibilities, context, hiring criteria, location constraints, or anything the interviewer should understand before drafting the first screen."
@@ -1267,18 +1315,22 @@ function CalibrateStep({
   toggleFocus: (value: InterviewFocus) => void;
   toggleMode: (value: ResponseMode) => void;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
       <div>
-        <p className="text-sm font-medium text-ink-700">Seniority</p>
+        <p className="text-sm font-medium text-ink-700">
+          {t("interviewBuilder.seniorityHeading")}
+        </p>
         <RadioCardGroup
-          ariaLabel="Seniority"
+          ariaLabel={t("interviewBuilder.seniorityHeading")}
           cardClassName="h-12 items-center justify-center rounded-[18px] px-4 py-0"
           className="mt-2 grid gap-2 sm:grid-cols-3 lg:grid-cols-1"
           contentClassName="text-center"
           onValueChange={onSeniorityChange}
           options={seniorityOptions.map((option) => ({
-            label: option.label,
+            label: t(option.labelKey),
             value: option.value,
           }))}
           showIndicator={false}
@@ -1286,7 +1338,7 @@ function CalibrateStep({
         />
 
         <p className="mt-6 text-sm font-medium text-ink-700">
-          Candidate formats
+          {t("interviewBuilder.candidateFormatsHeading")}
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
           {responseModes.map((mode) => {
@@ -1295,7 +1347,12 @@ function CalibrateStep({
             return (
               <button
                 key={mode.value}
-                aria-label={`${checked ? "Remove" : "Add"} ${mode.label} response mode`}
+                aria-label={t(
+                    checked
+                      ? "interviewBuilder.formatRemoveAria"
+                      : "interviewBuilder.formatAddAria",
+                    { format: t(mode.labelKey) },
+                  )}
                 className={cn(
                   selectionCardClasses({ selected: checked }),
                   "inline-flex h-10 items-center gap-2 rounded-full px-4 text-sm font-semibold",
@@ -1314,7 +1371,7 @@ function CalibrateStep({
                     className="h-4 w-4 text-olive-900"
                   />
                 ) : null}
-                {mode.label}
+                {t(mode.labelKey)}
               </button>
             );
           })}
@@ -1322,7 +1379,9 @@ function CalibrateStep({
       </div>
 
       <div>
-        <p className="text-sm font-medium text-ink-700">Hiring signals</p>
+        <p className="text-sm font-medium text-ink-700">
+          {t("interviewBuilder.hiringSignalsHeading")}
+        </p>
         <div className="mt-2 grid gap-3">
           {focusOptions.map((option) => {
             const checked = focus.includes(option.value);
@@ -1330,10 +1389,15 @@ function CalibrateStep({
             return (
               <SelectionCard
                 key={option.value}
-                aria-label={`${checked ? "Remove" : "Add"} ${option.label} signal`}
-                description={option.description}
+                aria-label={t(
+                  checked
+                    ? "interviewBuilder.signalRemoveAria"
+                    : "interviewBuilder.signalAddAria",
+                  { signal: t(option.labelKey) },
+                )}
+                description={t(option.descriptionKey)}
                 selected={checked}
-                title={option.label}
+                title={t(option.labelKey)}
                 onClick={() => toggleFocus(option.value)}
               />
             );
@@ -1347,7 +1411,7 @@ function CalibrateStep({
 function getQuestionMeta(question: InterviewQuestionDraft): {
   icon: React.ReactNode;
   iconClass: string;
-  label: string;
+  labelKey: string;
 } {
   const signal = question.expectedSignal.toLowerCase();
 
@@ -1355,7 +1419,7 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
     return {
       icon: <Paperclip aria-hidden="true" className="h-4 w-4" />,
       iconClass: "bg-[#eef0e3] text-olive-800",
-      label: "Context",
+      labelKey: "interviewBuilder.metaContext",
     };
   }
 
@@ -1363,7 +1427,7 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
     return {
       icon: <Heart aria-hidden="true" className="h-4 w-4" />,
       iconClass: "bg-coral-50 text-coral-800",
-      label: "Motivation",
+      labelKey: "interviewBuilder.metaMotivation",
     };
   }
 
@@ -1371,7 +1435,7 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
     return {
       icon: <Brain aria-hidden="true" className="h-4 w-4" />,
       iconClass: "bg-gold-100 text-gold-800",
-      label: "Judgment",
+      labelKey: "interviewBuilder.metaJudgment",
     };
   }
 
@@ -1379,7 +1443,7 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
     return {
       icon: <Message aria-hidden="true" className="h-4 w-4" />,
       iconClass: "bg-meadow-50 text-meadow-800",
-      label: "Communication",
+      labelKey: "interviewBuilder.metaCommunication",
     };
   }
 
@@ -1391,14 +1455,14 @@ function getQuestionMeta(question: InterviewQuestionDraft): {
     return {
       icon: <Briefcase aria-hidden="true" className="h-4 w-4" />,
       iconClass: "bg-ink-100 text-ink-800",
-      label: "Logistics",
+      labelKey: "interviewBuilder.metaLogistics",
     };
   }
 
   return {
     icon: <Briefcase aria-hidden="true" className="h-4 w-4" />,
     iconClass: "bg-[#eef0e3] text-olive-800",
-    label: "Experience",
+    labelKey: "interviewBuilder.metaExperience",
   };
 }
 
@@ -1477,7 +1541,12 @@ function QuestionsStep({
             >
               <div className="flex items-start gap-3">
                 <button
-                  aria-label={`${playing ? "Pause" : "Play"} question ${index + 1}`}
+                  aria-label={t(
+                    playing
+                      ? "interviewBuilder.pauseQuestionAria"
+                      : "interviewBuilder.playQuestionAria",
+                    { number: index + 1 },
+                  )}
                   className={`mt-0.5 flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full border outline-none transition focus-visible:ring-2 focus-visible:ring-[#e5e8d6] ${
                     playing
                       ? "border-ink-900 bg-ink-900 text-white"
@@ -1512,13 +1581,13 @@ function QuestionsStep({
                         {String(index + 1).padStart(2, "0")}
                       </span>
                       <span className="rounded-full bg-[#eef0e3] px-2 py-0.5 text-xs font-medium text-olive-800">
-                        {meta.label}
+                        {t(meta.labelKey)}
                       </span>
                       {textViolatesPolicy(
                         `${question.prompt} ${question.expectedSignal} ${question.followUpPrompt ?? ""}`,
                       ) ? (
                         <span className="rounded-full bg-coral-50 px-2 py-0.5 text-xs font-medium text-coral-800">
-                          Protected topic
+                          {t("interviewBuilder.protectedTopic")}
                         </span>
                       ) : null}
                     </span>
@@ -1548,13 +1617,15 @@ function QuestionsStep({
                       ) : null}
                       <div className="space-y-1.5">
                         <p className="text-xs font-medium text-ink-600">
-                          Follow-up the interviewer may ask (optional)
+                          {t("interviewBuilder.followUpLabel")}
                         </p>
                         <Textarea
-                          aria-label={`Question ${index + 1} follow-up`}
+                          aria-label={t("interviewBuilder.followUpAria", {
+                            number: index + 1,
+                          })}
                           className="min-h-16 bg-white/88 text-sm leading-6 focus:border-olive-800 focus:ring-[#e5e8d6]"
                           value={question.followUpPrompt ?? ""}
-                          placeholder="One short, open follow-up that draws out the answer, spoken to every candidate."
+                          placeholder={t("interviewBuilder.followUpPlaceholder")}
                           onChange={(event) =>
                             onUpdateQuestion(question.id, {
                               followUpPrompt: event.target.value,
@@ -1644,19 +1715,18 @@ function QuestionsStep({
           <div className="space-y-3">
             <div>
               <p className="text-sm font-semibold text-ink-900">
-                Add a question
+                {t("interviewBuilder.addQuestionTitle")}
               </p>
               <p className="mt-1 text-sm leading-5 text-ink-600">
-                Tell HireCall what signal is missing, or write the question
-                directly later.
+                {t("interviewBuilder.addQuestionBody")}
               </p>
             </div>
             <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
               <input
-                aria-label="Ask HireCall to add a question about"
+                aria-label={t("interviewBuilder.addQuestionAria")}
                 className="h-10 min-w-0 rounded-2xl border border-ink-200 bg-white/88 px-3 text-sm outline-none focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
                 value={addTopic}
-                placeholder="salary alignment, mobility, language..."
+                placeholder={t("interviewBuilder.addQuestionPlaceholder")}
                 onChange={(event) => setAddTopic(event.target.value)}
               />
               <Button
@@ -1742,19 +1812,19 @@ function EvaluationStep({
                 }`}
               >
                 <input
-                  aria-label="Criterion label"
+                  aria-label={t("interviewBuilder.criterionLabelAria")}
                   className="w-full rounded-2xl border border-ink-200 bg-white/88 px-3 py-2 text-sm font-semibold text-ink-900 outline-none focus:border-olive-800 focus:ring-2 focus:ring-[#e5e8d6]"
                   value={criterion.label}
-                  placeholder="What to evaluate (e.g. Relevant evidence)"
+                  placeholder={t("interviewBuilder.criterionLabelPlaceholder")}
                   onChange={(event) =>
                     onUpdateCriterion(criterion.id, "label", event.target.value)
                   }
                 />
                 <Textarea
-                  aria-label="Criterion description"
+                  aria-label={t("interviewBuilder.criterionDescriptionAria")}
                   className="mt-2 min-h-16 bg-white/88 text-sm leading-5 focus:border-olive-800 focus:ring-[#e5e8d6]"
                   value={criterion.description}
-                  placeholder="How a reviewer should judge it"
+                  placeholder={t("interviewBuilder.criterionDescriptionPlaceholder")}
                   onChange={(event) =>
                     onUpdateCriterion(
                       criterion.id,
@@ -1924,7 +1994,7 @@ function ShareStep({
   const { t } = useTranslation();
   const candidateLink = publishedInterview
     ? formatCandidateLinkLabel(publishedInterview.candidatePath)
-    : "Publish to create the candidate link";
+    : t("interviewBuilder.publishToCreateLink");
   const publicationIssues = getInterviewPlanPublicationIssues(
     {
       criteria: draft.criteria,
@@ -1942,20 +2012,23 @@ function ShareStep({
     <div className="space-y-5">
       <div className="grid gap-4 sm:grid-cols-3">
         <SummaryMetric
-          label="Questions"
+          label={t("interviewBuilder.summaryQuestions")}
           value={String(draft.questions.length)}
         />
         <SummaryMetric
-          label="Experience"
-          value={getResponseModeSummary(modes)}
+          label={t("interviewBuilder.summaryExperience")}
+          value={getResponseModeSummary(modes, t)}
         />
-        <SummaryMetric label="Organization" value={companyName} />
+        <SummaryMetric
+          label={t("interviewBuilder.summaryOrganization")}
+          value={companyName}
+        />
       </div>
 
       <div className="rounded-3xl border border-ink-100 bg-white/72 p-5">
         <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
           <Link2 aria-hidden="true" className="h-4 w-4 text-ink-700" />
-          Candidate link
+          {t("interviewBuilder.candidateLink")}
         </div>
         <p
           className={`mt-3 break-all text-lg font-semibold ${
@@ -2028,31 +2101,35 @@ function ShareStep({
         >
           <Eye aria-hidden="true" className="h-4 w-4" />
           {isPreviewing
-            ? "Preparing preview..."
-            : "Preview candidate experience"}
+            ? t("interviewBuilder.preparingPreview")
+            : t("interviewBuilder.previewCandidate")}
         </Button>
         <Button variant="secondary" onClick={onEditDraft}>
-          Edit draft
+          {t("interviewBuilder.editDraft")}
         </Button>
         <Button
           disabled={isSaving || isPublishing}
           variant="secondary"
           onClick={onSave}
         >
-          {isSaving ? "Saving..." : "Save draft"}
+          {isSaving
+            ? t("interviewBuilder.savingDraft")
+            : t("interviewBuilder.saveDraft")}
         </Button>
         <Button
           disabled={!canPublish || isSaving || isPublishing}
           onClick={onPublish}
         >
-          {isPublishing ? "Publishing..." : "Publish role screen"}
+          {isPublishing
+              ? t("interviewBuilder.publishing")
+              : t("interviewBuilder.publishRoleScreen")}
         </Button>
         {publishedInterview ? (
           <a
             className="inline-flex h-10 cursor-pointer items-center justify-center rounded-full border border-ink-200 bg-white/80 px-4 text-sm font-medium text-ink-900 transition hover:border-ink-900 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
             href={publishedInterview.detailPath}
           >
-            Open detail
+            {t("interviewBuilder.openDetail")}
           </a>
         ) : null}
       </div>
@@ -2253,6 +2330,8 @@ function DraftSaveStatusBadge({
   className?: string;
   status: DraftSaveStatus;
 }) {
+  const { t } = useTranslation();
+
   if (!status) {
     return null;
   }
@@ -2266,7 +2345,9 @@ function DraftSaveStatusBadge({
       role="status"
     >
       <Check aria-hidden="true" className="h-3.5 w-3.5" />
-      {status === "saved" ? "Saved" : "Published"}
+      {status === "saved"
+        ? t("interviewBuilder.statusSaved")
+        : t("interviewBuilder.statusPublished")}
     </p>
   );
 }

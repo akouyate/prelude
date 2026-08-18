@@ -17,6 +17,8 @@ import {
   WarningTriangle as AlertTriangle,
 } from "iconoir-react";
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 type RecruiterSummaryPanelProps = {
   summary: LiveInterviewRecruiterSummary;
@@ -40,31 +42,32 @@ const toneClasses: Record<Tone, string> = {
 
 const categoryConfig: Record<
   string,
-  { label: string; icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; classes: string }
+  { labelKey: string; icon: React.ComponentType<React.SVGProps<SVGSVGElement>>; classes: string }
 > = {
   role_fit: {
-    label: "Role fit",
+    labelKey: "candidateReview.categoryRoleFit",
     icon: Target,
     classes: "bg-[#eef7ff] text-[#245b89]",
   },
   experience: {
-    label: "Experience",
+    labelKey: "candidateReview.categoryExperience",
     icon: BriefcaseBusiness,
     classes: "bg-[#f6f1ff] text-[#68439c]",
   },
   communication: {
-    label: "Communication",
+    labelKey: "candidateReview.categoryCommunication",
     icon: MessageText,
     classes: "bg-meadow-100 text-meadow-700",
   },
   availability: {
-    label: "Logistics",
+    labelKey: "candidateReview.categoryLogistics",
     icon: Calendar,
     classes: "bg-gold-100 text-gold-800",
   },
 };
 
 export function RecruiterSummaryPanel({ summary }: RecruiterSummaryPanelProps) {
+  const { t } = useTranslation();
   const satisfiedCriteria = summary.criteria.filter(
     (criterion) => criterion.status === "satisfied",
   ).length;
@@ -76,9 +79,11 @@ export function RecruiterSummaryPanel({ summary }: RecruiterSummaryPanelProps) {
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
           <div className="max-w-3xl">
             <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge tone="dark">Interview recap</StatusBadge>
+              <StatusBadge tone="dark">{t("candidateReview.interviewRecap")}</StatusBadge>
               <StatusBadge tone={summary.status === "complete" ? "success" : "warning"}>
-                {summary.status === "complete" ? "Complete" : "Incomplete"}
+                {summary.status === "complete"
+                  ? t("candidateReview.recapComplete")
+                  : t("candidateReview.recapIncomplete")}
               </StatusBadge>
             </div>
             <h1 className="mt-4 text-3xl font-semibold tracking-normal text-ink-900 md:text-4xl">
@@ -115,14 +120,22 @@ export function RecruiterSummaryPanel({ summary }: RecruiterSummaryPanelProps) {
 
         <dl className="mt-6 grid gap-3 border-t border-ink-100 pt-4 sm:grid-cols-2 lg:grid-cols-4">
           <Metric
-            label="Signals captured"
+            label={t("candidateReview.metricSignalsCaptured")}
             value={`${satisfiedCriteria}/${summary.criteria.length}`}
           />
-          <Metric label="Needs attention" value={String(needsAttention)} />
-          <Metric label="Analysis mode" value={formatGenerator(summary.generator)} />
           <Metric
-            label="Evidence"
-            value={`${summary.audit.sourceEventIds.length} events`}
+            label={t("candidateReview.metricNeedsAttention")}
+            value={String(needsAttention)}
+          />
+          <Metric
+            label={t("candidateReview.metricAnalysisMode")}
+            value={formatGenerator(summary.generator, t)}
+          />
+          <Metric
+            label={t("candidateReview.metricEvidence")}
+            value={t("candidateReview.metricEvidenceValue", {
+              count: summary.audit.sourceEventIds.length,
+            })}
           />
         </dl>
       </section>
@@ -160,6 +173,8 @@ function DecisionBrief({
 }: {
   summary: LiveInterviewRecruiterSummary;
 }) {
+  const { t } = useTranslation();
+
   return (
     <section className="rounded-3xl border border-ink-100 bg-white/76 p-5 backdrop-blur">
       <div className="flex items-center justify-between gap-4">
@@ -169,23 +184,23 @@ function DecisionBrief({
             Decision brief
           </div>
           <p className="mt-1 text-sm text-ink-500">
-            A short read before opening the candidate profile.
+            {t("candidateReview.summaryShortRead")}
           </p>
         </div>
       </div>
 
       <div className="mt-5 grid gap-4 md:grid-cols-2">
         <SignalColumn
-          empty="No clear strength was extracted from this interview."
+          empty={t("candidateReview.whatWorksEmpty")}
           icon={<CheckCircle aria-hidden="true" className="h-4 w-4" />}
           signals={summary.strengths}
-          title="What works"
+          title={t("candidateReview.whatWorks")}
         />
         <SignalColumn
-          empty="No blocking concern was detected from the available transcript."
+          empty={t("candidateReview.whatToValidateEmpty")}
           icon={<AlertTriangle aria-hidden="true" className="h-4 w-4" />}
           signals={summary.risks}
-          title="What to validate"
+          title={t("candidateReview.whatToValidate")}
         />
       </div>
     </section>
@@ -289,18 +304,19 @@ function QuestionReview({
 }
 
 function CategoryIcon({ category }: { category: string }) {
-  const config = categoryConfig[category] ?? {
-    label: formatStatus(category),
-    icon: HelpCircle,
-    classes: "bg-ink-100 text-ink-700",
-  };
-  const Icon = config.icon;
+  const { t } = useTranslation();
+  const known = categoryConfig[category];
+  // An unknown category has no catalogue entry, so it falls back to its own
+  // readable form rather than rendering a missing key.
+  const label = known ? t(known.labelKey) : formatStatus(category);
+  const Icon = known?.icon ?? HelpCircle;
+  const classes = known?.classes ?? "bg-ink-100 text-ink-700";
 
   return (
     <div
-      aria-label={config.label}
-      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${config.classes}`}
-      title={config.label}
+      aria-label={label}
+      className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl ${classes}`}
+      title={label}
     >
       <Icon aria-hidden="true" className="h-5 w-5" />
     </div>
@@ -316,19 +332,30 @@ function ReviewChecklist({
   followUpQuestions: string[];
   logisticsNotes: string[];
 }) {
+  const { t } = useTranslation();
+
   return (
     <section className="rounded-3xl border border-ink-100 bg-white/76 p-5 backdrop-blur">
       <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
         <Target aria-hidden="true" className="h-4 w-4" />
-        Recruiter next step
+        {t("candidateReview.recruiterNextStep")}
       </div>
       <p className="mt-2 text-sm leading-6 text-ink-600">
-        Use this checklist to keep the follow-up short and focused.
+        {t("candidateReview.recruiterNextStepIntro")}
       </p>
 
-      <CompactList title="Clarify first" values={missingInformation} />
-      <CompactList title="Suggested questions" values={followUpQuestions} />
-      <CompactList title="Logistics" values={logisticsNotes} />
+      <CompactList
+        title={t("candidateReview.clarifyFirst")}
+        values={missingInformation}
+      />
+      <CompactList
+        title={t("candidateReview.suggestedQuestions")}
+        values={followUpQuestions}
+      />
+      <CompactList
+        title={t("candidateReview.categoryLogistics")}
+        values={logisticsNotes}
+      />
     </section>
   );
 }
@@ -417,6 +444,11 @@ function formatStatus(status: string) {
   return status.replace(/_/g, " ");
 }
 
-function formatGenerator(generator: LiveInterviewRecruiterSummary["generator"]) {
-  return generator === "llm_assisted" ? "AI assisted" : "Deterministic";
+function formatGenerator(
+  generator: LiveInterviewRecruiterSummary["generator"],
+  t: TFunction,
+) {
+  return generator === "llm_assisted"
+    ? t("candidateReview.generatorAiAssisted")
+    : t("candidateReview.generatorDeterministic");
 }
