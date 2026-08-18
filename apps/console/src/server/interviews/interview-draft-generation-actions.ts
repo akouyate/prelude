@@ -87,7 +87,7 @@ export async function generateInterviewDraftAction(
       provider: generated.provider,
     };
   } catch (error) {
-    return { error: toPublicGenerationError(error), ok: false };
+    return { error: await toPublicGenerationError(error), ok: false };
   }
 }
 
@@ -135,7 +135,7 @@ export async function refineInterviewQuestionAction(
       questionId: nextQuestion.id,
     };
   } catch (error) {
-    return { error: toPublicGenerationError(error), ok: false };
+    return { error: await toPublicGenerationError(error), ok: false };
   }
 }
 
@@ -185,7 +185,7 @@ export async function addInterviewQuestionAction(
       questionId: question.id,
     };
   } catch (error) {
-    return { error: toPublicGenerationError(error), ok: false };
+    return { error: await toPublicGenerationError(error), ok: false };
   }
 }
 
@@ -281,13 +281,21 @@ function estimateMinutes(questions: InterviewQuestionDraft[]) {
   );
 }
 
-function toPublicGenerationError(error: unknown) {
-  const message =
-    error instanceof Error ? error.message : "HireCall could not generate this draft.";
+/*
+ * This string reaches the recruiter's screen (the builder renders `result.error`
+ * verbatim), so it is translated. The one exception is a misconfiguration
+ * message, which is deliberately passed through untranslated: it names an env
+ * var to whoever is setting the deployment up, and turning that into French
+ * would make it harder, not easier, to act on.
+ */
+async function toPublicGenerationError(error: unknown) {
+  const message = error instanceof Error ? error.message : "";
 
   if (message.includes("not configured")) {
     return message;
   }
 
-  return "HireCall could not generate the role draft. Please retry in a moment.";
+  const t = getServerT(await getAuthenticatedUserLocale());
+
+  return t("interviewBuilder.generationFailedRetry");
 }

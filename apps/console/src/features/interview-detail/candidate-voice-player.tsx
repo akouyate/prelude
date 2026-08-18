@@ -2,6 +2,7 @@
 
 import { PauseSolid, PlaySolid, Undo } from "iconoir-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   formatReplayTime,
@@ -114,6 +115,15 @@ function VoicePlayer({
 }) {
   const { openTranscript, publishPlayback, registerPlayer, registerToggle } =
     useInterviewReplay();
+  const { t } = useTranslation();
+  /*
+   * `playRequest` below is a `useCallback` with empty deps — every caller holds
+   * the same function for the life of the player. Adding `t` to those deps
+   * would give it a new identity on every locale change; holding it in a ref
+   * keeps the callback stable while the message it reads stays current.
+   */
+  const tRef = useRef(t);
+  tRef.current = t;
   const audioRef = useRef<HTMLAudioElement>(null);
   const waveformRef = useRef<HTMLDivElement>(null);
   const [speed, setSpeed] = useState<number>(1);
@@ -201,7 +211,7 @@ function VoicePlayer({
     void audio.play().catch(() => {
       setIsPlaying(false);
       setPlaybackError(
-        "The recording could not be played. Check your connection and retry.",
+        tRef.current("recording.playbackFailed"),
       );
     });
   }, []);
@@ -233,13 +243,13 @@ function VoicePlayer({
       } catch {
         setIsPlaying(false);
         setPlaybackError(
-          "The recording could not be played. Check your connection and retry.",
+          t("recording.playbackFailed"),
         );
       }
     } else {
       audio.pause();
     }
-  }, [activeRequest]);
+  }, [activeRequest, t]);
 
   useEffect(() => {
     registerToggle(() => void togglePlayback());
@@ -287,7 +297,7 @@ function VoicePlayer({
 
   return (
     <section
-      aria-label="Interview recording"
+      aria-label={t("recording.regionAria")}
       className="sticky top-3 z-[15] mt-[26px] scroll-mt-3 rounded-[999px] border border-[#eae6dc] bg-white/95 py-[7px] pl-[7px] pr-[15px] backdrop-blur max-[680px]:rounded-[18px] max-[680px]:px-3.5 max-[680px]:py-2.5"
     >
       <audio
@@ -298,7 +308,7 @@ function VoicePlayer({
         onError={() => {
           setIsPlaying(false);
           setPlaybackError(
-            "The recording could not be loaded. Refresh the page to request a new secure playback link.",
+            t("recording.loadFailed"),
           );
         }}
         onLoadedMetadata={(event) => {
@@ -321,7 +331,9 @@ function VoicePlayer({
           aria-describedby={
             playbackError ? "recording-playback-error" : undefined
           }
-          aria-label={isPlaying ? "Pause recording" : "Play recording"}
+          aria-label={
+            isPlaying ? t("recording.pauseAria") : t("recording.playAria")
+          }
           className="grid h-[34px] w-[34px] shrink-0 cursor-pointer place-items-center rounded-full bg-ink-900 text-white transition hover:bg-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
           onClick={() => void togglePlayback()}
           type="button"
@@ -336,17 +348,17 @@ function VoicePlayer({
           )}
         </button>
         <button
-          aria-label="Back 15 seconds"
+          aria-label={t("recording.back15")}
           className="grid h-7 w-7 shrink-0 cursor-pointer place-items-center rounded-full text-ink-400 transition hover:bg-[#f1efe8] hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
           onClick={() => seekTo(elapsedMs - skipBackMs)}
-          title="Back 15 seconds"
+          title={t("recording.back15")}
           type="button"
         >
           <Undo aria-hidden={true} className="h-[15px] w-[15px]" />
         </button>
 
         <div
-          aria-label="Seek recording"
+          aria-label={t("recording.seekAria")}
           className="relative flex h-[26px] min-w-0 flex-1 cursor-pointer items-center justify-between gap-px max-[680px]:order-first max-[680px]:basis-full"
           onClick={(event) => seekFromPointer(event.clientX)}
           onKeyDown={(event) => {
@@ -405,7 +417,7 @@ function VoicePlayer({
               : "border-[#cbc4b6] text-ink-700"
           }`}
           onClick={() => setSpeed(nextPlaybackSpeed(speed))}
-          title="Playback speed"
+          title={t("recording.playbackSpeed")}
           type="button"
         >
           {speed}×
@@ -437,16 +449,17 @@ function VoicePlayerPlaceholder({
 }: {
   status: CandidateRecording["status"] | "none" | "playback_unavailable";
 }) {
+  const { t } = useTranslation();
   const message =
     status === "processing"
-      ? "Recording is processing — it will appear here shortly."
+      ? t("recording.processing")
       : status === "deleted"
-        ? "This recording has been deleted and is no longer available."
+        ? t("recording.deleted")
         : status === "failed"
-          ? "Audio recording is unavailable for this interview."
+          ? t("recording.unavailable")
           : status === "playback_unavailable"
-            ? "The recording is ready, but secure playback is not configured."
-            : "No audio recording for this interview.";
+            ? t("recording.playbackNotConfigured")
+            : t("recording.none");
 
   return (
     <section className="mt-[26px] flex items-center gap-3 rounded-[999px] border border-dashed border-[#e0dacc] bg-white/70 py-[7px] pl-[7px] pr-[15px] max-[680px]:rounded-[18px] max-[680px]:px-3.5">

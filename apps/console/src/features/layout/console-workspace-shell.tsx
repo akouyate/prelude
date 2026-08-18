@@ -9,6 +9,7 @@ import {
   EnterpriseShell,
   type EnterpriseNavCounts,
   type EnterpriseNavCredits,
+  type EnterpriseShellLabels,
 } from "@prelude/ui";
 import type { OrganizationUserContext } from "@prelude/types";
 
@@ -49,6 +50,48 @@ export function ConsoleWorkspaceShell({
     window.localStorage.setItem(sidebarStorageKey, String(nextCollapsed));
   }, []);
 
+  /*
+   * The shell lives in @prelude/ui and takes finished copy rather than
+   * catalogue keys — the same contract as `nextExpiryLabel`, which it already
+   * receives pre-formatted so the package needs no date library. The credit
+   * meter's tooltip is assembled here for the same reason: composing a sentence
+   * is a translation concern, and only this side has the catalogue.
+   */
+  const shellLabels: EnterpriseShellLabels = React.useMemo(() => {
+    const meterBase = credits
+      ? credits.totalGranted > 0
+        ? t("shell.creditMeterTitleWithTotal", {
+            available: credits.available,
+            total: credits.totalGranted,
+          })
+        : t("shell.creditMeterTitle", { available: credits.available })
+      : "";
+
+    return {
+      collapseSidebar: t("shell.collapseSidebar"),
+      creditMeterTitle: credits?.nextExpiryLabel
+        ? t("shell.creditMeterExpiry", {
+            base: meterBase,
+            expiry: credits.nextExpiryLabel,
+          })
+        : meterBase,
+      creditsHeading: t("shell.creditsHeading"),
+      creditsLeftOf: t("shell.creditsLeftOf", {
+        total: credits?.totalGranted ?? 0,
+      }),
+      creditsTopUp: t("shell.creditsTopUp"),
+      creditsUnit: t("shell.creditsUnit"),
+      expandSidebar: t("shell.expandSidebar"),
+      groupHiring: t("shell.groupHiring"),
+      groupOverview: t("shell.groupOverview"),
+      navCandidates: t("shell.navCandidates"),
+      navDashboard: t("shell.navDashboard"),
+      navRoles: t("shell.navRoles"),
+      navSettings: t("shell.navSettings"),
+      workspaceNav: t("shell.workspaceNav"),
+    };
+  }, [credits, t]);
+
   if (focusModeRoute) {
     return (
       <div className="min-h-screen bg-[#F9F8F3] text-ink-900">
@@ -71,6 +114,7 @@ export function ConsoleWorkspaceShell({
       activePath={pathname}
       collapsed={isCollapsed}
       credits={credits}
+      labels={shellLabels}
       navCounts={navCounts}
       onCollapsedChange={handleCollapsedChange}
     >

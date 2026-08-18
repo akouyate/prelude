@@ -75,6 +75,30 @@ type ShellNavItem = {
   matchHref?: string;
 };
 
+/*
+ * Every visible word this shell renders arrives from its caller, already
+ * translated — the same reasoning as `nextExpiryLabel` below: the package
+ * stays free of an i18n runtime, and the app that owns the catalogues owns the
+ * copy. The prop is required rather than defaulted to English so that missing
+ * a label is a compile error, not a word that silently stays untranslated.
+ */
+export type EnterpriseShellLabels = {
+  collapseSidebar: string;
+  creditsHeading: string;
+  creditsLeftOf: string;
+  creditsTopUp: string;
+  creditMeterTitle: string;
+  creditsUnit: string;
+  expandSidebar: string;
+  groupHiring: string;
+  groupOverview: string;
+  navCandidates: string;
+  navDashboard: string;
+  navRoles: string;
+  navSettings: string;
+  workspaceNav: string;
+};
+
 export type EnterpriseNavCounts = {
   candidates?: number;
   roles?: number;
@@ -91,22 +115,23 @@ export type EnterpriseNavCredits = {
   totalGranted: number;
 };
 
-const settingsNavItem: ShellNavItem = {
-  href: "/settings",
-  key: "settings",
-  label: "Settings",
-};
+function settingsNavItem(labels: EnterpriseShellLabels): ShellNavItem {
+  return { href: "/settings", key: "settings", label: labels.navSettings };
+}
 
 type ShellNavGroup = {
   items: ShellNavItem[];
   label: string;
 };
 
-function buildNavGroups(counts: EnterpriseNavCounts): ShellNavGroup[] {
+function buildNavGroups(
+  counts: EnterpriseNavCounts,
+  labels: EnterpriseShellLabels,
+): ShellNavGroup[] {
   return [
     {
-      items: [{ href: "/", key: "dashboard", label: "Dashboard" }],
-      label: "Overview",
+      items: [{ href: "/", key: "dashboard", label: labels.navDashboard }],
+      label: labels.groupOverview,
     },
     {
       items: [
@@ -115,17 +140,17 @@ function buildNavGroups(counts: EnterpriseNavCounts): ShellNavGroup[] {
           count: counts.roles,
           href: "/roles",
           key: "roles",
-          label: "Roles",
+          label: labels.navRoles,
         },
         {
           badgeTone: "olive",
           count: counts.candidates,
           href: "/candidates",
           key: "candidates",
-          label: "Candidates",
+          label: labels.navCandidates,
         },
       ],
-      label: "Hiring",
+      label: labels.groupHiring,
     },
   ];
 }
@@ -145,6 +170,7 @@ export type EnterpriseShellProps = {
   className?: string;
   collapsed?: boolean;
   credits?: EnterpriseNavCredits | null;
+  labels: EnterpriseShellLabels;
   navCounts?: EnterpriseNavCounts;
   onCollapsedChange?: (collapsed: boolean) => void;
 };
@@ -157,6 +183,7 @@ export function EnterpriseShell({
   className,
   collapsed = false,
   credits,
+  labels,
   navCounts = {},
   onCollapsedChange,
 }: EnterpriseShellProps) {
@@ -171,6 +198,7 @@ export function EnterpriseShell({
           activePath={activePath}
           collapsed={collapsed}
           credits={credits}
+          labels={labels}
           navCounts={navCounts}
           onCollapsedChange={onCollapsedChange}
           organizationName={organizationName}
@@ -182,7 +210,11 @@ export function EnterpriseShell({
             collapsed && "min-[901px]:pl-[68px]",
           )}
         >
-          <MobileWorkspaceHeader credits={credits} organizationName={organizationName} />
+          <MobileWorkspaceHeader
+            credits={credits}
+            labels={labels}
+            organizationName={organizationName}
+          />
           {/*
            * The gutter is a literal, not a custom property. It was briefly
            * published as `--shell-gutter` so a scroller inside a page could
@@ -198,7 +230,7 @@ export function EnterpriseShell({
           <main className="px-[clamp(16px,3vw,40px)] py-[clamp(20px,3vw,38px)] pb-16">
             <div className="mx-auto w-full max-w-[1180px]">{children}</div>
           </main>
-          <MobileWorkspaceNav activePath={activePath} />
+          <MobileWorkspaceNav activePath={activePath} labels={labels} />
         </div>
       </div>
     </div>
@@ -207,16 +239,18 @@ export function EnterpriseShell({
 
 function MobileWorkspaceHeader({
   credits,
+  labels,
   organizationName,
 }: {
   credits?: EnterpriseNavCredits | null;
+  labels: EnterpriseShellLabels;
   organizationName: string;
 }) {
   return (
     <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-[#e7e2d8] bg-[#faf8f3]/97 px-4 py-[11px] backdrop-blur-[14px] min-[901px]:hidden">
       <BrandMark appearance="color" labelClassName="h-[26px] max-w-none" />
       {credits ? (
-        <MobileCreditPill credits={credits} />
+        <MobileCreditPill credits={credits} labels={labels} />
       ) : (
         <span className="max-w-[9rem] truncate text-right text-xs font-medium text-[#8a8178]">
           {organizationName}
@@ -226,7 +260,13 @@ function MobileWorkspaceHeader({
   );
 }
 
-function MobileCreditPill({ credits }: { credits: EnterpriseNavCredits }) {
+function MobileCreditPill({
+  credits,
+  labels,
+}: {
+  credits: EnterpriseNavCredits;
+  labels: EnterpriseShellLabels;
+}) {
   return (
     <a
       className={cn(
@@ -235,7 +275,7 @@ function MobileCreditPill({ credits }: { credits: EnterpriseNavCredits }) {
         !credits.low && "border-[#e7e2d8]",
       )}
       href={credits.topUpHref}
-      title={creditMeterTitle(credits)}
+      title={labels.creditMeterTitle}
     >
       <span
         className={cn(
@@ -244,20 +284,26 @@ function MobileCreditPill({ credits }: { credits: EnterpriseNavCredits }) {
         )}
       />
       {credits.available}
-      <span className="font-medium text-[#8a8178]">credits</span>
+      <span className="font-medium text-[#8a8178]">{labels.creditsUnit}</span>
     </a>
   );
 }
 
-function MobileWorkspaceNav({ activePath }: { activePath: string }) {
+function MobileWorkspaceNav({
+  activePath,
+  labels,
+}: {
+  activePath: string;
+  labels: EnterpriseShellLabels;
+}) {
   const items = [
-    ...buildNavGroups({}).flatMap((group) => group.items),
-    settingsNavItem,
+    ...buildNavGroups({}, labels).flatMap((group) => group.items),
+    settingsNavItem(labels),
   ];
 
   return (
     <nav
-      aria-label="Workspace"
+      aria-label={labels.workspaceNav}
       className="fixed inset-x-0 bottom-0 z-[55] flex items-stretch gap-1 border-t border-[#e7e2d8] bg-[#faf8f3]/97 px-2 pb-[calc(6px+env(safe-area-inset-bottom))] pt-1.5 backdrop-blur-[14px] min-[901px]:hidden"
     >
       {items.map((item) => {
@@ -289,6 +335,7 @@ function EnterpriseSidebar({
   activePath,
   collapsed,
   credits,
+  labels,
   navCounts,
   onCollapsedChange,
   organizationName,
@@ -298,6 +345,7 @@ function EnterpriseSidebar({
   activePath: string;
   collapsed: boolean;
   credits?: EnterpriseNavCredits | null;
+  labels: EnterpriseShellLabels;
   navCounts: EnterpriseNavCounts;
   onCollapsedChange?: (collapsed: boolean) => void;
   organizationName: string;
@@ -324,10 +372,10 @@ function EnterpriseSidebar({
         />
         {onCollapsedChange && !collapsed ? (
           <button
-            aria-label="Collapse sidebar"
+            aria-label={labels.collapseSidebar}
             className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-full text-ink-400 transition hover:bg-ink-900/5 hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
             onClick={() => onCollapsedChange(true)}
-            title="Collapse sidebar"
+            title={labels.collapseSidebar}
             type="button"
           >
             <ChevronPair direction="left" />
@@ -337,17 +385,17 @@ function EnterpriseSidebar({
 
       {collapsed && onCollapsedChange ? (
         <button
-          aria-label="Expand sidebar"
+          aria-label={labels.expandSidebar}
           className="mt-3.5 grid h-[34px] w-full place-items-center rounded-full border border-[#e7e2d8] bg-white text-ink-400 transition hover:text-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
           onClick={() => onCollapsedChange(false)}
-          title="Expand sidebar"
+          title={labels.expandSidebar}
           type="button"
         >
           <ChevronPair direction="right" />
         </button>
       ) : null}
 
-      {buildNavGroups(navCounts).map((group, index) => (
+      {buildNavGroups(navCounts, labels).map((group, index) => (
         <div className={index === 0 ? "mt-[22px]" : "mt-5"} key={group.label}>
           <p
             className={cn(
@@ -371,11 +419,17 @@ function EnterpriseSidebar({
       ))}
 
       <div className="mt-auto flex flex-col gap-0.5 border-t border-[#f0ece1] pt-2.5">
-        {credits ? <CreditMeter collapsed={collapsed} credits={credits} /> : null}
+        {credits ? (
+          <CreditMeter
+            collapsed={collapsed}
+            credits={credits}
+            labels={labels}
+          />
+        ) : null}
         <SidebarNavItem
-          active={isActivePath(activePath, settingsNavItem.href)}
+          active={isActivePath(activePath, settingsNavItem(labels).href)}
           collapsed={collapsed}
-          item={settingsNavItem}
+          item={settingsNavItem(labels)}
         />
         <a
           className={cn(
@@ -424,9 +478,11 @@ function EnterpriseSidebar({
 function CreditMeter({
   collapsed,
   credits,
+  labels,
 }: {
   collapsed: boolean;
   credits: EnterpriseNavCredits;
+  labels: EnterpriseShellLabels;
 }) {
   const usedFraction =
     credits.totalGranted > 0
@@ -445,7 +501,7 @@ function CreditMeter({
           !credits.low && "border-[#e7e2d8]",
         )}
         href={credits.topUpHref}
-        title={creditMeterTitle(credits)}
+        title={labels.creditMeterTitle}
       >
         <span
           className={cn(
@@ -484,7 +540,7 @@ function CreditMeter({
     >
       <div className="flex items-center justify-between">
         <span className="font-title text-[10px] font-semibold uppercase tracking-[0.1em] text-[#a29b8d]">
-          Credits
+          {labels.creditsHeading}
         </span>
         <span
           className={cn(
@@ -492,7 +548,7 @@ function CreditMeter({
             credits.low ? "text-[#a3421f]" : "text-olive-900",
           )}
         >
-          Top up
+          {labels.creditsTopUp}
         </span>
       </div>
       <div className="flex items-baseline gap-1.5">
@@ -506,7 +562,7 @@ function CreditMeter({
         </span>
         {credits.totalGranted > 0 ? (
           <span className="text-[11.5px] text-[#8a8178]">
-            left of {credits.totalGranted}
+            {labels.creditsLeftOf}
           </span>
         ) : null}
       </div>
@@ -531,15 +587,6 @@ function CreditMeter({
       ) : null}
     </a>
   );
-}
-
-function creditMeterTitle(credits: EnterpriseNavCredits): string {
-  const base =
-    credits.totalGranted > 0
-      ? `${credits.available} credits available, left of ${credits.totalGranted}`
-      : `${credits.available} credits available`;
-
-  return credits.nextExpiryLabel ? `${base}. ${credits.nextExpiryLabel}.` : `${base}.`;
 }
 
 function ChevronPair({ direction }: { direction: "left" | "right" }) {
