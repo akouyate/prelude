@@ -102,7 +102,8 @@ function selectPrimaryEmail(data: Record<string, unknown>): string | null {
     // it is a version-skew/bug signal worth surfacing, not a normal shape.
     // Still returns null rather than throwing: a resolvable `name` in the
     // same event should still apply, and treating a malformed event as fatal
-    // would turn it into a poison pill Svix retries forever.
+    // would make it retry pointlessly through Svix's ~27.5h/8-attempt retry
+    // schedule (docs.svix.com/retries) on a defect no retry can fix.
     console.warn(
       "[clerk-webhook] user.updated: primary_email_address_id did not resolve to any listed email_addresses entry",
       primaryId,

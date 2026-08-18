@@ -87,8 +87,8 @@ describe("prismaClerkSyncStore.upsertUser — item 4: identity hijack via email 
   });
 });
 
-describe("prismaClerkSyncStore.updateUserProfile — item 4 related: email-collision retry storm", () => {
-  it("parks an email collision (P2002) instead of throwing into an infinite Svix retry loop", async () => {
+describe("prismaClerkSyncStore.updateUserProfile — item 4 related: email-collision parking", () => {
+  it("parks an email collision (P2002) instead of throwing into a delivery no retry can ever fix", async () => {
     prismaMock.user.findUnique.mockResolvedValue({ id: "user_db_1" });
     prismaMock.user.update
       .mockRejectedValueOnce(uniqueConstraintError("email"))
@@ -101,9 +101,10 @@ describe("prismaClerkSyncStore.updateUserProfile — item 4 related: email-colli
       name: "New Name",
     });
 
-    // Reports success (a non-retrying outcome) rather than throwing — a
-    // retry would hit the exact same P2002 forever until Svix disables the
-    // endpoint, taking every other event down with it.
+    // Reports success (a non-retrying outcome) rather than throwing — Svix's
+    // retry schedule is bounded (~8 attempts over ~27.5h), but every one of
+    // those attempts would hit the exact same P2002: no amount of retrying
+    // resolves a collision only a human can fix.
     expect(applied).toBe(true);
     // The conflicting email is not what's applied on the retry.
     expect(prismaMock.user.update).toHaveBeenLastCalledWith({
@@ -124,5 +125,53 @@ describe("prismaClerkSyncStore.updateUserProfile — item 4 related: email-colli
         name: "New Name",
       }),
     ).rejects.toThrow("connection reset");
+  });
+
+  it("does not treat a P2002 on a DIFFERENT constraint as an email collision — checks meta.target, not code alone", async () => {
+    prismaMock.user.findUnique.mockResolvedValue({ id: "user_db_1" });
+    // Same P2002 code, but the violated constraint (per Prisma's own
+    // meta.target) is not `email` — matching on `code === "P2002"` alone
+    // would misidentify this as the email collision, silently retry WITHOUT
+    // email (which would succeed, per the `.mockResolvedValueOnce` below),
+    // and report success — masking a real bug instead of surfacing it. Only
+    // ONE rejection is queued: correct code must throw on the very first
+    // call and never attempt a second (email-less) retry at all.
+    prismaMock.user.update
+      .mockRejectedValueOnce(uniqueConstraintError("id"))
+      .mockResolvedValueOnce({});
+
+    await expect(
+      prismaClerkSyncStore.updateUserProfile({
+        clerkUserId: "user_clerk_1",
+        email: "new@example.com",
+        name: "New Name",
+      }),
+    ).rejects.toThrow();
+    expect(prismaMock.user.update).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("prismaClerkSyncStore.upsertUser — byClerkId path collision (consistency with the byEmail branch)", () => {
+  it("fails loudly, with a clear message, when the byClerkId row's own email update collides with a different row", async () => {
+    // A row for this clerkUserId already exists, but the NEW email Clerk
+    // reports for them already belongs to some other User row. Before this
+    // fix this was a third, inconsistent behaviour for the same underlying
+    // condition (a raw, unguarded Prisma error) alongside the byEmail
+    // branch's clear thrown Error — now both fail loudly the same way.
+    prismaMock.user.findUnique.mockImplementation(({ where }) => {
+      if ("clerkUserId" in where) {
+        return Promise.resolve({ id: "user_db_existing" });
+      }
+      return Promise.resolve(null);
+    });
+    prismaMock.user.update.mockRejectedValue(uniqueConstraintError("email"));
+
+    await expect(
+      prismaClerkSyncStore.upsertUser({
+        clerkUserId: "user_clerk_1",
+        email: "taken@example.com",
+        name: "Someone",
+      }),
+    ).rejects.toThrow(/already belongs to a different/i);
   });
 });
