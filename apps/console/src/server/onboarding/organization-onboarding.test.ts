@@ -155,4 +155,53 @@ describe("completeOrganizationOnboarding — ownership", () => {
       expect(updateClause.role).toBe("owner");
     }
   });
+
+  it("does NOT hand ownership to an invited member just because they happen to be provisioned first", async () => {
+    // Reachable through supported UI: someone creates the org via Clerk's
+    // <CreateOrganization> and abandons before completing onboarding (org
+    // exists in Clerk, no DB row yet) -> they invite a colleague -> the
+    // invitee's membership webhook 409-retries against
+    // organization_not_found until Svix's retry schedule exhausts -> the
+    // invitee is bounced to onboarding, which creates the DB row. Count is 0
+    // at that point too, but this person is NOT the creator — their Clerk
+    // orgRole is org:member ("recruiter"), never org:admin. "First to be
+    // provisioned" must not be conflated with "the creator": only Clerk's
+    // own signal that this identity IS the creator (orgRole org:admin,
+    // i.e. authContext.role === "admin") may grant owner.
+    tx.organization.findUnique.mockResolvedValue(null);
+    tx.organization.create.mockResolvedValue({ id: "org_db_1" });
+    tx.organization.upsert.mockResolvedValue({ id: "org_db_1" });
+    tx.organizationMembership.findUnique.mockResolvedValue(null);
+    tx.organizationMembership.count.mockResolvedValue(0);
+    tx.organizationMembership.create.mockResolvedValue({});
+    tx.organizationMembership.upsert.mockResolvedValue({});
+
+    authMock.getConsoleAuthIdentity.mockResolvedValue({
+      ok: true,
+      value: {
+        clerkOrganizationId: "org_clerk_1",
+        // An invited member: Clerk's org:member maps to "recruiter", never
+        // "admin" — that mapping is how the fix tells creator from invitee.
+        role: "recruiter",
+        source: "clerk",
+        userId: "user_clerk_invitee",
+        userEmail: "invitee@example.com",
+        userName: "Invitee Name",
+      },
+    });
+
+    const result = await completeOrganizationOnboarding(baseInput);
+
+    expect(result.ok).toBe(true);
+
+    const membershipWrite =
+      tx.organizationMembership.create.mock.calls[0]?.[0] ??
+      tx.organizationMembership.upsert.mock.calls[0]?.[0];
+    expect(membershipWrite).toBeDefined();
+
+    const writtenRole =
+      membershipWrite.data?.role ?? membershipWrite.create?.role;
+    expect(writtenRole).not.toBe("owner");
+    expect(writtenRole).toBe("recruiter");
+  });
 });

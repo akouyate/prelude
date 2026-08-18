@@ -403,15 +403,27 @@ async function upsertOnboardingMembership(
   // (`console-auth-provider.ts` maps that down to our "admin" role) — so
   // deriving the FIRST member's role from Clerk would mean nobody is ever
   // owner, and ownership could never be granted to anyone. The first person
-  // to be provisioned into a brand-new organization IS its creator, so they
-  // become owner explicitly. Anyone provisioned afterward (a rarer path:
-  // onboarding running for a member of an org that already has members) is
-  // not the creator and keeps the Clerk-derived role.
+  // to be provisioned into a brand-new organization is USUALLY its creator,
+  // so they become owner explicitly — but "first provisioned" and "the
+  // creator" can come apart: someone creates the org via Clerk's
+  // <CreateOrganization> and abandons before completing onboarding (org
+  // exists in Clerk, no DB row yet), invites a colleague, and that
+  // colleague's membership webhook 409-retries against
+  // organization_not_found until Svix's retry schedule exhausts — they get
+  // bounced to onboarding and become the first DB membership instead of the
+  // actual creator. Gated on `authContext.role === "admin"` too: Clerk always
+  // makes an org's creator `org:admin` ("admin" here) and an invited member
+  // `org:member` ("recruiter"/"viewer"), so an invitee provisioned first
+  // still gets their Clerk-derived role, never owner. Anyone provisioned
+  // afterward (a rarer path still: onboarding running for a member of an org
+  // that already has members) also keeps the Clerk-derived role.
   const membershipCount = await tx.organizationMembership.count({
     where: { organizationId: input.organizationId },
   });
   const role: OrganizationRole =
-    membershipCount === 0 ? "owner" : input.authContext.role;
+    membershipCount === 0 && input.authContext.role === "admin"
+      ? "owner"
+      : input.authContext.role;
 
   return tx.organizationMembership.create({
     data: {
