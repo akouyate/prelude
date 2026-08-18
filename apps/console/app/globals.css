@@ -128,6 +128,22 @@ h3 {
 }
 
 /*
+ * No `animation-delay` here, despite the entry motion (packages/ui's
+ * `ToastRoot` className) having briefly been suspected of losing frames to
+ * this ring competing for the main thread during mount. A delay was a live
+ * option — pushed forward, it can only make the ring finish AFTER the real
+ * dismissal (still showing time remaining: safe) rather than before (a
+ * depleted ring on a live toast: unsafe) — but it was tested and dropped, not
+ * just not considered: disabling this animation outright (temporarily, via
+ * devtools) during a traced toast mount left the dropped first frame exactly
+ * as wide as with it enabled. The stall is base-ui's own mount-time
+ * `flushSync` (confirmed separately — see
+ * `.superpowers/sdd/2026-08-18-toast-motion/report.md`), not this ring, so
+ * delaying it would only cost the ring's honesty (a small permanent lag
+ * behind the real timer, on every toast) for zero smoothness in return.
+ */
+
+/*
  * Base UI's `Toast.Root` (and `Toast.Viewport`) carry `data-expanded` for
  * three of the dismissal timer's four pause conditions — hover, focus, and a
  * touch-swipe start — all flowing through its `hovering`/`focused` state
