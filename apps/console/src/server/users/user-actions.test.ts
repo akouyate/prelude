@@ -139,13 +139,42 @@ describe("updateProfileNameAction", () => {
     expect(result).toEqual({ error: null, ok: true });
   });
 
-  it("a single-word name leaves lastName undefined rather than blank", async () => {
+  // `undefined` would be dropped at JSON serialization, so Clerk's PATCH
+  // would never mention last_name at all and would silently keep whatever
+  // it already had there — breaking the honest-mirror invariant on any name
+  // SHORTENING ("Ada Lovelace" -> "Ada" would leave Clerk still saying
+  // "Lovelace" while the mirror says "Ada", forever, since there is no
+  // `user.updated` webhook handler to reconcile them. An explicit empty
+  // string tells Clerk to actually clear the field.
+  it("a single-word name sends an explicit empty lastName, not undefined", async () => {
     await updateProfileNameAction(IDLE_STATE, formData({ name: "Madonna" }));
 
     expect(updateUserMock).toHaveBeenCalledWith("clerk_user_123", {
       firstName: "Madonna",
-      lastName: undefined,
+      lastName: "",
     });
+  });
+
+  // The reverse leg of the honest-failure rule: Clerk succeeded, but the
+  // mirror write then fails. That must not escape as an unhandled
+  // server-action error — it has to come back as the same `{ error, ok }`
+  // shape so the client can toast it (and the recruiter can retry), since
+  // there is nothing else to reconcile Clerk and the mirror afterward.
+  it("reports a graceful failure when the Clerk write succeeds but the DB mirror write fails", async () => {
+    prismaMock.user.update.mockRejectedValue(new Error("DB is down"));
+
+    const result = await updateProfileNameAction(
+      IDLE_STATE,
+      formData({ name: "Ada Lovelace" }),
+    );
+
+    expect(updateUserMock).toHaveBeenCalledWith("clerk_user_123", {
+      firstName: "Ada",
+      lastName: "Lovelace",
+    });
+    expect(result.ok).toBe(false);
+    expect(typeof result.error).toBe("string");
+    expect(result.error).not.toHaveLength(0);
   });
 
   it("trims and rejects a blank name without touching Clerk or the DB", async () => {

@@ -97,10 +97,22 @@ export async function updateProfileNameAction(
     }
   }
 
-  await prisma.user.update({
-    data: { name },
-    where: { id: scope.userId },
-  });
+  // Same honest-failure rule applies to this leg too: if Clerk's write just
+  // succeeded but the mirror write then fails, the two are left diverged
+  // with nothing to reconcile them (there is no `user.updated` webhook
+  // handler — clerk-webhook-sync.ts only handles membership/invitation
+  // events). Catching this and answering with the same shape at least
+  // surfaces the failure as a toast instead of an unhandled server-action
+  // error, and lets the recruiter retry the save.
+  try {
+    await prisma.user.update({
+      data: { name },
+      where: { id: scope.userId },
+    });
+  } catch {
+    const t = getServerT(await getAuthenticatedUserLocale(scope.userId));
+    return { error: t("settings.profile.nameSaveFailed"), ok: false };
+  }
 
   revalidatePath("/");
   revalidatePath("/settings");
@@ -110,16 +122,21 @@ export async function updateProfileNameAction(
 
 // Clerk splits a person's name into firstName/lastName; our own `User.name`
 // is a single field. The first word is the first name, everything else is
-// the last name — a single-word name (common for mock/demo data) leaves
-// lastName undefined rather than an empty string, so Clerk doesn't record a
-// spurious blank last name.
+// the last name. A single-word name (common for mock/demo data) sends an
+// EXPLICIT empty string for lastName, not `undefined` — `undefined` is
+// dropped at JSON serialization, so Clerk's PATCH would never mention
+// last_name at all and would keep whatever it already had there. That broke
+// the honest-mirror invariant on any name SHORTENING ("Ada Lovelace" -> "Ada"
+// left Clerk still showing "Lovelace" while the mirror said "Ada", with
+// nothing to reconcile the two — same missing-webhook problem as above).
+// Clerk accepts an empty string to clear the field, so this sends one.
 function splitDisplayName(name: string): {
   firstName: string;
-  lastName: string | undefined;
+  lastName: string;
 } {
   const [firstName, ...rest] = name.split(/\s+/).filter(Boolean);
   return {
     firstName: firstName ?? name,
-    lastName: rest.length > 0 ? rest.join(" ") : undefined,
+    lastName: rest.length > 0 ? rest.join(" ") : "",
   };
 }
