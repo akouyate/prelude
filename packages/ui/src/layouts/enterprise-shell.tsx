@@ -184,13 +184,18 @@ export function EnterpriseShell({
         >
           <MobileWorkspaceHeader credits={credits} organizationName={organizationName} />
           {/*
-           * The gutter is published as a custom property so a horizontal
-           * scroller inside a page can cancel it (`-mx-[var(--shell-gutter)]`)
-           * and run edge to edge. Without that, a cut-off item reads as broken
-           * layout instead of "there is more to the right", and the reader
-           * loses the width the gutter costs on the narrowest screens.
+           * The gutter is a literal, not a custom property. It was briefly
+           * published as `--shell-gutter` so a scroller inside a page could
+           * cancel it and run edge to edge — but a padding that resolves
+           * through a variable fails to ZERO when the rule defining it is
+           * missing from the served CSS (a stale stylesheet in a phone's
+           * cache is enough), and the whole page then sits flush against both
+           * edges with no margin at all. Reported from a real iPhone,
+           * reproduced by unsetting the property: padding-left went to 0px
+           * while the header kept its own literal padding. A cosmetic bleed is
+           * not worth a layout that can lose its margins.
            */}
-          <main className="[--shell-gutter:clamp(16px,3vw,40px)] px-[var(--shell-gutter)] py-[clamp(20px,3vw,38px)] pb-16">
+          <main className="px-[clamp(16px,3vw,40px)] py-[clamp(20px,3vw,38px)] pb-16">
             <div className="mx-auto w-full max-w-[1180px]">{children}</div>
           </main>
           <MobileWorkspaceNav activePath={activePath} />

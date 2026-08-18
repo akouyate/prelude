@@ -167,13 +167,18 @@ export function SettingsSectionNav({
     // page scrolled sideways instead.
     <div className="flex min-w-0 flex-col gap-3 min-[900px]:sticky min-[900px]:top-6 min-[900px]:gap-0">
       {/*
-       * The scroller cancels the shell gutter so it spans the full screen
-       * width: an item cut off at the very edge reads as "scroll for more",
-       * whereas one cut off inside a margin just reads as broken.
+       * The scroller stays inside the page gutter. An earlier version bled out
+       * to the screen edges by cancelling a `--shell-gutter` custom property
+       * published by the shell — it looked slightly better (a tab cut off at
+       * the very edge reads as "scroll for more") but it coupled this file to a
+       * variable in another package, and a padding built on a variable
+       * collapses to zero wherever that variable does not resolve. That cost
+       * the whole page its margins on a real phone. The tab is now cut off
+       * 16px in, which is a smaller price than a page with no gutter.
        */}
       <nav
         aria-label={t("settings.nav.aria")}
-        className="-mx-[var(--shell-gutter,0px)] flex gap-1.5 overflow-x-auto px-[var(--shell-gutter,0px)] pb-1 min-[900px]:mx-0 min-[900px]:flex-col min-[900px]:gap-px min-[900px]:overflow-x-visible min-[900px]:px-0 min-[900px]:pb-0"
+        className="flex gap-1.5 overflow-x-auto pb-1 min-[900px]:flex-col min-[900px]:gap-px min-[900px]:overflow-x-visible min-[900px]:pb-0"
         ref={navRef}
       >
         {settingsNavItems.map((item) => {

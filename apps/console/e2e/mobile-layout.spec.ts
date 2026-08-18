@@ -94,11 +94,34 @@ async function expectNoHorizontalOverflow(page: Page, where: string) {
   ).toBeLessThanOrEqual(report.viewportWidth);
 }
 
+/*
+ * Overflow is not the only way a page stops fitting. A gutter that resolves
+ * through a CSS custom property collapses to ZERO wherever that property does
+ * not resolve — a stale stylesheet in a phone's cache is enough — and the page
+ * then sits flush against both edges with no horizontal overflow at all, so the
+ * check above stays green. That is exactly what was reported from a real
+ * iPhone, so the gutter itself is now asserted.
+ */
+const MIN_GUTTER = 12;
+
+async function expectPageGutter(page: Page, where: string) {
+  const paddingLeft = await page
+    .locator("main")
+    .first()
+    .evaluate((element) => parseFloat(getComputedStyle(element).paddingLeft));
+
+  expect(
+    paddingLeft,
+    `${where}: the page content has no side gutter (padding-left ${paddingLeft}px) — it will sit flush against the screen edge`,
+  ).toBeGreaterThanOrEqual(MIN_GUTTER);
+}
+
 test("workspace pages fit a phone screen", async ({ page }) => {
   for (const path of ["/", "/roles", "/candidates"]) {
     await page.goto(path);
     await page.waitForLoadState("networkidle");
     await expectNoHorizontalOverflow(page, path);
+    await expectPageGutter(page, path);
   }
 });
 
