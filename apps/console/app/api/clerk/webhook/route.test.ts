@@ -121,6 +121,53 @@ describe("POST /api/clerk/webhook", () => {
     });
   });
 
+  it("returns a non-2xx for a billing event too, when the organization is not yet provisioned", async () => {
+    // Identical failure mode to the membership case above, on the billing
+    // branch: subscription.*/subscriptionItem.* events (which .env.example
+    // tells operators to subscribe to) can race onboarding exactly like a
+    // membership event can. syncClerkOrganizationBilling reports the same
+    // {applied:false, reason:"organization_not_found"} shape
+    // (packages/billing/src/server.ts:154) and a bare 200 here would drop it
+    // forever, same as the membership branch this route already fixes.
+    verify.mockResolvedValue({ type: "subscription.updated", data: {} } as never);
+    plan.mockReturnValue({
+      kind: "billing",
+      clerkOrganizationId: "org_clerk_1",
+      sourceUpdatedAt: undefined,
+    });
+    syncBilling.mockResolvedValue({
+      applied: false,
+      reason: "organization_not_found",
+    });
+
+    const response = await POST(post());
+
+    expect(response.status).not.toBe(200);
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    await expect(response.json()).resolves.toEqual({
+      applied: false,
+      reason: "organization_not_found",
+    });
+  });
+
+  it.each(["billing_disabled", "billing_unconfigured", "stale_source_update"])(
+    "still returns 200 for a billing event parked for a PERMANENT reason (%s), not just a not-yet-provisioned race",
+    async (reason) => {
+      verify.mockResolvedValue({ type: "subscription.updated", data: {} } as never);
+      plan.mockReturnValue({
+        kind: "billing",
+        clerkOrganizationId: "org_clerk_1",
+        sourceUpdatedAt: undefined,
+      });
+      syncBilling.mockResolvedValue({ applied: false, reason });
+
+      const response = await POST(post());
+
+      expect(response.status).toBe(200);
+      await expect(response.json()).resolves.toEqual({ applied: false, reason });
+    },
+  );
+
   it("returns 200 for a successfully applied sync", async () => {
     verify.mockResolvedValue({
       type: "organizationMembership.created",

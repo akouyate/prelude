@@ -44,6 +44,18 @@ export async function POST(request: NextRequest) {
         clerkOrganizationId: intent.clerkOrganizationId,
         sourceUpdatedAt: intent.sourceUpdatedAt,
       });
+      // Same race as the membership branch below, on subscription.*/
+      // subscriptionItem.* events: syncClerkOrganizationBilling returns this
+      // exact {applied:false, reason:"organization_not_found"} shape
+      // (packages/billing/src/server.ts:154) when the org hasn't been
+      // provisioned yet, and a bare 200 would drop it forever. Narrowly
+      // scoped to that one reason — "billing_disabled"/"billing_unconfigured"
+      // and "stale_source_update" are correct PERMANENT outcomes (the
+      // feature is off, or we already have newer data) and must stay 200; a
+      // retry can never change either.
+      if (!result.applied && result.reason === "organization_not_found") {
+        return Response.json(result, { status: 409 });
+      }
       return Response.json(result);
     }
     const result = await applyClerkSyncIntent(prismaClerkSyncStore, intent);
