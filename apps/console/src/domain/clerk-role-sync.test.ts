@@ -6,7 +6,7 @@ import {
 } from "./clerk-role-sync";
 
 describe("resolveOrganizationRoleFromClerk", () => {
-  it("prefers the granular Prelude role carried in publicMetadata", () => {
+  it("prefers the granular Prelude role carried in publicMetadata when it agrees with Clerk's coarse role", () => {
     expect(
       resolveOrganizationRoleFromClerk({
         publicMetadataRole: "recruiter",
@@ -16,7 +16,7 @@ describe("resolveOrganizationRoleFromClerk", () => {
     expect(
       resolveOrganizationRoleFromClerk({
         publicMetadataRole: "viewer",
-        clerkRole: "org:admin",
+        clerkRole: "org:member",
       }),
     ).toBe("viewer");
     expect(
@@ -25,6 +25,34 @@ describe("resolveOrganizationRoleFromClerk", () => {
         clerkRole: "org:admin",
       }),
     ).toBe("owner");
+  });
+
+  it("trusts a demotion performed in Clerk's own UI over a stale granular role — privilege retention", () => {
+    // Clerk's own UIs (the Dashboard, and clerk.openOrganizationProfile which
+    // the console opens itself) write only the coarse Clerk role, never
+    // publicMetadata.preludeRole. A stale "admin"/"owner" left behind by a
+    // demotion to org:member must not resurrect the old privilege level.
+    expect(
+      resolveOrganizationRoleFromClerk({
+        publicMetadataRole: "admin",
+        clerkRole: "org:member",
+      }),
+    ).toBe("recruiter");
+    expect(
+      resolveOrganizationRoleFromClerk({
+        publicMetadataRole: "owner",
+        clerkRole: "org:member",
+      }),
+    ).toBe("recruiter");
+  });
+
+  it("trusts a Clerk-side promotion to org:admin over a stale lower-tier granular role", () => {
+    expect(
+      resolveOrganizationRoleFromClerk({
+        publicMetadataRole: "viewer",
+        clerkRole: "org:admin",
+      }),
+    ).toBe("admin");
   });
 
   it("falls back to the Clerk coarse role when no granular role is set", () => {

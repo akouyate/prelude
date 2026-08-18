@@ -39,7 +39,24 @@ export function resolveOrganizationRoleFromClerk(input: {
 }): OrganizationRole {
   const granular = input.publicMetadataRole?.trim().toLowerCase();
   if (granular && VALID_ROLES.has(granular)) {
-    return granular as OrganizationRole;
+    const granularRole = granular as OrganizationRole;
+
+    // Privilege retention guard. Clerk's own UIs (the Dashboard, and
+    // clerk.openOrganizationProfile, which the console opens itself) write
+    // only the coarse Clerk role and never touch publicMetadata.preludeRole.
+    // Trusting the granular role unconditionally means a demotion performed
+    // there (org:admin -> org:member) never reaches the table authorization
+    // actually reads: the stale "admin"/"owner" metadata would keep winning
+    // forever. When the two disagree on TIER, the coarse Clerk role is the
+    // one that was just intentionally changed, so it wins.
+    if (
+      input.clerkRole &&
+      toClerkMembershipRole(granularRole) !== input.clerkRole
+    ) {
+      return mapClerkOrganizationRole(input.clerkRole, "viewer");
+    }
+
+    return granularRole;
   }
 
   return mapClerkOrganizationRole(input.clerkRole, "viewer");

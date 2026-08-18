@@ -35,7 +35,7 @@ describe("planClerkWebhookSync", () => {
     });
   });
 
-  it("prefers the granular preludeRole carried in membership public_metadata", () => {
+  it("prefers the granular preludeRole carried in membership public_metadata, when it agrees with Clerk's coarse role", () => {
     const intent = planClerkWebhookSync({
       type: "organizationMembership.updated",
       data: {
@@ -46,7 +46,12 @@ describe("planClerkWebhookSync", () => {
           first_name: "Vee",
           last_name: null,
         },
-        role: "org:admin",
+        // org:member is the coarse tier "viewer" maps to (see
+        // toClerkMembershipRole) — the two agree, so the granular role wins.
+        // The disagreement case (a demotion performed in Clerk's own UI
+        // leaving a stale, higher-tier preludeRole behind) is covered in
+        // clerk-role-sync.test.ts.
+        role: "org:member",
         public_metadata: { preludeRole: "viewer" },
       },
     });
