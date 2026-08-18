@@ -55,6 +55,21 @@ Set `APP_ENV=production` everywhere. Do **not** set `ALLOW_MOCK_INTERVIEW`.
 - `CONSOLE_AUTH_PROVIDER=clerk` with real Clerk keys (mock auth is refused in
   production), `DATABASE_URL`, `INTERVIEW_DRAFT_GENERATOR=openai` +
   `OPENAI_API_KEY`, and the protected-topic classifier config.
+- `CLERK_WEBHOOK_SIGNING_SECRET`, plus a webhook endpoint configured in the
+  Clerk Dashboard pointing at `apps/console/app/api/clerk/webhook/route.ts`
+  (Svix-signed; see `apps/console/src/server/organizations/clerk-webhook-sync.ts`
+  for the event → DB mapping). **The endpoint must be subscribed to exactly**:
+  `organizationMembership.created` / `.updated` / `.deleted`,
+  `organizationInvitation.created` / `.accepted` / `.revoked`,
+  `subscription.*` / `subscriptionItem.*` (billing), and **`user.updated`**
+  (keeps `User.name`/`User.email` from silently diverging from the identity a
+  recruiter edits in Clerk's own account modal). A handler nobody subscribed
+  the endpoint to is dead code that reads as done — verify the subscription
+  list in the Dashboard, not just that the code exists. Do NOT subscribe to
+  `user.created` (real users are already lazily provisioned, with org
+  context, by the membership events above) or `user.deleted` (handled as a
+  deliberate no-op — see the code comment on that case for why a hard delete
+  would be unsafe).
 
 ## Deploy order
 

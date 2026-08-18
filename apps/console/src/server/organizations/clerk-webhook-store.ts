@@ -78,6 +78,26 @@ export const prismaClerkSyncStore: ClerkSyncStore = {
     });
   },
 
+  async updateUserProfile({ clerkUserId, email, name }) {
+    const existing = await prisma.user.findUnique({
+      where: { clerkUserId },
+      select: { id: true },
+    });
+    if (!existing) {
+      // Not a row we know about (e.g. they haven't joined an org yet, so no
+      // membership event has provisioned them). Nothing to mirror onto.
+      return false;
+    }
+
+    const data: { email?: string; name?: string } = {};
+    if (email) data.email = email;
+    if (name) data.name = name;
+    if (Object.keys(data).length > 0) {
+      await prisma.user.update({ where: { id: existing.id }, data });
+    }
+    return true;
+  },
+
   async upsertInvitation({ organizationId, email, role, status, accepted }) {
     const acceptedAt = accepted ? new Date() : undefined;
     await prisma.organizationInvitation.upsert({

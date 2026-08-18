@@ -126,10 +126,93 @@ describe("planClerkWebhookSync", () => {
 
   it("ignores unrelated events", () => {
     expect(
+      planClerkWebhookSync({ type: "organization.created", data: { id: "org_x" } }),
+    ).toBeNull();
+  });
+
+  it("plans a user profile sync from user.updated, matched by clerkUserId", () => {
+    const intent = planClerkWebhookSync({
+      type: "user.updated",
+      data: {
+        id: "user_clerk_1",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        primary_email_address_id: "idn_1",
+        email_addresses: [{ id: "idn_1", email_address: "Ada@Example.com" }],
+      },
+    });
+
+    expect(intent).toEqual({
+      kind: "user",
+      clerkUserId: "user_clerk_1",
+      email: "ada@example.com",
+      name: "Ada Lovelace",
+    });
+  });
+
+  it("selects the PRIMARY email even when it is not first in email_addresses[]", () => {
+    const intent = planClerkWebhookSync({
+      type: "user.updated",
+      data: {
+        id: "user_clerk_1",
+        first_name: "Ada",
+        last_name: "Lovelace",
+        primary_email_address_id: "idn_2",
+        email_addresses: [
+          { id: "idn_1", email_address: "old@example.com" },
+          { id: "idn_2", email_address: "primary@example.com" },
+        ],
+      },
+    });
+
+    expect(intent).toMatchObject({ email: "primary@example.com" });
+  });
+
+  it("ignores a stale/removed email address even if it is listed first", () => {
+    const intent = planClerkWebhookSync({
+      type: "user.updated",
+      data: {
+        id: "user_clerk_1",
+        primary_email_address_id: "idn_missing",
+        email_addresses: [{ id: "idn_1", email_address: "old@example.com" }],
+      },
+    });
+
+    expect(intent).toMatchObject({ email: null });
+  });
+
+  it("round-trips a single-word name our own form produced without mutating it", () => {
+    // updateProfileNameAction's splitDisplayName("Ada") sends Clerk
+    // { firstName: "Ada", lastName: "" } (explicit empty string, not
+    // undefined, so a shortened name actually clears Clerk's last_name).
+    // Clerk echoes that back verbatim in user.updated; composeName must
+    // recompose it back to "Ada", not "Ada " or null.
+    const intent = planClerkWebhookSync({
+      type: "user.updated",
+      data: {
+        id: "user_clerk_1",
+        first_name: "Ada",
+        last_name: "",
+        primary_email_address_id: "idn_1",
+        email_addresses: [{ id: "idn_1", email_address: "ada@example.com" }],
+      },
+    });
+
+    expect(intent).toMatchObject({ name: "Ada" });
+  });
+
+  it("is a safe no-op for user.created and user.deleted (see code comments for rationale)", () => {
+    expect(
       planClerkWebhookSync({ type: "user.created", data: { id: "user_x" } }),
     ).toBeNull();
     expect(
-      planClerkWebhookSync({ type: "organization.created", data: { id: "org_x" } }),
+      planClerkWebhookSync({ type: "user.deleted", data: { id: "user_x" } }),
+    ).toBeNull();
+  });
+
+  it("still ignores a wholly unknown event type", () => {
+    expect(
+      planClerkWebhookSync({ type: "session.created", data: { id: "sess_x" } }),
     ).toBeNull();
   });
 
@@ -170,6 +253,7 @@ function fakeStore(overrides: Partial<ClerkSyncStore> = {}): ClerkSyncStore {
     upsertMembership: vi.fn(async () => {}),
     deactivateMembership: vi.fn(async () => {}),
     upsertInvitation: vi.fn(async () => {}),
+    updateUserProfile: vi.fn(async () => true),
     ...overrides,
   };
 }
@@ -247,5 +331,39 @@ describe("applyClerkSyncIntent", () => {
       status: "accepted",
       accepted: true,
     });
+  });
+
+  it("updates an existing user's mirrored name/email by clerkUserId, without any org lookup", async () => {
+    const store = fakeStore();
+    const result = await applyClerkSyncIntent(store, {
+      kind: "user",
+      clerkUserId: "user_clerk_1",
+      email: "ada@example.com",
+      name: "Ada Lovelace",
+    });
+
+    expect(result.applied).toBe(true);
+    expect(store.updateUserProfile).toHaveBeenCalledWith({
+      clerkUserId: "user_clerk_1",
+      email: "ada@example.com",
+      name: "Ada Lovelace",
+    });
+    expect(store.findOrganizationIdByClerkId).not.toHaveBeenCalled();
+  });
+
+  it("is a safe no-op when the clerkUserId is unknown to us: no throw, no row created", async () => {
+    const store = fakeStore({
+      updateUserProfile: vi.fn(async () => false),
+    });
+    const result = await applyClerkSyncIntent(store, {
+      kind: "user",
+      clerkUserId: "user_unknown",
+      email: "ghost@example.com",
+      name: "Ghost",
+    });
+
+    expect(result.applied).toBe(false);
+    expect(result.reason).toBe("user_not_found");
+    expect(store.upsertUser).not.toHaveBeenCalled();
   });
 });

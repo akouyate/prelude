@@ -32,6 +32,12 @@ export type ClerkSyncIntent =
       email: string;
       role: OrganizationRole;
       status: "pending" | "accepted" | "revoked";
+    }
+  | {
+      kind: "user";
+      clerkUserId: string;
+      email: string | null;
+      name: string | null;
     };
 
 export type ClerkBillingSyncIntent = {
@@ -68,6 +74,27 @@ function composeName(first: unknown, last: unknown): string | null {
     .map((part) => part?.trim())
     .filter((part): part is string => Boolean(part));
   return parts.length ? parts.join(" ") : null;
+}
+
+// A Clerk user carries every email address they've ever added; only one is
+// PRIMARY (`primary_email_address_id`), and it is not necessarily
+// `email_addresses[0]` — a user can add a new address and only later make it
+// primary, or reorder is not guaranteed at all. Picking `[0]` would silently
+// swap a person's mirrored email for an address they never asked to log in
+// with. Falls back to null (leave the mirror untouched) if the primary id
+// doesn't resolve to a listed address, rather than guessing.
+function selectPrimaryEmail(data: Record<string, unknown>): string | null {
+  const primaryId = asString(data.primary_email_address_id);
+  if (!primaryId) {
+    return null;
+  }
+  const addresses = Array.isArray(data.email_addresses)
+    ? data.email_addresses
+    : [];
+  const primary = addresses
+    .map((entry) => asRecord(entry))
+    .find((entry) => entry && asString(entry.id) === primaryId);
+  return primary ? normalizeEmail(primary.email_address) : null;
 }
 
 export function planClerkWebhookSync(
@@ -132,6 +159,46 @@ export function planClerkWebhookSync(
       };
     }
 
+    case "user.updated": {
+      const clerkUserId = asString(data.id);
+      if (!clerkUserId) {
+        return null;
+      }
+      return {
+        kind: "user",
+        clerkUserId,
+        email: selectPrimaryEmail(data),
+        name: composeName(data.first_name, data.last_name),
+      };
+    }
+
+    case "user.created": {
+      // Deliberately not implemented. A brand-new Clerk user with no
+      // organization membership yet has no attachment point in our schema —
+      // `User` only relates to an org through `OrganizationMembership`
+      // (packages/db/prisma/schema.prisma:49-79), and this event carries no
+      // org context at all. Real users are already lazily provisioned, WITH
+      // org context, by organizationMembership.created/updated (the
+      // "membership" case above) the moment they're actually added to an
+      // org. Handling user.created here would either duplicate that
+      // provisioning or create an orphaned User row nothing ever attaches
+      // to. Safe no-op by design, not an oversight.
+      return null;
+    }
+
+    case "user.deleted": {
+      // Deliberately not a hard delete. `User` is referenced by
+      // CandidateSessionReviewEvent, CandidateScheduledCall, CandidateSession
+      // review authorship, RoleIntake, CandidateExperiencePreview and
+      // OrganizationMembership (packages/db/prisma/schema.prisma:49-79) — a
+      // delete/cascade here would orphan or destroy real product history for
+      // an event we can't undo. A proper erasure flow needs a product
+      // decision on what "delete" means for a referenced identity
+      // (anonymize the row vs. retain-with-a-tombstone flag vs. something
+      // else) plus a migration; that's out of scope here. Safe no-op.
+      return null;
+    }
+
     default: {
       if (isClerkBillingEvent(event.type)) {
         const payer = asRecord(data.payer);
@@ -187,6 +254,19 @@ export interface ClerkSyncStore {
     status: string;
     accepted: boolean;
   }): Promise<void>;
+  /**
+   * Mirror a `user.updated` profile change onto an EXISTING row, matched by
+   * `clerkUserId`. Unlike `upsertUser`, this never creates a row — a
+   * `user.*` event carries no organization context, so provisioning stays
+   * the job of the membership sync above. Returns false (and does nothing)
+   * when no row matches, so an unknown/not-yet-provisioned Clerk user is a
+   * safe no-op rather than an orphaned insert.
+   */
+  updateUserProfile(input: {
+    clerkUserId: string;
+    email: string | null;
+    name: string | null;
+  }): Promise<boolean>;
 }
 
 export type ClerkSyncResult = { applied: boolean; reason?: string };
@@ -195,6 +275,20 @@ export async function applyClerkSyncIntent(
   store: ClerkSyncStore,
   intent: ClerkSyncIntent,
 ): Promise<ClerkSyncResult> {
+  if (intent.kind === "user") {
+    // No organization in this intent at all (a `user.*` event is not
+    // org-scoped) — go straight to the profile mirror, and never create a
+    // row for a Clerk user we don't already know about.
+    const applied = await store.updateUserProfile({
+      clerkUserId: intent.clerkUserId,
+      email: intent.email,
+      name: intent.name,
+    });
+    return applied
+      ? { applied: true }
+      : { applied: false, reason: "user_not_found" };
+  }
+
   const organizationId = await store.findOrganizationIdByClerkId(
     intent.clerkOrganizationId,
   );
