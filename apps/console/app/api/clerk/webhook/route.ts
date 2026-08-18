@@ -17,7 +17,16 @@ export async function POST(request: NextRequest) {
   try {
     event = await verifyWebhook(request);
   } catch (error) {
-    console.error("[clerk-webhook] signature verification failed", error);
+    // MESSAGE ONLY — never the error object. Same bug already fixed on the
+    // Stripe route (see the comment at app/api/stripe/webhook/route.ts:47-57):
+    // the verification error carries the rejected payload/headers as own
+    // properties, so logging the error itself writes the entire unverified
+    // request body into our logs — a log-injection sink on a public,
+    // unauthenticated endpoint.
+    console.error(
+      "[clerk-webhook] signature verification failed",
+      error instanceof Error ? error.message : String(error),
+    );
     return new Response("Webhook verification failed", { status: 400 });
   }
 
@@ -38,9 +47,25 @@ export async function POST(request: NextRequest) {
       return Response.json(result);
     }
     const result = await applyClerkSyncIntent(prismaClerkSyncStore, intent);
+    if (!result.applied && result.reason === "organization_not_found") {
+      // NOT a 200. The organization has not been provisioned in our DB yet
+      // (e.g. this event raced onboarding completion). Svix does not retry a
+      // 2xx response, and there is no later event that re-syncs a static
+      // membership on its own — acknowledging this with 200 would drop the
+      // event forever (see clerk-webhook-sync.ts for the full consequence: a
+      // subsequent onboarding pass by someone who DOES exist can then
+      // overwrite the workspace this invitee was trying to join). 409 asks
+      // Svix to redeliver with backoff until the organization exists.
+      return Response.json(result, { status: 409 });
+    }
     return Response.json(result);
   } catch (error) {
-    console.error("[clerk-webhook] sync failed", event.type, error);
+    // MESSAGE ONLY, for the same reason as the 400 path above.
+    console.error(
+      "[clerk-webhook] sync failed",
+      event.type,
+      error instanceof Error ? error.message : String(error),
+    );
     // 500 asks Svix to retry; the sync is idempotent so retries are safe.
     return new Response("Webhook sync failed", { status: 500 });
   }

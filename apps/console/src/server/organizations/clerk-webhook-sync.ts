@@ -294,8 +294,13 @@ export async function applyClerkSyncIntent(
   );
   if (!organizationId) {
     // The organization has not been provisioned in our DB yet (e.g. an event
-    // arrives before onboarding completes). Skip rather than fail — Clerk
-    // retries, and a later membership event re-syncs the state.
+    // arrives before onboarding completes). This is a "reason", not a
+    // silent success — the caller (route.ts) MUST turn `applied: false` here
+    // into a non-2xx response. Svix does NOT redeliver a 2xx, and there is
+    // no later event that re-syncs a static membership on its own, so
+    // acknowledging this with 200 acknowledges the event and drops it
+    // forever (a previous version of this comment claimed otherwise; both
+    // halves of that claim were false).
     return { applied: false, reason: "organization_not_found" };
   }
 
