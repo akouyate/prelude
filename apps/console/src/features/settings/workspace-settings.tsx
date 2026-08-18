@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { useClerk } from "@clerk/nextjs";
 import {
+  ArrowUpRight,
   Calendar,
   Check,
   Refresh,
@@ -13,6 +15,7 @@ import { parseAsStringLiteral, useQueryState } from "nuqs";
 import { useTranslation } from "react-i18next";
 import {
   Button,
+  Field,
   IconButton,
   Notice,
   SelectionCard,
@@ -21,6 +24,7 @@ import {
   StatusBadge,
   TextField,
   useToast,
+  useToastOnce,
 } from "@prelude/ui";
 import type { OrganizationRole } from "@prelude/types";
 
@@ -44,6 +48,7 @@ import {
   updateNotificationPreferencesAction,
   updateWorkspaceSettingsAction,
 } from "../../server/settings/workspace-settings-actions";
+import { updateProfileNameAction } from "../../server/users/user-actions";
 import { IntegrationLogo } from "../integrations/integration-logo";
 import { SettingsLanguageSelect } from "./settings-language-select";
 import { BillingSection } from "./settings-billing-section";
@@ -168,13 +173,46 @@ function SettingsSectionContent({
 
 function ProfileSection({ data }: { data: WorkspaceSettingsData }) {
   const { t } = useTranslation();
+  const { toastOnce } = useToastOnce();
+  // Same envelope as WorkspaceSection: a native `<form action={...}>` bound
+  // through `useActionState` so a non-throwing failure (the Clerk write
+  // failing) renders as a toast instead of an unhandled exception.
+  const [state, formAction, pending] = React.useActionState(
+    updateProfileNameAction,
+    { error: null, ok: false },
+  );
   const accountHint =
     data.authProvider === "clerk"
       ? t("settings.profile.clerkAccountHint")
       : t("settings.profile.mockAccountHint");
 
+  // `state` is a fresh object literal on every settle (both the success and
+  // the failure branch return a new `{ error, ok }` literal — see
+  // updateProfileNameAction), so its own identity is exactly "a new save
+  // happened" and safe to key `toastOnce` on regardless of why this effect
+  // re-runs for any other reason (translation function's identity changing
+  // on a locale switch, in particular).
+  React.useEffect(() => {
+    if (state.ok) {
+      toastOnce(state, {
+        dismissLabel: t("toast.dismiss"),
+        message: t("settings.profile.nameSaved"),
+        tone: "success",
+      });
+      return;
+    }
+    if (state.error) {
+      toastOnce(state, {
+        dismissLabel: t("toast.dismiss"),
+        duration: null,
+        message: state.error,
+        tone: "danger",
+      });
+    }
+  }, [state, t, toastOnce]);
+
   return (
-    <div className="flex flex-col gap-[18px]">
+    <form action={formAction} className="flex flex-col gap-[18px]">
       <SettingsPanel>
         <SettingsPanelHeading
           description={t("settings.profile.description")}
@@ -197,38 +235,130 @@ function ProfileSection({ data }: { data: WorkspaceSettingsData }) {
         <div className="mt-5 grid gap-[18px] sm:grid-cols-2">
           <SettingsField
             label={t("settings.profile.fullName")}
-            readOnly
+            maxLength={160}
+            name="name"
+            required
             value={data.account.name}
           />
           <SettingsField
-            label={t("settings.profile.jobTitle")}
+            label={t("settings.profile.role")}
             readOnly
             value={formatRoleLabel(data.account.role)}
           />
-          <SettingsField
-            label={t("settings.profile.email")}
-            readOnly
-            value={data.account.email}
+          <ProfileEmailField
+            authProvider={data.authProvider}
+            email={data.account.email}
+            mockHint={t("settings.profile.mockAccountHint")}
           />
           <SettingsLanguageSelect
             initialLanguage={data.account.preferredLanguage}
           />
         </div>
       </SettingsPanel>
-    </div>
+      <SettingsActionRow disabled={pending} />
+    </form>
+  );
+}
+
+// Email stays Clerk-managed: changing it goes through Clerk's own
+// verification flow, which this console does not reimplement. The dead
+// read-only field is replaced with an affordance that opens Clerk's account
+// screen — a real, working control under the real provider, and an honestly
+// disabled one under mock (no Clerk session exists there to open).
+function ProfileEmailField({
+  authProvider,
+  email,
+  mockHint,
+}: {
+  authProvider: WorkspaceSettingsData["authProvider"];
+  email: string;
+  mockHint: string;
+}) {
+  if (authProvider === "clerk") {
+    return <ClerkManagedEmailField email={email} />;
+  }
+
+  const { t } = useTranslation();
+
+  return (
+    <Field label={t("settings.profile.email")}>
+      <Button
+        className="w-full justify-between"
+        disabled
+        title={mockHint}
+        type="button"
+        variant="secondary"
+      >
+        <span className="truncate">{email}</span>
+      </Button>
+    </Field>
+  );
+}
+
+// Split out so `useClerk()` is only ever called while mounted under
+// `<ClerkProvider>` (app/layout.tsx only mounts it when the real Clerk
+// provider is active) — this component is only rendered on that branch,
+// never under mock, so the hook is never called without its provider.
+function ClerkManagedEmailField({ email }: { email: string }) {
+  const { t } = useTranslation();
+  const clerk = useClerk();
+
+  return (
+    <Field label={t("settings.profile.email")}>
+      <Button
+        className="w-full justify-between"
+        onClick={() => clerk.openUserProfile()}
+        title={t("settings.profile.manageEmailHint")}
+        type="button"
+        variant="secondary"
+      >
+        <span className="truncate">{email}</span>
+        <span className="flex shrink-0 items-center gap-1 text-xs text-ink-400">
+          {t("settings.profile.manageEmail")}
+          <ArrowUpRight aria-hidden={true} className="h-3.5 w-3.5" />
+        </span>
+      </Button>
+    </Field>
   );
 }
 
 function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
   const { t } = useTranslation();
+  const { toastOnce } = useToastOnce();
   // Same envelope as candidate-invitations-panel.tsx / schedule-call-dialog.tsx:
   // a native `<form action={...}>` bound through `useActionState` so a
   // non-throwing action failure (a non-manager's permission refusal) can be
-  // rendered inline instead of surfacing as an unhandled exception.
+  // announced by toast instead of surfacing as an unhandled exception.
   const [state, formAction, pending] = React.useActionState(
     updateWorkspaceSettingsAction,
     { error: null, ok: false },
   );
+  // Policy (plan 2026-08-18, Part 2): action-level outcome -> toast. Success
+  // gets the default auto-dismiss; the permission refusal is `duration:
+  // null` because it used to render as a persistent inline `Notice` that
+  // never auto-dismissed — an ephemeral toast would be an easy-to-miss
+  // regression for a recruiter who doesn't know why their save no-opped.
+  // `state`'s own identity is the dedupe key (see ProfileSection's comment
+  // for why that's safe): a fresh settle either way, never re-announced for
+  // an unrelated re-render.
+  React.useEffect(() => {
+    if (state.ok) {
+      toastOnce(state, {
+        dismissLabel: t("toast.dismiss"),
+        message: t("settings.workspace.saved"),
+        tone: "success",
+      });
+      return;
+    }
+    if (state.error) {
+      toastOnce(state, {
+        dismissLabel: t("toast.dismiss"),
+        duration: null,
+        message: state.error,
+        tone: "danger",
+      });
+    }
+  }, [state, t, toastOnce]);
   // `canManageTeam` already gates this exact action server-side
   // (assertCanEditSettings delegates to the same predicate), and the loader
   // already exposes it to every other section of this form (see TeamSection) —
@@ -340,7 +470,6 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
           />
         </div>
       </SettingsPanel>
-      {state.error ? <Notice tone="danger">{state.error}</Notice> : null}
       <SettingsActionRow disabled={pending || !canEdit} />
     </form>
   );
@@ -675,9 +804,37 @@ function TeamMemberRow({
 
 function InterviewDefaultsSection({ data }: { data: WorkspaceSettingsData }) {
   const { t } = useTranslation();
+  const { toastOnce } = useToastOnce();
+  const [state, formAction, pending] = React.useActionState(
+    updateInterviewPreferencesAction,
+    { error: null, ok: false },
+  );
   const [preferences, setPreferences] = React.useState(
     data.interviewPreferences,
   );
+
+  // Same policy/dedupe reasoning as WorkspaceSection's effect: `state` is a
+  // fresh settle each submit, so keying `toastOnce` on it is safe against any
+  // unrelated re-render (a locale switch changing `t`'s identity, in
+  // particular) without re-announcing an outcome that already happened.
+  React.useEffect(() => {
+    if (state.ok) {
+      toastOnce(state, {
+        dismissLabel: t("toast.dismiss"),
+        message: t("settings.interview.saved"),
+        tone: "success",
+      });
+      return;
+    }
+    if (state.error) {
+      toastOnce(state, {
+        dismissLabel: t("toast.dismiss"),
+        duration: null,
+        message: state.error,
+        tone: "danger",
+      });
+    }
+  }, [state, t, toastOnce]);
   const languageOptions = [
     { label: t("settings.language.english"), value: "en" },
     { label: t("settings.language.french"), value: "fr" },
@@ -708,10 +865,7 @@ function InterviewDefaultsSection({ data }: { data: WorkspaceSettingsData }) {
   );
 
   return (
-    <form
-      action={updateInterviewPreferencesAction}
-      className="flex flex-col gap-[18px]"
-    >
+    <form action={formAction} className="flex flex-col gap-[18px]">
       <SettingsPanel>
         <SettingsPanelHeading
           description={t("settings.interview.description")}
@@ -780,7 +934,7 @@ function InterviewDefaultsSection({ data }: { data: WorkspaceSettingsData }) {
           }
         />
       </SettingsPanel>
-      <SettingsActionRow />
+      <SettingsActionRow disabled={pending} />
     </form>
   );
 }
@@ -1047,6 +1201,11 @@ function NotificationsSection({
   preferences: WorkspaceSettingsData["notificationPreferences"];
 }) {
   const { t } = useTranslation();
+  const { toastOnce } = useToastOnce();
+  const [state, formAction, pending] = React.useActionState(
+    updateNotificationPreferencesAction,
+    { error: null, ok: false },
+  );
   const [values, setValues] = React.useState(preferences);
   const setPreference = React.useCallback(
     (key: keyof typeof values, checked: boolean) => {
@@ -1058,8 +1217,28 @@ function NotificationsSection({
     [],
   );
 
+  // Same policy/dedupe reasoning as WorkspaceSection's effect.
+  React.useEffect(() => {
+    if (state.ok) {
+      toastOnce(state, {
+        dismissLabel: t("toast.dismiss"),
+        message: t("settings.notifications.saved"),
+        tone: "success",
+      });
+      return;
+    }
+    if (state.error) {
+      toastOnce(state, {
+        dismissLabel: t("toast.dismiss"),
+        duration: null,
+        message: state.error,
+        tone: "danger",
+      });
+    }
+  }, [state, t, toastOnce]);
+
   return (
-    <form action={updateNotificationPreferencesAction}>
+    <form action={formAction}>
       <SettingsPanel className="px-6 py-2">
         <div className="py-5">
           <SettingsPanelHeading
@@ -1114,7 +1293,7 @@ function NotificationsSection({
         />
       </SettingsPanel>
       <div className="mt-[18px]">
-        <SettingsActionRow />
+        <SettingsActionRow disabled={pending} />
       </div>
     </form>
   );

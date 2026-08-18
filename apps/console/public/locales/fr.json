@@ -526,7 +526,7 @@
         "title": "Profil",
         "description": "Comment vous apparaissez aux candidats et à vos collègues.",
         "fullName": "Nom complet",
-        "jobTitle": "Intitulé du poste",
+        "role": "Rôle",
         "email": "E-mail",
         "language": "Langue",
         "changePhoto": "Changer la photo",
@@ -534,7 +534,12 @@
         "avatarHint": "JPG ou PNG, au moins 256x256px.",
         "accountManaged": "Géré par le fournisseur de compte",
         "clerkAccountHint": "Les changements de nom, e-mail, mot de passe et avatar sont délégués à Clerk pour la V1.",
-        "mockAccountHint": "Ce compte mock ne peut pas modifier l'identité du profil localement."
+        "mockAccountHint": "Ce compte mock ne peut pas modifier l'identité du profil localement.",
+        "nameSaved": "Nom mis à jour",
+        "nameSaveFailed": "Impossible de mettre à jour votre nom. Veuillez réessayer.",
+        "languageSaveFailed": "Impossible d'enregistrer votre préférence de langue. Veuillez réessayer.",
+        "manageEmail": "Gérer dans Clerk",
+        "manageEmailHint": "Ouvre vos paramètres de compte dans Clerk, où les changements d'e-mail passent par une vérification."
       },
       "language": {
         "english": "English",
@@ -547,6 +552,7 @@
       "workspace": {
         "title": "Espace de travail",
         "description": "Les informations générales de votre organisation dans HireCall.",
+        "saved": "Paramètres de l'espace de travail enregistrés",
         "forbidden": "Vous n'avez pas les droits pour modifier ces réglages.",
         "uploadLogo": "Importer un logo",
         "logoHint": "L'import de logo n'est pas encore disponible en V1. Les initiales de l'espace sont utilisées pour l'instant.",
@@ -609,6 +615,8 @@
       "interview": {
         "title": "Réglages d'entretien",
         "description": "Appliqués à chaque nouvel entretien de présélection. Modifiables par rôle.",
+        "saved": "Réglages d'entretien enregistrés",
+        "forbidden": "Vous n'avez pas les droits pour modifier ces réglages.",
         "defaultLanguage": "Langue par défaut",
         "interviewerVoice": "Voix de l'intervieweur",
         "voices": {
@@ -652,6 +660,8 @@
       "notifications": {
         "title": "Notifications",
         "description": "Choisissez les e-mails envoyés par HireCall.",
+        "saved": "Préférences de notification enregistrées",
+        "forbidden": "Vous n'avez pas les droits pour modifier ces préférences.",
         "screensReady": "Entretiens prêts à revoir",
         "screensReadyDescription": "Quand un brief recruteur est prêt ou demande une action.",
         "candidateCompletion": "Confirmation de fin d'entretien",
@@ -724,7 +734,14 @@
       "copyLinkCopied": "Lien copié",
       "copyLinkFailed": "Impossible de copier le lien. Copiez-le manuellement.",
       "draftSaved": "Brouillon enregistré",
-      "rolePublished": "Entretien de poste publié"
+      "rolePublished": "Entretien de poste publié",
+      "languageUpdated": "Langue mise à jour",
+      "candidateMovedToCall": "Marqué à appeler",
+      "candidateArchived": "Candidat archivé",
+      "candidateReopened": "Candidat remis en revue",
+      "candidateReviewUpdateFailed": "Impossible de mettre à jour le statut du candidat. Veuillez réessayer.",
+      "recordingDeleted": "Enregistrement supprimé",
+      "recordingDeleteFailed": "Impossible de supprimer l'enregistrement. Veuillez réessayer."
     }
   }
 }

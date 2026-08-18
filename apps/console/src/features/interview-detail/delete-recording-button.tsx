@@ -1,6 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
+import { useTranslation } from "react-i18next";
+import { useToast } from "@prelude/ui";
 
 import { deleteRecordingAction } from "../../server/interviews/recording-actions";
 import type { CandidateRecordingStatus } from "../../server/interviews/recording-playback";
@@ -14,8 +16,9 @@ export function DeleteRecordingButton({
   canDelete: boolean;
   recordingStatus: CandidateRecordingStatus | null;
 }) {
+  const { t } = useTranslation();
+  const { toast } = useToast();
   const [pending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
 
   // Restricted to owners/admins, and only when there is audio to erase. A
   // deleted/failed/absent recording has nothing to delete.
@@ -30,21 +33,33 @@ export function DeleteRecordingButton({
     if (!confirmed) {
       return;
     }
-    setError(null);
+    // Fires from this click handler, not a reactive effect, so no
+    // toastOnce/dedupe guard is needed. Deletion used to succeed silently
+    // (the failure DID already surface, via an inline message right below
+    // the button) — both outcomes now announce the same way, by toast, so
+    // there is one place this action's result is ever shown, not two.
     startTransition(() => {
-      deleteRecordingAction({ candidateSessionId }).catch((cause) => {
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "Failed to delete the recording.",
-        );
-      });
+      deleteRecordingAction({ candidateSessionId })
+        .then(() => {
+          toast({
+            dismissLabel: t("toast.dismiss"),
+            message: t("toast.recordingDeleted"),
+            tone: "success",
+          });
+        })
+        .catch(() => {
+          toast({
+            dismissLabel: t("toast.dismiss"),
+            duration: null,
+            message: t("toast.recordingDeleteFailed"),
+            tone: "danger",
+          });
+        });
     });
   };
 
   return (
     <div className="mt-2 flex items-center justify-end gap-3">
-      {error ? <p className="text-[12px] text-red-600">{error}</p> : null}
       <button
         className="cursor-pointer text-[12px] font-medium text-[#a29b8d] transition hover:text-red-600 disabled:cursor-default disabled:opacity-60"
         disabled={pending}
