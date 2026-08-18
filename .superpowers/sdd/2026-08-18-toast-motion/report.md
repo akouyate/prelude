@@ -121,6 +121,57 @@ that a delay was tested (ring disabled outright) and rejected because it
 didn't move the dropped frame at all, so delaying it would only cost the
 ring's honesty against the real timer for nothing in return.
 
+## A second wrong turn, caught by review: narrowing `transform` broke swipe-cancel snapback
+
+Same failure shape as the `translate` bug above, one property further along —
+and this one shipped in the first commit before it was caught.
+`transition-[opacity,translate]` (no `transform`) is correct for the entry/exit
+motion this file drives, but base-ui's own swipe-to-dismiss gesture — enabled
+here because this stack renders no `Toast.Positioner`, so `isAnchored` is
+false and `swipeDirection` defaults to `['down', 'right']`
+(`toast/root/ToastRoot.js:88,92-96`) — reuses this same element's `transform`
+and this same element's `transition-property` for its own purposes. While
+dragging, `getDragStyles()` applies an inline `transform: translateX(…)
+translateY(…) scale(…)` plus `transition: none`, freezing the element at the
+pointer's position with no animation (`ToastRoot.js:443-460`). Release a drag
+below the 40px `SWIPE_THRESHOLD` and `handlePointerUp` resets the drag offset
+back to the rest position and clears `isSwiping`
+(`ToastRoot.js:407-413`); `getDragStyles()` then takes its early-return
+branch and stops emitting the inline `transform`/`transition` overrides
+entirely — so whatever the CSS class's `transition-property` says to animate
+is what animates the snap back to rest. On `main`, `transition-all` covered
+this for free. `transition-[opacity,translate]` didn't include `transform`,
+so a cancelled swipe (mouse drag included — Base UI's pointer handling isn't
+touch-gated) snapped back instantly instead of animating. My own frame-delta
+harness never exercised this: it only ever drove the click-triggered entry
+path, never a drag gesture, so it had no way to see a regression on a path it
+never touched.
+
+**Reproduced directly**, dispatching synthetic `PointerEvent`s at the
+mounted toast (`pointerdown` → two `pointermove`s, ~14–18px down, comfortably
+under the 40px threshold → `pointerup`), then sampling
+`getComputedStyle(toastEl).transform` every `requestAnimationFrame` after
+release:
+
+- **With `transition-[opacity,translate]` (the regression, reproduced via a
+  temporary override stylesheet, not by reverting the real fix):**
+  `transform` reads `"none"` at the very first sampled frame after release
+  (5.4ms later) — the 14px drag offset disappears with no animation at all,
+  confirming the instant-snap regression the review flagged.
+- **With `transition-[opacity,translate,transform]` (the actual fix):** the
+  same drag-and-release sequence produces a clean decay —
+  `matrix(1,0,0,1,0,14)` right after release, easing smoothly down through
+  `…,13.98)`, `…,13.76)`, `…,12.25)`, `…,7.58)`, `…,2.32)` … to `"none"` at
+  ~305–313ms, matching the 300ms transition-duration. The gesture animates
+  again.
+
+Fix: add `transform` back to the property list —
+`transition-[opacity,translate,transform]`. It costs nothing on the entry
+path (confirmed below): the toast's own entry animation never touches
+`transform`, only `opacity`/`translate`, so listing it adds no work there —
+it only matters for, and is only ever driven by, the swipe gesture that
+base-ui itself reuses this element's transition for.
+
 ## Measurement — after
 
 **INP** (real trusted click): 32ms (was 35ms) — expected to be roughly
@@ -149,6 +200,15 @@ computed style, not assumed from the curve's name (the first curve tried,
 steep* initial slope to `ease-out` — despite reading as a "soft" easing name —
 and was replaced with `ease-in-out` before shipping, for exactly that
 reason).
+
+**Re-verified after adding `transform` back** (post-review fix): re-ran both
+the frame-delta harness (4 runs: single dropped frame each, 40.3–49.7ms — same
+magnitude as above) and the opacity-onset sampling (0.003 then 0.007 in the
+first two post-freeze frames — same as the 0.002/0.008 above, within
+run-to-run noise). Restoring `transform` to the property list changed nothing
+about the entry motion, exactly as expected: the entry path never sets a
+`transform` value, so adding it to the list gives the browser one more
+property to watch, not one more property to move.
 
 ## What this does and does not establish
 

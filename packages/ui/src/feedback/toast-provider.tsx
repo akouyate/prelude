@@ -145,11 +145,31 @@ function ToastStack() {
         // compositor-friendly, so the browser can animate them off the main
         // thread. `transition-all` armed a transition on every animatable
         // property, which forced the browser onto the non-compositable path.
-        // It's `translate`, not `transform`: Tailwind 4 compiles `translate-y-*`
-        // to the standalone CSS `translate` property (confirmed against the
-        // generated stylesheet), so listing `transform` here — the more
-        // familiar name — would silently drop the slide from the transition
-        // instead of narrowing it, leaving only the fade.
+        // It's `translate`, not (only) `transform`: Tailwind 4 compiles
+        // `translate-y-*` to the standalone CSS `translate` property
+        // (confirmed against the generated stylesheet), so listing only
+        // `transform` — the more familiar name — would silently drop the
+        // entry slide from the transition instead of narrowing it, leaving
+        // only the fade (an earlier pass here did exactly that; caught by
+        // re-measuring the rendered `translate`/bounding-rect, not assumed
+        // from the class compiling). `transform` still has to stay in the
+        // list alongside it, though: Base UI's swipe-to-dismiss gesture
+        // (enabled here — this stack renders no `Toast.Positioner`, so
+        // `isAnchored` is false and swipe is on by default,
+        // `@base-ui-components/react` `toast/root/ToastRoot.js:88,92-96`) is
+        // its own inline `transform`, applied while dragging
+        // (`getDragStyles()`, `ToastRoot.js:443-460`). Cancel a drag below
+        // the 40px threshold and `handlePointerUp` clears the inline
+        // override (`ToastRoot.js:407-413`); the snap-back is then whatever
+        // this class's `transition-property` says to animate. `transition-all`
+        // covered it for free; narrowing to `opacity,translate` alone
+        // silently dropped it — same failure shape as the `translate` bug
+        // above, caught the same way (exercising the actual swipe-cancel
+        // path and watching it snap back instantly instead of animating; see
+        // the report). The toast never uses `transform` on the entry path
+        // this file's own animation drives, so listing it here costs nothing
+        // there — it only matters for the gesture, and Base UI happens to
+        // reuse this element's own transition for it.
         //
         // Duration 300ms / distance 12px (`translate-y-3`), not 200ms / 8px:
         // frame-level measurement (see
@@ -185,7 +205,7 @@ function ToastStack() {
         // identical soft landing. Confirmed against the rendered
         // `getComputedStyle().translate`/`.opacity` samples in the report,
         // not assumed from the curve's name.
-        className="w-[min(380px,88vw)] transition-[opacity,translate] duration-300 ease-in-out data-[ending-style]:opacity-0 data-[starting-style]:translate-y-3 data-[starting-style]:opacity-0 motion-reduce:transition-none"
+        className="w-[min(380px,88vw)] transition-[opacity,translate,transform] duration-300 ease-in-out data-[ending-style]:opacity-0 data-[starting-style]:translate-y-3 data-[starting-style]:opacity-0 motion-reduce:transition-none"
         key={entry.id}
         toast={entry}
       >
