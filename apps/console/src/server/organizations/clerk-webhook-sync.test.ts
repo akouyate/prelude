@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   applyClerkSyncIntent,
@@ -6,6 +6,10 @@ import {
   type ClerkSyncIntent,
   type ClerkSyncStore,
 } from "./clerk-webhook-sync";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("planClerkWebhookSync", () => {
   it("plans an active membership upsert from organizationMembership.created", () => {
@@ -173,7 +177,9 @@ describe("planClerkWebhookSync", () => {
     expect(intent).toMatchObject({ email: "primary@example.com" });
   });
 
-  it("ignores a stale/removed email address even if it is listed first", () => {
+  it("ignores a stale/removed email address even if it is listed first, and warns — a version-skew/bug signal", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
     const intent = planClerkWebhookSync({
       type: "user.updated",
       data: {
@@ -184,6 +190,18 @@ describe("planClerkWebhookSync", () => {
     });
 
     expect(intent).toMatchObject({ email: null });
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("did not resolve"), "idn_missing");
+  });
+
+  it("does not warn when primary_email_address_id is simply absent — a normal shape", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    planClerkWebhookSync({
+      type: "user.updated",
+      data: { id: "user_clerk_1", first_name: "Ada" },
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it("round-trips a single-word name our own form produced without mutating it", () => {

@@ -86,6 +86,8 @@ function composeName(first: unknown, last: unknown): string | null {
 function selectPrimaryEmail(data: Record<string, unknown>): string | null {
   const primaryId = asString(data.primary_email_address_id);
   if (!primaryId) {
+    // No primary id at all is a normal shape (e.g. a user.updated payload
+    // that doesn't touch email) — nothing worth flagging.
     return null;
   }
   const addresses = Array.isArray(data.email_addresses)
@@ -94,7 +96,20 @@ function selectPrimaryEmail(data: Record<string, unknown>): string | null {
   const primary = addresses
     .map((entry) => asRecord(entry))
     .find((entry) => entry && asString(entry.id) === primaryId);
-  return primary ? normalizeEmail(primary.email_address) : null;
+  if (!primary) {
+    // Unlike the branch above, an id being PRESENT but not resolving to any
+    // listed address should never happen for a well-formed Clerk payload —
+    // it is a version-skew/bug signal worth surfacing, not a normal shape.
+    // Still returns null rather than throwing: a resolvable `name` in the
+    // same event should still apply, and treating a malformed event as fatal
+    // would turn it into a poison pill Svix retries forever.
+    console.warn(
+      "[clerk-webhook] user.updated: primary_email_address_id did not resolve to any listed email_addresses entry",
+      primaryId,
+    );
+    return null;
+  }
+  return normalizeEmail(primary.email_address);
 }
 
 export function planClerkWebhookSync(
@@ -164,6 +179,15 @@ export function planClerkWebhookSync(
       if (!clerkUserId) {
         return null;
       }
+      // No ordering guard: two rapid user.updated events landing out of
+      // order leave the OLDER name/email persisted, with nothing to
+      // self-correct until the next update arrives. Acceptable to ship —
+      // this is display data, not authZ or money — but unlike every other
+      // deliberate omission in this file, fixing it needs a new column (a
+      // `sourceUpdatedAt` guard, the same pattern as
+      // packages/billing/src/server.ts:293,313's
+      // `sourceUpdatedAt: { lte: … }`) and therefore a migration, which is
+      // out of scope for this wave.
       return {
         kind: "user",
         clerkUserId,

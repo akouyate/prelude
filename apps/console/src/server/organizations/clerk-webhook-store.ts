@@ -1,8 +1,15 @@
 import "server-only";
 
-import { prisma } from "@prelude/db";
+import { Prisma, prisma } from "@prelude/db";
 
 import type { ClerkSyncStore } from "./clerk-webhook-sync";
+
+function isUniqueConstraintViolation(error: unknown) {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === "P2002"
+  );
+}
 
 /**
  * Prisma-backed ClerkSyncStore: projects Clerk's authoritative organization
@@ -40,9 +47,25 @@ export const prismaClerkSyncStore: ClerkSyncStore = {
     if (email) {
       const byEmail = await prisma.user.findUnique({
         where: { email },
-        select: { id: true },
+        select: { id: true, clerkUserId: true },
       });
       if (byEmail) {
+        if (byEmail.clerkUserId) {
+          // This row is already linked to a DIFFERENT Clerk identity (we
+          // already know it isn't THIS clerkUserId — that lookup above came
+          // back empty). Two Clerk accounts can share an email (an email
+          // change, an instance migration, a delete + re-signup); silently
+          // reassigning clerkUserId here would hand the second account
+          // every OrganizationMembership the first one held. Fail loudly
+          // instead of guessing — this throws, so Svix retries the event,
+          // which is exactly as unproductive as it should be until a human
+          // resolves the collision.
+          throw new Error(
+            `Cannot provision Clerk user ${clerkUserId}: email ${email} already ` +
+              `belongs to user ${byEmail.id}, which is linked to a different ` +
+              `Clerk identity (${byEmail.clerkUserId}). Refusing to reassign it.`,
+          );
+        }
         await prisma.user.update({
           where: { id: byEmail.id },
           data: { clerkUserId, ...(name ? { name } : {}) },
@@ -92,8 +115,33 @@ export const prismaClerkSyncStore: ClerkSyncStore = {
     const data: { email?: string; name?: string } = {};
     if (email) data.email = email;
     if (name) data.name = name;
-    if (Object.keys(data).length > 0) {
+    if (Object.keys(data).length === 0) {
+      return true;
+    }
+
+    try {
       await prisma.user.update({ where: { id: existing.id }, data });
+    } catch (error) {
+      if (!data.email || !isUniqueConstraintViolation(error)) {
+        throw error;
+      }
+      // The new email already belongs to a DIFFERENT User row — a Clerk
+      // user changed their email to one another account already holds.
+      // Retrying this event would hit the exact same P2002 forever until
+      // Svix disables the endpoint, taking every OTHER sync down with it
+      // (see item 4's related note in the hardening brief). Park it: apply
+      // whatever isn't in conflict (the name), log it for a human to
+      // reconcile the two rows, and report success so the event stops
+      // retrying — a retry cannot fix a collision only a human can resolve.
+      console.error(
+        "[clerk-webhook] user.updated: email collision, parked",
+        clerkUserId,
+        email,
+      );
+      const { email: _conflictingEmail, ...rest } = data;
+      if (Object.keys(rest).length > 0) {
+        await prisma.user.update({ where: { id: existing.id }, data: rest });
+      }
     }
     return true;
   },
