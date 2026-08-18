@@ -130,6 +130,14 @@ export async function updateProfileNameAction(
 // left Clerk still showing "Lovelace" while the mirror said "Ada", with
 // nothing to reconcile the two — same missing-webhook problem as above).
 // Clerk accepts an empty string to clear the field, so this sends one.
+//
+// Both halves verified against the real Backend API on 2026-08-18 (test
+// instance, throwaway user, deleted after): PATCH `{last_name: ""}` on a user
+// whose surname was "Lovelace" read back as `null`, and the control — the
+// pre-fix payload, omitting `last_name` — read back as "Lovelace" still.
+// Recorded because the unit tests mock Clerk: they prove what we SEND, never
+// what Clerk DOES with it, so a reader has no other way to know this is
+// measured rather than assumed.
 function splitDisplayName(name: string): {
   firstName: string;
   lastName: string;
