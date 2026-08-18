@@ -183,7 +183,14 @@ export function EnterpriseShell({
           )}
         >
           <MobileWorkspaceHeader credits={credits} organizationName={organizationName} />
-          <main className="px-[clamp(16px,3vw,40px)] py-[clamp(20px,3vw,38px)] pb-16">
+          {/*
+           * The gutter is published as a custom property so a horizontal
+           * scroller inside a page can cancel it (`-mx-[var(--shell-gutter)]`)
+           * and run edge to edge. Without that, a cut-off item reads as broken
+           * layout instead of "there is more to the right", and the reader
+           * loses the width the gutter costs on the narrowest screens.
+           */}
+          <main className="[--shell-gutter:clamp(16px,3vw,40px)] px-[var(--shell-gutter)] py-[clamp(20px,3vw,38px)] pb-16">
             <div className="mx-auto w-full max-w-[1180px]">{children}</div>
           </main>
           <MobileWorkspaceNav activePath={activePath} />
