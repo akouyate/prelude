@@ -1,6 +1,9 @@
 import { organizationRoles, type OrganizationRole } from "@prelude/types";
 
-import { mapClerkOrganizationRole } from "./organization-access-policy";
+import {
+  isKnownClerkRole,
+  mapClerkOrganizationRole,
+} from "./organization-access-policy";
 
 // The granular Prelude roles we recognise, derived from the canonical list so a
 // new role in @prelude/types is accepted here automatically. The role is carried
@@ -49,8 +52,20 @@ export function resolveOrganizationRoleFromClerk(input: {
     // actually reads: the stale "admin"/"owner" metadata would keep winning
     // forever. When the two disagree on TIER, the coarse Clerk role is the
     // one that was just intentionally changed, so it wins.
+    //
+    // Gated on `isKnownClerkRole`, NOT just "truthy": mapClerkOrganizationRole
+    // falls back to "viewer" for any coarse role this codebase doesn't have a
+    // mapping for (a typo, or a genuine Clerk custom-role slug like
+    // "org:owner" / "org:billing_manager" — the paid B2B add-on this codebase
+    // already contemplates). Treating "unrecognized" the same as "disagrees"
+    // would collapse every member, including the owner, to viewer the moment
+    // the Clerk instance emits such a role — and since canAssignRole requires
+    // an owner to grant owner, that state is unrecoverable in-product. An
+    // unrecognized coarse role means "we don't know what Clerk just did",
+    // not "Clerk just demoted this person" — keep the granular role.
     if (
       input.clerkRole &&
+      isKnownClerkRole(input.clerkRole) &&
       toClerkMembershipRole(granularRole) !== input.clerkRole
     ) {
       return mapClerkOrganizationRole(input.clerkRole, "viewer");

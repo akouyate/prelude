@@ -43,6 +43,19 @@ export function mapClerkOrganizationRole(
   return clerkRoleMap[role] ?? "viewer";
 }
 
+/**
+ * Whether `role` is a Clerk coarse role this codebase actually has a mapping
+ * for (currently only org:admin / org:member — see clerkRoleMap). Distinct
+ * from `mapClerkOrganizationRole`, which silently falls back to "viewer" for
+ * ANY unrecognized key: a caller that needs to tell "I know this role and it
+ * means member-tier" apart from "I have never seen this role before" (e.g.
+ * clerk-role-sync.ts deciding whether the coarse role disagrees with a
+ * granular one on purpose) needs this, not the fallback-masked mapper.
+ */
+export function isKnownClerkRole(role: string): boolean {
+  return Object.prototype.hasOwnProperty.call(clerkRoleMap, role);
+}
+
 export function hasAuthenticatedClerkUser(
   clerkUserId: string | null | undefined,
 ): clerkUserId is string {

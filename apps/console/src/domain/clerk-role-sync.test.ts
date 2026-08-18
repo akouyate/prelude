@@ -55,6 +55,37 @@ describe("resolveOrganizationRoleFromClerk", () => {
     ).toBe("admin");
   });
 
+  it("keeps the granular role when the coarse Clerk role is UNRECOGNIZED, rather than collapsing to viewer", () => {
+    // The "trust Clerk on disagreement" guard must only fire for a coarse
+    // role we actually understand. org:owner / org:billing_manager are
+    // Clerk custom-role slugs this codebase doesn't have a mapping for
+    // (organization-access-policy.ts's clerkRoleMap has only org:admin and
+    // org:member) — mapClerkOrganizationRole falls back to "viewer" for ANY
+    // unrecognized key, so treating "unrecognized" the same as "disagrees"
+    // would collapse every member, including the owner, to viewer the
+    // moment the Clerk instance emits a role we don't know about. Since
+    // canAssignRole requires an owner to grant owner, that state is
+    // unrecoverable in-product.
+    expect(
+      resolveOrganizationRoleFromClerk({
+        publicMetadataRole: "owner",
+        clerkRole: "org:owner",
+      }),
+    ).toBe("owner");
+    expect(
+      resolveOrganizationRoleFromClerk({
+        publicMetadataRole: "admin",
+        clerkRole: "org:owner",
+      }),
+    ).toBe("admin");
+    expect(
+      resolveOrganizationRoleFromClerk({
+        publicMetadataRole: "owner",
+        clerkRole: "org:billing_manager",
+      }),
+    ).toBe("owner");
+  });
+
   it("falls back to the Clerk coarse role when no granular role is set", () => {
     // org:admin -> admin, org:member -> recruiter (a member can operate).
     expect(

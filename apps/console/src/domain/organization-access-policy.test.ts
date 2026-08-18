@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   hasAuthenticatedClerkUser,
+  isKnownClerkRole,
   mapClerkOrganizationRole,
   resolveCompletedOrganizationScope,
   type OrganizationScopeMembershipCandidate,
@@ -27,6 +28,21 @@ describe("organization access policy", () => {
 
   it("downgrades unknown roles to viewer", () => {
     expect(mapClerkOrganizationRole("org:billing", "owner")).toBe("viewer");
+  });
+
+  it("distinguishes a recognized coarse role from an unrecognized one — isKnownClerkRole", () => {
+    // Every key mapClerkOrganizationRole actually maps.
+    expect(isKnownClerkRole("org:admin")).toBe(true);
+    expect(isKnownClerkRole("org:member")).toBe(true);
+    expect(isKnownClerkRole("owner")).toBe(true);
+    // A Clerk custom-role slug (the paid B2B add-on this codebase already
+    // contemplates) or a plain typo — neither is a role this codebase has a
+    // mapping for. Callers that need to tell "disagrees" apart from "we've
+    // never seen this" (clerk-role-sync.ts's privilege-retention guard) rely
+    // on this returning false here, NOT on mapClerkOrganizationRole's
+    // fallback-to-viewer, which would conflate the two.
+    expect(isKnownClerkRole("org:owner")).toBe(false);
+    expect(isKnownClerkRole("org:billing_manager")).toBe(false);
   });
 
   it("requires an authenticated Clerk user before resolving access", () => {
