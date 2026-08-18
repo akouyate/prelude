@@ -9,6 +9,8 @@ import {
   useTransition,
 } from "react";
 import { useRouter } from "next/navigation";
+import { Trans, useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   ArrowLeft,
   ArrowRight,
@@ -86,86 +88,95 @@ const companySizes = [
   { label: "1000+", value: "1000+" },
 ];
 
+/*
+ * `value` is persisted (Organization.onboardingRole, hiringFocus,
+ * interviewMode) and is NOT a display string: translating it would write
+ * French into rows an English workspace also reads, and would orphan every
+ * value already stored. Only the label and description are translated, which
+ * is why they are keys and the value stays a literal.
+ */
 const roles = [
   {
-    description: "I screen, qualify, and coordinate candidates.",
+    descriptionKey: "onboarding.roleRecruiterDescription",
     icon: Community,
-    label: "Recruiter",
+    labelKey: "onboarding.roleRecruiterLabel",
     value: "Recruiter",
   },
   {
-    description: "I own the role and need better first filters.",
+    descriptionKey: "onboarding.roleHiringManagerDescription",
     icon: Suitcase,
-    label: "Hiring manager",
+    labelKey: "onboarding.roleHiringManagerLabel",
     value: "Hiring manager",
   },
   {
-    description: "I need a lean hiring setup for a growing team.",
+    descriptionKey: "onboarding.roleFounderDescription",
     icon: Building,
-    label: "Founder / operator",
+    labelKey: "onboarding.roleFounderLabel",
     value: "Founder / operator",
   },
   {
-    description: "We manage hiring processes across the company.",
+    descriptionKey: "onboarding.roleHrTeamDescription",
     icon: TaskList,
-    label: "HR team",
+    labelKey: "onboarding.roleHrTeamLabel",
     value: "HR team",
   },
 ];
 
 const hiringFocuses = [
   {
-    description: "Restaurants, hotels, tourism, and guest-facing roles.",
+    descriptionKey: "onboarding.focusHospitalityDescription",
     icon: Shop,
-    label: "Hospitality",
+    labelKey: "onboarding.focusHospitalityLabel",
     value: "Hospitality",
   },
   {
-    description: "Warehouse, transport, field operations, and shifts.",
+    descriptionKey: "onboarding.focusLogisticsDescription",
     icon: DeliveryTruck,
-    label: "Logistics",
+    labelKey: "onboarding.focusLogisticsLabel",
     value: "Logistics",
   },
   {
-    description: "Retail, customer support, sales, and service teams.",
+    descriptionKey: "onboarding.focusCustomerFacingDescription",
     icon: Shop,
-    label: "Customer-facing",
+    labelKey: "onboarding.focusCustomerFacingLabel",
     value: "Customer-facing",
   },
   {
-    description: "Product, engineering, data, and specialist roles.",
+    descriptionKey: "onboarding.focusSpecialistDescription",
     icon: Industry,
-    label: "Specialist roles",
+    labelKey: "onboarding.focusSpecialistLabel",
     value: "Specialist roles",
   },
   {
-    description:
-      "Use this when your hiring needs do not fit a preset category.",
+    descriptionKey: "onboarding.focusOtherDescription",
     icon: MoreHoriz,
-    label: "Other roles",
+    labelKey: "onboarding.focusOtherLabel",
     value: "Other roles",
   },
 ];
 
+// LinkedIn and Indeed are product names and stay untranslated; only the
+// "add manually" option has a label to speak.
 const jobSources = [
   {
-    description: "Mock connection to active LinkedIn job posts.",
+    descriptionKey: "onboarding.sourceLinkedinDescription",
     label: "LinkedIn",
     value: "linkedin",
   },
   {
-    description: "Mock connection to active Indeed job posts.",
+    descriptionKey: "onboarding.sourceIndeedDescription",
     label: "Indeed",
     value: "indeed",
   },
   {
-    description: "Start from a role title and add details later.",
-    label: "Add manually",
+    descriptionKey: "onboarding.sourceManualDescription",
+    labelKey: "onboarding.sourceManualLabel",
     value: "manual",
   },
 ] satisfies Array<{
-  description: string;
-  label: string;
+  descriptionKey: string;
+  label?: string;
+  labelKey?: string;
   value: JobSource;
 }>;
 
@@ -198,15 +209,15 @@ const importedJobs = [
 
 const interviewModes = [
   {
-    description: "HireCall speaks with the candidate and adapts live.",
+    descriptionKey: "onboarding.modeVoiceDescription",
     icon: Microphone,
-    label: "Voice first",
+    labelKey: "onboarding.modeVoiceLabel",
     value: "Voice first",
   },
   {
-    description: "Keep a quiet Typeform-like fallback for candidates.",
+    descriptionKey: "onboarding.modeFormDescription",
     icon: EditPencil,
-    label: "Form fallback",
+    labelKey: "onboarding.modeFormLabel",
     value: "Form fallback",
   },
 ];
@@ -227,7 +238,27 @@ const initialState: OnboardingState = {
   selectedJobId: "",
 };
 
+/*
+ * The emphasised word inside a title is not the same word in every language —
+ * "Let's create your *hiring* workspace" versus "Créons votre espace de
+ * *recrutement*" — and it does not sit in the same place either. `<Trans>`
+ * keeps each title as one translatable sentence with the emphasis marked
+ * inside it, rather than three fragments a translator has to reassemble.
+ */
+function EmphasisedTitle({ i18nKey, values }: { i18nKey: string; values?: Record<string, string> }) {
+  return (
+    <Trans
+      components={{
+        em: <span className="font-display italic text-olive-700" />,
+      }}
+      i18nKey={i18nKey}
+      values={values}
+    />
+  );
+}
+
 export function OnboardingWizard() {
+  const { t } = useTranslation();
   const router = useRouter();
   const [currentStep, setCurrentStep] = useState(0);
   const [isLoadingProgress, setIsLoadingProgress] = useState(true);
@@ -374,20 +405,12 @@ export function OnboardingWizard() {
   if (isLoadingProgress) {
     return (
       <StepShell
-        eyebrow="HireCall onboarding"
-        title={
-          <>
-            Preparing your{" "}
-            <span className="font-display italic text-olive-700">
-              workspace
-            </span>
-            .
-          </>
-        }
-        description="We are loading your saved setup progress."
+        eyebrow={t("onboarding.eyebrowWelcome")}
+        title={<EmphasisedTitle i18nKey="onboarding.loadingTitle" />}
+        description={t("onboarding.loadingDescription")}
       >
         <div className="rounded-3xl border border-ink-100 bg-white/65 p-5 text-sm text-ink-600">
-          Loading workspace setup...
+          {t("onboarding.loadingBody")}
         </div>
       </StepShell>
     );
@@ -395,7 +418,11 @@ export function OnboardingWizard() {
 
   return (
     <StepShell
-      eyebrow={step === "welcome" ? "HireCall onboarding" : "Workspace setup"}
+      eyebrow={
+        step === "welcome"
+          ? t("onboarding.eyebrowWelcome")
+          : t("onboarding.eyebrowSetup")
+      }
       footer={
         <WizardFooter
           canContinue={canContinue}
@@ -407,7 +434,7 @@ export function OnboardingWizard() {
         />
       }
       title={<StepTitle state={state} step={step} />}
-      description={getStepDescription(step, state)}
+      description={getStepDescription(step, state, t)}
     >
       <div className="mb-10">
         <StepProgress current={currentStep + 1} total={steps.length} />
@@ -426,7 +453,7 @@ export function OnboardingWizard() {
             autoFocus
             className="h-14 rounded-2xl border-ink-200 bg-white px-4 text-lg"
             onChange={(event) => update("companyName", event.target.value)}
-            placeholder="Acme Talent"
+            placeholder={t("onboarding.companyPlaceholder")}
             value={state.companyName}
           />
         </form>
@@ -485,7 +512,7 @@ export function OnboardingWizard() {
             autoFocus
             className="h-14 rounded-2xl border-ink-200 bg-white px-4 text-lg"
             onChange={(event) => update("manualJobTitle", event.target.value)}
-            placeholder="Restaurant Manager"
+            placeholder={t("onboarding.manualJobPlaceholder")}
             value={state.manualJobTitle}
           />
         </form>
@@ -493,7 +520,7 @@ export function OnboardingWizard() {
 
       {step === "jobs" && state.jobSource !== "manual" ? (
         <RadioCardGroup
-          ariaLabel="Select first job"
+          ariaLabel={t("onboarding.selectFirstJobAria")}
           className="space-y-3"
           indicatorShape="circle"
           onValueChange={(value) => update("selectedJobId", value)}
@@ -517,19 +544,44 @@ export function OnboardingWizard() {
       {step === "ready" ? (
         <div className="rounded-3xl border border-ink-100 bg-white/65 p-5">
           <dl className="grid gap-4 text-sm sm:grid-cols-2">
-            <SummaryItem label="Workspace" value={state.companyName} />
-            <SummaryItem label="Company size" value={state.companySize} />
-            <SummaryItem label="Your role" value={state.role} />
-            <SummaryItem label="Hiring focus" value={state.hiringFocus} />
+            {/*
+              The recap reads back the persisted values, which are English
+              literals by design (see the note on `roles`). Each one is mapped
+              back to its translated label so the summary speaks the reader's
+              language instead of echoing the stored key.
+            */}
             <SummaryItem
-              label="Job source"
-              value={formatJobSource(state.jobSource)}
+              label={t("onboarding.summaryWorkspace")}
+              value={state.companyName}
             />
             <SummaryItem
-              label="First job"
-              value={firstJobTitle ?? "Not selected"}
+              label={t("onboarding.summaryCompanySize")}
+              value={state.companySize}
             />
-            <SummaryItem label="Candidate mode" value={state.interviewMode} />
+            <SummaryItem
+              label={t("onboarding.summaryRole")}
+              value={translatedLabelFor(roles, state.role, t)}
+            />
+            <SummaryItem
+              label={t("onboarding.summaryHiringFocus")}
+              value={translatedLabelFor(hiringFocuses, state.hiringFocus, t)}
+            />
+            <SummaryItem
+              label={t("onboarding.summaryJobSource")}
+              value={formatJobSource(state.jobSource, t)}
+            />
+            <SummaryItem
+              label={t("onboarding.summaryFirstJob")}
+              value={firstJobTitle ?? t("onboarding.summaryNotSelected")}
+            />
+            <SummaryItem
+              label={t("onboarding.summaryCandidateMode")}
+              value={translatedLabelFor(
+                interviewModes,
+                state.interviewMode,
+                t,
+              )}
+            />
           </dl>
           {submitError ? (
             <p className="mt-5 rounded-2xl border border-[#f4c7b7] bg-[#fff4f0] px-4 py-3 text-sm text-[#8f2f1a]">
@@ -547,7 +599,9 @@ export function OnboardingWizard() {
               disabled={isSubmitting}
               onClick={completeOnboarding}
             >
-              {isSubmitting ? "Creating..." : "Finish workspace setup"}
+              {isSubmitting
+                ? t("onboarding.creating")
+                : t("onboarding.finish")}
             </Button>
           </div>
         </div>
@@ -563,12 +617,15 @@ function JobSourceGrid({
 }: {
   onSelect: (value: JobSource) => void;
   options: Array<{
-    description: string;
-    label: string;
+    descriptionKey: string;
+    label?: string;
+    labelKey?: string;
     value: JobSource;
   }>;
   selected: JobSource | "";
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {options.map((option) => {
@@ -596,10 +653,12 @@ function JobSourceGrid({
                 </span>
                 <span>
                   <span className="block text-base font-semibold text-ink-900">
-                    {option.label}
+                    {option.labelKey ? t(option.labelKey) : option.label}
                   </span>
                   <span className="mt-1 block text-xs font-medium uppercase tracking-[0.12em] text-ink-500">
-                    {isManual ? "No connector" : "Mock connector"}
+                    {isManual
+                      ? t("onboarding.sourceConnectorNone")
+                      : t("onboarding.sourceConnectorMock")}
                   </span>
                 </span>
               </span>
@@ -610,7 +669,7 @@ function JobSourceGrid({
               ) : null}
             </span>
             <span className="mt-6 max-w-sm text-sm leading-6 text-ink-600">
-              {option.description}
+              {t(option.descriptionKey)}
             </span>
           </button>
         );
@@ -631,20 +690,24 @@ function SourceLogo({ source }: { source: JobSource }) {
   return <EditPencil aria-hidden="true" className="h-6 w-6 text-ink-800" />;
 }
 
+type LabelledChoice = {
+  descriptionKey: string;
+  icon: typeof Suitcase;
+  labelKey: string;
+  value: string;
+};
+
 function ChoiceGrid({
   onSelect,
   options,
   selected,
 }: {
   onSelect: (value: string) => void;
-  options: Array<{
-    description: string;
-    icon: typeof Suitcase;
-    label: string;
-    value: string;
-  }>;
+  options: LabelledChoice[];
   selected: string;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       {options.map((option) => {
@@ -653,11 +716,11 @@ function ChoiceGrid({
         return (
           <ChoiceTile
             key={option.value}
-            description={option.description}
+            description={t(option.descriptionKey)}
             icon={<Icon className="h-6 w-6" />}
             onClick={() => onSelect(option.value)}
             selected={selected === option.value}
-            title={option.label}
+            title={t(option.labelKey)}
           />
         );
       })}
@@ -665,81 +728,89 @@ function ChoiceGrid({
   );
 }
 
+// The stored value is an English literal; this maps it back to whatever the
+// reader's language calls it. Falls back to the raw value so a legacy or
+// hand-edited row still shows something rather than an empty cell.
+function translatedLabelFor(
+  options: Array<{ labelKey: string; value: string }>,
+  value: string,
+  t: TFunction,
+) {
+  const match = options.find((option) => option.value === value);
+  return match ? t(match.labelKey) : value;
+}
+
 function StepTitle({ state, step }: { state: OnboardingState; step: StepId }) {
+  const { t } = useTranslation();
+
   if (step === "welcome") {
-    return (
-      <>
-        Let’s create your{" "}
-        <span className="font-display italic text-olive-700">hiring</span>{" "}
-        workspace.
-      </>
-    );
+    return <EmphasisedTitle i18nKey="onboarding.titleWelcome" />;
   }
 
   if (step === "company") {
-    return "What’s your company or team name?";
+    return t("onboarding.titleCompany");
   }
 
   if (step === "size") {
-    return "How many people work there?";
+    return t("onboarding.titleSize");
   }
 
   if (step === "role") {
-    return "What best describes your role?";
+    return t("onboarding.titleRole");
   }
 
   if (step === "focus") {
-    return "What roles do you usually screen?";
+    return t("onboarding.titleFocus");
   }
 
   if (step === "source") {
-    return (
-      <>
-        Import your{" "}
-        <span className="font-display italic text-olive-700">active roles</span>
-        .
-      </>
-    );
+    return <EmphasisedTitle i18nKey="onboarding.titleSource" />;
   }
 
   if (step === "jobs") {
     return state.jobSource === "manual"
-      ? "What role are you hiring for?"
-      : "Which job post should we draft first?";
+      ? t("onboarding.titleJobsManual")
+      : t("onboarding.titleJobsImported");
   }
 
   if (step === "mode") {
-    return "How should candidates answer?";
+    return t("onboarding.titleMode");
   }
 
-  return `${state.companyName || "Your workspace"} is ready.`;
+  return t("onboarding.titleReady", {
+    workspace: state.companyName || t("onboarding.titleReadyFallback"),
+  });
 }
 
-function getStepDescription(step: StepId, state: OnboardingState) {
+function getStepDescription(
+  step: StepId,
+  state: OnboardingState,
+  t: TFunction,
+) {
   if (step === "welcome") {
-    return "A few focused questions help HireCall tailor the first interview draft without turning setup into an admin form.";
+    return t("onboarding.descriptionWelcome");
   }
 
   if (step === "size") {
-    return "This helps us tune the experience for your hiring volume and organization shape.";
+    return t("onboarding.descriptionSize");
   }
 
   if (step === "source") {
-    return "LinkedIn and Indeed are mocked for now, but the flow is designed for real connectors later.";
+    return t("onboarding.descriptionSource");
   }
 
   if (step === "jobs") {
     return state.jobSource === "manual"
-      ? "Enter the first job title. You can add the description and criteria before generating questions."
-      : "Pick one active post. HireCall will use it to generate your first interview draft.";
+      ? t("onboarding.descriptionJobsManual")
+      : t("onboarding.descriptionJobsImported");
   }
 
   if (step === "mode") {
-    return "This becomes the default for new pre-screen interviews. Recruiters can override it per role later.";
+    return t("onboarding.descriptionMode");
   }
 
   if (step === "ready") {
-    return "We have enough context to create the workspace and prepare the first role on your dashboard.";
+    return t("onboarding.descriptionReady");
   }
 
   return undefined;
@@ -794,6 +865,8 @@ function WizardFooter({
   onBack: () => void;
   onNext: () => void;
 }) {
+  const { t } = useTranslation();
+
   if (isLast) {
     return null;
   }
@@ -806,14 +879,16 @@ function WizardFooter({
         variant="ghost"
       >
         <ArrowLeft aria-hidden="true" className="h-4 w-4" />
-        Back
+        {t("onboarding.back")}
       </Button>
       <span className="flex items-center gap-3">
         {isSaving ? (
-          <span className="text-xs font-medium text-ink-400">Saving...</span>
+          <span className="text-xs font-medium text-ink-400">
+            {t("onboarding.saving")}
+          </span>
         ) : null}
         <Button disabled={!canContinue} onClick={onNext}>
-          Continue
+          {t("onboarding.continue")}
           <ArrowRight aria-hidden="true" className="h-4 w-4" />
         </Button>
       </span>
@@ -858,29 +933,36 @@ function normalizeInterviewMode(value: string) {
 }
 
 function WelcomeStep() {
+  const { t } = useTranslation();
+  const cards = [
+    {
+      body: t("onboarding.welcomeCardFocusBody"),
+      key: "focus",
+      title: t("onboarding.welcomeCardFocusTitle"),
+    },
+    {
+      body: t("onboarding.welcomeCardImportsBody"),
+      key: "imports",
+      title: t("onboarding.welcomeCardImportsTitle"),
+    },
+    {
+      body: t("onboarding.welcomeCardDraftBody"),
+      key: "draft",
+      title: t("onboarding.welcomeCardDraftTitle"),
+    },
+  ];
+
   return (
     <div className="grid gap-4 sm:grid-cols-3">
-      <div className="rounded-3xl border border-ink-100 bg-white/55 p-4">
-        <p className="text-sm font-semibold text-ink-900">
-          One question at a time
-        </p>
-        <p className="mt-2 text-sm leading-6 text-ink-600">
-          The setup stays focused, closer to Typeform and Tally than a settings
-          form.
-        </p>
-      </div>
-      <div className="rounded-3xl border border-ink-100 bg-white/55 p-4">
-        <p className="text-sm font-semibold text-ink-900">Mock job imports</p>
-        <p className="mt-2 text-sm leading-6 text-ink-600">
-          Validate LinkedIn and Indeed onboarding before real partner APIs.
-        </p>
-      </div>
-      <div className="rounded-3xl border border-ink-100 bg-white/55 p-4">
-        <p className="text-sm font-semibold text-ink-900">Ready to draft</p>
-        <p className="mt-2 text-sm leading-6 text-ink-600">
-          The flow lands directly on the first interview draft action.
-        </p>
-      </div>
+      {cards.map((card) => (
+        <div
+          className="rounded-3xl border border-ink-100 bg-white/55 p-4"
+          key={card.key}
+        >
+          <p className="text-sm font-semibold text-ink-900">{card.title}</p>
+          <p className="mt-2 text-sm leading-6 text-ink-600">{card.body}</p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -896,14 +978,14 @@ function SummaryItem({ label, value }: { label: string; value: string }) {
   );
 }
 
-function formatJobSource(source: JobSource | "") {
+function formatJobSource(source: JobSource | "", t: TFunction) {
   if (source === "linkedin") {
-    return "LinkedIn mock";
+    return t("onboarding.jobSourceLinkedinMock");
   }
 
   if (source === "indeed") {
-    return "Indeed mock";
+    return t("onboarding.jobSourceIndeedMock");
   }
 
-  return "Manual";
+  return t("onboarding.jobSourceManual");
 }

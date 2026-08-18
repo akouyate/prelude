@@ -1,20 +1,26 @@
 "use client";
 
 import { CreateOrganization } from "@clerk/nextjs";
+import { Trans, useTranslation } from "react-i18next";
 import { StepShell } from "@prelude/ui";
 
 export function CreateOrganizationStep() {
+  const { t } = useTranslation();
+
   return (
     <StepShell
-      eyebrow="Workspace setup"
+      eyebrow={t("onboarding.eyebrowSetup")}
       title={
-        <>
-          Create your{" "}
-          <span className="font-display italic text-olive-700">workspace</span>.
-        </>
+        <Trans
+          components={{
+            em: <span className="font-display italic text-olive-700" />,
+          }}
+          i18nKey="onboarding.createOrgTitle"
+        />
       }
-      description="Name your organization to get started — you can invite your team right after."
+      description={t("onboarding.createOrgDescription")}
     >
+      {/* Clerk renders this form in its own locale, set on ClerkProvider. */}
       <CreateOrganization
         afterCreateOrganizationUrl="/onboarding/organization"
         skipInvitationScreen
