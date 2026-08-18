@@ -198,6 +198,8 @@ model InterviewDraft {
   guardrails           Json                         @default("[]")
   estimatedMinutes     Int?
   rationale            String?
+  // Language the generated content was written in. Null means "generated before stamping existed" — never a default, never a backfill.
+  language             String?
   sourceAttachmentName String?
   schemaVersion        Int                          @default(1)
   generatorProvider    String?
@@ -252,6 +254,8 @@ model Interview {
   guardrails           Json                  @default("[]")
   estimatedMinutes     Int?
   rationale            String?
+  // Language the generated content was written in, copied from the draft at publish. Null means "generated before stamping existed" — never a default, never a backfill.
+  language             String?
   schemaVersion        Int                   @default(1)
   generatorProvider    String?
   generatorModel       String?
@@ -570,6 +574,8 @@ model CandidateBrief {
   recommendation     String?
   limitations        Json             @default("[]")
   evidence           Json             @default("[]")
+  // Language the generated brief was written in. Null means "generated before stamping existed" — never a default, never a backfill.
+  language           String?
   modelProvider      String?
   modelName          String?
   schemaVersion      Int              @default(1)

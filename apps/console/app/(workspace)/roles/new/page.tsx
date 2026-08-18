@@ -70,12 +70,14 @@ export default async function NewRoleScreenPage({
   return (
     <InterviewAgentBuilder
       companyName={context.companyName}
+      defaultInterviewLanguage={context.defaultInterviewLanguage}
       initialDraft={context.initialDraft}
       initialJobDescription={context.initialJob?.description}
       initialJobId={context.initialJob?.id}
       initialJobLocation={context.initialJob?.location ?? undefined}
       initialJobTitle={context.initialJob?.title}
       initialSourceUrl={sourceUrl}
+      workspaceLanguage={context.workspaceLanguage}
     />
   );
 }

@@ -353,36 +353,150 @@ describe("N10 deterministic generator never emits protected-topic text", () => {
     { jobTitle: "Kitchen Assistant", jobDescription: "Prepare orders cleanly." },
   ];
 
-  it("produces only policy-clean questions and criteria across roles, focus, and seniority", () => {
+  it("produces only policy-clean questions and criteria across roles, focus, seniority, and language", () => {
     for (const role of roles) {
       for (const seniority of seniorities) {
         // Empty focus exercises the default-focus path too.
         for (const focus of [allFocus, [] as InterviewFocus[]]) {
-          const draft = generateDeterministicInterviewDraft({
-            companyName: "HireCall",
-            focus,
-            jobDescription: role.jobDescription,
-            jobTitle: role.jobTitle,
-            seniority,
-          });
+          for (const language of ["en", "fr"] as const) {
+            const draft = generateDeterministicInterviewDraft({
+              attachmentName: "job-brief.pdf",
+              companyName: "HireCall",
+              focus,
+              jobDescription: role.jobDescription,
+              jobTitle: role.jobTitle,
+              language,
+              seniority,
+            });
 
-          for (const question of draft.questions) {
-            const text = `${question.prompt} ${question.expectedSignal}`;
-            expect(
-              textViolatesPolicy(text),
-              `question flagged for ${role.jobTitle}/${seniority}: ${text}`,
-            ).toBe(false);
-          }
+            for (const question of draft.questions) {
+              const text = `${question.prompt} ${question.expectedSignal}`;
+              expect(
+                textViolatesPolicy(text),
+                `question flagged for ${role.jobTitle}/${seniority}/${language}: ${text}`,
+              ).toBe(false);
+            }
 
-          for (const criterion of draft.criteria) {
-            const text = `${criterion.label} ${criterion.description}`;
-            expect(
-              textViolatesPolicy(text),
-              `criterion flagged for ${role.jobTitle}/${seniority}: ${text}`,
-            ).toBe(false);
+            for (const criterion of draft.criteria) {
+              const text = `${criterion.label} ${criterion.description}`;
+              expect(
+                textViolatesPolicy(text),
+                `criterion flagged for ${role.jobTitle}/${seniority}/${language}: ${text}`,
+              ).toBe(false);
+            }
           }
         }
       }
+    }
+  });
+});
+
+// Plan 2026-08-18, rules 1 + 5: the deterministic generator is the PRODUCTION
+// fallback when the LLM call fails, so it must speak the interview language too
+// — a failed OpenAI call must never silently switch the product's language.
+// Candidate-bound copy (questions, criteria, guardrails) follows the interview
+// language; the rationale is builder copy addressed to the recruiter and follows
+// the workspace language, which is why the two are separate inputs.
+describe("deterministic generator language", () => {
+  const baseInput = {
+    companyName: "HireCall",
+    focus: ["role_skills", "situational_judgment", "motivation"] as InterviewFocus[],
+    jobDescription:
+      "Own customer onboarding, coordinate support and product stakeholders, and reduce churn risk for SMB customers.",
+    jobTitle: "Customer Success Manager",
+    seniority: "mid" as InterviewSeniority,
+  };
+
+  it("writes questions, criteria, guardrails, and rationale in English by default", () => {
+    const draft = generateDeterministicInterviewDraft(baseInput);
+
+    expect(draft.guardrails[0]).toBe(
+      "Ask every candidate the same questions in the same order.",
+    );
+    expect(draft.rationale).toContain("HireCall generated");
+    expect(draft.questions.every((question) => question.prompt.length > 8)).toBe(
+      true,
+    );
+  });
+
+  it("writes candidate-bound copy and the rationale in French when both languages are fr", () => {
+    const draft = generateDeterministicInterviewDraft({
+      ...baseInput,
+      language: "fr",
+      rationaleLanguage: "fr",
+    });
+
+    expect(draft.guardrails[0]).toBe(
+      "Poser à chaque candidat les mêmes questions, dans le même ordre.",
+    );
+    expect(draft.rationale).toContain("questions ciblées");
+    expect(
+      draft.questions.some((question) =>
+        question.prompt.startsWith("Parlez-nous"),
+      ),
+    ).toBe(true);
+    expect(
+      draft.criteria.some((criterion) => criterion.label === "Motivation"),
+    ).toBe(true);
+    expect(
+      draft.criteria.some((criterion) =>
+        criterion.description.includes("fiche de poste"),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps the rationale in the workspace language when it differs from the interview language", () => {
+    const draft = generateDeterministicInterviewDraft({
+      ...baseInput,
+      language: "fr",
+      rationaleLanguage: "en",
+    });
+
+    expect(draft.guardrails[0]).toBe(
+      "Poser à chaque candidat les mêmes questions, dans le même ordre.",
+    );
+    expect(draft.rationale).toContain("HireCall generated");
+  });
+
+  it("keeps candidate-bound copy in English while the rationale follows a French workspace", () => {
+    const draft = generateDeterministicInterviewDraft({
+      ...baseInput,
+      language: "en",
+      rationaleLanguage: "fr",
+    });
+
+    expect(draft.guardrails[0]).toBe(
+      "Ask every candidate the same questions in the same order.",
+    );
+    expect(draft.rationale).toContain("questions ciblées");
+  });
+
+  it("defaults the rationale to the interview language when the workspace language is absent", () => {
+    const draft = generateDeterministicInterviewDraft({
+      ...baseInput,
+      language: "fr",
+    });
+
+    expect(draft.rationale).toContain("questions ciblées");
+  });
+
+  it("localizes every domain-specific template, not just the shared library", () => {
+    const draft = generateDeterministicInterviewDraft({
+      ...baseInput,
+      focus: ["role_skills", "situational_judgment", "communication"],
+      jobDescription:
+        "Coordinate shipments, carriers, and warehouse exceptions across the transport network.",
+      jobTitle: "Logistics Coordinator",
+      language: "fr",
+    });
+
+    // Every localized string must actually be replaced: no English template may
+    // survive into a French draft.
+    for (const question of draft.questions) {
+      expect(question.prompt).not.toMatch(/\bTell us about\b|\bImagine\b/u);
+    }
+    for (const criterion of draft.criteria) {
+      expect(criterion.description).not.toMatch(/\bEvidence shows\b|\bthe candidate\b/u);
     }
   });
 });

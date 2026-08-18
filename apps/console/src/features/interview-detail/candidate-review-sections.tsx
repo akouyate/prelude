@@ -6,6 +6,8 @@ import { useTranslation } from "react-i18next";
 
 import {
   reviewCriterionTone,
+  type BriefLanguageBadge,
+  type QuoteLanguageNote,
   type ReviewCriterion,
 } from "./candidate-review-model";
 import { formatReplayTime } from "./interview-replay";
@@ -19,9 +21,17 @@ const seekButtonClassName =
 
 export function CandidateVerdictSection({
   criteria,
+  languageBadge,
+  quoteLanguageNote,
   summary,
 }: {
   criteria: ReviewCriterion[];
+  // Present only when the brief was NOT written in the workspace language, or
+  // predates language stamping. Null is the normal case and renders nothing.
+  languageBadge?: BriefLanguageBadge | null;
+  // Present only when the interview was conducted in a different language than
+  // the brief, which is why the quotes below read differently than the prose.
+  quoteLanguageNote?: QuoteLanguageNote | null;
   summary: string | null;
 }) {
   const { t } = useTranslation();
@@ -46,6 +56,7 @@ export function CandidateVerdictSection({
             {t("candidateReview.criteriaSecondLook", { count: openCount })}
           </span>
         ) : null}
+        <BriefLanguageChip badge={languageBadge ?? null} />
       </div>
 
       {criteria.length > 0 ? (
@@ -65,8 +76,68 @@ export function CandidateVerdictSection({
           {summary}
         </p>
       ) : null}
+
+      <QuoteLanguageLine note={quoteLanguageNote ?? null} />
     </section>
   );
+}
+
+// Sits directly above the criteria sections that carry the blockquotes, so the
+// recruiter reads the explanation before the first quote that needs it.
+function QuoteLanguageLine({ note }: { note: QuoteLanguageNote | null }) {
+  const { t } = useTranslation();
+
+  if (!note) {
+    return null;
+  }
+
+  return (
+    <p className="mt-3 max-w-[64ch] text-[12.5px] leading-[1.6] text-[#8a8178]">
+      {t("candidateReview.quoteLanguageNote", {
+        language: languageDisplayName(note.language, t),
+      })}
+    </p>
+  );
+}
+
+function BriefLanguageChip({ badge }: { badge: BriefLanguageBadge | null }) {
+  const { t } = useTranslation();
+
+  if (!badge) {
+    return null;
+  }
+
+  const label =
+    badge.kind === "unknown"
+      ? t("candidateReview.briefLanguageUnknown")
+      : t("candidateReview.briefLanguageOther", {
+          language: languageDisplayName(badge.language, t),
+        });
+
+  return (
+    <span className="inline-flex items-center rounded-full bg-[#f1efe8] px-2.5 py-[3px] font-title text-[11px] font-semibold text-[#8a8178]">
+      {label}
+    </span>
+  );
+}
+
+// Only the catalogue pair gets a translated name. Anything else — a legacy or
+// hand-edited stamp — shows its raw code rather than being silently reworded.
+// Shared by the brief badge and the quote note: both name a language, and the
+// reader sees it in their own UI locale either way.
+function languageDisplayName(
+  language: string,
+  t: ReturnType<typeof useTranslation>["t"],
+) {
+  if (language === "en") {
+    return t("candidateReview.languageNameEnglish");
+  }
+
+  if (language === "fr") {
+    return t("candidateReview.languageNameFrench");
+  }
+
+  return language.toUpperCase();
 }
 
 export function CandidateGapsSection({ criteria }: { criteria: ReviewCriterion[] }) {

@@ -2,7 +2,12 @@ import type {
   InterviewCriterionDraft,
   InterviewQuestionDraft,
 } from "@prelude/core";
-import { aiGuardrails, textViolatesPolicy } from "@prelude/core";
+import {
+  aiGuardrails,
+  aiGuardrailsFr,
+  sameQuestionOrderGuardrailFr,
+  textViolatesPolicy,
+} from "@prelude/core";
 
 // Default (English) message for the disallowed-topic publish/save block. This is
 // byte-identical to the previous catalog/compliance-copy English string so the
@@ -30,9 +35,17 @@ export const interviewPlanPolicy = {
 export type PolicyInterviewResponseMode = "audio" | "text";
 
 const allowedModes = new Set<PolicyInterviewResponseMode>(["audio", "text"]);
-const requiredGuardrails = [
-  "same questions",
-  ...aiGuardrails.map((guardrail) => guardrail.toLowerCase()),
+// One catalogue per interview language (plan 2026-08-18, rule 1: guardrails are
+// candidate-bound copy). A plan is required to carry ONE complete set — a
+// half-translated set fails, which is what catches a partially localized draft.
+// The English fragment stays "same questions" rather than the full sentence so
+// legacy plans phrased slightly differently keep publishing.
+const requiredGuardrailSets = [
+  ["same questions", ...aiGuardrails.map((guardrail) => guardrail.toLowerCase())],
+  [
+    sameQuestionOrderGuardrailFr.toLowerCase(),
+    ...aiGuardrailsFr.map((guardrail) => guardrail.toLowerCase()),
+  ],
 ] as const;
 
 export type PublishableInterviewPlanInput = {
@@ -112,11 +125,12 @@ export function getInterviewPlanPublicationIssues(
     issues.push("Choose at least one candidate response mode.");
   }
 
-  for (const required of requiredGuardrails) {
-    if (!guardrailText.includes(required.toLowerCase())) {
-      issues.push("Keep the required compliance guardrails before publishing.");
-      break;
-    }
+  const carriesGuardrailSet = requiredGuardrailSets.some((set) =>
+    set.every((required) => guardrailText.includes(required)),
+  );
+
+  if (!carriesGuardrailSet) {
+    issues.push("Keep the required compliance guardrails before publishing.");
   }
 
   if (planReferencesDisallowedTopic(input)) {

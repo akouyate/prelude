@@ -92,6 +92,32 @@ describe("deterministic protected topic classifier", () => {
     expect(result).toEqual({ flagged: false, category: "none", reason: "" });
   });
 
+  // The classifier claims protected topics are caught in ANY language. French
+  // is the other half of the product catalogue, so pin it offline rather than
+  // trusting the live model to be the only French gate.
+  it.each([
+    "Avez-vous des enfants ?",
+    "Quel âge avez-vous ?",
+    "Êtes-vous enceinte ?",
+    "Quelle est votre religion ?",
+    "Avez-vous un casier judiciaire ?",
+  ])("flags the French protected question %j", async (text) => {
+    const classifier = createDeterministicProtectedTopicClassifier();
+    const [result] = await classifier.classify([text]);
+
+    expect(result?.flagged).toBe(true);
+    expect(result?.category).toBe("protected_topic");
+  });
+
+  it("passes a clean French job-related question", async () => {
+    const classifier = createDeterministicProtectedTopicClassifier();
+    const [result] = await classifier.classify([
+      "Décrivez comment vous avez résolu un incident en production.",
+    ]);
+
+    expect(result).toEqual({ flagged: false, category: "none", reason: "" });
+  });
+
   it("returns [] for an empty batch", async () => {
     const classifier = createDeterministicProtectedTopicClassifier();
 

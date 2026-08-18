@@ -1,4 +1,7 @@
-import { aiGuardrails } from "../policies/ai";
+import {
+  getInterviewPlanGuardrails,
+  type GeneratedContentLanguage,
+} from "../policies/ai";
 
 export type InterviewSeniority = "junior" | "mid" | "senior";
 
@@ -24,6 +27,18 @@ export type InterviewDraftInput = {
   seniority: InterviewSeniority;
   focus: InterviewFocus[];
   attachmentName?: string;
+  /**
+   * The INTERVIEW language (plan 2026-08-18, rule 1): questions, criteria, and
+   * guardrails are candidate-bound and follow it. Defaults to English, which is
+   * what every pre-stamping caller gets.
+   */
+  language?: GeneratedContentLanguage;
+  /**
+   * The WORKSPACE language: the rationale is builder copy addressed to the
+   * recruiter, not to the candidate. Defaults to `language` so a caller that
+   * only knows one language still gets a coherent draft.
+   */
+  rationaleLanguage?: GeneratedContentLanguage;
 };
 
 export type InterviewQuestionDraft = {
@@ -181,6 +196,8 @@ export function resolveTargetInterviewQuestionCount({
 export function generateDeterministicInterviewDraft(
   input: InterviewDraftInput,
 ): InterviewAgentDraft {
+  const language = input.language ?? "en";
+  const rationaleLanguage = input.rationaleLanguage ?? language;
   const selectedFocus =
     input.focus.length > 0 ? input.focus : [...defaultFocus];
   const targetQuestionCount = resolveTargetInterviewQuestionCount(input);
@@ -227,15 +244,37 @@ export function generateDeterministicInterviewDraft(
   );
 
   return {
-    questions,
-    criteria,
+    // Localization is a final pass over the finished structure: ids, categories,
+    // durations, and the selection logic above stay single-sourced, and only the
+    // recruiter/candidate-visible strings vary by language.
+    questions: questions.map((question) =>
+      localizeQuestion(question, language, input.attachmentName),
+    ),
+    criteria: criteria.map((criterion) => localizeCriterion(criterion, language)),
     estimatedMinutes,
-    rationale: `HireCall generated ${questions.length} focused questions to cover role evidence, judgment, motivation, and communication for ${input.jobTitle || "the role"}.`,
-    guardrails: [
-      "Ask every candidate the same questions in the same order.",
-      ...aiGuardrails,
-    ],
+    rationale: buildDeterministicRationale({
+      jobTitle: input.jobTitle,
+      language: rationaleLanguage,
+      questionCount: questions.length,
+    }),
+    guardrails: getInterviewPlanGuardrails(language),
   };
+}
+
+function buildDeterministicRationale({
+  jobTitle,
+  language,
+  questionCount,
+}: {
+  jobTitle: string;
+  language: GeneratedContentLanguage;
+  questionCount: number;
+}) {
+  if (language === "fr") {
+    return `HireCall a préparé ${questionCount} questions ciblées pour couvrir les éléments probants du poste, le discernement, la motivation et la communication pour ${jobTitle || "ce poste"}.`;
+  }
+
+  return `HireCall generated ${questionCount} focused questions to cover role evidence, judgment, motivation, and communication for ${jobTitle || "the role"}.`;
 }
 
 function resolveRoleDomain(input: InterviewDraftInput): RoleDomain {
@@ -840,4 +879,288 @@ function uniqueCriteria(criteria: InterviewCriterionDraft[]) {
 
 function includesAny(value: string, keywords: readonly string[]) {
   return keywords.some((keyword) => value.includes(keyword));
+}
+
+/*
+ * French templates (plan 2026-08-18, rule 5).
+ *
+ * Keyed by the template's stable `id`, which is what the selection logic above
+ * already produces, so the two catalogues can never drift structurally — only a
+ * missing id can drift, and the compliance sweep in the tests walks every role,
+ * focus, seniority, and language to catch that.
+ *
+ * These are written as French recruiter copy, not as a word-for-word rendering
+ * of the English: "Parlez-nous d'une fois où…" is what a French recruiter
+ * actually says, and the expected signals use the vocabulary a French hiring
+ * report is written in. Every string must also clear `textViolatesPolicy`,
+ * including the French proxy-phrase list.
+ *
+ * `{attachment}` is the only placeholder, substituted with the uploaded file
+ * name exactly as the English template interpolates it.
+ */
+const frenchQuestionCopy: Record<
+  string,
+  { prompt: string; expectedSignal: string }
+> = {
+  motivation: {
+    prompt:
+      "Qu'est-ce qui vous a donné envie de postuler à ce poste, et qu'est-ce qui en ferait une bonne suite pour votre parcours ?",
+    expectedSignal: "Motivation pour le poste et clarté des attentes",
+  },
+  "role-skills": {
+    prompt:
+      "Parlez-nous d'un projet ou d'une situation récente qui montre que vous savez tenir les responsabilités clés de ce poste.",
+    expectedSignal: "Expérience pertinente au regard de la fiche de poste",
+  },
+  "situational-judgment": {
+    prompt:
+      "Imaginons : vous arrivez dans l'équipe et une priorité n'est pas claire alors que l'échéance approche. Que faites-vous en premier ?",
+    expectedSignal:
+      "Discernement, priorisation et communication face à l'incertitude",
+  },
+  communication: {
+    prompt:
+      "Expliquez un sujet complexe de votre travail à quelqu'un qui ne connaît pas votre métier.",
+    expectedSignal: "Clarté, structure et prise en compte de l'interlocuteur",
+  },
+  "ai-orchestration-role-skills": {
+    prompt:
+      "Parlez-nous d'un enchaînement de tâches que vous avez automatisé ou orchestré avec des outils d'IA. Quel problème résolvait-il, et comment avez-vous vérifié qu'il fonctionnait ?",
+    expectedSignal:
+      "Conception de workflows IA, discernement d'orchestration et rigueur de validation",
+  },
+  "marketing-strategy-role-skills": {
+    prompt:
+      "Parlez-nous d'une stratégie marketing que vous avez pilotée et qui a fait bouger le pipeline, le chiffre d'affaires, la position de marque ou l'acquisition client.",
+    expectedSignal:
+      "Pilotage de la stratégie marketing et impact mesurable sur l'activité",
+  },
+  "hospitality-operations-role-skills": {
+    prompt:
+      "Parlez-nous d'un service ou d'une situation client que vous avez gérée alors qu'il fallait tenir l'exploitation sous pression.",
+    expectedSignal:
+      "Exploitation du service, coordination d'équipe et exécution face au client",
+  },
+  "hr-screening-role-skills": {
+    prompt:
+      "Parlez-nous d'un processus de recrutement que vous avez amélioré, du brief avec le manager jusqu'au suivi des candidats.",
+    expectedSignal:
+      "Processus de recrutement structuré, cadrage avec le manager et expérience candidat",
+  },
+  "logistics-coordination-role-skills": {
+    prompt:
+      "Parlez-nous d'un incident d'expédition, de transporteur, d'entrepôt ou de livraison que vous avez piloté, de la détection du problème jusqu'à sa résolution.",
+    expectedSignal:
+      "Coordination logistique, gestion des aléas et suivi opérationnel",
+  },
+  "procurement-role-skills": {
+    prompt:
+      "Parlez-nous d'une décision fournisseur, catégorie ou achat où vous avez arbitré entre coût, qualité, risque et délais.",
+    expectedSignal:
+      "Discernement achats, gestion fournisseurs et clarté des arbitrages",
+  },
+  "ai-orchestration-judgment": {
+    prompt:
+      "Si un workflow IA produit des résultats incohérents en production, que vérifiez-vous en premier avant d'en élargir l'usage ?",
+    expectedSignal:
+      "Traitement des défaillances, place de la validation humaine et prudence en production",
+  },
+  "marketing-judgment": {
+    prompt:
+      "Imaginons : la croissance ralentit alors que le budget est contraint. Comment décidez-vous quoi protéger, couper ou tester en premier ?",
+    expectedSignal:
+      "Priorisation marketing, arbitrages budgétaires et hauteur de vue",
+  },
+  "hospitality-judgment": {
+    prompt:
+      "Une réclamation s'envenime en plein coup de feu, avec une équipe en sous-effectif. Que faites-vous en premier ?",
+    expectedSignal:
+      "Rattrapage client, priorisation et discernement en équipe sous pression",
+  },
+  "hr-judgment": {
+    prompt:
+      "Un manager vous demande de présélectionner des candidats sur un critère sans lien avec le poste. Comment traitez-vous sa demande ?",
+    expectedSignal:
+      "Équité de recrutement, accompagnement du manager et rigueur du processus",
+  },
+  "logistics-judgment": {
+    prompt:
+      "Une livraison critique prend du retard et plusieurs équipes attendent des informations. Que vérifiez-vous et que communiquez-vous en premier ?",
+    expectedSignal:
+      "Gestion des aléas, priorisation et communication opérationnelle",
+  },
+  "procurement-judgment": {
+    prompt:
+      "Un fournisseur peu cher fait peser un risque de délai ou de conformité. Comment décidez-vous de poursuivre, de renégocier ou d'escalader ?",
+    expectedSignal:
+      "Appréciation du risque fournisseur, rigueur de négociation et clarté de l'escalade",
+  },
+  "ai-orchestration-communication": {
+    prompt:
+      "Racontez-nous comment vous avez expliqué les limites, les risques ou les arbitrages d'un workflow IA à des interlocuteurs non techniques.",
+    expectedSignal:
+      "Communication des risques liés à l'IA et traduction entre métiers",
+  },
+  "marketing-communication": {
+    prompt:
+      "Racontez-nous une fois où vous avez aligné les ventes, le produit et le marketing sur une priorité de marché, de marque ou de pipeline.",
+    expectedSignal:
+      "Alignement des directions et communication marketing entre les fonctions",
+  },
+  "hospitality-communication": {
+    prompt:
+      "Racontez-nous comment vous avez accompagné un équipier ou remobilisé le collectif pendant un service difficile.",
+    expectedSignal:
+      "Accompagnement d'équipe, communication de service et gestion de la pression",
+  },
+  "hr-communication": {
+    prompt:
+      "Racontez-nous une fois où vous avez aidé des évaluateurs à adopter un processus d'évaluation plus structuré et plus équitable.",
+    expectedSignal:
+      "Communication sur le recrutement structuré et accompagnement des parties prenantes",
+  },
+  "logistics-communication": {
+    prompt:
+      "Racontez-nous comment vous avez tenu les parties prenantes informées pendant un aléa d'expédition, un retard ou un changement de planning.",
+    expectedSignal: "Communication logistique en situation d'aléa",
+  },
+  "procurement-communication": {
+    prompt:
+      "Racontez-nous une négociation où vous avez amélioré les conditions sans dégrader la fiabilité ni la confiance du fournisseur.",
+    expectedSignal:
+      "Communication fournisseur, discernement en négociation et gestion de la relation",
+  },
+  "executive-marketing-ownership": {
+    prompt:
+      "Parlez-nous d'un résultat transverse — chiffre d'affaires, marque ou marché — que vous avez porté. Qu'est-ce qui a changé grâce à vos décisions ?",
+    expectedSignal:
+      "Responsabilité marketing de direction, pilotage transverse et impact mesurable",
+  },
+  "ownership-impact": {
+    prompt:
+      "Parlez-nous d'une fois où vous avez porté un résultat important de bout en bout. Qu'est-ce qui a changé grâce à votre travail ?",
+    expectedSignal:
+      "Prise de responsabilité, impact mesurable et cohérence avec le niveau attendu",
+  },
+  "customer-facing-judgment": {
+    prompt:
+      "Décrivez une situation où vous avez dû mener une conversation difficile avec un client ou un interlocuteur interne. Qu'avez-vous fait ?",
+    expectedSignal: "Discernement face au client et communication sous pression",
+  },
+  "logistics-alignment": {
+    prompt:
+      "Quelles contraintes d'organisation du travail, de lieu, de déplacements ou de disponibilité le recruteur doit-il connaître avant d'aller plus loin ?",
+    expectedSignal:
+      "Éléments pratiques utiles au processus de recrutement, liés au poste",
+  },
+  "compensation-alignment": {
+    prompt:
+      "Si la fourchette de rémunération du poste vous a été communiquée, correspond-elle à vos attentes pour aller plus loin ?",
+    expectedSignal:
+      "Cohérence de rémunération, uniquement lorsque la fourchette fait partie du processus",
+  },
+  "recruiter-context": {
+    prompt:
+      "Qu'est-ce que le recruteur devrait comprendre de votre adéquation avec ce poste et qui n'apparaît pas dans votre CV ?",
+    expectedSignal:
+      "Éléments de contexte supplémentaires pour le recruteur, ancrés dans le poste",
+  },
+  "attachment-context": {
+    prompt:
+      "À partir de {attachment}, quelle partie du contexte du poste vous parle le plus, et sur quoi auriez-vous besoin de précisions ?",
+    expectedSignal:
+      "Capacité à relier le document joint aux attentes du poste",
+  },
+};
+
+const frenchCriterionCopy: Record<
+  string,
+  { label: string; description: string }
+> = {
+  "job-fit": {
+    label: "Éléments probants",
+    description:
+      "Les exemples donnés sont reliés aux responsabilités décrites dans la fiche de poste.",
+  },
+  judgment: {
+    label: "Discernement pratique",
+    description:
+      "Les premiers réflexes proposés dans des situations réelles sont raisonnables et argumentés.",
+  },
+  communication: {
+    label: "Clarté",
+    description:
+      "Les réponses sont structurées, précises et faciles à relire rapidement.",
+  },
+  motivation: {
+    label: "Motivation",
+    description: "L'intérêt pour le poste est concret plutôt que générique.",
+  },
+  "ai-orchestration": {
+    label: "Orchestration IA",
+    description:
+      "Les éléments montrent une capacité à concevoir, valider et surveiller des workflows outillés par l'IA, avec une revue humaine là où elle s'impose.",
+  },
+  "marketing-strategy": {
+    label: "Stratégie marketing",
+    description:
+      "Les exemples relient stratégie, arbitrages budgétaires, lecture du marché et résultats mesurables de croissance ou de marque.",
+  },
+  "service-operations": {
+    label: "Exploitation du service",
+    description:
+      "Les éléments montrent une capacité à coordonner les équipes, les standards de service et le rattrapage client sous pression.",
+  },
+  "structured-hiring": {
+    label: "Recrutement structuré",
+    description:
+      "Les éléments montrent des pratiques de présélection équitables et liées au poste, ainsi qu'un cadrage productif avec les managers.",
+  },
+  "logistics-execution": {
+    label: "Exécution logistique",
+    description:
+      "Les éléments montrent une gestion claire des aléas, une coordination transporteurs ou entrepôt, et une communication opérationnelle.",
+  },
+  "supplier-judgment": {
+    label: "Discernement fournisseurs",
+    description:
+      "Les éléments montrent des arbitrages équilibrés entre coût, qualité, conformité, délais et risque fournisseur.",
+  },
+  ownership: {
+    label: "Prise de responsabilité",
+    description:
+      "Les éléments montrent une capacité à porter des résultats et à expliquer l'impact de son travail.",
+  },
+  "logistics-alignment": {
+    label: "Alignement logistique",
+    description:
+      "Les contraintes de disponibilité, de lieu, de déplacements ou d'organisation sont assez claires pour un suivi par le recruteur.",
+  },
+};
+
+function localizeQuestion(
+  question: InterviewQuestionDraft,
+  language: GeneratedContentLanguage,
+  attachmentName?: string,
+): InterviewQuestionDraft {
+  const copy = language === "fr" ? frenchQuestionCopy[question.id] : undefined;
+
+  if (!copy) {
+    return question;
+  }
+
+  return {
+    ...question,
+    prompt: copy.prompt.replace("{attachment}", attachmentName ?? ""),
+    expectedSignal: copy.expectedSignal,
+  };
+}
+
+function localizeCriterion(
+  criterion: InterviewCriterionDraft,
+  language: GeneratedContentLanguage,
+): InterviewCriterionDraft {
+  const copy = language === "fr" ? frenchCriterionCopy[criterion.id] : undefined;
+
+  return copy ? { ...criterion, ...copy } : criterion;
 }

@@ -37,6 +37,15 @@ vi.mock("../organizations/organization-scope", () => ({
   })),
 }));
 
+const contentLanguages = vi.hoisted(() => ({
+  interviewDefault: "en" as "en" | "fr",
+  workspace: "en" as "en" | "fr",
+}));
+
+vi.mock("../organizations/organization-content-languages", () => ({
+  loadOrganizationContentLanguages: vi.fn(async () => contentLanguages),
+}));
+
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import { saveInterviewDraft, type SaveInterviewDraftInput } from "./interview-drafts";
 
@@ -93,6 +102,8 @@ const baseInput = (): SaveInterviewDraftInput => ({
 
 beforeEach(() => {
   vi.clearAllMocks();
+  contentLanguages.interviewDefault = "en";
+  contentLanguages.workspace = "en";
   tx.job.findFirst.mockResolvedValue(null);
   tx.job.create.mockResolvedValue({ id: "job_1" });
   tx.job.update.mockResolvedValue({ id: "job_1" });
@@ -165,6 +176,94 @@ describe("saveInterviewDraft N9 provenance", () => {
     expect(createCall?.data.schemaVersion).toBe(INTERVIEW_PLAN_SCHEMA_VERSION);
     expect(createCall?.data.generatorProvider ?? null).toBeNull();
     expect(createCall?.data.generatorModel ?? null).toBeNull();
+  });
+});
+
+// Plan 2026-08-18, rules 1 + 6: the interview language is a per-DRAFT fact,
+// stamped once at creation from the workspace's interview default. It is never
+// re-derived on a later save — only the builder's explicit selector may change
+// it — so an autosave can't silently rewrite the language the questions and
+// criteria were actually generated in.
+describe("saveInterviewDraft interview language stamping", () => {
+  it("stamps the workspace interview default when creating a draft", async () => {
+    contentLanguages.interviewDefault = "fr";
+
+    await saveInterviewDraft(baseInput());
+
+    const createCall = tx.interviewDraft.create.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+
+    expect(createCall?.data.language).toBe("fr");
+  });
+
+  it("prefers the recruiter's explicit selection over the workspace default", async () => {
+    contentLanguages.interviewDefault = "en";
+
+    await saveInterviewDraft({ ...baseInput(), language: "fr" });
+
+    const createCall = tx.interviewDraft.create.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+
+    expect(createCall?.data.language).toBe("fr");
+  });
+
+  it("falls back to English for an unusable stored default", async () => {
+    contentLanguages.interviewDefault = "de" as unknown as "en";
+
+    await saveInterviewDraft(baseInput());
+
+    const createCall = tx.interviewDraft.create.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+
+    expect(createCall?.data.language).toBe("en");
+  });
+
+  it("leaves an existing draft's language untouched on a plain save", async () => {
+    tx.interviewDraft.findFirst.mockResolvedValueOnce({ id: "draft_1" });
+    contentLanguages.interviewDefault = "fr";
+
+    await saveInterviewDraft({ ...baseInput(), draftId: "draft_1" });
+
+    const updateCall = tx.interviewDraft.update.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+
+    expect(updateCall?.data).not.toHaveProperty("language");
+  });
+
+  it("re-stamps an existing draft only through the explicit selector", async () => {
+    tx.interviewDraft.findFirst.mockResolvedValueOnce({ id: "draft_1" });
+
+    await saveInterviewDraft({
+      ...baseInput(),
+      draftId: "draft_1",
+      language: "fr",
+    });
+
+    const updateCall = tx.interviewDraft.update.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+
+    expect(updateCall?.data.language).toBe("fr");
+  });
+
+  it("ignores a language outside the catalogue on update", async () => {
+    tx.interviewDraft.findFirst.mockResolvedValueOnce({ id: "draft_1" });
+
+    await saveInterviewDraft({
+      ...baseInput(),
+      draftId: "draft_1",
+      language: "de" as unknown as "fr",
+    });
+
+    const updateCall = tx.interviewDraft.update.mock.calls[0]?.[0] as
+      | { data: Record<string, unknown> }
+      | undefined;
+
+    expect(updateCall?.data).not.toHaveProperty("language");
   });
 });
 

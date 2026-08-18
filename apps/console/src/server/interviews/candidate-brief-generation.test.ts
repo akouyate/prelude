@@ -4,8 +4,10 @@ import {
   buildLocalCandidateBrief,
   createCandidateBriefSynthesizerFromEnv,
   createFallbackCandidateBriefSynthesizer,
+  createLocalCandidateBriefSynthesizer,
   type CandidateBriefSynthesizerInput,
 } from "./candidate-brief-generation";
+import { dominantStopwordLanguage } from "./text-language-heuristic";
 
 describe("candidate brief generation", () => {
   it("builds a structured brief from transcript evidence", () => {
@@ -224,6 +226,183 @@ describe("candidate brief generation", () => {
   });
 });
 
+// Plan 2026-08-18, rule 5: the deterministic brief is the production fallback
+// when the LLM call fails or is unconfigured, so a failed call must never
+// silently switch the product's language back to English.
+describe("deterministic candidate brief language parity", () => {
+  it("writes the whole fallback brief in French for a French workspace", () => {
+    const brief = buildLocalCandidateBrief(input({ language: "fr" }));
+
+    expect(dominantStopwordLanguage(recruiterFacingText(brief))).toBe("fr");
+    expect(brief.summary).toContain("Ada");
+    expect(brief.limitations.join(" ")).toContain("traits protégés");
+    expect(brief.limitations.join(" ")).toContain("information sensible");
+    expect(brief.evaluationMatrix?.recommendationRationale).toContain(
+      "recruteur",
+    );
+  });
+
+  it("keeps the English fallback brief English", () => {
+    const brief = buildLocalCandidateBrief(input({ language: "en" }));
+
+    expect(dominantStopwordLanguage(recruiterFacingText(brief))).toBe("en");
+    expect(brief.limitations.join(" ")).toContain("protected traits");
+  });
+
+  it("localises every deterministic status path", () => {
+    const partial = buildLocalCandidateBrief(
+      input({
+        evidence: {
+          ...input().evidence,
+          completedAt: null,
+          questionCompletionRate: 50,
+          runtimeStatus: "in_progress",
+          status: "abandoned",
+          terminalEventType: null,
+        },
+        language: "fr",
+      }),
+    );
+    const technicalFailure = buildLocalCandidateBrief(
+      input({
+        evidence: {
+          ...input().evidence,
+          completedAt: null,
+          failedAt: "2026-06-20T10:03:00.000Z",
+          questionCompletionRate: 0,
+          runtimeStatus: "failed",
+          status: "failed",
+          terminalEventType: "session_failed",
+          transcriptTurns: [],
+        },
+        language: "fr",
+      }),
+    );
+    const insufficient = buildLocalCandidateBrief(
+      input({
+        evidence: { ...input().evidence, transcriptTurns: [] },
+        language: "fr",
+      }),
+    );
+
+    expect(partial.status).toBe("partial");
+    expect(dominantStopwordLanguage(recruiterFacingText(partial))).toBe("fr");
+    expect(technicalFailure.status).toBe("technical_failure");
+    expect(
+      dominantStopwordLanguage(recruiterFacingText(technicalFailure)),
+    ).toBe("fr");
+    expect(insufficient.status).toBe("insufficient_signal");
+    expect(dominantStopwordLanguage(recruiterFacingText(insufficient))).toBe(
+      "fr",
+    );
+    expect(insufficient.limitations.join(" ")).toContain(
+      "Aucun tour de parole",
+    );
+  });
+
+  // French is wordier than English, and the brief schema caps several fields.
+  // A maximum-length criterion label must not push the French copy past a cap
+  // and turn the fallback itself into a generation failure.
+  it("stays inside the schema caps with maximum-length criterion labels", () => {
+    const label = "C".repeat(120);
+
+    for (const language of ["en", "fr"] as const) {
+      // Reviewable evidence: the criterion lands in `strengths`.
+      expect(() =>
+        buildLocalCandidateBrief(
+          input({
+            criteria: [
+              { description: "Understands customer context.", id: "c1", label },
+            ],
+            language,
+          }),
+        ),
+      ).not.toThrow();
+
+      // Speech with nothing reviewable in it: the criterion lands in the
+      // evaluation matrix's risks instead, which has its own cap.
+      expect(() =>
+        buildLocalCandidateBrief(
+          input({
+            criteria: [
+              { description: "Understands customer context.", id: "c1", label },
+            ],
+            evidence: {
+              ...input().evidence,
+              transcriptTurns: [
+                {
+                  ...input().evidence.transcriptTurns[0]!,
+                  text: "caca",
+                },
+              ],
+            },
+            language,
+          }),
+        ),
+      ).not.toThrow();
+    }
+  });
+
+  // Rule 4: quotes are audit evidence — the deterministic path copies the turn,
+  // it never rewrites it into the workspace language.
+  it("keeps candidate quotes in the language the candidate spoke", () => {
+    const brief = buildLocalCandidateBrief(input({ language: "fr" }));
+
+    expect(brief.criteria[0]?.evidence[0]?.text).toBe(
+      input().evidence.transcriptTurns[0]?.text,
+    );
+    expect(brief.evaluationMatrix?.facts.join(" ")).toContain(
+      "I led onboarding projects for enterprise customers",
+    );
+  });
+
+  it("writes the fallback-was-used limitation in the workspace language", async () => {
+    const synthesizer = createFallbackCandidateBriefSynthesizer({
+      fallback: createLocalCandidateBriefSynthesizer(),
+      primary: {
+        modelName: "llm",
+        provider: "llm",
+        synthesize: async () => {
+          throw new Error("network unavailable");
+        },
+      },
+    });
+
+    const brief = await synthesizer.synthesize(input({ language: "fr" }));
+
+    expect(brief.limitations.join(" ")).toContain(
+      "La synthèse LLM était indisponible",
+    );
+    expect(brief.limitations.join(" ")).not.toContain("LLM synthesis was");
+  });
+});
+
+// Everything the recruiter reads as analysis. Verbatim candidate evidence is
+// deliberately excluded: it stays in the spoken language, so it would poison a
+// language check of the generated prose.
+function recruiterFacingText(brief: ReturnType<typeof buildLocalCandidateBrief>) {
+  return [
+    brief.summary,
+    ...brief.strengths,
+    ...brief.risks,
+    ...brief.pointsToClarify,
+    ...brief.limitations,
+    ...brief.criteria.map((criterion) => criterion.rationale),
+    ...(brief.evaluationMatrix
+      ? [
+          brief.evaluationMatrix.recommendationRationale,
+          ...brief.evaluationMatrix.missingInfo,
+          ...brief.evaluationMatrix.risks,
+          ...brief.evaluationMatrix.criteria.flatMap((criterion) => [
+            criterion.rationale,
+            ...criterion.followUps,
+            ...criterion.missingInfo,
+          ]),
+        ]
+      : []),
+  ].join(" ");
+}
+
 function input(
   overrides: Partial<CandidateBriefSynthesizerInput> = {},
 ): CandidateBriefSynthesizerInput {
@@ -267,6 +446,7 @@ function input(
       ],
     },
     jobTitle: "Customer Success Manager",
+    language: "en",
     roleTitle: "Customer Success Manager",
     ...overrides,
   };

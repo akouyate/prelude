@@ -83,6 +83,38 @@ describe("createCandidateExperiencePreview", () => {
     expect(createCall.data.tokenDigest).not.toContain(rawToken);
   });
 
+  // GL-T4.2 — the preview snapshot is the only plan payload the Go store reads
+  // for a `pv_` session, so the interview language must ride along with it.
+  it("carries the draft language into the preview snapshot plan", async () => {
+    tx.interviewDraft.findFirst.mockResolvedValueOnce({
+      ...interviewDraft(),
+      language: "fr",
+    });
+
+    const result = await createCandidateExperiencePreview("draft_1");
+
+    expect(result.ok).toBe(true);
+    const snapshot = tx.candidateExperiencePreview.create.mock.calls[0]?.[0]
+      .data.snapshot as { plan: { language: string | null } };
+    expect(snapshot.plan.language).toBe("fr");
+  });
+
+  it("passes a legacy null draft language through honestly", async () => {
+    tx.interviewDraft.findFirst.mockResolvedValueOnce({
+      ...interviewDraft(),
+      language: null,
+    });
+
+    const result = await createCandidateExperiencePreview("draft_1");
+
+    expect(result.ok).toBe(true);
+    const snapshot = tx.candidateExperiencePreview.create.mock.calls[0]?.[0]
+      .data.snapshot as { plan: { language: string | null } };
+    // Never resolved at write time: the live pipeline's own fallback decides
+    // what a legacy plan is spoken in (plan 2026-08-18, rules 6 + 7).
+    expect(snapshot.plan.language).toBeNull();
+  });
+
   it("rejects workspace members who cannot manage roles", async () => {
     vi.mocked(getCompletedOrganizationScope).mockResolvedValueOnce({
       organizationId: "org_1",

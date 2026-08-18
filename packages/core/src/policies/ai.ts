@@ -405,6 +405,43 @@ export const aiGuardrails = [
   "Ignore volunteered protected or sensitive information when forming recruiter-facing evidence.",
 ] as const;
 
+// French mirror of `aiGuardrails` (plan 2026-08-18, rule 1: guardrails anchor
+// the published candidate-facing snapshot, so they follow the interview
+// language). This is compliance copy: a faithful, one-for-one restatement in the
+// same order — never a loose paraphrase, and never reordered, because the
+// publication gate matches the whole set.
+export const aiGuardrailsFr = [
+  "N'analyser que le contenu des réponses du candidat.",
+  "Ne pas analyser le visage, l'accent, le ton, les émotions ni les caractéristiques protégées.",
+  "Ne prendre aucune décision automatique d'embauche ou de refus.",
+  "Laisser la revue finale et les décisions de suivi sous contrôle humain.",
+  "Écarter les informations protégées ou sensibles communiquées spontanément lors de la constitution des éléments transmis au recruteur.",
+] as const;
+
+// The en/fr catalogue pair for generated content. Declared here rather than
+// imported from `@prelude/contracts` because `@prelude/core` deliberately has no
+// dependency on the contracts package.
+export type GeneratedContentLanguage = "en" | "fr";
+
+export const sameQuestionOrderGuardrail =
+  "Ask every candidate the same questions in the same order.";
+export const sameQuestionOrderGuardrailFr =
+  "Poser à chaque candidat les mêmes questions, dans le même ordre.";
+
+/**
+ * The full guardrail set stamped on an interview plan, in the interview
+ * language. Single source for both the deterministic generator and the console's
+ * OpenAI normalizer, so a plan can never carry a half-translated set — which the
+ * publication gate would reject.
+ */
+export function getInterviewPlanGuardrails(
+  language: GeneratedContentLanguage = "en",
+): string[] {
+  return language === "fr"
+    ? [sameQuestionOrderGuardrailFr, ...aiGuardrailsFr]
+    : [sameQuestionOrderGuardrail, ...aiGuardrails];
+}
+
 export const defaultComplianceFlags = [
   complianceFlagCodes.humanReviewRequired,
   complianceFlagCodes.jobRelatedQuestionsOnly,

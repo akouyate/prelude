@@ -10,6 +10,7 @@ import {
   type WorkspaceBilling,
 } from "@prelude/billing";
 import { computeWalletTotals, type CreditLotSnapshot } from "@prelude/core";
+import type { WorkspaceLanguage } from "@prelude/contracts";
 import { prisma, type Prisma } from "@prelude/db";
 import { readWorkspaceNotificationPreferences } from "@prelude/notifications/preferences";
 import type { OrganizationRole } from "@prelude/types";
@@ -21,6 +22,7 @@ import {
 } from "../../domain/organization-permissions";
 import { getConsoleAuthIdentity } from "../auth/console-auth-provider";
 import { clerkOrganizationDirectory } from "../organizations/clerk-organization-directory";
+import { resolveWorkspaceLanguage } from "../organizations/content-language";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import { resolveDisplayCurrencyFromRequest } from "../../features/settings/settings-billing-helpers";
 import type {
@@ -184,6 +186,7 @@ export async function getWorkspaceSettingsData(): Promise<WorkspaceSettingsData>
       drafts: draftCount,
     },
     notificationPreferences: preferences.notifications,
+    workspaceLanguage: preferences.workspaceLanguage,
     organization: {
       companySize: organization.companySize,
       country: organization.country,
@@ -442,6 +445,7 @@ async function loadPendingInvitations(
 export function parseOrganizationSettings(input: Prisma.JsonValue): {
   interview: SettingsInterviewPreferences;
   notifications: SettingsNotificationPreferences;
+  workspaceLanguage: WorkspaceLanguage;
 } {
   const root = isRecord(input) ? input : {};
   const interview = isRecord(root.interview) ? root.interview : {};
@@ -479,6 +483,23 @@ export function parseOrganizationSettings(input: Prisma.JsonValue): {
       ),
     },
     notifications: readWorkspaceNotificationPreferences(input),
+    // THE WALL (plan 2026-08-18, rule 2). `workspaceLanguage` governs ONLY
+    // shared generated artifacts — the candidate brief, its criterion notes,
+    // the builder rationale — because one brief is read by many teammates and
+    // generating it per reader would fork the evidence. Notifications and UI
+    // copy stay per-recipient through `User.preferredLanguage`; the org-profile
+    // plan's rule 2 ("No `Organization.preferredLanguage` — ever") stands
+    // untouched, which is why this lives in the settings JSON and adds no
+    // column. Any PR pointing a notification or UI read at this value breaks
+    // both rules.
+    //
+    // Root-level on purpose: it is NOT an interview preference, even though the
+    // candidate-facing `interview.defaultLanguage` sits one key away.
+    workspaceLanguage: resolveWorkspaceLanguage(
+      typeof root.workspaceLanguage === "string"
+        ? root.workspaceLanguage
+        : null,
+    ),
   };
 }
 

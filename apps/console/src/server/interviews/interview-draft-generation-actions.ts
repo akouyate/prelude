@@ -10,26 +10,42 @@ import type {
 import { interviewPlanPolicy } from "../../domain/interview-plan-policy";
 import { canManageRoles } from "../../domain/organization-permissions";
 import { getServerT } from "../../libs/i18n-server";
+import { resolveInterviewLanguage } from "../organizations/content-language";
+import { loadOrganizationContentLanguages } from "../organizations/organization-content-languages";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import { getAuthenticatedUserLocale } from "../users/user-locale";
 import type { InterviewResponseMode } from "./interview-drafts";
 import {
+  buildQuestionEditRationale,
   createInterviewDraftGeneratorFromEnv,
   type InterviewDraftGenerationInput,
 } from "./interview-draft-generation";
 
-export type GenerateInterviewDraftActionInput = InterviewDraftGenerationInput;
-
-export type RefineInterviewQuestionActionInput = InterviewDraftGenerationInput & {
-  action: "sharper" | "replace";
-  draft: InterviewAgentDraft;
-  questionId: string;
+/**
+ * What the builder actually sends. Both language facts are resolved on the
+ * server (plan 2026-08-18, rule 1): the client may hint at the INTERVIEW
+ * language through its selector, and never has a say in the WORKSPACE language,
+ * which governs a shared artifact read by the whole team.
+ */
+export type GenerateInterviewDraftActionInput = Omit<
+  InterviewDraftGenerationInput,
+  "interviewLanguage" | "workspaceLanguage"
+> & {
+  interviewLanguage?: string;
 };
 
-export type AddInterviewQuestionActionInput = InterviewDraftGenerationInput & {
-  draft: InterviewAgentDraft;
-  topic: string;
-};
+export type RefineInterviewQuestionActionInput =
+  GenerateInterviewDraftActionInput & {
+    action: "sharper" | "replace";
+    draft: InterviewAgentDraft;
+    questionId: string;
+  };
+
+export type AddInterviewQuestionActionInput =
+  GenerateInterviewDraftActionInput & {
+    draft: InterviewAgentDraft;
+    topic: string;
+  };
 
 export type InterviewDraftGenerationActionResult =
   | {
@@ -65,9 +81,9 @@ export async function generateInterviewDraftAction(
     return normalized;
   }
 
-  const authorizationError = await roleManagementAuthorizationError();
-  if (authorizationError) {
-    return { error: authorizationError, ok: false };
+  const authorization = await authorizeRoleManagement();
+  if (!authorization.ok) {
+    return { error: authorization.error, ok: false };
   }
 
   const generator = createInterviewDraftGeneratorFromEnv();
@@ -76,9 +92,13 @@ export async function generateInterviewDraftAction(
     // N9: use the provenance-aware path so the returned provider/model reflect
     // the engine that actually produced the draft (e.g. a deterministic
     // fallback when OpenAI was unavailable), not the generator's static label.
-    const generated = await generator.generateDraftWithProvenance(
-      normalized.input,
-    );
+    const generated = await generator.generateDraftWithProvenance({
+      ...normalized.input,
+      ...(await resolveGenerationLanguages(
+        authorization.organizationId,
+        input.interviewLanguage,
+      )),
+    });
 
     return {
       draft: generated.draft,
@@ -106,16 +126,21 @@ export async function refineInterviewQuestionAction(
     return { error: "Select a question before asking HireCall to refine it.", ok: false };
   }
 
-  const authorizationError = await roleManagementAuthorizationError();
-  if (authorizationError) {
-    return { error: authorizationError, ok: false };
+  const authorization = await authorizeRoleManagement();
+  if (!authorization.ok) {
+    return { error: authorization.error, ok: false };
   }
 
   const generator = createInterviewDraftGeneratorFromEnv();
 
   try {
+    const languages = await resolveGenerationLanguages(
+      authorization.organizationId,
+      input.interviewLanguage,
+    );
     const nextQuestion = await generator.refineQuestion({
       ...normalized.input,
+      ...languages,
       action: input.action,
       draft: input.draft,
       question,
@@ -127,7 +152,11 @@ export async function refineInterviewQuestionAction(
         questions: input.draft.questions.map((item) =>
           item.id === input.questionId ? nextQuestion : item,
         ),
-        rationale: `HireCall refined one question while keeping this role screen focused on ${input.draft.questions.length} first-screening questions.`,
+        rationale: buildQuestionEditRationale({
+          change: "refined",
+          questionCount: input.draft.questions.length,
+          workspaceLanguage: languages.workspaceLanguage,
+        }),
       },
       modelName: generator.modelName,
       ok: true,
@@ -157,16 +186,21 @@ export async function addInterviewQuestionAction(
 
   const topic = normalizeQuestionTopic(input.topic);
 
-  const authorizationError = await roleManagementAuthorizationError();
-  if (authorizationError) {
-    return { error: authorizationError, ok: false };
+  const authorization = await authorizeRoleManagement();
+  if (!authorization.ok) {
+    return { error: authorization.error, ok: false };
   }
 
   const generator = createInterviewDraftGeneratorFromEnv();
 
   try {
+    const languages = await resolveGenerationLanguages(
+      authorization.organizationId,
+      input.interviewLanguage,
+    );
     const question = await generator.addQuestion({
       ...normalized.input,
+      ...languages,
       draft: input.draft,
       topic,
     });
@@ -177,7 +211,11 @@ export async function addInterviewQuestionAction(
         ...input.draft,
         estimatedMinutes: estimateMinutes(questions),
         questions,
-        rationale: `HireCall prepared ${questions.length} focused questions for this first-screening role screen.`,
+        rationale: buildQuestionEditRationale({
+          change: "added",
+          questionCount: questions.length,
+          workspaceLanguage: languages.workspaceLanguage,
+        }),
       },
       modelName: generator.modelName,
       ok: true,
@@ -189,25 +227,57 @@ export async function addInterviewQuestionAction(
   }
 }
 
-async function roleManagementAuthorizationError() {
+async function authorizeRoleManagement(): Promise<
+  { ok: true; organizationId: string } | { error: string; ok: false }
+> {
   const scope = await getCompletedOrganizationScope();
   if (canManageRoles(scope.role)) {
-    return null;
+    return { ok: true, organizationId: scope.organizationId };
   }
 
   const t = getServerT(await getAuthenticatedUserLocale(scope.userId));
-  return t("roleManagement.forbidden");
+  return { error: t("roleManagement.forbidden"), ok: false };
+}
+
+/**
+ * The two language facts the generator needs, resolved from the workspace.
+ *
+ * `interviewLanguageHint` is the builder's selector — advisory, and validated
+ * here rather than trusted: `resolveInterviewLanguage` drops anything outside
+ * the en/fr catalogue and falls through to the workspace's interview default.
+ * The workspace language is read only from settings, never from the request.
+ */
+async function resolveGenerationLanguages(
+  organizationId: string,
+  interviewLanguageHint: string | undefined,
+) {
+  const languages = await loadOrganizationContentLanguages(organizationId);
+
+  return {
+    interviewLanguage: resolveInterviewLanguage(
+      interviewLanguageHint,
+      languages.interviewDefault,
+    ),
+    workspaceLanguage: languages.workspace,
+  };
 }
 
 function normalizeQuestionTopic(value: string) {
   return value.trim().slice(0, 120) || "screening fit";
 }
 
+// The languages are resolved separately, from the workspace, so they are
+// deliberately absent from what this validator returns.
+type NormalizedGenerationInput = Omit<
+  InterviewDraftGenerationInput,
+  "interviewLanguage" | "workspaceLanguage"
+>;
+
 function normalizeGenerationInput(
-  input: InterviewDraftGenerationInput,
+  input: GenerateInterviewDraftActionInput,
 ):
   | {
-      input: InterviewDraftGenerationInput;
+      input: NormalizedGenerationInput;
       ok: true;
     }
   | {

@@ -37,7 +37,11 @@ import { canManageCandidateReview } from "../../../../src/domain/candidate-revie
 import { initialsForCandidate } from "../../../../src/features/candidate-screens";
 import { CandidateDecisionBar } from "../../../../src/features/interview-detail/candidate-decision-bar";
 import { CandidateReviewNote } from "../../../../src/features/interview-detail/candidate-review-note";
-import { buildReviewCriteria } from "../../../../src/features/interview-detail/candidate-review-model";
+import {
+  buildReviewCriteria,
+  resolveBriefLanguageBadge,
+  resolveQuoteLanguageNote,
+} from "../../../../src/features/interview-detail/candidate-review-model";
 import {
   CandidateConfirmedSection,
   CandidateCoveredCallout,
@@ -109,6 +113,7 @@ export default async function InterviewDetailPage({
       session={detail.candidateSession}
       siblings={siblings}
       t={t}
+      workspaceLanguage={detail.workspaceLanguage}
     />
   );
 }
@@ -120,11 +125,15 @@ function CandidateSessionReview({
   session,
   siblings,
   t,
+  workspaceLanguage,
 }: {
   canDelete: boolean;
   canManageReview: boolean;
   siblings: CandidateSessionSiblings;
   t: TFunction;
+  // The language shared recruiter-bound analysis is generated in — an ORG fact,
+  // not this reader's UI locale.
+  workspaceLanguage: string;
   calendarConnectionStatus:
     | "connected"
     | "connecting"
@@ -142,6 +151,11 @@ function CandidateSessionReview({
     billedOutcome: string | null;
     billedRequiredCount: number | null;
     brief: CandidateBriefDto | null;
+    // Row-level brief facts `brief` cannot carry: the generation-language stamp
+    // (null = generated before stamping existed) and a regeneration that failed
+    // over a previous success, which leaves `brief.status` reading "completed".
+    briefLanguage: string | null;
+    briefRegenerationFailed: boolean;
     candidateEmail: string | null;
     candidateLabel: string;
     completedAt: string | null;
@@ -156,6 +170,9 @@ function CandidateSessionReview({
     hasCompletedBrief: boolean;
     id: string;
     interviewId: string;
+    // The published role's language stamp — what the candidate was actually
+    // interviewed in, and therefore what the verbatim quotes are in.
+    interviewLanguage: string | null;
     jobTitle: string;
     limitationsCount: number;
     pointsToClarifyCount: number | null;
@@ -296,6 +313,22 @@ function CandidateSessionReview({
 
         <CandidateVerdictSection
           criteria={criteria}
+          languageBadge={
+            session.brief
+              ? resolveBriefLanguageBadge({
+                  briefLanguage: session.briefLanguage,
+                  workspaceLanguage,
+                })
+              : null
+          }
+          quoteLanguageNote={
+            session.brief
+              ? resolveQuoteLanguageNote({
+                  interviewLanguage: session.interviewLanguage,
+                  workspaceLanguage,
+                })
+              : null
+          }
           summary={session.brief?.summary ?? null}
         />
 
@@ -305,7 +338,18 @@ function CandidateSessionReview({
           recording={session.evidence.recording}
         />
 
-        {session.brief?.status === "completed" ? null : (
+        {/* `brief.status` comes from the stored summaryJson, so a failed
+            REGENERATION still reads "completed" — it describes the surviving
+            previous version, not the attempt that just failed. The row-level
+            flag is checked FIRST so that failure is never hidden behind the
+            stale content it left standing. */}
+        {session.briefRegenerationFailed ? (
+          <BriefRegenerationFailedSection
+            detailPath={detailPath}
+            sessionId={session.id}
+            t={t}
+          />
+        ) : session.brief?.status === "completed" ? null : (
           <BriefPendingSection
             briefStatus={session.brief?.status}
             detailPath={detailPath}
@@ -448,6 +492,50 @@ function PagerButton({
     >
       {children}
     </Link>
+  );
+}
+
+// A regeneration that failed OVER a previous success. The old brief is still on
+// screen above (it is real, generated evidence and the recruiter may still need
+// it), so this says exactly that — it never pretends the content is current, and
+// it never blanks the page either.
+function BriefRegenerationFailedSection({
+  detailPath,
+  sessionId,
+  t,
+}: {
+  detailPath: string;
+  sessionId: string;
+  t: TFunction;
+}) {
+  return (
+    <Card className="mt-[30px] border-dashed bg-white/72 p-6">
+      <div className="flex items-start gap-3">
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[#fbeae4] text-[#8a3a26]">
+          <WarningTriangle aria-hidden={true} className="h-5 w-5" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-ink-950">
+            {t("candidateReview.regenerationFailedTitle")}
+          </p>
+          <p className="mt-2 text-sm leading-6 text-ink-600">
+            {t("candidateReview.regenerationFailedBody")}
+          </p>
+          {/* The same server action BriefPendingSection offers, so retrying a
+              failed regeneration is the same one-click path as a first run. */}
+          <form action={generateCandidateBriefAction}>
+            <input name="candidateSessionId" type="hidden" value={sessionId} />
+            <input name="detailPath" type="hidden" value={detailPath} />
+            <button
+              className="mt-3.5 inline-flex h-[34px] cursor-pointer items-center rounded-full border border-ink-200 bg-white px-3.5 text-[12.5px] font-semibold text-ink-950 transition hover:border-ink-900"
+              type="submit"
+            >
+              {t("candidateReview.regenerationFailedRetry")}
+            </button>
+          </form>
+        </div>
+      </div>
+    </Card>
   );
 }
 

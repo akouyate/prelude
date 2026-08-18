@@ -47,6 +47,7 @@ export {
 export { suggestReviewStatus } from "./domain/review";
 export {
   aiGuardrails,
+  aiGuardrailsFr,
   aiCompliancePolicyVersion,
   audioRecordingConsentCopyVersions,
   buildAiCompliancePromptContext,
@@ -61,13 +62,17 @@ export {
   disallowedQuestionTopics,
   findForbiddenAutomatedDecisionPhrases,
   forbiddenAutomatedDecisionPhrases,
+  getInterviewPlanGuardrails,
   humanInLoopRule,
   protectedTopicCategories,
   recruiterLimitationCopy,
   recruiterLimitationCopyVersion,
   sensitiveInformationHandlingRule,
+  sameQuestionOrderGuardrail,
+  sameQuestionOrderGuardrailFr,
   textViolatesPolicy,
   type ComplianceFlagCode,
+  type GeneratedContentLanguage,
   type ProtectedTopicCategory,
 } from "./policies/ai";
 export {

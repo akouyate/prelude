@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { organizationCountrySchema } from "./organization";
+import {
+  organizationCountrySchema,
+  workspaceLanguageSchema,
+} from "./organization";
 
 describe("organizationCountrySchema", () => {
   it.each([
@@ -24,4 +27,20 @@ describe("organizationCountrySchema", () => {
   it.each(["DE", "XX", "fr", ""])("rejects %s", (value) => {
     expect(organizationCountrySchema.safeParse(value).success).toBe(false);
   });
+});
+
+describe("workspaceLanguageSchema", () => {
+  it.each(["en", "fr"])("accepts %s", (value) => {
+    expect(workspaceLanguageSchema.safeParse(value).success).toBe(true);
+  });
+
+  // Strict like organizationCountrySchema: this is the wire/DTO boundary, not a
+  // normalizer. Case-folding and fallbacks live in the console's resolution
+  // helpers, which read persisted values that may predate the setting.
+  it.each(["EN", "FR", "de", "en-US", "", null, undefined])(
+    "rejects %j",
+    (value) => {
+      expect(workspaceLanguageSchema.safeParse(value).success).toBe(false);
+    },
+  );
 });

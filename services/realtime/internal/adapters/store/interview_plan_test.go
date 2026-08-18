@@ -146,3 +146,110 @@ func TestFollowUpPromptIsLocalized(t *testing.T) {
 		t.Fatalf("expected the English fallback to remain available, got %q", got)
 	}
 }
+
+// GL-T4.3 — the interview language is no longer pinned. It rides in on the
+// stored snapshot (Interview.language for a real session, plan.language for a
+// preview) and must reach BOTH application.InterviewPlan.Language, which drives
+// the whole Python delivery layer, and the category follow-up fallback, which is
+// spoken to the candidate. A legacy snapshot with no language keeps the historic
+// "fr" so already-published interviews do not change behavior.
+func TestBuildStoredInterviewPlanThreadsTheSnapshotLanguage(t *testing.T) {
+	cases := []struct {
+		name             string
+		stored           string
+		wantLanguage     string
+		wantFollowUpFrom string
+	}{
+		{name: "french snapshot", stored: "fr", wantLanguage: "fr", wantFollowUpFrom: "fr"},
+		{name: "english snapshot", stored: "en", wantLanguage: "en", wantFollowUpFrom: "en"},
+		{name: "legacy absent language", stored: "", wantLanguage: "fr", wantFollowUpFrom: "fr"},
+		{name: "blank language", stored: "   ", wantLanguage: "fr", wantFollowUpFrom: "fr"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			plan, err := buildStoredInterviewPlan(storedInterviewPlan{
+				ID:            "interview_1",
+				RoleTitle:     "Backend Engineer",
+				Language:      tc.stored,
+				ResponseModes: []byte(`["audio"]`),
+				// No authored followUpPrompt: the category fallback must be
+				// authored in the same language the plan announces.
+				Questions:  []byte(`[{"id":"q1","prompt":"What makes you want this role?","category":"motivation","source":"agent"}]`),
+				Guardrails: []byte(`[]`),
+				RoleBrief:  "Own backend services.",
+			})
+			if err != nil {
+				t.Fatalf("expected the plan to build: %v", err)
+			}
+			if plan.Language != tc.wantLanguage {
+				t.Fatalf("stored language %q: want plan language %q, got %q", tc.stored, tc.wantLanguage, plan.Language)
+			}
+			want := followUpPrompt("motivation", tc.wantFollowUpFrom)
+			if len(plan.Questions) != 1 || plan.Questions[0].FollowUpPrompt != want {
+				t.Fatalf("stored language %q: want follow-up %q, got %+v", tc.stored, want, plan.Questions)
+			}
+		})
+	}
+}
+
+// A recruiter-authored follow-up still wins over the localized fallback, in any
+// interview language — resolveFollowUpPrompt must not "translate" it away.
+func TestResolveFollowUpPromptKeepsTheAuthoredProbeInEveryLanguage(t *testing.T) {
+	for _, language := range []string{"fr", "en", ""} {
+		if got := resolveFollowUpPrompt("  What changed afterward?  ", "motivation", language); got != "What changed afterward?" {
+			t.Fatalf("language %q: expected the authored follow-up, got %q", language, got)
+		}
+		if got := resolveFollowUpPrompt("   ", "motivation", language); got != followUpPrompt("motivation", language) {
+			t.Fatalf("language %q: expected the category fallback, got %q", language, got)
+		}
+	}
+}
+
+func TestDecodeCandidatePreviewPlanThreadsTheSnapshotLanguage(t *testing.T) {
+	cases := []struct {
+		name         string
+		languageJSON string
+		want         string
+	}{
+		{name: "english preview", languageJSON: `"language":"en",`, want: "en"},
+		{name: "french preview", languageJSON: `"language":"fr",`, want: "fr"},
+		{name: "null preview language", languageJSON: `"language":null,`, want: "fr"},
+		{name: "legacy preview snapshot", languageJSON: ``, want: "fr"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := []byte(`{
+				"companyName":"Acme",
+				"jobId":"job_1",
+				"jobTitle":"Backend Engineer",
+				"schemaVersion":1,
+				"plan":{
+					"roleTitle":"Backend Engineer",
+					"roleBrief":"Own backend services and incident response.",
+					"seniority":"mid",
+					` + tc.languageJSON + `
+					"responseModes":["audio"],
+					"questions":[{
+						"id":"q1",
+						"prompt":"What makes you want this role?",
+						"category":"motivation"
+					}],
+					"guardrails":[]
+				}
+			}`)
+
+			plan, err := decodeCandidatePreviewPlan("pv_123", raw)
+			if err != nil {
+				t.Fatalf("expected preview plan to decode: %v", err)
+			}
+			if plan.Language != tc.want {
+				t.Fatalf("want preview plan language %q, got %q", tc.want, plan.Language)
+			}
+			if want := followUpPrompt("motivation", tc.want); plan.Questions[0].FollowUpPrompt != want {
+				t.Fatalf("want preview follow-up %q, got %q", want, plan.Questions[0].FollowUpPrompt)
+			}
+		})
+	}
+}

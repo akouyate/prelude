@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 
 const requireFromDbPackage = createRequire(
   new URL("../packages/db/package.json", import.meta.url),
@@ -9,47 +10,77 @@ const requireFromDbPackage = createRequire(
 const { PrismaClient } = requireFromDbPackage("@prisma/client");
 
 const prisma = new PrismaClient();
-const args = parseArgs(process.argv.slice(2));
-const runId = sanitizeRunId(
-  args.runId ?? process.env.E2E_SMOKE_RUN_ID ?? timestampRunId(),
-);
-const reset = Boolean(args.reset ?? process.env.E2E_SMOKE_RESET === "1");
-const allowLiveLlm = Boolean(
-  args.liveLlm ?? process.env.E2E_SMOKE_LIVE_LLM === "1",
-);
-const baseUrl = trimTrailingSlash(
-  args.consoleUrl ?? process.env.CONSOLE_URL ?? "http://localhost:3000",
-);
 
-try {
-  if (args.help) {
-    console.log(helpText());
-    process.exit(0);
-  }
+/**
+ * Everything that reads argv, touches the database, or sets an exit code lives
+ * in here, and `main()` runs ONLY when this file is executed as a CLI.
+ *
+ * That guard is load-bearing: apps/console imports this module to drift-check
+ * its copy of the stopword heuristic against the original, and an import must
+ * never seed a database. Module scope is therefore side-effect free apart from
+ * constructing the (lazy, unconnected) Prisma client.
+ */
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  const runId = sanitizeRunId(
+    args.runId ?? process.env.E2E_SMOKE_RUN_ID ?? timestampRunId(),
+  );
+  const reset = Boolean(args.reset ?? process.env.E2E_SMOKE_RESET === "1");
+  const allowLiveLlm = Boolean(
+    args.liveLlm ?? process.env.E2E_SMOKE_LIVE_LLM === "1",
+  );
+  // Which language this run's workspace works in (plan 2026-08-18). It seeds the
+  // org's two language settings AND the content, so a `fr` run is a coherent
+  // French workspace end to end rather than French stamps over English prose.
+  const language = normalizeSmokeLanguage(
+    args.language ?? process.env.E2E_SMOKE_LANGUAGE ?? "en",
+  );
+  const baseUrl = trimTrailingSlash(
+    args.consoleUrl ?? process.env.CONSOLE_URL ?? "http://localhost:3000",
+  );
 
-  if (allowLiveLlm && process.env.ALLOW_LIVE_LLM_TESTS !== "1") {
-    fail(
-      "Live LLM smoke is gated. Set ALLOW_LIVE_LLM_TESTS=1 to opt into paid provider calls.",
-    );
-  }
+  try {
+    if (args.help) {
+      console.log(helpText());
+      process.exit(0);
+    }
 
-  const report = await runSmoke({ allowLiveLlm, baseUrl, reset, runId });
-  if (args.json) {
-    console.log(JSON.stringify(report, null, 2));
-  } else {
-    console.log(formatMarkdown(report));
-  }
+    if (allowLiveLlm && process.env.ALLOW_LIVE_LLM_TESTS !== "1") {
+      fail(
+        "Live LLM smoke is gated. Set ALLOW_LIVE_LLM_TESTS=1 to opt into paid provider calls.",
+      );
+    }
 
-  if (args.strict && report.decision !== "Pass") {
-    process.exitCode = 1;
+    const report = await runSmoke({
+      allowLiveLlm,
+      baseUrl,
+      language,
+      reset,
+      runId,
+    });
+    if (args.json) {
+      console.log(JSON.stringify(report, null, 2));
+    } else {
+      console.log(formatMarkdown(report));
+    }
+
+    if (args.strict && report.decision !== "Pass") {
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  } finally {
+    await prisma.$disconnect();
   }
-} catch (error) {
-  fail(error instanceof Error ? error.message : String(error));
-} finally {
-  await prisma.$disconnect();
 }
 
-async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
+function isMainModule() {
+  const entry = process.argv[1];
+
+  return Boolean(entry) && import.meta.url === pathToFileURL(entry).href;
+}
+
+async function runSmoke({ allowLiveLlm, baseUrl, language, reset, runId }) {
   if (reset) {
     await deleteSmokeData(runId);
   }
@@ -58,7 +89,8 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
   const ids = idsFor(runId);
   const recruiterEmail =
     process.env.MOCK_CLERK_USER_EMAIL || "recruiter@hirecall.ai";
-  const draft = interviewDraft();
+  const content = smokeContent(language);
+  const draft = interviewDraft(content);
   const publicToken = `iv_e2e_${runId}`;
   const candidateInvitationToken = `ci_e2e_${runId}`;
   const resumeToken = `resume_e2e_${runId}`;
@@ -96,6 +128,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
           onboardingRole: "owner",
         },
         onboardingStep: "done",
+        settings: organizationLanguageSettings(language),
       },
       update: {
         companySize: "11-50",
@@ -104,6 +137,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         name: `HireCall E2E ${runId}`,
         onboardingCompletedAt: now,
         onboardingStep: "done",
+        settings: organizationLanguageSettings(language),
       },
       where: { clerkOrganizationId: ids.clerkOrganizationId },
     });
@@ -150,21 +184,21 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
 
     const job = await tx.job.upsert({
       create: {
-        description: smokeRoleBrief(),
+        description: content.roleBrief,
         id: ids.jobId,
         location: "Paris, remote-friendly",
         organizationId: organization.id,
         sourceExternalId: `manual:e2e-smoke:${runId}`,
         sourceProvider: "manual",
         status: "published",
-        title: "Customer Success Manager",
+        title: content.roleTitle,
       },
       update: {
-        description: smokeRoleBrief(),
+        description: content.roleBrief,
         location: "Paris, remote-friendly",
         organizationId: organization.id,
         status: "published",
-        title: "Customer Success Manager",
+        title: content.roleTitle,
       },
       where: { id: ids.jobId },
     });
@@ -177,12 +211,15 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         guardrails: draft.guardrails,
         id: ids.draftId,
         jobId: job.id,
+        // The draft's own stamp: the language the candidate-facing questions,
+        // criteria and guardrails above are actually written in.
+        language,
         organizationId: organization.id,
         questions: draft.questions,
         rationale: draft.rationale,
         responseModes: ["audio", "text"],
-        roleBrief: smokeRoleBrief(),
-        roleTitle: "Customer Success Manager",
+        roleBrief: content.roleBrief,
+        roleTitle: content.roleTitle,
         seniority: "mid",
         status: "published",
       },
@@ -193,11 +230,12 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         guardrails: draft.guardrails,
         questions: draft.questions,
         rationale: draft.rationale,
+        language,
         organizationId: organization.id,
         jobId: job.id,
         responseModes: ["audio", "text"],
-        roleBrief: smokeRoleBrief(),
-        roleTitle: "Customer Success Manager",
+        roleBrief: content.roleBrief,
+        roleTitle: content.roleTitle,
         seniority: "mid",
         status: "published",
       },
@@ -213,13 +251,16 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         guardrails: draft.guardrails,
         id: ids.interviewId,
         jobId: job.id,
+        // Copied from the draft at publish time — the Go realtime store reads
+        // this column to decide what the live agent speaks.
+        language,
         organizationId: organization.id,
         publicToken,
         questions: draft.questions,
         rationale: draft.rationale,
         responseModes: ["audio", "text"],
-        roleBrief: smokeRoleBrief(),
-        roleTitle: "Customer Success Manager",
+        roleBrief: content.roleBrief,
+        roleTitle: content.roleTitle,
         seniority: "mid",
         status: "published",
       },
@@ -230,13 +271,14 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         guardrails: draft.guardrails,
         draftId: interviewDraftRecord.id,
         jobId: job.id,
+        language,
         organizationId: organization.id,
         publicToken,
         questions: draft.questions,
         rationale: draft.rationale,
         responseModes: ["audio", "text"],
-        roleBrief: smokeRoleBrief(),
-        roleTitle: "Customer Success Manager",
+        roleBrief: content.roleBrief,
+        roleTitle: content.roleTitle,
         seniority: "mid",
         status: "published",
       },
@@ -339,6 +381,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
     await tx.liveInterviewEvent.createMany({
       data: buildEvents({
         candidateSessionId,
+        content,
         questions: draft.questions,
         realtimeSessionId,
         startedAt: addSeconds(now, 10),
@@ -347,6 +390,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
 
     const brief = buildBrief({
       candidateSessionId,
+      content,
       criteria: draft.criteria,
       runId,
     });
@@ -355,6 +399,9 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         candidateSessionId,
         evidence: brief.evidenceRefs,
         generatedAt: addSeconds(now, 190),
+        // Recruiter-bound shared analysis follows the WORKSPACE language, which
+        // this run seeds to the same value as the interview language.
+        language,
         limitations: brief.summary.limitations,
         modelName: allowLiveLlm
           ? "openai-live-smoke-requested"
@@ -370,6 +417,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
         evidence: brief.evidenceRefs,
         failedReason: null,
         generatedAt: addSeconds(now, 190),
+        language,
         limitations: brief.summary.limitations,
         modelName: allowLiveLlm
           ? "openai-live-smoke-requested"
@@ -385,33 +433,42 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
     });
   });
 
-  const [candidateSession, runtimeSession, brief, eventCount, transcriptTurns] =
-    await Promise.all([
-      prisma.candidateSession.findUniqueOrThrow({
-        include: {
-          candidateInvitation: true,
-          interview: true,
-          job: true,
-          organization: true,
-        },
-        where: { id: candidateSessionId },
-      }),
-      prisma.liveInterviewSession.findUniqueOrThrow({
-        where: { id: realtimeSessionId },
-      }),
-      prisma.candidateBrief.findUniqueOrThrow({
-        where: { candidateSessionId },
-      }),
-      prisma.liveInterviewEvent.count({
-        where: { sessionId: realtimeSessionId },
-      }),
-      prisma.liveInterviewEvent.count({
-        where: {
-          sessionId: realtimeSessionId,
-          type: { in: ["candidate_turn_finalized", "question_asked"] },
-        },
-      }),
-    ]);
+  const [
+    candidateSession,
+    interviewDraftRow,
+    runtimeSession,
+    brief,
+    eventCount,
+    transcriptTurns,
+  ] = await Promise.all([
+    prisma.candidateSession.findUniqueOrThrow({
+      include: {
+        candidateInvitation: true,
+        interview: true,
+        job: true,
+        organization: true,
+      },
+      where: { id: candidateSessionId },
+    }),
+    prisma.interviewDraft.findUniqueOrThrow({
+      where: { id: ids.draftId },
+    }),
+    prisma.liveInterviewSession.findUniqueOrThrow({
+      where: { id: realtimeSessionId },
+    }),
+    prisma.candidateBrief.findUniqueOrThrow({
+      where: { candidateSessionId },
+    }),
+    prisma.liveInterviewEvent.count({
+      where: { sessionId: realtimeSessionId },
+    }),
+    prisma.liveInterviewEvent.count({
+      where: {
+        sessionId: realtimeSessionId,
+        type: { in: ["candidate_turn_finalized", "question_asked"] },
+      },
+    }),
+  ]);
 
   const dashboardUrl = `${baseUrl}/`;
   const interviewDetailUrl = `${baseUrl}/interviews/${candidateSession.interviewId}`;
@@ -428,12 +485,46 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
     evaluationMatrix && typeof evaluationMatrix.recommendationLabel === "string"
       ? evaluationMatrix.recommendationLabel
       : null;
+  // The language chain (plan 2026-08-18). Two independent facts are checked:
+  // every artifact carries the run's language STAMP, and the prose those
+  // artifacts contain actually READS as that language. A stamp over prose in the
+  // other language is precisely the incoherence this variant exists to catch.
+  const settings = isRecord(candidateSession.organization.settings)
+    ? candidateSession.organization.settings
+    : {};
+  const interviewSettings = isRecord(settings.interview)
+    ? settings.interview
+    : {};
+  const languageChecks = {
+    workspaceSetting: settings.workspaceLanguage === language,
+    interviewDefaultSetting: interviewSettings.defaultLanguage === language,
+    draftStamp: interviewDraftRow.language === language,
+    interviewStamp: candidateSession.interview.language === language,
+    briefStamp: brief.language === language,
+    // Candidate-bound prose: the published questions the agent will speak.
+    questionProse:
+      dominantStopwordLanguage(
+        readQuestionPrompts(candidateSession.interview.questions),
+      ) === language,
+    // Recruiter-bound prose: the shared brief the whole team reads.
+    briefProse:
+      dominantStopwordLanguage(
+        [
+          typeof summaryJson.summary === "string" ? summaryJson.summary : "",
+          ...toStringArray(summaryJson.strengths),
+          ...toStringArray(summaryJson.pointsToClarify),
+        ].join(" "),
+      ) === language,
+  };
+  const languageCoherent = Object.values(languageChecks).every(Boolean);
+
   const decision =
     candidateSession.status === "completed" &&
     runtimeSession.status === "completed" &&
     brief.status === "completed" &&
     evaluationMatrix !== null &&
-    eventCount > 0
+    eventCount > 0 &&
+    languageCoherent
       ? "Pass"
       : "Blocker";
 
@@ -442,6 +533,14 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
     runId,
     mode: allowLiveLlm ? "live-llm-explicit" : "mock-llm-default",
     decision,
+    language: {
+      requested: language,
+      checks: languageChecks,
+      coherent: languageCoherent,
+      draft: interviewDraftRow.language,
+      interview: candidateSession.interview.language,
+      brief: brief.language,
+    },
     organization: {
       id: candidateSession.organizationId,
       name: candidateSession.organization.name,
@@ -487,6 +586,7 @@ async function runSmoke({ allowLiveLlm, baseUrl, reset, runId }) {
 
 function buildEvents({
   candidateSessionId,
+  content,
   questions,
   realtimeSessionId,
   startedAt,
@@ -575,7 +675,7 @@ function buildEvents({
           sessionId: realtimeSessionId,
           speaker: "candidate",
           startedAt: addSeconds(startedAt, baseOffset + 17).toISOString(),
-          text: candidateAnswerFor(question.id),
+          text: candidateAnswerFor(question.id, content),
           turnId: candidateTurnId,
         },
       },
@@ -635,8 +735,7 @@ function buildEvents({
     actor: "agent",
     offset: 170,
     payload: {
-      closing:
-        "Thank you, Ada. The recruiter will review your answers and follow up with the next step.",
+      closing: content.closingLine,
       completedQuestions: questions.length,
       totalQuestions: questions.length,
       transcriptTurn: {
@@ -645,7 +744,7 @@ function buildEvents({
         sessionId: realtimeSessionId,
         speaker: "interviewer",
         startedAt: addSeconds(startedAt, 170).toISOString(),
-        text: "Thank you, Ada. The recruiter will review your answers and follow up with the next step.",
+        text: content.closingLine,
         turnId: "turn_session_closing",
       },
     },
@@ -665,9 +764,9 @@ function buildEvents({
   return events;
 }
 
-function buildBrief({ candidateSessionId, criteria, runId }) {
+function buildBrief({ candidateSessionId, content, criteria, runId }) {
   const assessments = criteria.map((criterion) =>
-    smokeCriterionAssessment(criterion),
+    smokeCriterionAssessment(criterion, content),
   );
   const evidenceRefs = assessments.map((assessment) => ({
     criterionId: assessment.criterion.id,
@@ -696,125 +795,47 @@ function buildBrief({ candidateSessionId, criteria, runId }) {
         rationale: assessment.matrixRationale,
         status: "partial",
       })),
-      facts: [
-        "Candidate described involvement in enterprise customer onboarding.",
-        "Candidate described cross-functional work with support, product, and customer success.",
-        "Candidate proposed customer recovery steps with owners, dates, and communication cadence.",
-      ],
-      inferredSignals: [
-        {
-          confidence: "medium",
-          evidence: [smokeEvidence("role-skills")],
-          label: "Enterprise onboarding coordination",
-        },
-        {
-          confidence: "medium",
-          evidence: [smokeEvidence("communication")],
-          label: "Structured at-risk customer response",
-        },
-      ],
-      missingInfo: [
-        "Exact activation, churn, or adoption metric movement.",
-        "Candidate's direct ownership versus team contribution.",
-        "Commercial impact and stakeholder seniority.",
-      ],
+      facts: content.brief.facts,
+      inferredSignals: content.brief.inferredSignals.map((label, index) => ({
+        confidence: "medium",
+        evidence: [
+          smokeEvidence(index === 0 ? "role-skills" : "communication", content),
+        ],
+        label,
+      })),
+      missingInfo: content.brief.missingInfo,
       recommendationConfidence: "medium",
       recommendationLabel: "targeted_follow_up",
-      recommendationRationale:
-        "The transcript contains useful first-screen signal for a CSM role, but the recruiter should validate measurable customer impact and ownership before advancing.",
+      recommendationRationale: content.brief.recommendationRationale,
       recommendedNextStep: "to_review",
-      risks: [
-        "The smoke candidate data is synthetic and should only validate workflow plumbing.",
-        "Metrics and exact ownership remain unverified.",
-      ],
+      risks: content.brief.matrixRisks,
     },
     limitations: [
-      "This brief supports human review only and is not an automated hiring decision.",
-      "Do not assess protected attributes, appearance, accent, tone, emotion, personality, or biometrics.",
-      `Generated by local E2E smoke run ${runId}.`,
+      ...content.brief.limitations,
+      content.brief.smokeLimitation(runId),
     ],
-    pointsToClarify: [
-      "What activation, churn, or adoption metric changed after the onboarding work?",
-      "What was Ada directly responsible for versus owned by the broader team?",
-      "How senior were the customer stakeholders involved in the recovery plan?",
-    ],
-    risks: [
-      "The smoke candidate data is synthetic and should only validate workflow plumbing.",
-      "Metrics and ownership need recruiter validation before moving forward.",
-    ],
+    pointsToClarify: content.brief.pointsToClarify,
+    risks: content.brief.risks,
     status: "completed",
-    strengths: [
-      "Relevant evidence: candidate described onboarding projects and cross-functional coordination.",
-      "Practical judgment: candidate proposed a short recovery plan with owners and dates.",
-      "Communication: answers were concise enough for first-screening review.",
-    ],
+    strengths: content.brief.strengths,
     suggestedNextStep: "to_review",
-    summary:
-      "Ada Martin completed the Customer Success Manager smoke interview with persisted transcript evidence, answer evaluations, and a matrix-backed recruiter brief for human review.",
+    summary: content.brief.summary,
   };
 
   return { evidenceRefs, summary };
 }
 
-function smokeCriterionAssessment(criterion) {
+function smokeCriterionAssessment(criterion, content) {
   const questionId = smokeQuestionForCriterion(criterion.id);
-  const evidence = smokeEvidence(questionId);
-  const shared = {
+  const evidence = smokeEvidence(questionId, content);
+  const assessment = content.assessments[criterion.id];
+
+  return {
+    ...assessment,
     criterion,
     evidence,
     questionId,
     transcriptTurnId: evidence.transcriptTurnId,
-  };
-
-  if (criterion.id === "relevant-evidence") {
-    return {
-      ...shared,
-      category: "experience",
-      followUps: [
-        "Which activation or churn metric moved after the onboarding changes?",
-        "How many enterprise customers were in scope?",
-      ],
-      matrixRationale:
-        "The answer is relevant to enterprise onboarding and cross-functional CSM work, but the measurable impact is not quantified.",
-      missingInfo: [
-        "Activation or churn metric movement.",
-        "Scale of the customer portfolio involved.",
-      ],
-      rationale:
-        "Candidate gave job-related onboarding evidence, but the exact customer impact still needs validation.",
-    };
-  }
-
-  if (criterion.id === "practical-judgment") {
-    return {
-      ...shared,
-      category: "role_specific",
-      followUps: [
-        "What would you do first if product cannot commit to the customer's requested fix?",
-        "How would you decide whether to escalate commercially?",
-      ],
-      matrixRationale:
-        "The answer shows a structured customer recovery approach, but trade-offs and escalation thresholds are not yet clear.",
-      missingInfo: [
-        "Escalation threshold.",
-        "Commercial or renewal risk assessment.",
-      ],
-      rationale:
-        "Candidate described a practical recovery plan, but the recruiter should probe trade-offs and escalation judgment.",
-    };
-  }
-
-  return {
-    ...shared,
-    category: "communication",
-    followUps: [
-      "How would you explain the recovery timeline if the customer is already frustrated?",
-    ],
-    matrixRationale:
-      "The answer is clear and recruiter-readable, but it does not yet show how the candidate adapts communication to senior stakeholders.",
-    missingInfo: ["Stakeholder communication depth."],
-    rationale:
-      "Candidate communicated in a structured way, with enough clarity for first-screening review.",
   };
 }
 
@@ -828,16 +849,163 @@ function smokeQuestionForCriterion(criterionId) {
   return "motivation";
 }
 
-function smokeEvidence(questionId) {
+function smokeEvidence(questionId, content) {
   return {
     questionId,
-    text: candidateAnswerFor(questionId),
+    text: candidateAnswerFor(questionId, content),
     transcriptTurnId: `turn_${questionId}_candidate`,
   };
 }
 
-function interviewDraft() {
+function interviewDraft(content) {
   return {
+    criteria: content.criteria,
+    estimatedMinutes: 4,
+    guardrails: content.guardrails,
+    questions: content.questions,
+    rationale: content.rationale,
+  };
+}
+
+function candidateAnswerFor(questionId, content) {
+  return content.answers[questionId] ?? content.answers["role-skills"];
+}
+
+/**
+ * The seeded prose for one workspace language.
+ *
+ * Everything a recruiter or candidate READS is in here, so a run is coherent in
+ * exactly one language: the candidate-facing chain (role brief, questions,
+ * criteria, guardrails) and the recruiter-bound chain (the brief) are seeded
+ * from the same entry. That is what makes the language stamps assertable — a
+ * stamp over prose in the other language would be the bug this smoke exists to
+ * catch, not a passing run.
+ *
+ * Candidate answers are deliberately in the interview language too: they stand
+ * in for what a candidate actually said, and the brief quotes them verbatim.
+ */
+function smokeContent(language) {
+  return language === "fr" ? frenchSmokeContent() : englishSmokeContent();
+}
+
+function organizationLanguageSettings(language) {
+  return {
+    interview: { defaultLanguage: language },
+    workspaceLanguage: language,
+  };
+}
+
+function normalizeSmokeLanguage(value) {
+  const normalized = String(value ?? "")
+    .trim()
+    .toLowerCase();
+  if (normalized !== "en" && normalized !== "fr") {
+    fail(
+      `Unsupported smoke language "${value}". The catalogue pair is en | fr.`,
+    );
+  }
+
+  return normalized;
+}
+
+function englishSmokeContent() {
+  return {
+    answers: {
+      communication:
+        "I would first acknowledge the implementation issues, confirm the business impact with the customer, and set a short recovery plan with product and support. I would keep the customer updated with clear owners and dates.",
+      motivation:
+        "I am interested because the role combines customer onboarding, retention, and cross-functional problem solving. I like roles where I can improve the customer journey and make handoffs clearer.",
+      "role-skills":
+        "In my last role I led onboarding for enterprise customers and coordinated support, product, and customer success. We reduced activation delays by creating clearer kickoff checklists and weekly risk reviews.",
+    },
+    assessments: {
+      communication: {
+        category: "communication",
+        followUps: [
+          "How would you explain the recovery timeline if the customer is already frustrated?",
+        ],
+        matrixRationale:
+          "The answer is clear and recruiter-readable, but it does not yet show how the candidate adapts communication to senior stakeholders.",
+        missingInfo: ["Stakeholder communication depth."],
+        rationale:
+          "Candidate communicated in a structured way, with enough clarity for first-screening review.",
+      },
+      "practical-judgment": {
+        category: "role_specific",
+        followUps: [
+          "What would you do first if product cannot commit to the customer's requested fix?",
+          "How would you decide whether to escalate commercially?",
+        ],
+        matrixRationale:
+          "The answer shows a structured customer recovery approach, but trade-offs and escalation thresholds are not yet clear.",
+        missingInfo: [
+          "Escalation threshold.",
+          "Commercial or renewal risk assessment.",
+        ],
+        rationale:
+          "Candidate described a practical recovery plan, but the recruiter should probe trade-offs and escalation judgment.",
+      },
+      "relevant-evidence": {
+        category: "experience",
+        followUps: [
+          "Which activation or churn metric moved after the onboarding changes?",
+          "How many enterprise customers were in scope?",
+        ],
+        matrixRationale:
+          "The answer is relevant to enterprise onboarding and cross-functional CSM work, but the measurable impact is not quantified.",
+        missingInfo: [
+          "Activation or churn metric movement.",
+          "Scale of the customer portfolio involved.",
+        ],
+        rationale:
+          "Candidate gave job-related onboarding evidence, but the exact customer impact still needs validation.",
+      },
+    },
+    brief: {
+      facts: [
+        "Candidate described involvement in enterprise customer onboarding.",
+        "Candidate described cross-functional work with support, product, and customer success.",
+        "Candidate proposed customer recovery steps with owners, dates, and communication cadence.",
+      ],
+      inferredSignals: [
+        "Enterprise onboarding coordination",
+        "Structured at-risk customer response",
+      ],
+      limitations: [
+        "This brief supports human review only and is not an automated hiring decision.",
+        "Do not assess protected attributes, appearance, accent, tone, emotion, personality, or biometrics.",
+      ],
+      missingInfo: [
+        "Exact activation, churn, or adoption metric movement.",
+        "Candidate's direct ownership versus team contribution.",
+        "Commercial impact and stakeholder seniority.",
+      ],
+      pointsToClarify: [
+        "What activation, churn, or adoption metric changed after the onboarding work?",
+        "What was Ada directly responsible for versus owned by the broader team?",
+        "How senior were the customer stakeholders involved in the recovery plan?",
+      ],
+      recommendationRationale:
+        "The transcript contains useful first-screen signal for a CSM role, but the recruiter should validate measurable customer impact and ownership before advancing.",
+      risks: [
+        "The smoke candidate data is synthetic and should only validate workflow plumbing.",
+        "Metrics and ownership need recruiter validation before moving forward.",
+      ],
+      matrixRisks: [
+        "The smoke candidate data is synthetic and should only validate workflow plumbing.",
+        "Metrics and exact ownership remain unverified.",
+      ],
+      strengths: [
+        "Relevant evidence: candidate described onboarding projects and cross-functional coordination.",
+        "Practical judgment: candidate proposed a short recovery plan with owners and dates.",
+        "Communication: answers were concise enough for first-screening review.",
+      ],
+      summary:
+        "Ada Martin completed the Customer Success Manager smoke interview with persisted transcript evidence, answer evaluations, and a matrix-backed recruiter brief for human review.",
+      smokeLimitation: (runId) => `Generated by local E2E smoke run ${runId}.`,
+    },
+    closingLine:
+      "Thank you, Ada. The recruiter will review your answers and follow up with the next step.",
     criteria: [
       {
         description:
@@ -857,7 +1025,6 @@ function interviewDraft() {
         label: "Communication",
       },
     ],
-    estimatedMinutes: 4,
     guardrails: [
       "Ask every candidate the same questions in the same order.",
       "Evaluate answers against job-related criteria only.",
@@ -869,7 +1036,7 @@ function interviewDraft() {
         durationSeconds: 75,
         id: "motivation",
         prompt:
-          "Qu'est-ce qui vous a donné envie de rejoindre ce poste de Customer Success Manager ?",
+          "What made you want to join this Customer Success Manager position?",
         signal: "Role motivation and clarity of expectations",
         source: "agent",
       },
@@ -877,7 +1044,7 @@ function interviewDraft() {
         durationSeconds: 90,
         id: "role-skills",
         prompt:
-          "Parlez-moi d'un projet d'onboarding client récent et de l'impact que vous avez eu.",
+          "Tell me about a recent customer onboarding project and the impact you had.",
         signal: "Relevant experience connected to customer success work",
         source: "job_description",
       },
@@ -885,31 +1052,177 @@ function interviewDraft() {
         durationSeconds: 90,
         id: "communication",
         prompt:
-          "Expliquez comment vous géreriez un client à risque après une implémentation difficile.",
+          "Explain how you would handle an at-risk customer after a difficult implementation.",
         signal: "Communication, prioritization, and customer judgment",
         source: "agent",
       },
     ],
     rationale:
       "Three focused first-screening questions cover motivation, role evidence, and customer communication.",
+    roleBrief:
+      "Own customer onboarding, spot early retention risks, coordinate with support and product, and communicate clearly with customers during implementation.",
+    roleTitle: "Customer Success Manager",
   };
 }
 
-function candidateAnswerFor(questionId) {
-  const answers = {
-    communication:
-      "I would first acknowledge the implementation issues, confirm the business impact with the customer, and set a short recovery plan with product and support. I would keep the customer updated with clear owners and dates.",
-    motivation:
-      "I am interested because the role combines customer onboarding, retention, and cross-functional problem solving. I like roles where I can improve the customer journey and make handoffs clearer.",
-    "role-skills":
-      "In my last role I led onboarding for enterprise customers and coordinated support, product, and customer success. We reduced activation delays by creating clearer kickoff checklists and weekly risk reviews.",
+function frenchSmokeContent() {
+  return {
+    answers: {
+      communication:
+        "Je commencerais par reconnaitre les difficultes de la mise en place, puis je confirmerais l'impact business avec le client et je poserais un plan de redressement court avec le produit et le support. Je tiendrais le client informe avec des responsables et des dates claires.",
+      motivation:
+        "Ce poste m'interesse parce qu'il combine l'onboarding client, la retention et la resolution de problemes avec plusieurs equipes. J'aime les roles ou je peux ameliorer le parcours client et rendre les passages de relais plus nets.",
+      "role-skills":
+        "Dans mon dernier poste, j'ai pilote l'onboarding des clients grands comptes et coordonne le support, le produit et le customer success. Nous avons reduit les delais d'activation grace a des checklists de lancement plus claires et des revues de risque hebdomadaires.",
+    },
+    assessments: {
+      communication: {
+        category: "communication",
+        followUps: [
+          "Comment expliqueriez-vous le calendrier de redressement a un client deja mecontent ?",
+        ],
+        matrixRationale:
+          "La reponse est claire et lisible pour le recruteur, mais elle ne montre pas encore comment la candidate adapte sa communication a des interlocuteurs seniors.",
+        missingInfo: [
+          "Profondeur de la communication avec les parties prenantes.",
+        ],
+        rationale:
+          "La candidate a communique de maniere structuree, avec assez de clarte pour une preselection.",
+      },
+      "practical-judgment": {
+        category: "role_specific",
+        followUps: [
+          "Que feriez-vous en premier si le produit ne peut pas s'engager sur le correctif demande par le client ?",
+          "Comment decideriez-vous d'escalader sur le plan commercial ?",
+        ],
+        matrixRationale:
+          "La reponse montre une approche structuree du redressement client, mais les arbitrages et les seuils d'escalade ne sont pas encore explicites.",
+        missingInfo: [
+          "Seuil d'escalade.",
+          "Evaluation du risque commercial ou de renouvellement.",
+        ],
+        rationale:
+          "La candidate a decrit un plan de redressement concret, mais le recruteur doit creuser les arbitrages et le jugement sur l'escalade.",
+      },
+      "relevant-evidence": {
+        category: "experience",
+        followUps: [
+          "Quel indicateur d'activation ou de churn a bouge apres ces changements d'onboarding ?",
+          "Combien de clients grands comptes etaient concernes ?",
+        ],
+        matrixRationale:
+          "La reponse est pertinente pour l'onboarding grands comptes et le travail transverse d'un CSM, mais l'impact mesurable n'est pas chiffre.",
+        missingInfo: [
+          "Evolution de l'indicateur d'activation ou de churn.",
+          "Taille du portefeuille client concerne.",
+        ],
+        rationale:
+          "La candidate a donne des elements d'onboarding lies au poste, mais l'impact client exact reste a valider.",
+      },
+    },
+    brief: {
+      facts: [
+        "La candidate a decrit sa participation a l'onboarding de clients grands comptes.",
+        "La candidate a decrit un travail transverse avec le support, le produit et le customer success.",
+        "La candidate a propose des etapes de redressement client avec des responsables, des dates et un rythme de communication.",
+      ],
+      inferredSignals: [
+        "Coordination d'onboarding grands comptes",
+        "Reponse structuree face a un client a risque",
+      ],
+      limitations: [
+        "Ce brief sert uniquement a la revue humaine et ne constitue pas une decision de recrutement automatisee.",
+        "Ne pas evaluer les attributs proteges, l'apparence, l'accent, le ton, l'emotion, la personnalite ou la biometrie.",
+      ],
+      missingInfo: [
+        "Evolution precise de l'indicateur d'activation, de churn ou d'adoption.",
+        "Perimetre porte directement par la candidate par rapport a l'equipe.",
+        "Impact commercial et seniorite des interlocuteurs.",
+      ],
+      pointsToClarify: [
+        "Quel indicateur d'activation, de churn ou d'adoption a change apres ce travail d'onboarding ?",
+        "De quoi Ada etait-elle directement responsable par rapport au reste de l'equipe ?",
+        "Quelle etait la seniorite des interlocuteurs impliques dans le plan de redressement ?",
+      ],
+      recommendationRationale:
+        "Le verbatim contient des signaux utiles pour une preselection sur un poste de CSM, mais le recruteur doit valider l'impact client mesurable et le perimetre porte avant d'avancer.",
+      risks: [
+        "Les donnees candidat de ce smoke sont synthetiques et ne servent qu'a valider la tuyauterie du parcours.",
+        "Les indicateurs et le perimetre doivent etre valides par le recruteur avant d'aller plus loin.",
+      ],
+      matrixRisks: [
+        "Les donnees candidat de ce smoke sont synthetiques et ne servent qu'a valider la tuyauterie du parcours.",
+        "Les indicateurs et le perimetre exact restent non verifies.",
+      ],
+      strengths: [
+        "Elements pertinents : la candidate a decrit des projets d'onboarding et une coordination transverse.",
+        "Jugement pratique : la candidate a propose un plan de redressement court avec des responsables et des dates.",
+        "Communication : les reponses sont assez concises pour une revue de preselection.",
+      ],
+      summary:
+        "Ada Martin a termine l'entretien de smoke pour le poste de Customer Success Manager avec un verbatim persiste, des evaluations de reponses et un brief recruteur adosse a la matrice, destine a une revue humaine.",
+      smokeLimitation: (runId) => `Genere par le smoke E2E local ${runId}.`,
+    },
+    closingLine:
+      "Merci Ada. Le recruteur va relire vos reponses et revenir vers vous pour la suite.",
+    criteria: [
+      {
+        description:
+          "Les exemples sont lies a l'onboarding client et au travail de retention.",
+        id: "relevant-evidence",
+        label: "Elements pertinents",
+      },
+      {
+        description:
+          "La candidate explique clairement les arbitrages et les premieres actions.",
+        id: "practical-judgment",
+        label: "Jugement pratique",
+      },
+      {
+        description:
+          "Les reponses sont structurees, precises et faciles a relire.",
+        id: "communication",
+        label: "Communication",
+      },
+    ],
+    guardrails: [
+      "Poser a chaque candidat les memes questions dans le meme ordre.",
+      "Evaluer les reponses uniquement sur des criteres lies au poste.",
+      "Ne pas analyser le visage, l'accent, le ton, l'emotion ou les attributs proteges.",
+      "Laisser la decision finale au recruteur.",
+    ],
+    questions: [
+      {
+        durationSeconds: 75,
+        id: "motivation",
+        prompt:
+          "Qu'est-ce qui vous a donne envie de rejoindre ce poste de Customer Success Manager ?",
+        signal: "Motivation pour le poste et clarte des attentes",
+        source: "agent",
+      },
+      {
+        durationSeconds: 90,
+        id: "role-skills",
+        prompt:
+          "Parlez-moi d'un projet d'onboarding client recent et de l'impact que vous avez eu.",
+        signal: "Experience pertinente liee au customer success",
+        source: "job_description",
+      },
+      {
+        durationSeconds: 90,
+        id: "communication",
+        prompt:
+          "Expliquez comment vous gereriez un client a risque apres une implementation difficile.",
+        signal: "Communication, priorisation et jugement client",
+        source: "agent",
+      },
+    ],
+    rationale:
+      "Trois questions de preselection ciblees couvrent la motivation, les elements lies au poste et la communication client.",
+    roleBrief:
+      "Piloter l'onboarding des clients, reperer tot les risques de retention, coordonner le support et le produit, et communiquer clairement avec les clients pendant la mise en place.",
+    roleTitle: "Customer Success Manager",
   };
-
-  return answers[questionId] ?? answers["role-skills"];
-}
-
-function smokeRoleBrief() {
-  return "Own customer onboarding, spot early retention risks, coordinate with support and product, and communicate clearly with customers during implementation.";
 }
 
 async function deleteSmokeData(runId) {
@@ -1008,6 +1321,11 @@ function parseArgs(values) {
     } else if (value === "--console-url") {
       parsed.consoleUrl = values[index + 1];
       index += 1;
+    } else if (value === "--language") {
+      parsed.language = values[index + 1];
+      index += 1;
+    } else if (value?.startsWith("--language=")) {
+      parsed.language = value.slice("--language=".length);
     } else if (value?.startsWith("--run-id=")) {
       parsed.runId = value.slice("--run-id=".length);
     } else if (value?.startsWith("--console-url=")) {
@@ -1024,6 +1342,7 @@ function formatMarkdown(report) {
 - Decision: **${report.decision}**
 - Run: \`${report.runId}\`
 - Mode: \`${report.mode}\`
+- Language: \`${report.language.requested}\` (${report.language.coherent ? "**coherent**" : "**INCOHERENT**"})
 
 ## Records
 
@@ -1044,6 +1363,13 @@ function formatMarkdown(report) {
 - Brief provider: \`${report.brief.modelProvider}\`
 - Brief evaluation matrix: ${report.brief.hasEvaluationMatrix ? "**present**" : "**missing**"}
 - Matrix recommendation: \`${report.brief.matrixRecommendation ?? "n/a"}\`
+
+## Language
+
+- Stamps: draft \`${report.language.draft ?? "null"}\` · interview \`${report.language.interview ?? "null"}\` · brief \`${report.language.brief ?? "null"}\`
+${Object.entries(report.language.checks)
+  .map(([check, ok]) => `- ${check}: ${ok ? "pass" : "**FAIL**"}`)
+  .join("\n")}
 
 ## URLs
 
@@ -1066,6 +1392,9 @@ Options:
   --strict           Exit non-zero unless the smoke decision is Pass.
   --console-url <u>  Base console URL for printed links. Default: http://localhost:3000.
   --live-llm         Mark the run as explicit live LLM mode; requires ALLOW_LIVE_LLM_TESTS=1.
+  --language <l>     Workspace language for the run: en | fr. Default: en.
+                     Seeds the org language settings, the artifact stamps, and
+                     the seeded prose, so the whole run is one language.
 `;
 }
 
@@ -1097,6 +1426,144 @@ function trimTrailingSlash(value) {
   return String(value).replace(/\/+$/, "");
 }
 
+function readQuestionPrompts(value) {
+  return Array.isArray(value)
+    ? value
+        .map((question) =>
+          isRecord(question) && typeof question.prompt === "string"
+            ? question.prompt
+            : "",
+        )
+        .join(" ")
+    : "";
+}
+
+function toStringArray(value) {
+  return Array.isArray(value)
+    ? value.filter((item) => typeof item === "string")
+    : [];
+}
+
+/**
+ * Which catalogue language a piece of prose reads as, by counting function
+ * words. Mirrors `dominantStopwordLanguage` in
+ * apps/console/src/server/interviews/text-language-heuristic.ts — kept as a copy
+ * because this seeding script runs as plain Node with no TypeScript build, and
+ * duplicating ~40 stopwords is cheaper than compiling the console to seed a DB.
+ * Returns null on a thin or mixed signal, so an assertion fails rather than
+ * coin-flips.
+ */
+export function dominantStopwordLanguage(text) {
+  const tokens = String(text ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .split(/[^\p{L}]+/u)
+    .filter(Boolean);
+
+  let english = 0;
+  let french = 0;
+  for (const token of tokens) {
+    if (SMOKE_ENGLISH_STOPWORDS.has(token)) {
+      english += 1;
+    }
+    if (SMOKE_FRENCH_STOPWORDS.has(token)) {
+      french += 1;
+    }
+  }
+
+  if (
+    english >= SMOKE_MINIMUM_HITS &&
+    english >= french * SMOKE_DOMINANCE_RATIO
+  ) {
+    return "en";
+  }
+  if (
+    french >= SMOKE_MINIMUM_HITS &&
+    french >= english * SMOKE_DOMINANCE_RATIO
+  ) {
+    return "fr";
+  }
+
+  return null;
+}
+
+// Exported so `text-language-heuristic.drift.test.ts` in apps/console can assert
+// this copy still matches the original, value for value.
+export const SMOKE_MINIMUM_HITS = 3;
+export const SMOKE_DOMINANCE_RATIO = 2;
+
+// Deliberately disjoint: words shared by both languages are excluded rather
+// than counted for the wrong side.
+export const SMOKE_ENGLISH_STOPWORDS = new Set([
+  "and",
+  "are",
+  "been",
+  "before",
+  "for",
+  "from",
+  "has",
+  "have",
+  "in",
+  "is",
+  "its",
+  "not",
+  "of",
+  "should",
+  "than",
+  "that",
+  "the",
+  "their",
+  "these",
+  "they",
+  "this",
+  "to",
+  "was",
+  "were",
+  "when",
+  "which",
+  "while",
+  "with",
+]);
+
+export const SMOKE_FRENCH_STOPWORDS = new Set([
+  "au",
+  "aucun",
+  "aux",
+  "avant",
+  "avec",
+  "ces",
+  "cet",
+  "cette",
+  "dans",
+  "des",
+  "doit",
+  "du",
+  "elle",
+  "est",
+  "etre",
+  "la",
+  "le",
+  "les",
+  "leur",
+  "leurs",
+  "mais",
+  "notre",
+  "nous",
+  "pas",
+  "peut",
+  "pour",
+  "qui",
+  "sans",
+  "ses",
+  "sont",
+  "sur",
+  "tres",
+  "une",
+  "votre",
+  "vous",
+]);
+
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -1104,4 +1571,10 @@ function isRecord(value) {
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+// Last line on purpose: every const above is initialized by the time main()
+// runs, and an `import` of this module stops right here without doing anything.
+if (isMainModule()) {
+  await main();
 }

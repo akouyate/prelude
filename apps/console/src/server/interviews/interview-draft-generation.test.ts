@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  interviewPlanSchema,
   interviewQuestionSourceSchema,
   liveInterviewQuestionCategorySchema,
 } from "@prelude/contracts";
 
+import {
+  getInterviewPlanPublicationIssues,
+  planReferencesDisallowedTopic,
+} from "../../domain/interview-plan-policy";
 import type { InterviewGenerationTelemetrySink } from "./interview-generation-telemetry";
 import {
+  buildQuestionEditRationale,
   createDeterministicInterviewDraftGenerator,
   createInterviewDraftGeneratorFromEnv,
   createOpenAIInterviewDraftGenerator,
@@ -449,7 +455,349 @@ describe("interview draft generation", () => {
   });
 });
 
-function input(): InterviewDraftGenerationInput {
+// Plan 2026-08-18, rules 1, 3 and 5. Two independent language facts reach the
+// generator: the INTERVIEW language (questions, criteria, guardrails — read by
+// the candidate) and the WORKSPACE language (rationale — builder copy read by
+// the recruiter). The deterministic generator is the production fallback, so it
+// must honour both without an LLM.
+describe("interview draft generation language", () => {
+  it("writes every field in English when both languages are en", async () => {
+    const generator = createDeterministicInterviewDraftGenerator();
+    const draft = await generator.generateDraft(
+      input({ interviewLanguage: "en", workspaceLanguage: "en" }),
+    );
+
+    expect(draft.guardrails).toContain(
+      "Ask every candidate the same questions in the same order.",
+    );
+    expect(draft.rationale).toContain("HireCall prepared");
+    expect(
+      draft.questions.some((question) => question.prompt.includes("Tell us")),
+    ).toBe(true);
+  });
+
+  it("writes every field in French when both languages are fr", async () => {
+    const generator = createDeterministicInterviewDraftGenerator();
+    const draft = await generator.generateDraft(
+      input({ interviewLanguage: "fr", workspaceLanguage: "fr" }),
+    );
+
+    expect(draft.guardrails).toContain(
+      "Poser à chaque candidat les mêmes questions, dans le même ordre.",
+    );
+    expect(draft.rationale).toContain("HireCall a préparé");
+    expect(
+      draft.questions.every((question) => question.followUpPrompt?.length),
+    ).toBe(true);
+    expect(
+      draft.questions.some((question) =>
+        question.prompt.startsWith("Parlez-nous"),
+      ),
+    ).toBe(true);
+    expect(
+      draft.criteria.some((criterion) =>
+        criterion.description.includes("fiche de poste"),
+      ),
+    ).toBe(true);
+    // Follow-ups are candidate-facing too: they must not stay English.
+    expect(
+      draft.questions.every(
+        (question) => !/^(Walk me|Can you|What specifically)/u.test(question.followUpPrompt ?? ""),
+      ),
+    ).toBe(true);
+  });
+
+  it("keeps candidate-bound copy French while the rationale follows an English workspace", async () => {
+    const generator = createDeterministicInterviewDraftGenerator();
+    const draft = await generator.generateDraft(
+      input({ interviewLanguage: "fr", workspaceLanguage: "en" }),
+    );
+
+    expect(draft.guardrails).toContain(
+      "Poser à chaque candidat les mêmes questions, dans le même ordre.",
+    );
+    expect(draft.rationale).toContain("HireCall prepared");
+  });
+
+  it("keeps candidate-bound copy English while the rationale follows a French workspace", async () => {
+    const generator = createDeterministicInterviewDraftGenerator();
+    const draft = await generator.generateDraft(
+      input({ interviewLanguage: "en", workspaceLanguage: "fr" }),
+    );
+
+    expect(draft.guardrails).toContain(
+      "Ask every candidate the same questions in the same order.",
+    );
+    expect(draft.rationale).toContain("HireCall a préparé");
+  });
+
+  it("keeps the deterministic fallback French when the OpenAI call fails", async () => {
+    const { events, telemetry } = captureTelemetry();
+    const generator = createOpenAIInterviewDraftGenerator({
+      apiKey: "sk-test",
+      fetcher: async () => ({
+        json: async () => ({}),
+        ok: false,
+        status: 500,
+        text: async () => "server error",
+      }),
+      model: "gpt-test",
+      telemetry,
+      timeoutMs: 1000,
+    });
+
+    const draft = await generator.generateDraft(
+      input({ interviewLanguage: "fr", workspaceLanguage: "en" }),
+    );
+
+    expect(draft.guardrails).toContain(
+      "Poser à chaque candidat les mêmes questions, dans le même ordre.",
+    );
+    expect(draft.rationale).toContain("HireCall prepared");
+    // The fallback event carries the language pair: "AI was unavailable" and
+    // "which language did the templates answer in" are the two things an audit
+    // of a French workspace needs together.
+    expect(
+      events.find((event) => event.event === "ai_draft_fallback"),
+    ).toMatchObject({
+      interviewLanguage: "fr",
+      workspaceLanguage: "en",
+    });
+  });
+
+  it("keeps the deterministic add/refine safety nets in the interview language", async () => {
+    const generator = createDeterministicInterviewDraftGenerator();
+    const frenchInput = input({
+      interviewLanguage: "fr",
+      workspaceLanguage: "fr",
+    });
+    const draft = await generator.generateDraft(frenchInput);
+
+    const added = await generator.addQuestion({
+      ...frenchInput,
+      draft,
+      topic: "mobility",
+    });
+    const refined = await generator.refineQuestion({
+      ...frenchInput,
+      action: "sharper",
+      draft,
+      question: draft.questions[0]!,
+    });
+
+    expect(added.prompt).toContain("disponibilité");
+    expect(refined.prompt).toContain("Merci de préciser la situation");
+  });
+
+  // The gates a French draft has to clear are written against English strings
+  // (the keyword policy, the guardrail catalogue, the plan contract). A French
+  // draft that generates cleanly but cannot be saved or published is worse than
+  // no French at all, so the whole chain is asserted per role domain.
+  it("produces French drafts that clear the save contract and the publication gate", async () => {
+    const roleTitles = [
+      "Customer Success Manager",
+      "Directeur Marketing",
+      "Coordinateur logistique",
+      "Responsable RH",
+      "Acheteur",
+      "Responsable de salle",
+      "AI Orchestrator",
+    ];
+    const roleBrief =
+      "Nous recrutons pour accompagner les clients, coordonner les équipes support et produit, gérer les fournisseurs et la logistique, et communiquer clairement pendant tout le processus.";
+
+    for (const roleTitle of roleTitles) {
+      const draft = await createDeterministicInterviewDraftGenerator().generateDraft(
+        input({
+          interviewLanguage: "fr",
+          roleBrief,
+          roleTitle,
+          seniority: "senior",
+          workspaceLanguage: "fr",
+        }),
+      );
+
+      expect(planReferencesDisallowedTopic(draft), roleTitle).toBe(false);
+
+      const plan = {
+        criteria: draft.criteria,
+        estimatedMinutes: draft.estimatedMinutes,
+        focus: ["role_skills"],
+        guardrails: draft.guardrails,
+        questions: draft.questions,
+        rationale: draft.rationale,
+        responseModes: ["audio", "text"] as const,
+        roleBrief,
+        roleTitle,
+        seniority: "senior",
+      };
+
+      expect(interviewPlanSchema.safeParse(plan).success, roleTitle).toBe(true);
+      expect(
+        getInterviewPlanPublicationIssues({
+          criteria: plan.criteria,
+          guardrails: plan.guardrails,
+          questions: plan.questions,
+          responseModes: [...plan.responseModes],
+          roleBrief,
+          roleTitle,
+        }),
+        roleTitle,
+      ).toEqual([]);
+    }
+  });
+
+  it("instructs the model to write values in the interview language", async () => {
+    const calls: string[] = [];
+    const generator = createOpenAIInterviewDraftGenerator({
+      apiKey: "sk-test",
+      fetcher: async (_url, init) => {
+        calls.push(init.body);
+        return {
+          json: async () => ({ output_text: JSON.stringify(sampleDraft) }),
+          ok: true,
+          status: 200,
+          text: async () => "",
+        };
+      },
+      model: "gpt-test",
+      timeoutMs: 1000,
+    });
+
+    await generator.generateDraft(
+      input({ interviewLanguage: "fr", workspaceLanguage: "fr" }),
+    );
+
+    const systemInstructions = JSON.parse(calls[0] ?? "{}").input[0]
+      .content as string;
+
+    // Rule 3: the instruction itself stays in English, only the OUTPUT is
+    // localized, and the model is never asked to emit the language back.
+    expect(systemInstructions).toContain("Write every value in French");
+    // The schema half of rule 3, pinned literally: keys and enums are contract
+    // surface, and the model must never report the language back — the server
+    // already knows it and is the one that stamps it.
+    expect(systemInstructions).toContain(
+      "Keep the JSON keys and the category and source enum values exactly as specified in English, and never add a language field.",
+    );
+    expect(systemInstructions).not.toContain('"language"');
+    // Same language on both sides: the directive must not split into an
+    // awkward per-field instruction.
+    expect(systemInstructions).not.toContain("write the rationale");
+    // Recency guard: the compliance block is unavoidably English and is the
+    // longest run of text in the prompt, so the LAST thing the model reads must
+    // be the language, not English policy prose.
+    expect(systemInstructions.endsWith("Reminder: write every value in French.")).toBe(
+      true,
+    );
+  });
+
+  it("splits the directive when the rationale language differs from the interview language", async () => {
+    const calls: string[] = [];
+    const generator = createOpenAIInterviewDraftGenerator({
+      apiKey: "sk-test",
+      fetcher: async (_url, init) => {
+        calls.push(init.body);
+        return {
+          json: async () => ({ output_text: JSON.stringify(sampleDraft) }),
+          ok: true,
+          status: 200,
+          text: async () => "",
+        };
+      },
+      model: "gpt-test",
+      timeoutMs: 1000,
+    });
+
+    await generator.generateDraft(
+      input({ interviewLanguage: "fr", workspaceLanguage: "en" }),
+    );
+
+    const systemInstructions = JSON.parse(calls[0] ?? "{}").input[0]
+      .content as string;
+
+    expect(systemInstructions).toContain(
+      "Write the questions, criteria, and guardrails in French",
+    );
+    expect(systemInstructions).toContain("write the rationale in English");
+    // The schema rule is not a property of the collapsed form: it must survive
+    // the split directive too.
+    expect(systemInstructions).toContain(
+      "Keep the JSON keys and the category and source enum values exactly as specified in English, and never add a language field.",
+    );
+    expect(
+      systemInstructions.endsWith(
+        "Reminder: write the questions, criteria, and guardrails in French, and the rationale in English.",
+      ),
+    ).toBe(true);
+  });
+
+  it("re-anchors the language after the compliance block in the question prompt", async () => {
+    const calls: string[] = [];
+    const generator = createOpenAIInterviewDraftGenerator({
+      apiKey: "sk-test",
+      fetcher: async (_url, init) => {
+        calls.push(init.body);
+        return {
+          json: async () => ({ output_text: JSON.stringify(sampleDraft.questions[0]) }),
+          ok: true,
+          status: 200,
+          text: async () => "",
+        };
+      },
+      model: "gpt-test",
+      timeoutMs: 1000,
+    });
+    const frenchInput = input({
+      interviewLanguage: "fr",
+      workspaceLanguage: "fr",
+    });
+    const draft = await createDeterministicInterviewDraftGenerator().generateDraft(
+      frenchInput,
+    );
+
+    await generator.addQuestion({ ...frenchInput, draft, topic: "mobility" });
+
+    const systemInstructions = JSON.parse(calls[0] ?? "{}").input[0]
+      .content as string;
+
+    // One question is candidate-bound only, so the reminder stays collapsed.
+    expect(
+      systemInstructions.endsWith("Reminder: write every value in French."),
+    ).toBe(true);
+  });
+
+  it("re-anchors in English when that is the resolved language", async () => {
+    const calls: string[] = [];
+    const generator = createOpenAIInterviewDraftGenerator({
+      apiKey: "sk-test",
+      fetcher: async (_url, init) => {
+        calls.push(init.body);
+        return {
+          json: async () => ({ output_text: JSON.stringify(sampleDraft) }),
+          ok: true,
+          status: 200,
+          text: async () => "",
+        };
+      },
+      model: "gpt-test",
+      timeoutMs: 1000,
+    });
+
+    await generator.generateDraft(input());
+
+    const systemInstructions = JSON.parse(calls[0] ?? "{}").input[0]
+      .content as string;
+
+    expect(
+      systemInstructions.endsWith("Reminder: write every value in English."),
+    ).toBe(true);
+  });
+});
+
+function input(
+  overrides: Partial<InterviewDraftGenerationInput> = {},
+): InterviewDraftGenerationInput {
   return {
     companyName: "HireCall",
     focus: [
@@ -458,11 +806,14 @@ function input(): InterviewDraftGenerationInput {
       "motivation",
       "communication",
     ],
+    interviewLanguage: "en",
     responseModes: ["text", "audio"],
     roleBrief:
       "We are hiring a Customer Success Manager to onboard SMB customers, reduce churn risk, coordinate with product teams, and turn customer feedback into practical improvements.",
     roleTitle: "Customer Success Manager",
     seniority: "mid",
+    workspaceLanguage: "en",
+    ...overrides,
   };
 }
 
@@ -557,5 +908,50 @@ describe("N10 interviewQuestionJsonSchema enums match the Zod contract", () => {
     const zodSources = [...interviewQuestionSourceSchema.options].sort();
 
     expect(jsonSources).toEqual(zodSources);
+  });
+});
+
+// The agent bubble in the builder renders `draft.rationale` verbatim, and the
+// next save persists it — so every path that rewrites it, including the purely
+// client-side removal, is recruiter-bound copy in the WORKSPACE language.
+describe("single-question edit rationale", () => {
+  it("describes a removal without claiming HireCall authored the remainder", () => {
+    // Reusing the "added" sentence here would assert that HireCall prepared
+    // exactly these questions, right after the recruiter deleted one.
+    expect(
+      buildQuestionEditRationale({
+        change: "removed",
+        questionCount: 3,
+        workspaceLanguage: "en",
+      }),
+    ).toBe(
+      "HireCall kept this role screen focused on 3 first-screening questions.",
+    );
+    expect(
+      buildQuestionEditRationale({
+        change: "removed",
+        questionCount: 3,
+        workspaceLanguage: "fr",
+      }),
+    ).toBe(
+      "HireCall garde cet entretien de préqualification centré sur 3 questions.",
+    );
+  });
+
+  it("agrees in number in both languages", () => {
+    expect(
+      buildQuestionEditRationale({
+        change: "removed",
+        questionCount: 1,
+        workspaceLanguage: "fr",
+      }),
+    ).toContain("1 question.");
+    expect(
+      buildQuestionEditRationale({
+        change: "removed",
+        questionCount: 1,
+        workspaceLanguage: "en",
+      }),
+    ).toContain("1 first-screening question.");
   });
 });
