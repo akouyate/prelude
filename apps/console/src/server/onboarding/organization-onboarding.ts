@@ -373,22 +373,63 @@ async function upsertOnboardingMembership(
     userId: string;
   },
 ) {
-  return tx.organizationMembership.upsert({
+  const existing = await tx.organizationMembership.findUnique({
     where: {
       organizationId_userId: {
         organizationId: input.organizationId,
         userId: input.userId,
       },
     },
-    update: {
-      onboardingRole: input.onboardingRole || null,
-      role: input.authContext.role,
-      status: "active",
-    },
-    create: {
+  });
+
+  if (existing) {
+    // A second onboarding pass (a progress save, or completing onboarding
+    // again) must never touch an already-provisioned role. Clerk's coarse
+    // orgRole (`input.authContext.role`) is never a promotion signal here —
+    // deriving from it on update is exactly how an owner got silently
+    // demoted back to "admin" before this fix. Role CHANGES after initial
+    // provisioning are the Clerk webhook sync's job
+    // (`clerk-role-sync.ts`), not onboarding's.
+    return tx.organizationMembership.update({
+      where: { id: existing.id },
+      data: {
+        onboardingRole: input.onboardingRole || null,
+        status: "active",
+      },
+    });
+  }
+
+  // Clerk makes an org's creator `org:admin`, never `owner`
+  // (`console-auth-provider.ts` maps that down to our "admin" role) — so
+  // deriving the FIRST member's role from Clerk would mean nobody is ever
+  // owner, and ownership could never be granted to anyone. The first person
+  // to be provisioned into a brand-new organization is USUALLY its creator,
+  // so they become owner explicitly — but "first provisioned" and "the
+  // creator" can come apart: someone creates the org via Clerk's
+  // <CreateOrganization> and abandons before completing onboarding (org
+  // exists in Clerk, no DB row yet), invites a colleague, and that
+  // colleague's membership webhook 409-retries against
+  // organization_not_found until Svix's retry schedule exhausts — they get
+  // bounced to onboarding and become the first DB membership instead of the
+  // actual creator. Gated on `authContext.role === "admin"` too: Clerk always
+  // makes an org's creator `org:admin` ("admin" here) and an invited member
+  // `org:member` ("recruiter"/"viewer"), so an invitee provisioned first
+  // still gets their Clerk-derived role, never owner. Anyone provisioned
+  // afterward (a rarer path still: onboarding running for a member of an org
+  // that already has members) also keeps the Clerk-derived role.
+  const membershipCount = await tx.organizationMembership.count({
+    where: { organizationId: input.organizationId },
+  });
+  const role: OrganizationRole =
+    membershipCount === 0 && input.authContext.role === "admin"
+      ? "owner"
+      : input.authContext.role;
+
+  return tx.organizationMembership.create({
+    data: {
       organizationId: input.organizationId,
       onboardingRole: input.onboardingRole || null,
-      role: input.authContext.role,
+      role,
       status: "active",
       userId: input.userId,
     },

@@ -1,8 +1,33 @@
 import "server-only";
 
-import { prisma } from "@prelude/db";
+import { Prisma, prisma } from "@prelude/db";
 
 import type { ClerkSyncStore } from "./clerk-webhook-sync";
+
+// Checks the SPECIFIC constraint (via Prisma's error.meta.target), not just
+// the P2002 code. A call that writes more than one uniquely-constrained
+// field could hit P2002 for a reason that has nothing to do with `field`;
+// matching on code alone would misidentify it and either mask a real bug
+// (by parking/retrying the wrong thing) or misattribute the wrong recovery.
+// meta.target isn't guaranteed to be populated by every driver/DB — when we
+// genuinely can't tell which constraint fired, this falls back to treating
+// any P2002 as a match, the same behavior as before this refinement.
+function isUniqueConstraintViolationOn(error: unknown, field: string) {
+  if (
+    !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+    error.code !== "P2002"
+  ) {
+    return false;
+  }
+  const target = error.meta?.target;
+  if (Array.isArray(target)) {
+    return target.includes(field);
+  }
+  if (typeof target === "string") {
+    return target === field || target.includes(field);
+  }
+  return true;
+}
 
 /**
  * Prisma-backed ClerkSyncStore: projects Clerk's authoritative organization
@@ -27,22 +52,55 @@ export const prismaClerkSyncStore: ClerkSyncStore = {
       select: { id: true },
     });
     if (byClerkId) {
-      await prisma.user.update({
-        where: { id: byClerkId.id },
-        data: {
-          ...(email ? { email } : {}),
-          ...(name ? { name } : {}),
-        },
-      });
+      try {
+        await prisma.user.update({
+          where: { id: byClerkId.id },
+          data: {
+            ...(email ? { email } : {}),
+            ...(name ? { name } : {}),
+          },
+        });
+      } catch (error) {
+        if (!email || !isUniqueConstraintViolationOn(error, "email")) {
+          throw error;
+        }
+        // Same identity-integrity stance as the byEmail branch below, for
+        // the same underlying condition: this Clerk user's membership event
+        // carries an email that already belongs to a DIFFERENT User row.
+        // Fail loudly with a clear message rather than let a raw, unguarded
+        // Prisma error propagate — Svix retries (bounded), a human resolves
+        // the collision.
+        throw new Error(
+          `Cannot update Clerk user ${clerkUserId} (row ${byClerkId.id}): ` +
+            `email ${email} already belongs to a different User row. Refusing to apply it.`,
+        );
+      }
       return byClerkId.id;
     }
 
     if (email) {
       const byEmail = await prisma.user.findUnique({
         where: { email },
-        select: { id: true },
+        select: { id: true, clerkUserId: true },
       });
       if (byEmail) {
+        if (byEmail.clerkUserId) {
+          // This row is already linked to a DIFFERENT Clerk identity (we
+          // already know it isn't THIS clerkUserId — that lookup above came
+          // back empty). Two Clerk accounts can share an email (an email
+          // change, an instance migration, a delete + re-signup); silently
+          // reassigning clerkUserId here would hand the second account
+          // every OrganizationMembership the first one held. Fail loudly
+          // instead of guessing — this throws, so Svix retries the event
+          // (bounded — see the updateUserProfile comment below for the real
+          // schedule), which is exactly as unproductive as it should be
+          // until a human resolves the collision.
+          throw new Error(
+            `Cannot provision Clerk user ${clerkUserId}: email ${email} already ` +
+              `belongs to user ${byEmail.id}, which is linked to a different ` +
+              `Clerk identity (${byEmail.clerkUserId}). Refusing to reassign it.`,
+          );
+        }
         await prisma.user.update({
           where: { id: byEmail.id },
           data: { clerkUserId, ...(name ? { name } : {}) },
@@ -76,6 +134,60 @@ export const prismaClerkSyncStore: ClerkSyncStore = {
       where: { organizationId, user: { clerkUserId } },
       data: { status: "inactive" },
     });
+  },
+
+  async updateUserProfile({ clerkUserId, email, name }) {
+    const existing = await prisma.user.findUnique({
+      where: { clerkUserId },
+      select: { id: true },
+    });
+    if (!existing) {
+      // Not a row we know about (e.g. they haven't joined an org yet, so no
+      // membership event has provisioned them). Nothing to mirror onto.
+      return false;
+    }
+
+    const data: { email?: string; name?: string } = {};
+    if (email) data.email = email;
+    if (name) data.name = name;
+    if (Object.keys(data).length === 0) {
+      return true;
+    }
+
+    try {
+      await prisma.user.update({ where: { id: existing.id }, data });
+    } catch (error) {
+      if (!data.email || !isUniqueConstraintViolationOn(error, "email")) {
+        throw error;
+      }
+      // The new email already belongs to a DIFFERENT User row — a Clerk
+      // user changed their email to one another account already holds.
+      // Svix's retry schedule is bounded (~8 attempts over ~27.5h, not
+      // forever — docs.svix.com/retries), and endpoint auto-disable is a
+      // separate, much stricter condition (ALL deliveries failing for 5
+      // days straight), so one poison-pill event alone doesn't "take every
+      // other sync down with it". But every one of those ~8 attempts would
+      // still hit the exact same P2002: this is a collision only a human
+      // can resolve, and no amount of retrying fixes it. Park it instead:
+      // apply whatever isn't in conflict (the name), log it for a human to
+      // reconcile the two rows, and report success so Svix stops retrying a
+      // delivery no retry can ever fix. (Svix also has a purpose-built
+      // primitive for this exact shape — a `webhook-delivery: abort-message`
+      // response tells Svix to stop retrying THIS delivery without us
+      // needing to fake a 2xx; worth adopting instead of "report success"
+      // if we ever want the distinction visible in Svix's own delivery log,
+      // not implemented here.)
+      console.error(
+        "[clerk-webhook] user.updated: email collision, parked",
+        clerkUserId,
+        email,
+      );
+      const { email: _conflictingEmail, ...rest } = data;
+      if (Object.keys(rest).length > 0) {
+        await prisma.user.update({ where: { id: existing.id }, data: rest });
+      }
+    }
+    return true;
   },
 
   async upsertInvitation({ organizationId, email, role, status, accepted }) {
