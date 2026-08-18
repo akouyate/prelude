@@ -140,11 +140,18 @@ async function ensureDevelopmentUser(clerkUserId: string) {
     where: { clerkUserId },
   });
 
+  // DEVIATION (plan 2026-08-18, Part 1): this used to unconditionally
+  // re-sync email+name from the MOCK_CLERK_USER_* env vars on EVERY request
+  // that resolves scope — which is most of them. That silently reverted any
+  // edit to the mock user's name back to the env default on the very next
+  // page load, making the newly-editable profile name a no-op under the
+  // mock auth provider (the only provider this repo can exercise without
+  // real Clerk credentials — `make dev`, Playwright's default, and this
+  // plan's own browser proof all run mock). Once the row exists, it is the
+  // durable identity; only bootstrap (the branches below, for a row that
+  // doesn't exist yet under this clerkUserId) may set it from env.
   if (existingByClerkId) {
-    return prisma.user.update({
-      data: { email, name },
-      where: { id: existingByClerkId.id },
-    });
+    return existingByClerkId;
   }
 
   const existingByEmail = await prisma.user.findUnique({
