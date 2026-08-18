@@ -10,6 +10,7 @@ import {
   WarningTriangle,
 } from "iconoir-react";
 import * as React from "react";
+import { useTranslation } from "react-i18next";
 
 type CandidateReviewTabsProps = {
   summary: LiveInterviewRecruiterSummary;
@@ -19,32 +20,33 @@ type TabId = "overview" | "questions" | "follow_up" | "evidence";
 
 const tabs: Array<{
   id: TabId;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
 }> = [
   {
     id: "overview",
-    label: "Summary",
-    description: "Decision signals",
+    labelKey: "candidateReview.tabSummary",
+    descriptionKey: "candidateReview.tabSummaryHint",
   },
   {
     id: "questions",
-    label: "Answers",
-    description: "Question review",
+    labelKey: "candidateReview.tabAnswers",
+    descriptionKey: "candidateReview.tabAnswersHint",
   },
   {
     id: "follow_up",
-    label: "Follow-ups",
-    description: "Clarify next",
+    labelKey: "candidateReview.tabFollowUps",
+    descriptionKey: "candidateReview.tabFollowUpsHint",
   },
   {
     id: "evidence",
-    label: "Evidence",
-    description: "Quotes and audit",
+    labelKey: "candidateReview.tabEvidence",
+    descriptionKey: "candidateReview.tabEvidenceHint",
   },
 ];
 
 export function CandidateReviewTabs({ summary }: CandidateReviewTabsProps) {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = React.useState<TabId>("overview");
 
   return (
@@ -53,16 +55,16 @@ export function CandidateReviewTabs({ summary }: CandidateReviewTabsProps) {
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.16em] text-olive-900">
-              Review workspace
+              {t("candidateReview.reviewWorkspace")}
             </p>
             <p className="mt-1 text-sm text-ink-500">
-              Switch between the recruiter summary, answers, next steps, and evidence.
+              {t("candidateReview.reviewWorkspaceIntro")}
             </p>
           </div>
         </div>
         <div className="mt-6 border-b border-ink-100">
           <div
-            aria-label="Candidate recap sections"
+            aria-label={t("candidateReview.tabsAria")}
             className="grid grid-cols-4 gap-0 sm:flex sm:gap-7"
             role="tablist"
           >
@@ -83,10 +85,10 @@ export function CandidateReviewTabs({ summary }: CandidateReviewTabsProps) {
                       isActive ? "text-ink-950" : "text-ink-500"
                     }`}
                   >
-                    {tab.label}
+                    {t(tab.labelKey)}
                   </span>
                   <span className="mt-1 hidden text-xs font-medium text-ink-400 sm:block">
-                    {tab.description}
+                    {t(tab.descriptionKey)}
                   </span>
                 </button>
               );
@@ -114,6 +116,7 @@ export function CandidateReviewTabs({ summary }: CandidateReviewTabsProps) {
 }
 
 function OverviewTab({ summary }: { summary: LiveInterviewRecruiterSummary }) {
+  const { t } = useTranslation();
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
       <div className="divide-y divide-ink-100 overflow-hidden rounded-3xl border border-ink-100 bg-white/54">
@@ -145,21 +148,23 @@ function OverviewTab({ summary }: { summary: LiveInterviewRecruiterSummary }) {
 
       <div className="grid gap-3 content-start">
         <CompactSignal
-          label="Best signal"
+          label={t("candidateReview.bestSignal")}
           tone="success"
-          value={summary.strengths[0]?.title ?? "No strength extracted"}
+          value={
+            summary.strengths[0]?.title ?? t("candidateReview.bestSignalEmpty")
+          }
         />
         <CompactSignal
-          label="Main risk"
+          label={t("candidateReview.mainRisk")}
           tone="warning"
-          value={summary.risks[0]?.title ?? "No major risk detected"}
+          value={summary.risks[0]?.title ?? t("candidateReview.mainRiskEmpty")}
         />
         <CompactSignal
-          label="Missing"
+          label={t("candidateReview.missing")}
           tone="muted"
           value={
             summary.missingInformation[0] ??
-            "No missing information flagged"
+            t("candidateReview.missingEmpty")
           }
         />
       </div>
@@ -236,21 +241,23 @@ function FollowUpTab({
   logisticsNotes: string[];
   missingInformation: string[];
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="grid gap-4 lg:grid-cols-3">
       <FollowUpColumn
         icon={<WarningTriangle aria-hidden="true" className="h-4 w-4" />}
-        title="Clarify first"
+        title={t("candidateReview.clarifyFirst")}
         values={missingInformation}
       />
       <FollowUpColumn
         icon={<Sparks aria-hidden="true" className="h-4 w-4" />}
-        title="Suggested questions"
+        title={t("candidateReview.suggestedQuestions")}
         values={followUpQuestions}
       />
       <FollowUpColumn
         icon={<ClipboardCheck aria-hidden="true" className="h-4 w-4" />}
-        title="Logistics"
+        title={t("candidateReview.categoryLogistics")}
         values={logisticsNotes}
       />
     </div>

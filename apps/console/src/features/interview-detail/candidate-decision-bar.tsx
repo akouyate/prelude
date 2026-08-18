@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { ArrowRight, Check, Clock, Xmark } from "iconoir-react";
+import { useTranslation } from "react-i18next";
 
 import type { CandidateReviewStatus } from "../candidate-screens";
 
@@ -9,7 +10,7 @@ type DecisionDefinition = {
   Icon: React.ComponentType<{ "aria-hidden"?: boolean; className?: string }>;
   activeClassName: string;
   idleIconClassName: string;
-  label: string;
+  labelKey: string;
   value: CandidateReviewStatus;
 };
 
@@ -20,21 +21,21 @@ const decisions: DecisionDefinition[] = [
     activeClassName: "border-[#8bd66f] bg-[#8bd66f] text-[#12291d]",
     Icon: Check,
     idleIconClassName: "text-[#8bd66f]",
-    label: "Advance",
+    labelKey: "candidateReview.advance",
     value: "to_call",
   },
   {
     activeClassName: "border-[#e0b257] bg-[#e0b257] text-[#33230a]",
     Icon: Clock,
     idleIconClassName: "text-[#e0b257]",
-    label: "Hold",
+    labelKey: "candidateReview.hold",
     value: "to_review",
   },
   {
     activeClassName: "border-[#d99a7f] bg-[#d99a7f] text-[#33170d]",
     Icon: Xmark,
     idleIconClassName: "text-[#d99a7f]",
-    label: "Pass",
+    labelKey: "candidateReview.pass",
     value: "archived",
   },
 ];
@@ -57,6 +58,8 @@ export function CandidateDecisionBar({
   scheduleAction: React.ReactNode;
   sessionId: string;
 }) {
+  const { t } = useTranslation();
+
   return (
     /*
      * On a phone the bar stacks: the three decisions share one row, the
@@ -68,7 +71,7 @@ export function CandidateDecisionBar({
      */
     <div className="fixed bottom-[22px] left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-[20px] border border-white/10 bg-ink-900/95 py-[11px] pl-[19px] pr-[13px] shadow-[0_16px_44px_rgba(20,18,12,0.30)] backdrop-blur-lg max-[900px]:bottom-[calc(94px+env(safe-area-inset-bottom))] max-[680px]:left-3 max-[680px]:right-3 max-[680px]:translate-x-0 max-[680px]:flex-col max-[680px]:items-stretch max-[680px]:gap-2 max-[680px]:px-3 max-[680px]:py-2.5">
       <span className="font-title text-xs font-semibold whitespace-nowrap text-white/50 max-[680px]:hidden">
-        Decision
+        {t("candidateReview.decision")}
       </span>
       <form
         action={onDecide}
@@ -96,7 +99,7 @@ export function CandidateDecisionBar({
                 aria-hidden={true}
                 className={`h-3.5 w-3.5 ${on ? "" : decision.idleIconClassName}`}
               />
-              {decision.label}
+              {t(decision.labelKey)}
             </button>
           );
         })}
@@ -110,10 +113,10 @@ export function CandidateDecisionBar({
         <button
           className={`${decisionCtaClassName} opacity-55`}
           disabled
-          title="Move the candidate to Advance to schedule the call."
+          title={t("candidateReview.scheduleDisabledHint")}
           type="button"
         >
-          Schedule call
+          {t("candidateReview.scheduleCall")}
           <ArrowRight aria-hidden={true} className="h-[15px] w-[15px]" />
         </button>
       )}
