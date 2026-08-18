@@ -22,21 +22,23 @@ const allowedCompanySizes = new Set([
 ]);
 const allowedVoices = new Set(["maya", "noah", "lea"]);
 
-// The section's standard action-state shape for a native `<form action=...>`
-// bound via `useActionState` (matches `CandidateInvitationActionState` in
-// candidate-invitation-actions.ts and the schedule-call-dialog action): `ok`
-// tells the form whether the last submit landed, `error` is the message (already
-// localized) to render near the save control, or `null` when there is nothing
-// to show.
-export type WorkspaceSettingsActionState = {
+// The settings actions' standard action-state shape for a native
+// `<form action=...>` bound via `useActionState` (matches
+// `CandidateInvitationActionState` in candidate-invitation-actions.ts and the
+// schedule-call-dialog action): `ok` tells the form whether the last submit
+// landed, `error` is the message (already localized) to announce, or `null`
+// when there is nothing to show. Shared by all three settings actions below —
+// each renders it as a toast (plan 2026-08-18, Part 2) rather than reaching
+// for its own shape.
+export type SettingsActionState = {
   error: string | null;
   ok: boolean;
 };
 
 export async function updateWorkspaceSettingsAction(
-  _state: WorkspaceSettingsActionState,
+  _state: SettingsActionState,
   formData: FormData,
-): Promise<WorkspaceSettingsActionState> {
+): Promise<SettingsActionState> {
   const scope = await getCompletedOrganizationScope();
 
   // A non-manager (viewer/recruiter) submitting this form must fail
@@ -90,9 +92,21 @@ export async function updateWorkspaceSettingsAction(
   return { error: null, ok: true };
 }
 
-export async function updateInterviewPreferencesAction(formData: FormData) {
+export async function updateInterviewPreferencesAction(
+  _state: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
   const scope = await getCompletedOrganizationScope();
-  assertCanEditSettings(scope.role);
+
+  // Same graceful-refusal shape as updateWorkspaceSettingsAction above: a
+  // non-manager submitting this form must fail gracefully, not crash the
+  // page (this action used to just propagate assertCanEditSettings's throw).
+  try {
+    assertCanEditSettings(scope.role);
+  } catch {
+    const t = getServerT(await getAuthenticatedUserLocale(scope.userId));
+    return { error: t("settings.interview.forbidden"), ok: false };
+  }
 
   const organization = await prisma.organization.findUniqueOrThrow({
     select: { settings: true },
@@ -137,11 +151,22 @@ export async function updateInterviewPreferencesAction(formData: FormData) {
   });
 
   revalidateSettings();
+
+  return { error: null, ok: true };
 }
 
-export async function updateNotificationPreferencesAction(formData: FormData) {
+export async function updateNotificationPreferencesAction(
+  _state: SettingsActionState,
+  formData: FormData,
+): Promise<SettingsActionState> {
   const scope = await getCompletedOrganizationScope();
-  assertCanEditSettings(scope.role);
+
+  try {
+    assertCanEditSettings(scope.role);
+  } catch {
+    const t = getServerT(await getAuthenticatedUserLocale(scope.userId));
+    return { error: t("settings.notifications.forbidden"), ok: false };
+  }
 
   const organization = await prisma.organization.findUniqueOrThrow({
     select: { settings: true },
@@ -170,6 +195,8 @@ export async function updateNotificationPreferencesAction(formData: FormData) {
   });
 
   revalidateSettings();
+
+  return { error: null, ok: true };
 }
 
 function assertCanEditSettings(role: OrganizationRole) {

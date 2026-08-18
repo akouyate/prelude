@@ -526,7 +526,7 @@
         "title": "Profile",
         "description": "How you appear to candidates and teammates.",
         "fullName": "Full name",
-        "jobTitle": "Job title",
+        "role": "Role",
         "email": "Email",
         "language": "Language",
         "changePhoto": "Change photo",
@@ -534,7 +534,12 @@
         "avatarHint": "JPG or PNG, at least 256x256px.",
         "accountManaged": "Managed by account provider",
         "clerkAccountHint": "Name, email, password, and avatar changes are delegated to Clerk for V1.",
-        "mockAccountHint": "This mock account cannot edit profile identity locally."
+        "mockAccountHint": "This mock account cannot edit profile identity locally.",
+        "nameSaved": "Name updated",
+        "nameSaveFailed": "Could not update your name. Please try again.",
+        "languageSaveFailed": "Could not save your language preference. Please try again.",
+        "manageEmail": "Manage in Clerk",
+        "manageEmailHint": "Opens your account settings in Clerk, where email changes go through a verification flow."
       },
       "language": {
         "english": "English",
@@ -547,6 +552,7 @@
       "workspace": {
         "title": "Workspace",
         "description": "General details for your organization on HireCall.",
+        "saved": "Workspace settings saved",
         "forbidden": "Only owners and admins can update workspace settings.",
         "uploadLogo": "Upload logo",
         "logoHint": "Logo upload is not available in V1 yet. Workspace initials are used for now.",
@@ -599,6 +605,16 @@
         "you": "(you)",
         "changeRoleAria": "Change role for {{name}}",
         "removeAria": "Remove {{name}}",
+        "mockModeError": "Inviting and managing teammates needs a real workspace, which is not available in local mock mode.",
+        "inviteForbidden": "You do not have permission to invite teammates.",
+        "assignRoleForbidden": "You cannot assign that role.",
+        "invalidEmail": "Enter a valid email address.",
+        "revokeForbidden": "You do not have permission to revoke invitations.",
+        "cannotChangeOwnRole": "You cannot change your own role.",
+        "memberNotFound": "That teammate is no longer in the workspace.",
+        "changeRoleForbidden": "You do not have permission to change this teammate's role.",
+        "cannotRemoveSelf": "You cannot remove yourself from the workspace here.",
+        "removeForbidden": "You do not have permission to remove this teammate.",
         "roles": {
           "owner": "Owner",
           "admin": "Admin",
@@ -609,6 +625,8 @@
       "interview": {
         "title": "Interview defaults",
         "description": "Applied to every new screening interview. Editable per role.",
+        "saved": "Interview defaults saved",
+        "forbidden": "Only owners and admins can update interview defaults.",
         "defaultLanguage": "Default language",
         "interviewerVoice": "Interviewer voice",
         "voices": {
@@ -652,6 +670,8 @@
       "notifications": {
         "title": "Notifications",
         "description": "Choose what HireCall emails you about.",
+        "saved": "Notification preferences saved",
+        "forbidden": "Only owners and admins can update notification preferences.",
         "screensReady": "Screens ready for review",
         "screensReadyDescription": "When a recruiter brief is ready or needs attention.",
         "candidateCompletion": "Candidate completion confirmation",
@@ -724,7 +744,14 @@
       "copyLinkCopied": "Link copied",
       "copyLinkFailed": "Could not copy the link. Copy it manually.",
       "draftSaved": "Draft saved",
-      "rolePublished": "Role screen published"
+      "rolePublished": "Role screen published",
+      "languageUpdated": "Language updated",
+      "candidateMovedToCall": "Marked as to call",
+      "candidateArchived": "Candidate archived",
+      "candidateReopened": "Candidate moved back to review",
+      "candidateReviewUpdateFailed": "Could not update this candidate's status. Please try again.",
+      "recordingDeleted": "Recording deleted",
+      "recordingDeleteFailed": "Could not delete the recording. Please try again."
     }
   }
 }

@@ -6,12 +6,18 @@ import {
   canInviteMember,
   canRemoveMember,
 } from "../../domain/organization-permissions";
+import { getServerT, type ConsoleLocale } from "../../libs/i18n-server";
 
 export type TeamActor = {
   organizationId: string;
   clerkOrganizationId: string | null;
   role: OrganizationRole;
   userId: string;
+  // The acting user's UI locale, resolved by the caller (team-actions.ts, via
+  // getAuthenticatedUserLocale) and carried on the actor like role/userId so
+  // every TeamResult error below can be localized at the point it's raised —
+  // same getServerT pattern as user-actions.ts / workspace-settings-actions.ts.
+  locale: ConsoleLocale;
 };
 
 export type PendingInvitation = {
@@ -61,12 +67,10 @@ export type TeamResult<T> =
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-const MOCK_MODE_ERROR =
-  "Inviting and managing teammates needs a real workspace, which is not available in local mock mode.";
-
 function requireRealWorkspace(actor: TeamActor): TeamResult<string> {
   if (!actor.clerkOrganizationId) {
-    return { ok: false, error: MOCK_MODE_ERROR };
+    const t = getServerT(actor.locale);
+    return { ok: false, error: t("settings.team.mockModeError") };
   }
   return { ok: true, value: actor.clerkOrganizationId };
 }
@@ -80,16 +84,17 @@ export async function inviteTeamMember(
   if (!workspace.ok) {
     return workspace;
   }
+  const t = getServerT(actor.locale);
   if (!canInviteMember(actor.role)) {
-    return { ok: false, error: "You do not have permission to invite teammates." };
+    return { ok: false, error: t("settings.team.inviteForbidden") };
   }
   if (!canAssignRole(actor.role, input.role)) {
-    return { ok: false, error: "You cannot assign that role." };
+    return { ok: false, error: t("settings.team.assignRoleForbidden") };
   }
 
   const email = input.email.trim().toLowerCase();
   if (!EMAIL_RE.test(email)) {
-    return { ok: false, error: "Enter a valid email address." };
+    return { ok: false, error: t("settings.team.invalidEmail") };
   }
 
   const invitation = await directory.inviteMember({
@@ -111,7 +116,8 @@ export async function revokeTeamInvitation(
     return workspace;
   }
   if (!canInviteMember(actor.role)) {
-    return { ok: false, error: "You do not have permission to revoke invitations." };
+    const t = getServerT(actor.locale);
+    return { ok: false, error: t("settings.team.revokeForbidden") };
   }
   await directory.revokeInvitation({
     clerkOrganizationId: workspace.value,
@@ -130,8 +136,9 @@ export async function changeTeamMemberRole(
   if (!workspace.ok) {
     return workspace;
   }
+  const t = getServerT(actor.locale);
   if (input.userId === actor.userId) {
-    return { ok: false, error: "You cannot change your own role." };
+    return { ok: false, error: t("settings.team.cannotChangeOwnRole") };
   }
 
   const targetRole = await directory.getMemberRole({
@@ -139,12 +146,12 @@ export async function changeTeamMemberRole(
     userId: input.userId,
   });
   if (!targetRole) {
-    return { ok: false, error: "That teammate is no longer in the workspace." };
+    return { ok: false, error: t("settings.team.memberNotFound") };
   }
   if (!canChangeMemberRole(actor.role, targetRole, input.newRole)) {
     return {
       ok: false,
-      error: "You do not have permission to change this teammate's role.",
+      error: t("settings.team.changeRoleForbidden"),
     };
   }
 
@@ -168,7 +175,7 @@ export async function removeTeamMember(
   if (input.userId === actor.userId) {
     return {
       ok: false,
-      error: "You cannot remove yourself from the workspace here.",
+      error: getServerT(actor.locale)("settings.team.cannotRemoveSelf"),
     };
   }
 
@@ -183,7 +190,7 @@ export async function removeTeamMember(
   if (!canRemoveMember(actor.role, targetRole)) {
     return {
       ok: false,
-      error: "You do not have permission to remove this teammate.",
+      error: getServerT(actor.locale)("settings.team.removeForbidden"),
     };
   }
 

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const prismaMock = vi.hoisted(() => ({
-  organization: { update: vi.fn() },
+  organization: { findUniqueOrThrow: vi.fn(), update: vi.fn() },
 }));
 
 const scopeMock = vi.hoisted(() => ({
@@ -21,15 +21,19 @@ vi.mock("../users/user-locale", () => ({
   getAuthenticatedUserLocale: vi.fn(async () => "en"),
 }));
 vi.mock("../../libs/i18n-server", () => ({
+  coerceConsoleLocale: (value: string | undefined | null) =>
+    value === "fr" ? "fr" : "en",
   getServerT: () => (key: string) => key,
 }));
 
 import {
+  updateInterviewPreferencesAction,
+  updateNotificationPreferencesAction,
   updateWorkspaceSettingsAction,
-  type WorkspaceSettingsActionState,
+  type SettingsActionState,
 } from "./workspace-settings-actions";
 
-const IDLE_STATE: WorkspaceSettingsActionState = { error: null, ok: false };
+const IDLE_STATE: SettingsActionState = { error: null, ok: false };
 
 function scope(role: string) {
   return {
@@ -64,6 +68,10 @@ const CURATED_COUNTRIES = [
 beforeEach(() => {
   prismaMock.organization.update.mockReset();
   prismaMock.organization.update.mockResolvedValue({});
+  prismaMock.organization.findUniqueOrThrow.mockReset();
+  prismaMock.organization.findUniqueOrThrow.mockResolvedValue({
+    settings: {},
+  });
   scopeMock.getCompletedOrganizationScope.mockReset();
   scopeMock.getCompletedOrganizationScope.mockResolvedValue(scope("owner"));
   revalidateMock.revalidatePath.mockReset();
@@ -179,5 +187,64 @@ describe("updateWorkspaceSettingsAction — country", () => {
     );
     const secondCall = prismaMock.organization.update.mock.calls[1]?.[0];
     expect(secondCall.data).not.toHaveProperty("country");
+  });
+});
+
+// Plan 2026-08-18, Part 2, site 4: these two actions used to just propagate
+// assertCanEditSettings's throw as an unhandled exception (same QA T8 finding
+// B.6 the workspace action was already fixed for). They now answer with the
+// section's standard `{ error, ok }` shape instead, so the client can toast
+// the refusal instead of crashing.
+describe("updateInterviewPreferencesAction", () => {
+  it("refuses a non-managing role with the standard error shape, and never touches the database", async () => {
+    scopeMock.getCompletedOrganizationScope.mockResolvedValue(scope("viewer"));
+
+    const result = await updateInterviewPreferencesAction(
+      IDLE_STATE,
+      formData({}),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(typeof result.error).toBe("string");
+    expect(result.error).not.toHaveLength(0);
+    expect(prismaMock.organization.findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(prismaMock.organization.update).not.toHaveBeenCalled();
+  });
+
+  it("saves and reports ok for a managing role", async () => {
+    const result = await updateInterviewPreferencesAction(
+      IDLE_STATE,
+      formData({ allowAudio: "true", interviewerVoice: "maya" }),
+    );
+
+    expect(result).toEqual({ error: null, ok: true });
+    expect(prismaMock.organization.update).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("updateNotificationPreferencesAction", () => {
+  it("refuses a non-managing role with the standard error shape, and never touches the database", async () => {
+    scopeMock.getCompletedOrganizationScope.mockResolvedValue(scope("recruiter"));
+
+    const result = await updateNotificationPreferencesAction(
+      IDLE_STATE,
+      formData({}),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(typeof result.error).toBe("string");
+    expect(result.error).not.toHaveLength(0);
+    expect(prismaMock.organization.findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(prismaMock.organization.update).not.toHaveBeenCalled();
+  });
+
+  it("saves and reports ok for a managing role", async () => {
+    const result = await updateNotificationPreferencesAction(
+      IDLE_STATE,
+      formData({ weeklyDigest: "true" }),
+    );
+
+    expect(result).toEqual({ error: null, ok: true });
+    expect(prismaMock.organization.update).toHaveBeenCalledTimes(1);
   });
 });

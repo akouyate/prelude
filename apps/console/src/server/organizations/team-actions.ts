@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import type { OrganizationRole } from "@prelude/types";
 
 import { getConsoleAuthSession } from "../auth/console-auth-provider";
+import { getAuthenticatedUserLocale } from "../users/user-locale";
 import { clerkOrganizationDirectory } from "./clerk-organization-directory";
 import { getCompletedOrganizationScope } from "./organization-scope";
 import {
@@ -27,6 +28,7 @@ async function getTeamActor(): Promise<TeamActor> {
   if (!session.ok) {
     throw new Error(session.error);
   }
+  const locale = await getAuthenticatedUserLocale(session.value.userId);
   // clerkOrganizationId comes from the org scope (null in mock mode), so the
   // service's mock-mode guard fires without a per-action source check.
   return {
@@ -34,6 +36,7 @@ async function getTeamActor(): Promise<TeamActor> {
     clerkOrganizationId: scope.clerkOrganizationId,
     role: scope.role,
     userId: session.value.userId,
+    locale,
   };
 }
 

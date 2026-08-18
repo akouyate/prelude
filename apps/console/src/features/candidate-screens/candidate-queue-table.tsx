@@ -4,8 +4,9 @@ import * as React from "react";
 import Link from "next/link";
 import { useFormStatus } from "react-dom";
 import { ArrowRight, CheckCircle } from "iconoir-react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
-import { StatusBadge, cn } from "@prelude/ui";
+import { StatusBadge, cn, useToast } from "@prelude/ui";
 
 import { candidateReviewStaleAfterDays } from "../../domain/candidate-review-policy";
 import { CriteriaSignal } from "../dashboard/criteria-signal";
@@ -91,9 +92,36 @@ function CandidateQueueRowView({
   row: CandidateQueueRow;
 }) {
   const { t } = useTranslation();
+  const { toast } = useToast();
   const isStale =
     row.reviewStatus === "to_review" &&
     row.waitingDays >= candidateReviewStaleAfterDays;
+
+  // The row's decision (advance/archive/reopen) used to leave the row to
+  // silently vanish from the queue with no announcement of what happened.
+  // This fires from the form's own submit, not a reactive effect, so no
+  // toastOnce/dedupe guard is needed.
+  const handleStatusChange = React.useCallback(
+    async (formData: FormData) => {
+      const nextStatus = String(formData.get("reviewStatus") ?? "");
+      try {
+        await onStatusChange(formData);
+        toast({
+          dismissLabel: t("toast.dismiss"),
+          message: candidateDecisionMessage(nextStatus, t),
+          tone: "success",
+        });
+      } catch {
+        toast({
+          dismissLabel: t("toast.dismiss"),
+          duration: null,
+          message: t("toast.candidateReviewUpdateFailed"),
+          tone: "danger",
+        });
+      }
+    },
+    [onStatusChange, t, toast],
+  );
 
   return (
     <div
@@ -164,7 +192,7 @@ function CandidateQueueRowView({
       </span>
 
       <span className="flex items-center gap-2 max-lg:justify-start lg:justify-end">
-        <form action={onStatusChange} className="flex items-center gap-2">
+        <form action={handleStatusChange} className="flex items-center gap-2">
           <input name="candidateSessionId" type="hidden" value={row.id} />
           {row.reviewStatus === "to_review" ? (
             <>
@@ -197,6 +225,19 @@ function CandidateQueueRowView({
       </span>
     </div>
   );
+}
+
+// The toasted decision text mirrors the review status the row just submitted
+// — "to_call" reads as "marked to call", "archived" as archived, and moving
+// back OUT of archived reads as "reopened" rather than a generic "updated".
+function candidateDecisionMessage(nextStatus: string, t: TFunction): string {
+  if (nextStatus === "to_call") {
+    return t("toast.candidateMovedToCall");
+  }
+  if (nextStatus === "archived") {
+    return t("toast.candidateArchived");
+  }
+  return t("toast.candidateReopened");
 }
 
 function QueueActionButton({
