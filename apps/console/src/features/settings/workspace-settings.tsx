@@ -17,7 +17,6 @@ import {
   Button,
   Field,
   IconButton,
-  Notice,
   SelectionCard,
   SelectControl,
   SelectField,
@@ -274,11 +273,11 @@ function ProfileEmailField({
   email: string;
   mockHint: string;
 }) {
+  const { t } = useTranslation();
+
   if (authProvider === "clerk") {
     return <ClerkManagedEmailField email={email} />;
   }
-
-  const { t } = useTranslation();
 
   return (
     <Field label={t("settings.profile.email")}>
@@ -532,12 +531,10 @@ function InviteTeammatePanel() {
   const { toast } = useToast();
   const [email, setEmail] = React.useState("");
   const [role, setRole] = React.useState<OrganizationRole>("recruiter");
-  const [error, setError] = React.useState<string | null>(null);
   const [pending, startTransition] = React.useTransition();
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setError(null);
     startTransition(async () => {
       const result = await inviteTeamMemberAction({ email, role });
       if (result.ok) {
@@ -551,7 +548,16 @@ function InviteTeammatePanel() {
           tone: "success",
         });
       } else {
-        setError(result.error);
+        // Action-level failure (permission refusal, already invited/member,
+        // etc.), not field validation — same policy as the rest of this
+        // file: toast it instead of an inline Notice, so the outcome is
+        // announced in exactly one place.
+        toast({
+          dismissLabel: t("toast.dismiss"),
+          duration: null,
+          message: result.error,
+          tone: "danger",
+        });
       }
     });
   }
@@ -597,11 +603,6 @@ function InviteTeammatePanel() {
           {pending ? t("settings.team.sending") : t("settings.team.sendInvite")}
         </Button>
       </form>
-      {error ? (
-        <Notice className="mt-3" tone="danger">
-          {error}
-        </Notice>
-      ) : null}
     </SettingsPanel>
   );
 }

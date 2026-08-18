@@ -52,10 +52,17 @@ export function SettingsLanguageSelect({
           tone: "success",
         });
       } else {
+        // `result.error` is already localized, but server-side — from the
+        // locale in `User.preferredLanguage` as it stood BEFORE this call,
+        // since the write that would have changed it just failed. That's the
+        // language the user switched away from, not the one they just
+        // switched to. Discard it and announce the same known failure
+        // client-side with `announce`, for the same reason as the success
+        // branch above.
         toast({
           dismissLabel: announce("toast.dismiss"),
           duration: null,
-          message: result.error,
+          message: announce("settings.profile.languageSaveFailed"),
           tone: "danger",
         });
       }
