@@ -112,14 +112,69 @@ export function SettingsSectionNav({
   section: SettingsSection;
 }) {
   const { t } = useTranslation();
+  const navRef = React.useRef<HTMLElement | null>(null);
+
+  /*
+   * Below 900px the sections are a horizontal scroller, and the active one is
+   * not always in view: `/settings?view=billing` is the seventh item, and it
+   * is exactly where the credit pill in the mobile header sends people. They
+   * would land on the billing pane with the rail still showing "Profile" —
+   * no indication of where they are, or that the row scrolls at all.
+   *
+   * Clicking a tab focuses it, which the browser scrolls into view on its
+   * own; arriving by URL or by history navigation does not, which is why
+   * this keys on the section rather than on any interaction.
+   */
+  React.useEffect(() => {
+    const nav = navRef.current;
+    // Read back from the DOM rather than holding a ref on the active button:
+    // a ref that moves between elements makes the effect depend on React's
+    // detach/attach ordering, and `aria-current` already marks the one item
+    // this is about.
+    const item = nav?.querySelector('[aria-current="page"]');
+    if (!nav || !item) return;
+    // The rail (>=900px) is a column with nothing to scroll sideways.
+    if (nav.scrollWidth <= nav.clientWidth) return;
+
+    const navBox = nav.getBoundingClientRect();
+    const itemBox = item.getBoundingClientRect();
+    // Measured from rects rather than offsetLeft: offsetLeft is relative to
+    // the nearest positioned ancestor, which this nav does not control.
+    const centered =
+      nav.scrollLeft +
+      (itemBox.left - navBox.left) -
+      (navBox.width - itemBox.width) / 2;
+
+    // Deliberately instantaneous rather than `behavior: "smooth"`. The page
+    // should arrive already positioned instead of animating itself in front of
+    // the reader — and smooth scrolling is a no-op in automation browsers
+    // (measured: `auto` lands, `smooth` leaves scrollLeft at 0), which would
+    // have made this both unverifiable here and untestable in Playwright.
+    // scrollTo clamps out-of-range values, so the first and last items simply
+    // come to rest against their end of the row.
+    nav.scrollTo({ behavior: "auto", left: centered });
+  }, [section]);
 
   return (
     // Sign out stays out of the scroller below 900px — inside it, it would sit
     // past the right edge of a row the reader has no reason to scroll.
-    <div className="flex flex-col gap-3 min-[900px]:sticky min-[900px]:top-6 min-[900px]:gap-0">
+    //
+    // `min-w-0` is load-bearing, not decoration: this div is a grid item, and a
+    // grid item's default `min-width: auto` refuses to shrink below its content's
+    // intrinsic width. Without it the row of seven buttons made this column
+    // ~1090px wide inside a 390px viewport, the `overflow-x-auto` below never
+    // engaged (nothing was overflowing — the COLUMN had grown), and the whole
+    // page scrolled sideways instead.
+    <div className="flex min-w-0 flex-col gap-3 min-[900px]:sticky min-[900px]:top-6 min-[900px]:gap-0">
+      {/*
+       * The scroller cancels the shell gutter so it spans the full screen
+       * width: an item cut off at the very edge reads as "scroll for more",
+       * whereas one cut off inside a margin just reads as broken.
+       */}
       <nav
         aria-label={t("settings.nav.aria")}
-        className="flex gap-1.5 overflow-x-auto pb-1 min-[900px]:flex-col min-[900px]:gap-px min-[900px]:overflow-x-visible min-[900px]:pb-0"
+        className="-mx-[var(--shell-gutter,0px)] flex gap-1.5 overflow-x-auto px-[var(--shell-gutter,0px)] pb-1 min-[900px]:mx-0 min-[900px]:flex-col min-[900px]:gap-px min-[900px]:overflow-x-visible min-[900px]:px-0 min-[900px]:pb-0"
+        ref={navRef}
       >
         {settingsNavItems.map((item) => {
           const isActive = item.value === section;

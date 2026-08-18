@@ -216,7 +216,15 @@ export async function InterviewOverview({
           </p>
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2.5">
+        {/*
+         * `shrink-0` used to sit here unconditionally, which defeated this
+         * row's own `flex-wrap`: an unshrinkable box is as wide as its content,
+         * so the wrap never triggered and the four actions ran 250px past the
+         * right edge of a phone. It earns its keep beside the title from `sm`
+         * up, where the row does need to hold its ground against a long role
+         * name — so that is where it now applies.
+         */}
+        <div className="flex w-full flex-wrap items-center gap-2.5 sm:w-auto sm:shrink-0">
           <CopyCandidateLinkButton candidatePath={interview.candidatePath}>
             {candidateLinkLabel}
           </CopyCandidateLinkButton>

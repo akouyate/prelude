@@ -66,16 +66,22 @@ export async function DashboardPageHeader({
         </p>
       </div>
 
-      <div className="flex gap-2.5">
+      {/*
+       * Full width and stacked on a phone: side by side, two long labels
+       * ("Exporter la file (CSV)", "Nouvel entretien de poste") squeezed onto
+       * two lines each and spilled out of their own 38px pill. `nowrap` keeps
+       * a label on one line whatever the language it is translated into.
+       */}
+      <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row">
         <button
-          className="inline-flex h-[38px] cursor-pointer items-center justify-center gap-2 rounded-full border border-ink-200 bg-white px-4 text-[13px] font-semibold text-ink-900 transition hover:border-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+          className="inline-flex h-[38px] w-full cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-full border border-ink-200 bg-white px-4 text-[13px] font-semibold text-ink-900 transition hover:border-ink-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300 sm:w-auto"
           type="button"
         >
           <Download aria-hidden={true} className="h-4 w-4" />
           {t("dashboard.exportQueue")}
         </button>
         <Link
-          className="inline-flex h-[38px] cursor-pointer items-center justify-center gap-2 rounded-full bg-ink-900 px-[17px] text-[13px] font-semibold text-white transition hover:bg-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+          className="inline-flex h-[38px] w-full cursor-pointer items-center justify-center gap-2 whitespace-nowrap rounded-full bg-ink-900 px-[17px] text-[13px] font-semibold text-white transition hover:bg-ink-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300 sm:w-auto"
           href="/roles/new"
         >
           <Plus aria-hidden={true} className="h-4 w-4" />
