@@ -57,6 +57,51 @@ describe("console auth configuration", () => {
     });
   });
 
+  it("rejects the mock provider when APP_ENV alone says production", () => {
+    // The rest of the stack (Go realtime service, candidate app, Python worker)
+    // switches on APP_ENV. A deploy that sets it and leaves NODE_ENV unset must
+    // not get a mock recruiter identity.
+    expect(
+      resolveConsoleAuthConfiguration({
+        appEnv: "production",
+        clerkConfigured: true,
+        requestedProvider: "mock",
+      }),
+    ).toMatchObject({
+      error: "Mock Clerk auth is disabled in production.",
+      provider: "clerk",
+      setting: "mock",
+    });
+  });
+
+  it("rejects the auto-mode mock fallback when APP_ENV alone says production", () => {
+    expect(
+      resolveConsoleAuthConfiguration({
+        appEnv: "production",
+        clerkConfigured: false,
+      }),
+    ).toMatchObject({
+      error: "Clerk is not configured.",
+      provider: "clerk",
+      setting: "auto",
+    });
+  });
+
+  it("still allows the mock provider when neither switch says production", () => {
+    expect(
+      resolveConsoleAuthConfiguration({
+        appEnv: "development",
+        clerkConfigured: true,
+        nodeEnv: "test",
+        requestedProvider: "mock",
+      }),
+    ).toMatchObject({
+      error: null,
+      provider: "mock",
+      setting: "mock",
+    });
+  });
+
   it("requires Clerk keys when the provider is forced to Clerk", () => {
     expect(
       resolveConsoleAuthConfiguration({

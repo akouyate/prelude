@@ -8,14 +8,14 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Protocol
+from typing import Mapping, Protocol, Sequence
 
 import redis.asyncio as redis
 from redis.exceptions import ResponseError
 
 from app.adapters.realtime_api import HttpRealtimeApiClient
 from app.domain.models import EventType
-from app.live_worker import run_live_worker
+from app.live_worker import option_from_env, run_live_worker
 
 DEFAULT_STREAM_KEY = "prelude:agent-join:stream"
 DEFAULT_CONSUMER_GROUP = "prelude-live-workers"
@@ -370,21 +370,47 @@ async def run_auto_worker(
     return completed_jobs
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(
+    argv: Sequence[str] | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> argparse.Namespace:
+    worker_env = env if env is not None else os.environ
     parser = argparse.ArgumentParser(
         description="Run the HireCall auto-worker that starts live interviewer agents from Redis."
     )
-    parser.add_argument("--redis-url", required=True, help="Redis URL, e.g. redis://localhost:6379/0.")
-    parser.add_argument("--realtime-api-url", required=True, help="Go realtime API base URL.")
-    parser.add_argument("--api-key", default=None, help="Optional bearer token for the Go API.")
+    # Every deployment-critical option takes a flag OR an environment variable.
+    # `make live-openai-autoworker` passes flags; a container running
+    # `python -m app.auto_worker` passes only env vars, which is the shape
+    # .env.example documents. An explicit flag always wins.
+    #
+    # REALTIME_API_URL is the Python worker's name for the Go realtime API base
+    # URL. The console and candidate apps reach that SAME service under
+    # PRELUDE_REALTIME_API_URL. The two names are deliberately distinct — one is
+    # read here, the other by Next.js — so do not merge them.
+    parser.add_argument(
+        "--redis-url",
+        default=None,
+        help="Redis URL, e.g. redis://localhost:6379/0. Falls back to $REDIS_URL.",
+    )
+    parser.add_argument(
+        "--realtime-api-url",
+        default=None,
+        help="Go realtime API base URL. Falls back to $REALTIME_API_URL.",
+    )
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="Optional bearer token for the Go API. Falls back to $REALTIME_API_KEY.",
+    )
     parser.add_argument(
         "--stream-key",
-        default=os.getenv("AGENT_JOIN_STREAM_KEY", DEFAULT_STREAM_KEY),
+        default=worker_env.get("AGENT_JOIN_STREAM_KEY", DEFAULT_STREAM_KEY),
         help="Redis stream key used for agent join jobs.",
     )
     parser.add_argument(
         "--consumer-group",
-        default=os.getenv("AGENT_JOIN_CONSUMER_GROUP", DEFAULT_CONSUMER_GROUP),
+        default=worker_env.get("AGENT_JOIN_CONSUMER_GROUP", DEFAULT_CONSUMER_GROUP),
         help="Redis consumer group for live interviewer workers.",
     )
     parser.add_argument(
@@ -397,7 +423,7 @@ def parse_args() -> argparse.Namespace:
         "--pending-idle-seconds",
         type=int,
         default=int(
-            os.getenv(
+            worker_env.get(
                 "AGENT_JOIN_PENDING_IDLE_SECONDS",
                 str(DEFAULT_PENDING_IDLE_SECONDS),
             )
@@ -407,7 +433,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-concurrency",
         type=int,
-        default=int(os.getenv("LIVE_WORKER_MAX_CONCURRENCY", "2")),
+        default=int(worker_env.get("LIVE_WORKER_MAX_CONCURRENCY", "2")),
         help="Maximum live interviewer sessions this process may run concurrently.",
     )
     parser.add_argument(
@@ -415,7 +441,26 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Join LiveKit and persist events without opening OpenAI Realtime.",
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+
+    args.redis_url = option_from_env(args.redis_url, worker_env, "REDIS_URL")
+    if not args.redis_url:
+        parser.error(
+            "Redis URL is required: pass --redis-url or set the REDIS_URL "
+            "environment variable."
+        )
+
+    args.realtime_api_url = option_from_env(
+        args.realtime_api_url, worker_env, "REALTIME_API_URL"
+    )
+    if not args.realtime_api_url:
+        parser.error(
+            "Go realtime API base URL is required: pass --realtime-api-url or set "
+            "the REALTIME_API_URL environment variable."
+        )
+
+    args.api_key = option_from_env(args.api_key, worker_env, "REALTIME_API_KEY")
+    return args
 
 
 async def main() -> None:
