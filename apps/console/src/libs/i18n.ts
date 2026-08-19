@@ -2,22 +2,25 @@
 
 import i18n from "i18next";
 import LanguageDetector from "i18next-browser-languagedetector";
-import Backend from "i18next-http-backend";
 import { initReactI18next } from "react-i18next";
 
 // Mirrors the Fluenceur frontend i18n setup (i18next + react-i18next), adapted
 // for the Next.js App Router: this module is client-only ("use client") and is
 // initialized once from the I18nProvider. Server-side strings go through
 // `getServerT` in `i18n-server.ts` instead.
-
-// Cache-busting version for the translation catalogs. Bump when copy changes.
-const TRANSLATION_VERSION = "20";
+//
+// There is deliberately no http-backend here, and no catalogue version to bump.
+// `I18nProvider` imports both catalogues as modules and seeds them with
+// i18next's overwrite flag, so they are already in memory before the first
+// render. A backend fetching /locales on top of that could only ever ADD keys —
+// i18next's backend connector merges with overwrite disabled — so it silently
+// lost every EDIT to an existing string while appearing to work, because new
+// keys did show up. The bundled import is the single source of truth and it is
+// rebuilt by `next build`, which is what makes edited copy ship.
 
 // Guard against double-init across fast-refresh / multiple imports.
 if (!i18n.isInitialized) {
   i18n
-    // Load translation files from /public/locales
-    .use(Backend)
     // Detect user language (localStorage first, then navigator)
     .use(LanguageDetector)
     // Pass the i18n instance to react-i18next
@@ -31,10 +34,6 @@ if (!i18n.isInitialized) {
 
       interpolation: {
         escapeValue: false, // React already escapes values
-      },
-
-      backend: {
-        loadPath: `/locales/{{lng}}.json?v=${TRANSLATION_VERSION}`,
       },
 
       detection: {
