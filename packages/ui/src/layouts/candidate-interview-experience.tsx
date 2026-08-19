@@ -39,6 +39,12 @@ export type CandidateInterviewExperienceLabels = {
   answersBody: string;
   answersTitle: string;
   audioOnlyNotice: string;
+  /**
+   * GDPR art. 13 layer 1: the two-sentence controller statement that sits under
+   * the disclosure paragraph, already interpolated with the hiring company's
+   * name. Statutory copy the caller composes; the package only places it.
+   */
+  controllerLine: string;
   durationPill: string;
   emailLabel: string;
   emailOptional: string;
@@ -68,6 +74,8 @@ export type CandidateInterviewExperienceLabels = {
   paceTitle: string;
   preflightHeading: string;
   preflightSubtitle: string;
+  /** Link text pointing at the layer-2 privacy notice. */
+  privacyNoticeLink: string;
   privacyPill: string;
   roleLabel: string;
   startButton: string;
@@ -86,6 +94,7 @@ export type CandidateWelcomeExperienceProps = {
     CandidateInterviewExperienceLabels,
     | "answersBody"
     | "answersTitle"
+    | "controllerLine"
     | "durationPill"
     | "evidenceBody"
     | "evidenceTitle"
@@ -98,11 +107,19 @@ export type CandidateWelcomeExperienceProps = {
     | "modesPill"
     | "paceBody"
     | "paceTitle"
+    | "privacyNoticeLink"
     | "privacyPill"
     | "startButton"
     | "startFootnote"
   >;
   onStart: () => void;
+  /**
+   * Where the layer-2 privacy notice lives for THIS interview, or `null` when
+   * no public notice route answers this token (the recruiter preview). The
+   * controller statement is true either way and always renders; only the link
+   * depends on there being somewhere to go.
+   */
+  privacyNoticeHref: string | null;
   roleTitle: string;
 };
 
@@ -110,6 +127,7 @@ export function CandidateWelcomeExperience({
   disclosureCopy,
   labels,
   onStart,
+  privacyNoticeHref,
   roleTitle,
 }: CandidateWelcomeExperienceProps) {
   return (
@@ -130,6 +148,20 @@ export function CandidateWelcomeExperience({
             {labels.listeningNoteEmphasis}
           </span>
           .
+        </p>
+        <p className="mt-4 max-w-[34rem] text-pretty text-[14.5px] leading-[1.6] text-ink-600">
+          {labels.controllerLine}
+          {privacyNoticeHref ? (
+            <>
+              {" "}
+              <a
+                className="font-medium text-spruce-700 underline decoration-spruce-700/35 underline-offset-[3px] transition-colors hover:text-spruce-800 hover:decoration-spruce-800"
+                href={privacyNoticeHref}
+              >
+                {labels.privacyNoticeLink}
+              </a>
+            </>
+          ) : null}
         </p>
 
         <div className="mt-[26px] flex flex-wrap gap-2">

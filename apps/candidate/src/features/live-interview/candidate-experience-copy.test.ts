@@ -64,6 +64,24 @@ describe("candidate experience copy", () => {
     expect(fr.previewConsentCopy).toContain("test en direct");
   });
 
+  it("names the controller and links the notice in both languages", () => {
+    // GDPR art. 13 layer 1, ruled wording: two sentences naming the hiring
+    // organization as controller and HireCall as its processor, plus the link
+    // to the full notice.
+    expect(candidateExperienceCopy("fr").controllerLine("Acme")).toBe(
+      "Cet entretien est mené pour Acme, responsable du traitement de vos données. HireCall le conduit pour son compte.",
+    );
+    expect(candidateExperienceCopy("fr").privacyNoticeLink).toBe(
+      "Consulter la notice de confidentialité",
+    );
+    expect(candidateExperienceCopy("en").controllerLine("Acme")).toBe(
+      "This interview is run for Acme, the data controller. HireCall conducts it on their behalf.",
+    );
+    expect(candidateExperienceCopy("en").privacyNoticeLink).toBe(
+      "Read the privacy notice",
+    );
+  });
+
   it("formats durations in the reader's language", () => {
     expect(candidateExperienceCopy("en").durationLong(8)).toBe(
       "About 8 minutes",

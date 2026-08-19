@@ -43,6 +43,7 @@ vi.mock("@prelude/notifications", () => ({
 vi.mock("./credit-settlement", () => ({ settleCandidateSessionCredit }));
 
 import { unconfiguredBilling } from "@prelude/billing";
+import { candidateConsentCopyFor } from "@prelude/core";
 
 import {
   completeCandidateSession,
@@ -296,7 +297,7 @@ describe("consent language is recorded as evidence", () => {
 
     expect(prismaMock.candidateSession.update).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        consentCopyVersion: "candidate-consent-v2",
+        consentCopyVersion: "candidate-consent-v3-no-recording",
         consentLanguage: "fr",
       }),
       where: { id: "cs_1" },
@@ -323,7 +324,7 @@ describe("consent language is recorded as evidence", () => {
 
     expect(prismaMock.candidateSession.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        consentCopyVersion: "candidate-consent-v2",
+        consentCopyVersion: "candidate-consent-v3-no-recording",
         consentLanguage: "en",
       }),
     });
@@ -340,7 +341,7 @@ describe("consent language is recorded as evidence", () => {
 
     expect(prismaMock.candidateInvitation.updateMany).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        consentCopyVersion: "candidate-consent-v2",
+        consentCopyVersion: "candidate-consent-v3-no-recording",
         consentLanguage: "fr",
       }),
       where: {
@@ -363,5 +364,230 @@ describe("consent language is recorded as evidence", () => {
       data: expect.objectContaining({ consentLanguage: "fr" }),
       where: { id: "cs_1" },
     });
+  });
+});
+
+describe("the recording reality reaches the candidate surfaces", () => {
+  it("resolves the deployment's recording flag once, on the context", async () => {
+    // Same invariant as `consentLanguage`: one server-side resolution feeds both
+    // the copy the candidate reads and the version stamped on their session, so
+    // the two can never describe different processing.
+    vi.stubEnv("RECORDING_ENABLED", "1");
+
+    await expect(
+      getPublicInterviewContext("tok_candidate"),
+    ).resolves.toMatchObject({
+      interview: { recordingActive: true },
+      kind: "published",
+    });
+  });
+
+  it("reads an absent or unparseable flag as no recording", async () => {
+    // Fail-closed: an environment we cannot read is one we cannot claim
+    // recording from, so the candidate gets the no-recording truth.
+    vi.stubEnv("RECORDING_ENABLED", "");
+
+    await expect(
+      getPublicInterviewContext("tok_candidate"),
+    ).resolves.toMatchObject({
+      interview: { recordingActive: false },
+      kind: "published",
+    });
+  });
+});
+
+describe("the stamped consent version is the one that was rendered", () => {
+  const writes = async () => {
+    await expect(
+      prepareCandidateSession(resumeAttempt()),
+    ).resolves.toMatchObject({ ok: true });
+
+    return {
+      invitation:
+        prismaMock.candidateInvitation.updateMany.mock.calls.at(-1)?.[0].data,
+      session: prismaMock.candidateSession.update.mock.calls.at(-1)?.[0].data,
+    };
+  };
+
+  it("stamps the no-recording variant where recording is off", async () => {
+    vi.stubEnv("RECORDING_ENABLED", "0");
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      openedInvitation({ language: "fr" }),
+    );
+
+    const { invitation, session } = await writes();
+    const rendered = candidateConsentCopyFor("fr", false);
+
+    expect(session).toMatchObject({
+      consentCopyVersion: "candidate-consent-v3-no-recording",
+      consentLanguage: "fr",
+    });
+    expect(invitation).toMatchObject({
+      consentCopyVersion: "candidate-consent-v3-no-recording",
+      consentLanguage: "fr",
+    });
+    // Not two constants that happen to agree: the stamp IS the version of the
+    // text the pre-join screens rendered for this language and this flag.
+    expect(session?.consentCopyVersion).toBe(rendered.version);
+    expect(rendered.text).toContain("n'est pas enregistré en audio");
+  });
+
+  it("stamps the recording variant where recording is on", async () => {
+    vi.stubEnv("RECORDING_ENABLED", "1");
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      openedInvitation({ language: "en" }),
+    );
+
+    const { invitation, session } = await writes();
+    const rendered = candidateConsentCopyFor("en", true);
+
+    expect(session).toMatchObject({
+      consentCopyVersion: "candidate-consent-v3",
+      consentLanguage: "en",
+    });
+    expect(invitation).toMatchObject({
+      consentCopyVersion: "candidate-consent-v3",
+    });
+    expect(session?.consentCopyVersion).toBe(rendered.version);
+    expect(rendered.text).toContain("90 days");
+  });
+
+  it("stamps the rendered variant on a newly created session too", async () => {
+    vi.stubEnv("RECORDING_ENABLED", "0");
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      openedInvitation({ language: "en" }),
+    );
+    prismaMock.candidateSession.findFirst.mockResolvedValue(null);
+    prismaMock.candidateSession.create.mockResolvedValue({
+      id: "cs_new",
+      interviewId: "interview_1",
+      resumeToken: "cs_new_resume",
+    });
+
+    await expect(
+      prepareCandidateSession({
+        candidateToken: "tok_candidate",
+        consentAccepted: true,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(prismaMock.candidateSession.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        consentCopyVersion: candidateConsentCopyFor("en", false).version,
+        consentLanguage: "en",
+      }),
+    });
+  });
+});
+
+/**
+ * LF-T3b, defect D1. Erasure terminates the invitation (status "expired" +
+ * expiresAt pinned to the erasure instant) precisely so the link already sitting
+ * in the candidate's inbox stops working. That only holds if THIS side refuses
+ * it — otherwise the next click starts a fresh session and re-collects the name
+ * and email the erasure just deleted, and the data subject undoes their own
+ * erasure by clicking their own link.
+ */
+describe("an erased candidate's invitation link is dead", () => {
+  /** Exactly what `eraseCandidateSessionData` leaves behind on the invitation. */
+  function erasedInvitation() {
+    return {
+      ...openedInvitation(),
+      candidateEmail: null,
+      candidateName: null,
+      // Pinned to the erasure instant, which is in the past by the time anyone
+      // clicks. The token itself survives as an opaque id — it is the thing that
+      // must now be inert.
+      expiresAt: new Date("2026-08-13T09:00:00.000Z"),
+      status: "expired",
+    };
+  }
+
+  it("refuses to start a live session on an erased invitation", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      erasedInvitation(),
+    );
+
+    await expect(
+      prepareCandidateSession({
+        candidateToken: "tok_candidate",
+        consentAccepted: true,
+      }),
+    ).resolves.toMatchObject({
+      error: "candidate_session_expired",
+      ok: false,
+      status: 410,
+    });
+
+    // The decisive assertion: no new session row, so nothing re-collects the
+    // identity that was erased.
+    expect(prismaMock.candidateSession.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses the form fallback on an erased invitation too", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue({
+      ...erasedInvitation(),
+      interview: {
+        ...erasedInvitation().interview,
+        responseModes: ["audio", "form"],
+      },
+    });
+
+    await expect(
+      submitCandidateFormInterview({
+        answers: [{ questionId: "q1", text: "I would still like to answer." }],
+        candidateEmail: "ada@example.com",
+        candidateName: "Ada",
+        candidateToken: "tok_candidate",
+        consentAccepted: true,
+      }),
+    ).resolves.toMatchObject({
+      error: "candidate_session_expired",
+      ok: false,
+      status: 410,
+    });
+
+    expect(prismaMock.candidateSession.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses on the terminal status alone, even if the date were still open", async () => {
+    // Belt and braces: erasure writes BOTH, and either one on its own must be
+    // enough. A future migration that stopped writing one must not silently
+    // reopen the link.
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue({
+      ...erasedInvitation(),
+      expiresAt: new Date("2026-08-20T09:00:00.000Z"),
+    });
+
+    await expect(
+      prepareCandidateSession({
+        candidateToken: "tok_candidate",
+        consentAccepted: true,
+      }),
+    ).resolves.toMatchObject({
+      error: "candidate_session_expired",
+      ok: false,
+      status: 410,
+    });
+    expect(prismaMock.candidateSession.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses on the past date alone, even if the status were not terminal", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue({
+      ...erasedInvitation(),
+      status: "opened",
+    });
+
+    await expect(
+      prepareCandidateSession({
+        candidateToken: "tok_candidate",
+        consentAccepted: true,
+      }),
+    ).resolves.toMatchObject({
+      error: "candidate_session_expired",
+      ok: false,
+      status: 410,
+    });
+    expect(prismaMock.candidateSession.create).not.toHaveBeenCalled();
   });
 });

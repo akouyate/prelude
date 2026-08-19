@@ -487,6 +487,7 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
           <ResidencyChoice
             description={t("settings.workspace.usResidencyDescription")}
             label={t("settings.workspace.usResidency")}
+            unavailableLabel={t("settings.workspace.residencyComingSoon")}
           />
         </div>
       </SettingsPanel>
@@ -1343,20 +1344,32 @@ function UnavailableSettingsButton({
   );
 }
 
+// A residency card is a statement of where candidate data lives, not a control:
+// nothing here is wired to a form field or the server. `unavailableLabel` marks
+// the region that does not exist yet, so the card cannot read as a choice the
+// recruiter could make — see the EU-only copy on the panel heading.
 function ResidencyChoice({
   active = false,
   description,
   label,
+  unavailableLabel,
 }: {
   active?: boolean;
   description: string;
   label: string;
+  unavailableLabel?: string;
 }) {
   return (
     <SelectionCard
       className="rounded-[15px]"
       description={description}
+      disabled={unavailableLabel !== undefined}
       indicatorShape="circle"
+      meta={
+        unavailableLabel === undefined ? undefined : (
+          <StatusBadge tone="muted">{unavailableLabel}</StatusBadge>
+        )
+      }
       selected={active}
       title={label}
     />

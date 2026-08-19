@@ -62,6 +62,12 @@ export async function getCandidateExperiencePreviewContext(
         prompt: question.prompt,
         signal: question.expectedSignal ?? null,
       })),
+      // A preview never records: the Go service refuses egress for a preview
+      // session outright, so the recruiter must be shown the no-recording copy
+      // whatever `RECORDING_ENABLED` says. Hard-coded rather than resolved, so
+      // turning recording on can never make a preview claim a recording that
+      // will not happen.
+      recordingActive: false,
       responseModes: resolvePreviewResponseModes(snapshot.plan.responseModes),
       roleTitle: snapshot.plan.roleTitle,
     },

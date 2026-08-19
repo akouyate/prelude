@@ -234,6 +234,60 @@ func TestServiceDoesNotRecordWithPreAudioConsentVersion(t *testing.T) {
 	}
 }
 
+// TestRecordingGateAcceptsExactlyTheAudioDisclosingConsentVersions mirrors
+// @prelude/core's audioRecordingConsentCopyVersions. v3 ships as a VARIANT PAIR
+// and only the recording variant may be recorded: a candidate who read
+// candidate-consent-v3-no-recording was told their voice is not retained, so the
+// gate must refuse them even here, where the service's own RECORDING_ENABLED is
+// on. That asymmetry is what makes a flag mismatch between the candidate app and
+// this service fail CLOSED instead of recording someone who was never told.
+func TestRecordingGateAcceptsExactlyTheAudioDisclosingConsentVersions(t *testing.T) {
+	cases := []struct {
+		version string
+		record  bool
+	}{
+		{version: "candidate-consent-v2", record: true},
+		{version: "candidate-consent-v3", record: true},
+		{version: "candidate-consent-v3-no-recording", record: false},
+		{version: "candidate-disclosure-v3-no-recording", record: false},
+		{version: "candidate-consent-v1", record: false},
+		{version: "", record: false},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.version, func(t *testing.T) {
+			service, repo, egress, session := newRecordingService(t, false, false)
+			sessionID := session.Session.ID
+			repo.SetRecordingConsent(sessionID, application.RecordingConsent{
+				Granted:           true,
+				RecordingEntitled: true,
+				CopyVersion:       testCase.version,
+			})
+
+			ingestJoined(t, service, sessionID, 1, "evt_joined")
+			ingestMediaReady(t, service, sessionID, 2, "evt_media", true)
+
+			_, found, _ := repo.ActiveRecordingForSession(context.Background(), sessionID)
+			if testCase.record {
+				if egress.attempts != 1 {
+					t.Fatalf("expected one egress attempt for %q, got %d", testCase.version, egress.attempts)
+				}
+				if !found {
+					t.Fatalf("expected an active recording for %q", testCase.version)
+				}
+				return
+			}
+
+			if egress.attempts != 0 {
+				t.Fatalf("expected no egress attempt for %q, got %d", testCase.version, egress.attempts)
+			}
+			if found {
+				t.Fatalf("expected no recording for %q", testCase.version)
+			}
+		})
+	}
+}
+
 func TestServiceDoesNotRecordWhenAudioNotReady(t *testing.T) {
 	service, repo, egress, session := newRecordingService(t, true, true)
 	sessionID := session.Session.ID

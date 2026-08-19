@@ -191,3 +191,72 @@ func TestPostgresStorePurgesOnlyExpiredPreviewSessions(t *testing.T) {
 		t.Fatalf("expected active preview to remain, got %v", err)
 	}
 }
+
+// TestPostgresStoreDeleteEventsForSessionKeepsTheSessionRow pins the physical
+// meaning of "erasing the transcript" against a real Postgres: the event rows go,
+// the session row stays as the content-free tombstone, and a re-run is a no-op.
+func TestPostgresStoreDeleteEventsForSessionKeepsTheSessionRow(t *testing.T) {
+	databaseURL := os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		t.Skip("DATABASE_URL is required for Postgres store integration test")
+	}
+
+	ctx := context.Background()
+	postgresStore, err := store.NewPostgresStore(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("NewPostgresStore returned error: %v", err)
+	}
+
+	session := domain.Session{
+		ID:                "it_erase_" + time.Now().UTC().Format("20060102150405.000000000"),
+		InterviewPlanID:   "plan_123",
+		CandidateID:       "candidate_123",
+		Status:            domain.SessionStatusWaitingCandidate,
+		LiveKitRoomName:   "prelude-erase-room",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio},
+		CreatedAt:         time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC),
+		UpdatedAt:         time.Date(2026, 6, 17, 10, 0, 0, 0, time.UTC),
+	}
+	if err := postgresStore.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	if _, err := postgresStore.AppendEvent(ctx, domain.Event{
+		ID:             "it_erase_evt_" + session.ID,
+		SessionID:      session.ID,
+		Type:           domain.EventSessionStarted,
+		Actor:          domain.EventActorAgent,
+		Sequence:       1,
+		IdempotencyKey: session.ID + ":session_started",
+		OccurredAt:     time.Date(2026, 6, 17, 10, 0, 1, 0, time.UTC),
+		Payload:        json.RawMessage(`{"provider":"mock"}`),
+	}); err != nil {
+		t.Fatalf("AppendEvent returned error: %v", err)
+	}
+
+	deleted, err := postgresStore.DeleteEventsForSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("DeleteEventsForSession returned error: %v", err)
+	}
+	if deleted != 1 {
+		t.Fatalf("expected 1 event deleted, got %d", deleted)
+	}
+
+	stored, err := postgresStore.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("expected the session row to survive erasure, got error: %v", err)
+	}
+	if len(stored.Events) != 0 {
+		t.Fatalf("expected no events after erasure, got %d", len(stored.Events))
+	}
+	if stored.ID != session.ID || stored.Status != session.Status {
+		t.Fatalf("erasure must preserve id and status, got %+v", stored)
+	}
+
+	again, err := postgresStore.DeleteEventsForSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("idempotent DeleteEventsForSession returned error: %v", err)
+	}
+	if again != 0 {
+		t.Fatalf("expected a re-run to delete nothing, got %d", again)
+	}
+}

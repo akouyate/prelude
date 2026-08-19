@@ -1,4 +1,4 @@
-import { candidateConsentCopyVersion } from "../policies/ai";
+import { validCandidateConsentCopyVersions } from "../policies/ai";
 
 export const candidateLifecycleStatuses = [
   "invited",
@@ -194,14 +194,23 @@ export function canTransitionCandidateLifecycle(
   return transitionCandidateLifecycle(currentStatus, event).ok;
 }
 
+/**
+ * Whether a stamped consent still counts as one.
+ *
+ * `requiredConsentCopyVersion` takes a SET, not a single id, because there is no
+ * longer one current version: v3 ships as a variant pair and a session carries
+ * the id of the variant its candidate actually read. A gate pinned to one string
+ * would quietly reject half of the freshly consented candidates. A bare string
+ * is still accepted for callers that mean exactly one version.
+ */
 export function resolveCandidateConsentGate({
   consentCopyVersion,
   consentedAt,
-  requiredConsentCopyVersion = candidateConsentCopyVersion,
+  requiredConsentCopyVersion = validCandidateConsentCopyVersions,
 }: {
   consentCopyVersion: string | null | undefined;
   consentedAt: Date | string | null | undefined;
-  requiredConsentCopyVersion?: string;
+  requiredConsentCopyVersion?: string | readonly string[];
 }): CandidateConsentGateResult {
   if (!consentedAt || !consentCopyVersion) {
     return {
@@ -211,7 +220,12 @@ export function resolveCandidateConsentGate({
     };
   }
 
-  if (consentCopyVersion !== requiredConsentCopyVersion) {
+  const accepted =
+    typeof requiredConsentCopyVersion === "string"
+      ? [requiredConsentCopyVersion]
+      : requiredConsentCopyVersion;
+
+  if (!accepted.includes(consentCopyVersion)) {
     return {
       accepted: false,
       reason: "outdated",

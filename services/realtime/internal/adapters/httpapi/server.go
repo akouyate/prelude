@@ -101,6 +101,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /v1/interview-sessions/{session_id}/summary", s.handleGetRecruiterSummary)
 	s.mux.HandleFunc("POST /v1/interview-sessions/{session_id}/events", s.handleIngestEvent)
 	s.mux.HandleFunc("DELETE /v1/interview-sessions/{session_id}/recordings", s.handleEraseRecordings)
+	s.mux.HandleFunc("DELETE /v1/interview-sessions/{session_id}/personal-data", s.handleErasePersonalData)
 	s.mux.HandleFunc("POST /v1/livekit/egress-webhook", s.handleEgressWebhook)
 }
 
@@ -257,6 +258,22 @@ func (s *Server) handleEraseRecordings(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]int{"erased": erased})
+}
+
+// handleErasePersonalData is the FULL realtime-side erasure: the session's audio
+// objects AND its transcript events. It is the endpoint the console's erasure
+// orchestration calls; the narrower /recordings route stays because deleting
+// only the audio (a consent withdrawal) is a different, smaller act than erasing
+// the candidate's data. Idempotent, so the console can safely retry; a partial
+// failure returns 500 so it does.
+func (s *Server) handleErasePersonalData(w http.ResponseWriter, r *http.Request) {
+	report, err := s.service.ErasePersonalDataForSession(r.Context(), r.PathValue("session_id"))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "erase_failed", "failed to erase session personal data")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, report)
 }
 
 func (s *Server) handleEgressWebhook(w http.ResponseWriter, r *http.Request) {

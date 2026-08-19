@@ -612,6 +612,92 @@ func TestEraseRecordingsEndpoint(t *testing.T) {
 	}
 }
 
+func TestErasePersonalDataEndpoint(t *testing.T) {
+	repository := store.NewMemoryStore()
+	service := application.NewService(repository, livekit.NewMockGateway("wss://livekit.example.test"), nil)
+	service.SetRecordingRepository(repository)
+	service.SetTranscriptRepository(repository)
+	service.SetObjectStore(stubObjectStore{})
+
+	created, err := service.CreateSession(context.Background(), application.CreateSessionInput{
+		InterviewPlanID:   "plan_1",
+		CandidateID:       "candidate_1",
+		AllowedModalities: []domain.Modality{domain.ModalityAudio},
+	})
+	if err != nil {
+		t.Fatalf("CreateSession returned error: %v", err)
+	}
+	sessionID := created.Session.ID
+
+	if _, err := service.IngestEvent(context.Background(), application.IngestEventInput{
+		SessionID:      sessionID,
+		EventID:        "ev_1",
+		Type:           domain.EventCandidateJoined,
+		Actor:          domain.EventActorCandidate,
+		Sequence:       1,
+		IdempotencyKey: "idem_1",
+		OccurredAt:     time.Now().UTC(),
+		Payload:        json.RawMessage(`{"candidate_participant_id":"participant_1","modes":["audio"]}`),
+	}); err != nil {
+		t.Fatalf("IngestEvent returned error: %v", err)
+	}
+
+	startedAt := time.Now().UTC()
+	if err := repository.CreateRecording(context.Background(), domain.Recording{
+		ID:        "rec_erase",
+		SessionID: sessionID,
+		EgressID:  "eg_erase",
+		ObjectKey: "recordings/" + sessionID + "/1.ogg",
+		Status:    domain.RecordingStatusAvailable,
+		Format:    "audio/ogg",
+		StartedAt: startedAt,
+		EndedAt:   &startedAt,
+		CreatedAt: startedAt,
+		UpdatedAt: startedAt,
+	}); err != nil {
+		t.Fatalf("seed recording: %v", err)
+	}
+
+	server := NewServer(service)
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/v1/interview-sessions/"+sessionID+"/personal-data", nil)
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", response.Code, response.Body.String())
+	}
+	var body struct {
+		EventsErased     int `json:"events_erased"`
+		RecordingsErased int `json:"recordings_erased"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.EventsErased != 1 || body.RecordingsErased != 1 {
+		t.Fatalf("expected 1 event and 1 recording erased, got %+v", body)
+	}
+
+	// The session row survives as the content-free tombstone.
+	session, err := service.GetSession(context.Background(), sessionID)
+	if err != nil {
+		t.Fatalf("expected the session to survive erasure, got error: %v", err)
+	}
+	if len(session.Events) != 0 {
+		t.Fatalf("expected no events after erasure, got %d", len(session.Events))
+	}
+}
+
+func TestErasePersonalDataEndpointRequiresAPIKey(t *testing.T) {
+	server := newAuthServer(t, "s3cret")
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodDelete, "/v1/interview-sessions/is_1/personal-data", nil)
+	server.ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 without bearer, got %d: %s", response.Code, response.Body.String())
+	}
+}
+
 func newTestServer() *Server {
 	repository := store.NewMemoryStore()
 	livekitGateway := livekit.NewMockGateway("wss://livekit.example.test")

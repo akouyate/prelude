@@ -580,11 +580,12 @@
         "workspaceLanguage": "Generated content language",
         "workspaceLanguageDescription": "The language HireCall writes the candidate brief and analysis in. The candidate interview language is set separately, per role.",
         "residency": "Data residency",
-        "residencyDescription": "Where candidate data and recordings are stored.",
+        "residencyDescription": "Candidate data and recordings are stored in the European Union. A United States region is planned.",
         "euResidency": "European Union",
         "euResidencyDescription": "Frankfurt · GDPR-compliant",
         "usResidency": "United States",
-        "usResidencyDescription": "Virginia · SOC 2 Type II"
+        "usResidencyDescription": "Virginia",
+        "residencyComingSoon": "Coming soon"
       },
       "team": {
         "title": "Team & roles",
@@ -1106,6 +1107,27 @@
       "creditMeterTitleWithTotal": "{{available}} credits available, left of {{total}}.",
       "creditMeterExpiry": "{{base}} {{expiry}}.",
       "creditsExpiring": "{{count}} expiring {{date}}"
+    },
+    "erasure": {
+      "action": "Erase candidate data",
+      "pending": "Erasing…",
+      "dialogTitle": "Erase this candidate's data?",
+      "dialogIntro": "This permanently deletes, for {{candidate}}:",
+      "deletesTranscript": "the interview transcript, and the audio recording if one exists",
+      "deletesBrief": "the recruiter brief, and every assessment it contains",
+      "deletesIdentity": "the candidate's name, email address and interview link",
+      "keepsIntro": "What remains, and nothing more:",
+      "keepsRecord": "a technical record that an interview took place, and on what date",
+      "keepsBilling": "the credit-billing trace for this session",
+      "irreversible": "This cannot be undone.",
+      "cancel": "Cancel",
+      "confirm": "Erase permanently",
+      "tombstoneTitle": "Candidate data erased",
+      "tombstoneBody": "The transcript, the brief and this candidate's identity were permanently deleted on {{date}}. Only the record that an interview took place remains.",
+      "tombstoneReasonRequest": "Erased on request.",
+      "tombstoneReasonRetention": "Erased automatically at the end of the 12-month retention period.",
+      "toastSuccess": "Candidate data erased.",
+      "toastFailed": "The candidate's data could not be erased. Nothing was deleted — please try again."
     }
   }
 }

@@ -359,6 +359,14 @@ model CandidateSession {
   billedAnsweredCount     Int?
   billedRequiredCount     Int?
   billedOutcome           String?
+  // The Art. 17(3) tombstone (LF-T3b). Written once when the candidate's data is
+  // erased — on request, or by the 12-month retention sweep — and never cleared.
+  // `erasedAt` is the moment of erasure (NOT the interview's own timestamps,
+  // which are preserved), `erasureReason` is "erasure_request" | "retention".
+  // Their presence is what makes "no name, no brief" readable as a deliberate
+  // erasure rather than a broken row; everything else on this model survives.
+  erasedAt                DateTime?
+  erasureReason           String?
   createdAt               DateTime                      @default(now())
   updatedAt               DateTime                      @updatedAt
   organization            Organization                  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -380,6 +388,10 @@ model CandidateSession {
   @@index([candidateInvitationId, status])
   @@index([reviewStatusUpdatedById])
   @@index([reviewNoteUpdatedById])
+  // The retention sweep's only query: not-yet-erased sessions completed before
+  // the 12-month cutoff. Deliberately NOT organization-scoped — retention is a
+  // platform-wide obligation and the sweep runs across every workspace.
+  @@index([erasedAt, completedAt])
 }
 
 // Clerk owns billing state. This row is a privacy-minimal projection used for
