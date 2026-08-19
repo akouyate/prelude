@@ -139,6 +139,54 @@ async function cleanupExpiredPreviews(tx: Prisma.TransactionClient, now: Date) {
     return;
   }
 
+  /*
+   * `LiveInterviewRecording.session` is ON DELETE RESTRICT, not Cascade: a
+   * recording row is the only handle on an audio object in R2, so cascading it
+   * away on a session delete would leave the audio behind with nothing pointing
+   * at it. Postgres therefore REFUSES to delete a session that still has
+   * recordings — and this cleanup runs inside the transaction that creates a
+   * preview, so an unfiltered delete would not merely skip a row: it would fail
+   * the recruiter's preview creation with a foreign-key error.
+   *
+   * A preview is never recorded (the realtime service returns early for preview
+   * sessions before starting any egress), so this should select nothing. It is
+   * here so that if that ever changes, the consequence is one preview kept and
+   * one loud log — not a broken button and a wedged cleanup.
+   *
+   * Both deletes drop the blocked ids: keeping the snapshot alongside its session
+   * leaves the pair resolvable, which is what the erasure path needs to reach the
+   * audio that is still out there.
+   */
+  const blocked = await tx.liveInterviewSession.findMany({
+    select: { interviewPlanId: true },
+    where: {
+      interviewPlanId: { in: previewIds },
+      kind: "preview",
+      recordings: { some: {} },
+    },
+  });
+  if (blocked.length > 0) {
+    const blockedIds = blocked.map((session) => session.interviewPlanId);
+    console.error(
+      "[candidate-preview-cleanup] expired previews kept: their sessions still hold recordings, whose audio must be erased through the realtime erasure path first",
+      { previewIds: blockedIds },
+    );
+    const blockedSet = new Set(blockedIds);
+    const purgeableIds = previewIds.filter((id) => !blockedSet.has(id));
+    if (purgeableIds.length === 0) {
+      return;
+    }
+    await deleteExpiredPreviews(tx, purgeableIds);
+    return;
+  }
+
+  await deleteExpiredPreviews(tx, previewIds);
+}
+
+async function deleteExpiredPreviews(
+  tx: Prisma.TransactionClient,
+  previewIds: string[],
+) {
   await tx.liveInterviewSession.deleteMany({
     where: {
       interviewPlanId: { in: previewIds },

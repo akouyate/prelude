@@ -261,6 +261,52 @@ Store:
 - Provider metadata needed for debugging.
 - Recording references when consent and settings allow recording.
 
+### Deleting A Session On Purpose
+
+A recording row is the only handle on its audio object in Cloudflare R2: it
+carries the `object_key`, and nothing else in the system knows the key. So
+`LiveInterviewRecording.session` is **`onDelete: Restrict`**, not `Cascade`
+(migration `20260819093441_recording_session_fk_restrict`). Under the old cascade,
+deleting a session removed the row and left the audio behind, unreachable —
+orphaned audio the candidate privacy notice promises is "permanently deleted".
+Postgres now refuses that delete instead.
+
+The restriction holds for **tombstones too**. Erasure does not remove recording
+rows: it deletes the R2 object, then marks the row `deleted` with `object_key`
+cleared, keeping it as the content-free trace that audio existed and was erased.
+Running erasure therefore does not by itself unlock a session delete, and must
+not — `ErasePersonalDataForSession` deliberately leaves the session row standing
+precisely so those tombstones survive.
+
+There is deliberately **no application code path that hard-deletes a session**
+(no session or organization hard-delete endpoint). Two places delete session rows,
+both scoped to expired *preview* sessions, and both now step around any session
+that still holds recordings and log it loudly rather than fail:
+`PostgresStore.PurgeExpiredCandidatePreviewData` (Go) and `cleanupExpiredPreviews`
+in `apps/console/src/server/interviews/candidate-experience-previews.ts`.
+
+If a deliberate hard-delete ever becomes necessary, it must proceed in this order:
+
+1. **Erase all audio through the application**, via
+   `EraseRecordingsForSession` (or `DELETE /v1/interview-sessions/{id}/personal-data`).
+   That path — and only that path — deletes the R2 object *before* writing the
+   tombstone, so a storage failure leaves `object_key` and status intact for a
+   retry. Never delete an object out of band.
+2. **Verify the tombstones.** Every row for the session must be `status = 'deleted'`
+   with a null/empty `object_key`. A row still `available`, `failed` or `recording`
+   means audio may still exist; an in-flight (`recording`) row means an egress is
+   still running and has not landed its object yet — stop it and let it finalize,
+   then erase, before going further.
+3. **Remove the recording rows explicitly**, then the session row. Two statements,
+   in that order, having done steps 1 and 2. The explicitness is the point: the
+   constraint exists so that this can never happen as a silent side effect of
+   deleting something else.
+
+The R2 bucket lifecycle policy is **defense in depth only**. It is a backstop
+against objects the application failed to erase, never a substitute for steps 1–3:
+lifecycle expiration happens on the bucket's own schedule, so relying on it would
+mean telling a candidate their audio is deleted while it is merely scheduled to be.
+
 ## POC Acceptance Criteria
 
 The commercial POC is acceptable when:

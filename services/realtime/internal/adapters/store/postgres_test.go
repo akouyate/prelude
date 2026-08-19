@@ -233,6 +233,14 @@ func TestPostgresStoreDeleteEventsForSessionKeepsTheSessionRow(t *testing.T) {
 		t.Fatalf("AppendEvent returned error: %v", err)
 	}
 
+	// The appended session_started event legitimately moves the persisted row to
+	// in_progress, so the invariant below is measured against the status as stored
+	// right before erasure, not against the pre-append local value.
+	beforeErasure, err := postgresStore.GetSession(ctx, session.ID)
+	if err != nil {
+		t.Fatalf("expected to read the session before erasure, got error: %v", err)
+	}
+
 	deleted, err := postgresStore.DeleteEventsForSession(ctx, session.ID)
 	if err != nil {
 		t.Fatalf("DeleteEventsForSession returned error: %v", err)
@@ -248,7 +256,7 @@ func TestPostgresStoreDeleteEventsForSessionKeepsTheSessionRow(t *testing.T) {
 	if len(stored.Events) != 0 {
 		t.Fatalf("expected no events after erasure, got %d", len(stored.Events))
 	}
-	if stored.ID != session.ID || stored.Status != session.Status {
+	if stored.ID != session.ID || stored.Status != beforeErasure.Status {
 		t.Fatalf("erasure must preserve id and status, got %+v", stored)
 	}
 
