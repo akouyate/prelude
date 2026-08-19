@@ -22,6 +22,12 @@ export const metadata: Metadata = {
  * information a candidate has to log in to read is information they were not
  * given. The token is what scopes it: it resolves the controller (the hiring
  * organization's name) and the language, and nothing else about the candidate.
+ *
+ * Same loader, but read-only (`recordVisit: false`). Being unauthenticated cuts
+ * both ways: this URL is fetched by things that are not the candidate — email
+ * scanners, link-preview bots — and the recruiter reads `opened` as "the
+ * candidate looked at it". Reading the notice must not manufacture that signal;
+ * only the interview page earns it.
  */
 export default async function CandidatePrivacyNoticePage({
   params,
@@ -29,7 +35,9 @@ export default async function CandidatePrivacyNoticePage({
   params: Promise<{ token: string }>;
 }) {
   const { token } = await params;
-  const context = await getPublicInterviewContext(token);
+  const context = await getPublicInterviewContext(token, {
+    recordVisit: false,
+  });
 
   if (context.kind === "not_found") {
     notFound();

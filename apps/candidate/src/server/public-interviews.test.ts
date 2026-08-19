@@ -255,6 +255,132 @@ function openedInvitation({
   };
 }
 
+/** The row as it stands before anyone has followed the link. */
+function invitedInvitation() {
+  return {
+    ...openedInvitation(),
+    openedAt: null,
+    status: "invited",
+  };
+}
+
+describe("resolving the interview link is what records the open", () => {
+  it("stamps invited → opened the first time the link resolves", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      invitedInvitation(),
+    );
+
+    const context = await getPublicInterviewContext("tok_candidate");
+
+    expect(prismaMock.candidateInvitation.updateMany).toHaveBeenCalledWith({
+      data: { openedAt: now, status: "opened" },
+      where: { id: "inv_1" },
+    });
+    expect(context).toMatchObject({ kind: "published" });
+  });
+
+  it("stamps the open once, never re-stamping a later visit", async () => {
+    // `openedAt` is the first-touch evidence the recruiter reads as a date; a
+    // second visit must not move it.
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      openedInvitation(),
+    );
+
+    await getPublicInterviewContext("tok_candidate");
+
+    expect(prismaMock.candidateInvitation.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("never downgrades a terminal invitation to opened", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue({
+      ...invitedInvitation(),
+      status: "completed",
+    });
+
+    await getPublicInterviewContext("tok_candidate");
+
+    expect(prismaMock.candidateInvitation.updateMany).toHaveBeenCalledWith({
+      data: { openedAt: now, status: "completed" },
+      where: { id: "inv_1" },
+    });
+  });
+
+  it("flips a lapsed invitation to expired instead of opening it", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue({
+      ...invitedInvitation(),
+      expiresAt: new Date("2026-08-13T09:00:00.000Z"),
+    });
+
+    const context = await getPublicInterviewContext("tok_candidate");
+
+    expect(prismaMock.candidateInvitation.updateMany).toHaveBeenCalledWith({
+      data: { status: "expired" },
+      where: {
+        id: "inv_1",
+        status: { notIn: ["completed", "expired", "superseded"] },
+      },
+    });
+    expect(context).toMatchObject({ invitation: { status: "expired" } });
+  });
+});
+
+describe("the privacy notice resolves the same link without touching it", () => {
+  // `/interview/<token>/privacy` is a second URL on the same token, and a more
+  // casually fetched one: email scanners and link-preview bots reach it with no
+  // candidate behind them. Resolving it must never be what tells the recruiter
+  // "the candidate opened it", so this path takes no write at all.
+  it("stamps no open on an invitation nobody has followed yet", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      invitedInvitation(),
+    );
+
+    const context = await getPublicInterviewContext("tok_candidate", {
+      recordVisit: false,
+    });
+
+    expect(prismaMock.candidateInvitation.updateMany).not.toHaveBeenCalled();
+    expect(context).toMatchObject({
+      interview: { companyName: "Acme" },
+      invitation: { status: "invited" },
+      kind: "published",
+    });
+  });
+
+  it("leaves a lapsed invitation alone, and still reads it as expired", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue({
+      ...invitedInvitation(),
+      expiresAt: new Date("2026-08-13T09:00:00.000Z"),
+    });
+
+    const context = await getPublicInterviewContext("tok_candidate", {
+      recordVisit: false,
+    });
+
+    expect(prismaMock.candidateInvitation.updateMany).not.toHaveBeenCalled();
+    expect(context).toMatchObject({
+      invitation: { status: "expired" },
+      kind: "published",
+    });
+  });
+
+  it("leaves a terminal invitation exactly as it found it", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue({
+      ...invitedInvitation(),
+      status: "completed",
+    });
+
+    const context = await getPublicInterviewContext("tok_candidate", {
+      recordVisit: false,
+    });
+
+    expect(prismaMock.candidateInvitation.updateMany).not.toHaveBeenCalled();
+    expect(context).toMatchObject({
+      invitation: { status: "completed" },
+      kind: "published",
+    });
+  });
+});
+
 describe("the rendering language reaches the candidate surfaces", () => {
   it("resolves the published interview's stamped language", async () => {
     prismaMock.candidateInvitation.findUnique.mockResolvedValue(

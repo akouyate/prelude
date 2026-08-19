@@ -956,7 +956,11 @@
       "editDraft": "Modifier le brouillon",
       "openDetail": "Ouvrir le détail",
       "protectedTopic": "Sujet protégé",
-      "generationFailedRetry": "HireCall n’a pas pu générer le brouillon du poste. Réessayez dans un instant."
+      "generationFailedRetry": "HireCall n’a pas pu générer le brouillon du poste. Réessayez dans un instant.",
+      "trustHeading": "Transparence et information du candidat",
+      "trustLead": "Avant de publier, vérifiez exactement ce qui est dit à chaque candidat et ce qu’il accepte au démarrage de cet entretien. Ce texte s’affiche dans la langue de l’entretien et n’est pas modifiable ici.",
+      "trustDisclosureLabel": "Information IA",
+      "trustConsentLabel": "Consentement du candidat"
     },
     "candidateReview": {
       "decision": "Décision",

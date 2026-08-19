@@ -100,3 +100,7 @@ export {
   candidatePreviewRuntimeExpiresAt,
   isCandidatePreviewActive,
 } from "./policies/candidate-preview";
+export {
+  parseRecordingEnabled,
+  recordingEnabledTruthyValues,
+} from "./policies/recording";

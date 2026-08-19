@@ -4,6 +4,7 @@ import { RoleIntakeUploadFlow } from "../../../../src/features/role-intake/role-
 import { RoleIntakeUrlFlow } from "../../../../src/features/role-intake/role-intake-url-flow";
 import { isRoleIntakeFeatureEnabled } from "../../../../src/domain/role-intake-policy";
 import { getInterviewBuilderContext } from "../../../../src/server/interviews/interview-loaders";
+import { isRecordingActive } from "../../../../src/server/interviews/recording-state";
 import { getCompletedOrganizationScope } from "../../../../src/server/organizations/organization-scope";
 import { getRoleIntakeSummary } from "../../../../src/server/role-intakes/role-intake-service";
 
@@ -77,6 +78,12 @@ export default async function NewRoleScreenPage({
       initialJobLocation={context.initialJob?.location ?? undefined}
       initialJobTitle={context.initialJob?.title}
       initialSourceUrl={sourceUrl}
+      // Resolved here, on the server: the trust panel quotes the consent
+      // variant this deployment will actually ask the candidate to accept, and
+      // `RECORDING_ENABLED` only exists on a machine holding the deployment
+      // config. See src/server/interviews/recording-state.ts for the three
+      // processes that read it.
+      recordingActive={isRecordingActive()}
       workspaceLanguage={context.workspaceLanguage}
     />
   );
