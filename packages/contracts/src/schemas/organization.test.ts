@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   organizationCountrySchema,
+  parseWorkspaceLanguage,
   workspaceLanguageSchema,
 } from "./organization";
 
@@ -41,6 +42,28 @@ describe("workspaceLanguageSchema", () => {
     "rejects %j",
     (value) => {
       expect(workspaceLanguageSchema.safeParse(value).success).toBe(false);
+    },
+  );
+});
+
+describe("parseWorkspaceLanguage", () => {
+  // The forgiving half of the pair: it case-folds and trims what the strict
+  // schema above rejects, because these values come out of a DB column and a
+  // free-form settings JSON blob rather than a controlled <select>.
+  it.each([
+    ["en", "en"],
+    ["FR", "fr"],
+    ["  En  ", "en"],
+  ])("folds %j to %j", (value, expected) => {
+    expect(parseWorkspaceLanguage(value)).toBe(expected);
+  });
+
+  // Never more forgiving than the catalogue itself, and `null` — not a guess —
+  // is what lets each caller apply its own fallback.
+  it.each(["de", "en-US", "", null, undefined])(
+    "returns null for %j",
+    (value) => {
+      expect(parseWorkspaceLanguage(value)).toBeNull();
     },
   );
 });

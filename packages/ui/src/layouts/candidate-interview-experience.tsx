@@ -29,6 +29,11 @@ type CandidateExperienceMode = string;
  * `preflightSubtitle`, `formatValue`, …), for the same reason the shell receives
  * `nextExpiryLabel` pre-formatted: composing a sentence is a translation
  * concern, and only the app has the copy table.
+ *
+ * This is the ASSEMBLY type — what the app builds once and hands to all three
+ * screens. Each component's props narrow it to a `Pick` of the keys that
+ * component actually reads (the three sets partition this type exactly), so a
+ * label can never be listed here and silently rendered nowhere.
  */
 export type CandidateInterviewExperienceLabels = {
   answersBody: string;
@@ -77,7 +82,26 @@ export type CandidateExperienceModeLabels = {
 
 export type CandidateWelcomeExperienceProps = {
   disclosureCopy: string;
-  labels: CandidateInterviewExperienceLabels;
+  labels: Pick<
+    CandidateInterviewExperienceLabels,
+    | "answersBody"
+    | "answersTitle"
+    | "durationPill"
+    | "evidenceBody"
+    | "evidenceTitle"
+    | "fairnessHeading"
+    | "fairnessKicker"
+    | "humanReviewedPill"
+    | "invitation"
+    | "listeningNoteEmphasis"
+    | "listeningNoteLead"
+    | "modesPill"
+    | "paceBody"
+    | "paceTitle"
+    | "privacyPill"
+    | "startButton"
+    | "startFootnote"
+  >;
   onStart: () => void;
   roleTitle: string;
 };
@@ -162,7 +186,17 @@ export function CandidateWelcomeExperience({
 
 export type CandidateInterviewIntroProps = {
   jobTitle: string;
-  labels: CandidateInterviewExperienceLabels;
+  labels: Pick<
+    CandidateInterviewExperienceLabels,
+    | "formatLabel"
+    | "formatValue"
+    | "introDescription"
+    | "introHeading"
+    | "introPill"
+    | "lengthLabel"
+    | "lengthValue"
+    | "roleLabel"
+  >;
 };
 
 export function CandidateInterviewIntro({
@@ -205,7 +239,17 @@ export type CandidatePreflightExperienceProps = {
   candidateName: string;
   consentAccepted: boolean;
   consentCopy: string;
-  labels: CandidateInterviewExperienceLabels;
+  labels: Pick<
+    CandidateInterviewExperienceLabels,
+    | "audioOnlyNotice"
+    | "emailLabel"
+    | "emailOptional"
+    | "emailPlaceholder"
+    | "nameLabel"
+    | "namePlaceholder"
+    | "preflightHeading"
+    | "preflightSubtitle"
+  >;
   onCandidateEmailChange: (value: string) => void;
   onCandidateNameChange: (value: string) => void;
   onConsentChange: (value: boolean) => void;

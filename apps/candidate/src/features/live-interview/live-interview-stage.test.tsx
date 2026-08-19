@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
+import { candidateExperienceCopy } from "./candidate-experience-copy";
 import { LiveInterviewStage } from "./live-interview-room";
 import type { RoomStatus } from "./live-interview-types";
 
@@ -18,6 +19,9 @@ function renderStage({
     <LiveInterviewStage
       activeText="Tell me about a project you shipped recently."
       activeTurnId="turn_1"
+      // The stage takes the whole copy table, like `AbandonedPanel`: French here
+      // so the Quit control is checked in the consent language (ruling R5.2).
+      copy={candidateExperienceCopy("fr")}
       elapsedSeconds={42}
       inactivityNotice={null}
       isAudioPlaybackBlocked={false}
@@ -32,7 +36,6 @@ function renderStage({
       onEndInterview={() => undefined}
       onRepeatQuestion={() => undefined}
       onSkipQuestion={() => undefined}
-      quitLabel="Quitter"
       status={status}
     />,
   );
@@ -48,6 +51,14 @@ function skipButton(markup: string) {
 }
 
 describe("live interview stage", () => {
+  it("renders the quit control in the consent language", () => {
+    // Ruling R5.2: withdrawing has to be as readable as consenting, so the Quit
+    // control follows the consent language, not the room's English chrome.
+    expect(renderStage({ isPreview: false, status: "listening" })).toContain(
+      "Quitter",
+    );
+  });
+
   it("offers the skip control to a recruiter preview once the room is live", () => {
     const markup = renderStage({ isPreview: true, status: "listening" });
 

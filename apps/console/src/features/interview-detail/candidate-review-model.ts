@@ -125,6 +125,12 @@ function evidenceStartMs(
   return turn ? replayOffsetMs(turn.startedAt, originMs) : null;
 }
 
+// Case-folds a language tag for comparison only. Deliberately NOT the catalogue
+// validator: both functions below must keep surfacing out-of-catalogue tags
+// ("de", "en-US") rather than folding them into "unknown".
+const foldLanguage = (value: string | null | undefined) =>
+  (value ?? "").trim().toLowerCase();
+
 export type BriefLanguageBadge =
   | { kind: "other"; language: string }
   | { kind: "unknown" };
@@ -149,12 +155,12 @@ export function resolveBriefLanguageBadge({
   briefLanguage: string | null;
   workspaceLanguage: string;
 }): BriefLanguageBadge | null {
-  const stamped = (briefLanguage ?? "").trim().toLowerCase();
+  const stamped = foldLanguage(briefLanguage);
   if (!stamped) {
     return { kind: "unknown" };
   }
 
-  return stamped === workspaceLanguage.trim().toLowerCase()
+  return stamped === foldLanguage(workspaceLanguage)
     ? null
     : { kind: "other", language: stamped };
 }
@@ -185,8 +191,8 @@ export function resolveQuoteLanguageNote({
   interviewLanguage: string | null;
   workspaceLanguage: string;
 }): QuoteLanguageNote | null {
-  const spoken = (interviewLanguage ?? "").trim().toLowerCase();
-  if (!spoken || spoken === workspaceLanguage.trim().toLowerCase()) {
+  const spoken = foldLanguage(interviewLanguage);
+  if (!spoken || spoken === foldLanguage(workspaceLanguage)) {
     return null;
   }
 

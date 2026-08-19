@@ -1,5 +1,5 @@
 import {
-  workspaceLanguageSchema,
+  parseWorkspaceLanguage,
   type WorkspaceLanguage,
 } from "@prelude/contracts";
 
@@ -26,9 +26,5 @@ import {
 export function resolveCandidateRenderingLanguage(
   interviewLanguage: string | null | undefined,
 ): WorkspaceLanguage {
-  const parsed = workspaceLanguageSchema.safeParse(
-    (interviewLanguage ?? "").trim().toLowerCase(),
-  );
-
-  return parsed.success ? parsed.data : "fr";
+  return parseWorkspaceLanguage(interviewLanguage) ?? "fr";
 }

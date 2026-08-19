@@ -49,7 +49,12 @@ export function toCandidateBriefView(
   const parsedContent = candidateBriefSchema.safeParse(brief.summaryJson);
 
   return {
-    content: toCandidateBriefDto(brief),
+    // Reusing the parse we already have; the failure path falls back to
+    // `toCandidateBriefDto`, which re-parses this same value internally — an
+    // acceptably rare double parse for a row whose summaryJson is unusable.
+    content: parsedContent.success
+      ? parsedContent.data
+      : toCandidateBriefDto(brief),
     language: brief.language ?? null,
     regenerationFailed: brief.status === "failed" && parsedContent.success,
   };

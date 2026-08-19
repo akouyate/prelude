@@ -11,7 +11,7 @@
  * construction.
  */
 import {
-  workspaceLanguageSchema,
+  parseWorkspaceLanguage,
   type WorkspaceLanguage,
 } from "@prelude/contracts";
 
@@ -62,22 +62,34 @@ export function resolveWorkspaceLanguage(
 }
 
 /**
- * Case folds, then rejects anything outside the catalogue pair — `null` means
- * "this source said nothing usable", which is what lets the callers above chain
- * their fallbacks.
- *
  * Deliberately more forgiving than `coerceConsoleLocale`, which reads a value
  * produced by a controlled `<select>`: these inputs come out of a database
  * column and a free-form JSON blob, where "FR" is a plausible legacy shape. It
  * is never more forgiving than the catalogue itself — "de" or "en-US" fall
- * through rather than being guessed at.
+ * through rather than being guessed at, which is what lets the callers above
+ * chain their fallbacks.
  */
 function normalizeContentLanguage(
   value: string | null | undefined,
 ): WorkspaceLanguage | null {
-  const parsed = workspaceLanguageSchema.safeParse(
-    (value ?? "").trim().toLowerCase(),
-  );
+  return parseWorkspaceLanguage(value);
+}
 
-  return parsed.success ? parsed.data : null;
+/**
+ * The single site for the RAW read of THE WALL key: `workspaceLanguage` sits at
+ * the ROOT of the `Organization.settings` JSON (plan 2026-08-18, rule 2), and
+ * every reader — the settings page's parser and the brief pipeline alike — goes
+ * through here, so the key name and its shape are stated once.
+ *
+ * Returns the untouched string; deciding what an unusable value means is
+ * `resolveWorkspaceLanguage`'s job, not this one's.
+ */
+export function readWorkspaceLanguageValue(settings: unknown): string | null {
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    return null;
+  }
+
+  const value = (settings as Record<string, unknown>).workspaceLanguage;
+
+  return typeof value === "string" ? value : null;
 }

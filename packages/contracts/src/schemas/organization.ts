@@ -16,3 +16,18 @@ export type OrganizationCountry = z.infer<typeof organizationCountrySchema>;
 export const workspaceLanguageSchema = z.enum(["en", "fr"]);
 
 export type WorkspaceLanguage = z.infer<typeof workspaceLanguageSchema>;
+
+// The shared case-fold + catalogue-validation step for persisted language
+// values (DB columns, settings JSON), where "FR" or a stray space is a
+// plausible legacy shape. `null` means "this source said nothing usable" —
+// callers chain their own fallback on top, and they deliberately differ (the
+// console falls back to English, the candidate app to French).
+export function parseWorkspaceLanguage(
+  value: string | null | undefined,
+): WorkspaceLanguage | null {
+  const parsed = workspaceLanguageSchema.safeParse(
+    (value ?? "").trim().toLowerCase(),
+  );
+
+  return parsed.success ? parsed.data : null;
+}

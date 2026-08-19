@@ -707,64 +707,79 @@ export function LiveInterviewRoom({
    */
   const renderingLanguage =
     context.kind === "not_found" ? "fr" : context.interview.language;
+  // `candidateExperienceCopy` hands back the module-level table for the
+  // language, so `copy` is a stable reference and a legitimate memo dependency.
   const copy = candidateExperienceCopy(renderingLanguage);
-  const modesLabel = formatCandidateModes(allowedModes, {
-    audio: copy.modeAudio,
-    formFallback: copy.modeFormFallback,
-  });
   const estimatedMinutes = interview?.estimatedMinutes ?? null;
+  const modesLabel = React.useMemo(
+    () =>
+      formatCandidateModes(allowedModes, {
+        audio: copy.modeAudio,
+        formFallback: copy.modeFormFallback,
+      }),
+    [allowedModes, copy],
+  );
   /*
    * Assembled here rather than inside @prelude/ui, for the same reason the
    * console assembles `EnterpriseShellLabels`: the package takes finished copy,
    * and composing a sentence is a translation concern only this side can do.
+   *
+   * Memoized because the live room re-renders roughly once a second (three
+   * polling intervals drive it), and rebuilding 33 strings — several of them
+   * interpolated — on every tick is pure waste. Every dependency below is
+   * reference-stable across those ticks: `copy` is the module table, `interview`
+   * comes off the `context` prop, and the rest are primitives.
    */
-  const preJoinLabels: CandidateInterviewExperienceLabels = {
-    answersBody: copy.answersBody,
-    answersTitle: copy.answersTitle,
-    audioOnlyNotice: copy.audioOnlyNotice,
-    durationPill: estimatedMinutes
-      ? copy.durationLong(estimatedMinutes)
-      : copy.durationUnknown,
-    emailLabel: copy.emailLabel,
-    emailOptional: copy.emailOptional,
-    emailPlaceholder: copy.emailPlaceholder,
-    evidenceBody: isPreview ? copy.previewEvidenceBody : copy.evidenceBody,
-    evidenceTitle: isPreview ? copy.previewEvidenceTitle : copy.evidenceTitle,
-    fairnessHeading: copy.fairnessHeading,
-    fairnessKicker: copy.fairnessKicker,
-    formatLabel: copy.formatLabel,
-    formatValue: modesLabel,
-    humanReviewedPill: copy.humanReviewedPill,
-    introDescription: isPreview
-      ? copy.previewIntroDescription
-      : copy.introDescription({
-          companyName: interview?.companyName ?? "",
-          roleTitle: interview?.roleTitle ?? "",
-        }),
-    introHeading: copy.introHeading,
-    introPill: copy.introPill,
-    invitation: copy.invitation(interview?.companyName ?? ""),
-    lengthLabel: copy.lengthLabel,
-    lengthValue: estimatedMinutes
-      ? copy.durationShort(estimatedMinutes)
-      : copy.durationUnknown,
-    listeningNoteEmphasis: copy.listeningNoteEmphasis,
-    listeningNoteLead: copy.listeningNoteLead,
-    modesPill: modesLabel,
-    nameLabel: copy.nameLabel,
-    namePlaceholder: copy.namePlaceholder,
-    paceBody: copy.paceBody,
-    paceTitle: copy.paceTitle,
-    preflightHeading: copy.preflightHeading,
-    preflightSubtitle: copy.preflightSubtitle({
-      jobTitle: interview?.jobTitle ?? "",
-      minutes: estimatedMinutes,
+  const preJoinLabels: CandidateInterviewExperienceLabels = React.useMemo(
+    () => ({
+      answersBody: copy.answersBody,
+      answersTitle: copy.answersTitle,
+      audioOnlyNotice: copy.audioOnlyNotice,
+      durationPill: estimatedMinutes
+        ? copy.durationLong(estimatedMinutes)
+        : copy.durationUnknown,
+      emailLabel: copy.emailLabel,
+      emailOptional: copy.emailOptional,
+      emailPlaceholder: copy.emailPlaceholder,
+      evidenceBody: isPreview ? copy.previewEvidenceBody : copy.evidenceBody,
+      evidenceTitle: isPreview ? copy.previewEvidenceTitle : copy.evidenceTitle,
+      fairnessHeading: copy.fairnessHeading,
+      fairnessKicker: copy.fairnessKicker,
+      formatLabel: copy.formatLabel,
+      formatValue: modesLabel,
+      humanReviewedPill: copy.humanReviewedPill,
+      introDescription: isPreview
+        ? copy.previewIntroDescription
+        : copy.introDescription({
+            companyName: interview?.companyName ?? "",
+            roleTitle: interview?.roleTitle ?? "",
+          }),
+      introHeading: copy.introHeading,
+      introPill: copy.introPill,
+      invitation: copy.invitation(interview?.companyName ?? ""),
+      lengthLabel: copy.lengthLabel,
+      lengthValue: estimatedMinutes
+        ? copy.durationShort(estimatedMinutes)
+        : copy.durationUnknown,
+      listeningNoteEmphasis: copy.listeningNoteEmphasis,
+      listeningNoteLead: copy.listeningNoteLead,
+      modesPill: modesLabel,
+      nameLabel: copy.nameLabel,
+      namePlaceholder: copy.namePlaceholder,
+      paceBody: copy.paceBody,
+      paceTitle: copy.paceTitle,
+      preflightHeading: copy.preflightHeading,
+      preflightSubtitle: copy.preflightSubtitle({
+        jobTitle: interview?.jobTitle ?? "",
+        minutes: estimatedMinutes,
+      }),
+      privacyPill: copy.privacyPill,
+      roleLabel: copy.roleLabel,
+      startButton: copy.startButton,
+      startFootnote: copy.startFootnote,
     }),
-    privacyPill: copy.privacyPill,
-    roleLabel: copy.roleLabel,
-    startButton: copy.startButton,
-    startFootnote: copy.startFootnote,
-  };
+    [copy, estimatedMinutes, interview, isPreview, modesLabel],
+  );
   const primaryStartLabel =
     isPreview && canStart
       ? copy.previewStart
@@ -1040,7 +1055,7 @@ export function LiveInterviewRoom({
         isStreaming={interviewerView.isStreaming}
         localStream={localStream}
         onEnableAudio={enableAudio}
-        quitLabel={copy.quit}
+        copy={copy}
         onEndInterview={endInterview}
         onConfirmPresence={confirmCandidatePresence}
         onContinueInWriting={continueInWriting}
@@ -1405,6 +1420,7 @@ function StatusPill({ status }: { status: RoomStatus }) {
 export function LiveInterviewStage({
   activeText,
   activeTurnId,
+  copy,
   elapsedSeconds,
   isAudioPlaybackBlocked,
   inactivityNotice,
@@ -1419,11 +1435,16 @@ export function LiveInterviewStage({
   onEndInterview,
   onRepeatQuestion,
   onSkipQuestion,
-  quitLabel,
   status,
 }: {
   activeText: string | null;
   activeTurnId: string | null;
+  // Legal ruling R5.2: the Quit control is the only in-interview way to withdraw
+  // consent, so it follows the consent language even though the rest of the
+  // stage is still English. Taking the whole copy table (like `AbandonedPanel`,
+  // the panel this control leads to) rather than one pre-picked string keeps the
+  // two halves of that flow reading from the same source.
+  copy: CandidateExperienceCopy;
   elapsedSeconds: number;
   isAudioPlaybackBlocked: boolean;
   inactivityNotice: CandidateInactivityNotice | null;
@@ -1438,9 +1459,6 @@ export function LiveInterviewStage({
   onEndInterview: () => void;
   onRepeatQuestion: () => void;
   onSkipQuestion: () => void;
-  // Legal ruling R5.2: the only in-interview way to withdraw. It follows the
-  // consent language even though the rest of the stage is still English.
-  quitLabel: string;
   status: RoomStatus;
 }) {
   const hasInterviewerLine = activeText !== null;
@@ -1622,7 +1640,7 @@ export function LiveInterviewStage({
           onClick={onEndInterview}
         >
           <HangUpIcon className="h-[15px] w-[15px]" />
-          {quitLabel}
+          {copy.quit}
         </Button>
         <span className="h-[22px] w-px bg-[rgba(244,243,239,0.12)]" />
         <span className="px-2 font-mono text-[13px] tabular-nums text-[#F4F3EF]">

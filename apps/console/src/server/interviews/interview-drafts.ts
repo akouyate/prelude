@@ -38,7 +38,7 @@ import { canManageRoles } from "../../domain/organization-permissions";
 import { getServerT } from "../../libs/i18n-server";
 import { getAuthenticatedUserLocale } from "../users/user-locale";
 import { resolveInterviewLanguage } from "../organizations/content-language";
-import { loadOrganizationContentLanguages } from "../organizations/organization-content-languages";
+import { readOrganizationContentLanguages } from "../organizations/organization-content-languages";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import {
   logInterviewGenerationEvent,
@@ -236,8 +236,18 @@ export async function saveInterviewDraft(
             ...draftData,
             language: resolveInterviewLanguage(
               selectedLanguage,
-              (await loadOrganizationContentLanguages(scope.organizationId))
-                .interviewDefault,
+              // Read through `tx`, not the global client: the transaction is
+              // already open here, and going through `prisma` would check out a
+              // SECOND pooled connection while holding this one — the classic
+              // way to deadlock a saturated pool under load.
+              readOrganizationContentLanguages(
+                (
+                  await tx.organization.findUniqueOrThrow({
+                    select: { settings: true },
+                    where: { id: scope.organizationId },
+                  })
+                ).settings,
+              ).interviewDefault,
             ),
           },
         });

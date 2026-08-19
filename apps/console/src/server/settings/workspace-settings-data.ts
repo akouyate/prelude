@@ -22,7 +22,10 @@ import {
 } from "../../domain/organization-permissions";
 import { getConsoleAuthIdentity } from "../auth/console-auth-provider";
 import { clerkOrganizationDirectory } from "../organizations/clerk-organization-directory";
-import { resolveWorkspaceLanguage } from "../organizations/content-language";
+import {
+  readWorkspaceLanguageValue,
+  resolveWorkspaceLanguage,
+} from "../organizations/content-language";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import { resolveDisplayCurrencyFromRequest } from "../../features/settings/settings-billing-helpers";
 import type {
@@ -496,9 +499,7 @@ export function parseOrganizationSettings(input: Prisma.JsonValue): {
     // Root-level on purpose: it is NOT an interview preference, even though the
     // candidate-facing `interview.defaultLanguage` sits one key away.
     workspaceLanguage: resolveWorkspaceLanguage(
-      typeof root.workspaceLanguage === "string"
-        ? root.workspaceLanguage
-        : null,
+      readWorkspaceLanguageValue(input),
     ),
   };
 }

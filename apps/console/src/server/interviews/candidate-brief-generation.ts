@@ -21,7 +21,10 @@ import {
   type CandidateSessionEvidence,
   type CandidateTranscriptTurn,
 } from "./live-session-evidence";
-import { resolveWorkspaceLanguage } from "../organizations/content-language";
+import {
+  readWorkspaceLanguageValue,
+  resolveWorkspaceLanguage,
+} from "../organizations/content-language";
 
 export const candidateBriefPromptVersion = "candidate-brief-v1";
 export const candidateBriefSchemaVersion = 1;
@@ -100,7 +103,7 @@ export async function generateCandidateBriefForSession({
   // Resolved here, on every run: a regeneration writes today's workspace
   // language, not whatever the previous attempt happened to be stamped with.
   const language = resolveWorkspaceLanguage(
-    readWorkspaceLanguageSetting(session.organization?.settings),
+    readWorkspaceLanguageValue(session.organization?.settings ?? null),
   );
   const criteria = readCriteria(session.interview.criteria);
   const evidence = await getCandidateSessionEvidence({
@@ -801,16 +804,6 @@ function readCriteria(value: unknown): BriefCriterion[] {
 
 function readQuestions(value: unknown) {
   return Array.isArray(value) ? value : [];
-}
-
-// `workspaceLanguage` sits at the ROOT of the Organization settings JSON (plan
-// 2026-08-18, rule 2). Read directly rather than through the settings page's
-// parser, which drags the whole workspace-settings loader (Clerk, billing,
-// request headers) into the brief pipeline.
-function readWorkspaceLanguageSetting(settings: unknown) {
-  return isRecord(settings) && typeof settings.workspaceLanguage === "string"
-    ? settings.workspaceLanguage
-    : null;
 }
 
 function isCriterion(value: unknown): value is {

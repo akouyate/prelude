@@ -10,6 +10,7 @@ import {
   buildAiCompliancePromptContext,
   generateDeterministicInterviewDraft,
   getInterviewPlanGuardrails,
+  promptLanguageNames,
   resolveTargetInterviewQuestionCount,
   textViolatesPolicy,
 } from "@prelude/core";
@@ -314,6 +315,11 @@ export function createDeterministicInterviewDraftGenerator(): InterviewDraftGene
       {
         ...draft,
         questions,
+        // TWIN ALERT: core's `generateDeterministicInterviewDraft` (the
+        // `...draft` above) already built a rationale of its own, differently
+        // worded and covered by its own tests; this line deliberately overrides
+        // it so the count matches the padded question list. Change either
+        // wording knowing the other exists.
         rationale: deterministicRationale(
           questions.length,
           input.workspaceLanguage,
@@ -511,11 +517,6 @@ function buildQuestionPromptInput(
   };
 }
 
-const languageNames: Record<WorkspaceLanguage, string> = {
-  en: "English",
-  fr: "French",
-};
-
 /**
  * The single output-language directive (plan 2026-08-18, rule 3).
  *
@@ -540,10 +541,10 @@ function outputLanguageDirective({
     "Keep the JSON keys and the category and source enum values exactly as specified in English, and never add a language field.";
 
   if (interviewLanguage === workspaceLanguage) {
-    return `Write every value in ${languageNames[interviewLanguage]}. ${schemaRule}`;
+    return `Write every value in ${promptLanguageNames[interviewLanguage]}. ${schemaRule}`;
   }
 
-  return `Write the questions, criteria, and guardrails in ${languageNames[interviewLanguage]}, the language this interview is conducted in, and write the rationale in ${languageNames[workspaceLanguage]}, because the rationale is builder copy addressed to the recruiter rather than to the candidate. ${schemaRule}`;
+  return `Write the questions, criteria, and guardrails in ${promptLanguageNames[interviewLanguage]}, the language this interview is conducted in, and write the rationale in ${promptLanguageNames[workspaceLanguage]}, because the rationale is builder copy addressed to the recruiter rather than to the candidate. ${schemaRule}`;
 }
 
 /**
@@ -563,10 +564,10 @@ function outputLanguageReminder({
   workspaceLanguage: WorkspaceLanguage;
 }) {
   if (interviewLanguage === workspaceLanguage) {
-    return `Reminder: write every value in ${languageNames[interviewLanguage]}.`;
+    return `Reminder: write every value in ${promptLanguageNames[interviewLanguage]}.`;
   }
 
-  return `Reminder: write the questions, criteria, and guardrails in ${languageNames[interviewLanguage]}, and the rationale in ${languageNames[workspaceLanguage]}.`;
+  return `Reminder: write the questions, criteria, and guardrails in ${promptLanguageNames[interviewLanguage]}, and the rationale in ${promptLanguageNames[workspaceLanguage]}.`;
 }
 
 function openAIDraftInstructions(input: InterviewDraftGenerationInput) {

@@ -13,6 +13,9 @@ const tx = vi.hoisted(() => ({
     findFirst: vi.fn(),
     update: vi.fn(),
   },
+  organization: {
+    findUniqueOrThrow: vi.fn(),
+  },
 }));
 
 const prismaMock = vi.hoisted(() => ({
@@ -42,8 +45,11 @@ const contentLanguages = vi.hoisted(() => ({
   workspace: "en" as "en" | "fr",
 }));
 
+// The org-settings read rides the same transaction now, so the sync reader is
+// what the save path calls; the settings blob itself is irrelevant here because
+// this mock stands in for parsing it.
 vi.mock("../organizations/organization-content-languages", () => ({
-  loadOrganizationContentLanguages: vi.fn(async () => contentLanguages),
+  readOrganizationContentLanguages: vi.fn(() => contentLanguages),
 }));
 
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
@@ -116,6 +122,7 @@ beforeEach(() => {
     id: "draft_1",
     updatedAt: new Date("2026-01-01T00:00:00Z"),
   });
+  tx.organization.findUniqueOrThrow.mockResolvedValue({ settings: {} });
 });
 
 describe("saveInterviewDraft N9 provenance", () => {

@@ -442,6 +442,19 @@ export const aiGuardrailsFr = [
 // dependency on the contracts package.
 export type GeneratedContentLanguage = "en" | "fr";
 
+/**
+ * How a language is NAMED inside an English prompt instruction ("Write every
+ * value in French"), which is why the names themselves are English.
+ *
+ * Not UI copy and never candidate- or recruiter-visible: this is prompt
+ * surface, shared by the role-draft generator and the candidate-brief
+ * synthesizer so the two output-language directives can never drift apart.
+ */
+export const promptLanguageNames: Record<GeneratedContentLanguage, string> = {
+  en: "English",
+  fr: "French",
+};
+
 export const sameQuestionOrderGuardrail =
   "Ask every candidate the same questions in the same order.";
 export const sameQuestionOrderGuardrailFr =

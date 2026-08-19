@@ -8,6 +8,7 @@ import {
   buildAiCompliancePromptContext,
   defaultComplianceFlags,
   disallowedQuestionTopics,
+  promptLanguageNames,
   recruiterLimitationCopy,
   sensitiveInformationHandlingRule,
 } from "@prelude/core";
@@ -19,11 +20,6 @@ import type {
 
 const OPENAI_RESPONSES_URL = "https://api.openai.com/v1/responses";
 const OPENAI_CANDIDATE_BRIEF_PROMPT_VERSION = "candidate-brief-v1";
-
-const outputLanguageNames: Record<WorkspaceLanguage, string> = {
-  en: "English",
-  fr: "French",
-};
 
 type FetchResponse = {
   json: () => Promise<unknown>;
@@ -158,7 +154,7 @@ function buildPromptInput(input: CandidateBriefSynthesizerInput) {
 export function buildCandidateBriefSystemInstructions(
   language: WorkspaceLanguage,
 ) {
-  const languageName = outputLanguageNames[language];
+  const languageName = promptLanguageNames[language];
 
   // Source rationale: docs/sources/evaluation-matrix.md and docs/sources/compliance-guardrails.md.
   return [

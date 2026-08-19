@@ -68,6 +68,7 @@ export {
   forbiddenAutomatedDecisionPhrases,
   getInterviewPlanGuardrails,
   humanInLoopRule,
+  promptLanguageNames,
   protectedTopicCategories,
   recruiterLimitationCopy,
   recruiterLimitationCopyVersion,
