@@ -11,6 +11,7 @@ const tx = vi.hoisted(() => ({
   },
   liveInterviewSession: {
     deleteMany: vi.fn(),
+    findMany: vi.fn(),
   },
 }));
 
@@ -40,6 +41,7 @@ beforeEach(() => {
   vi.stubEnv("APP_ENV", "development");
   vi.stubEnv("NEXT_PUBLIC_CANDIDATE_URL", "https://candidate.hirecall.test");
   tx.candidateExperiencePreview.findMany.mockResolvedValue([]);
+  tx.liveInterviewSession.findMany.mockResolvedValue([]);
   tx.candidateExperiencePreview.create.mockImplementation(({ data }) =>
     Promise.resolve(data),
   );
@@ -155,6 +157,56 @@ describe("createCandidateExperiencePreview", () => {
     expect(tx.candidateExperiencePreview.deleteMany).toHaveBeenCalledWith({
       where: { id: { in: ["pv_expired"] } },
     });
+  });
+
+  /*
+   * The recording foreign key is ON DELETE RESTRICT (a recording row is the only
+   * handle on an R2 audio object, so cascading it away orphans the audio). This
+   * cleanup deletes live interview sessions, and it runs INSIDE the transaction
+   * that creates a preview — so a session Postgres refuses to delete would not
+   * just skip a row, it would fail the recruiter's preview creation with a
+   * foreign-key error.
+   *
+   * Preview sessions are never recorded, so this should be unreachable; the guard
+   * is what keeps it unreachable in consequence as well as in intent.
+   */
+  it("leaves a preview alone when its session still holds a recording", async () => {
+    tx.candidateExperiencePreview.findMany.mockResolvedValueOnce([
+      { id: "pv_expired" },
+      { id: "pv_recorded" },
+    ]);
+    tx.liveInterviewSession.findMany.mockResolvedValueOnce([
+      { interviewPlanId: "pv_recorded" },
+    ]);
+
+    await createCandidateExperiencePreview("draft_1");
+
+    // The session delete never even offers the blocked id to Postgres...
+    expect(tx.liveInterviewSession.deleteMany).toHaveBeenCalledWith({
+      where: {
+        interviewPlanId: { in: ["pv_expired"] },
+        kind: "preview",
+      },
+    });
+    // ...and its snapshot is kept too, so the session it belongs to stays
+    // resolvable while its audio is still out there.
+    expect(tx.candidateExperiencePreview.deleteMany).toHaveBeenCalledWith({
+      where: { id: { in: ["pv_expired"] } },
+    });
+  });
+
+  it("skips both deletes when every expired preview still holds a recording", async () => {
+    tx.candidateExperiencePreview.findMany.mockResolvedValueOnce([
+      { id: "pv_recorded" },
+    ]);
+    tx.liveInterviewSession.findMany.mockResolvedValueOnce([
+      { interviewPlanId: "pv_recorded" },
+    ]);
+
+    await createCandidateExperiencePreview("draft_1");
+
+    expect(tx.liveInterviewSession.deleteMany).not.toHaveBeenCalled();
+    expect(tx.candidateExperiencePreview.deleteMany).not.toHaveBeenCalled();
   });
 });
 

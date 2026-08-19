@@ -856,11 +856,23 @@ const (
 )
 
 // EraseRecordingsForSession deletes the audio object and tombstones the row for
-// every recording of a session — the right-to-erasure path, and the fix for the
-// schema's onDelete:Cascade, which would drop the rows but orphan the R2 objects.
+// every recording of a session. It is THE audio-erasure path — the only code
+// anywhere that removes an object from R2 — and the reason
+// `LiveInterviewRecording.session` is `onDelete: Restrict` rather than Cascade: a
+// recording row is the only handle on its object (it carries the object_key), so
+// cascading rows away on a session delete would strand the audio. The database
+// now refuses that delete, which leaves this function as the single way audio
+// legitimately disappears.
+//
 // It is idempotent: already-deleted rows are skipped, so a retry only re-attempts
 // what failed. It returns how many it erased and the first error encountered, so
 // the caller can retry on partial failure rather than assume full erasure.
+//
+// Note that erasure KEEPS the rows (tombstoned, object_key cleared), so running
+// it does not make a session deletable. A deliberate hard-delete must erase the
+// audio here, verify every row is a tombstone, then remove the recording rows and
+// the session explicitly — see "Deleting A Session On Purpose" in
+// docs/architecture/live-ia-interviewer.md.
 func (s *Service) EraseRecordingsForSession(ctx context.Context, sessionID string) (int, error) {
 	if s.objectStore == nil || s.recordings == nil {
 		return 0, nil

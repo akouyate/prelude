@@ -56,6 +56,15 @@ also refuses to start without:
   at boot** (#161).
 - `RECORDING_RETENTION_DAYS` ≠ `0` — production refuses that too, since it
   contradicts the 90-day deletion promise in the consent copy.
+- ⚠️ **An R2 bucket lifecycle rule is a backstop, never the deletion itself.**
+  What honours the promise is the application: the retention sweep and the
+  erasure endpoint delete the object first, then tombstone the row, and the
+  recording foreign key is `ON DELETE RESTRICT` so no session delete can orphan
+  audio behind their backs. Set a lifecycle rule if you want a net under that —
+  at a horizon *no shorter* than `RECORDING_RETENTION_DAYS`, so it can only ever
+  catch what the sweep missed — but never treat it as the mechanism: it expires
+  objects on Cloudflare's schedule, which would mean telling a candidate their
+  audio is deleted when it is merely scheduled to be.
 - ⚠️ **`RECORDING_ENABLED` must carry the same value on the candidate app *and*
   the console.** See both app sections below: this service decides whether to
   record, the candidate app decides what the candidate is told, the console

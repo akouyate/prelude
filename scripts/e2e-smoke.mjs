@@ -1264,9 +1264,20 @@ async function deleteSmokeData(runId) {
 
   try {
     await prisma.$transaction(async (tx) => {
-      // Runtime evidence. Events and recordings cascade from the session, but
-      // the session itself is tied to the candidate session by a plain id
-      // column (no FK), so nothing deletes it for us.
+      // Runtime evidence. Events cascade from the session, but the session
+      // itself is tied to the candidate session by a plain id column (no FK),
+      // so nothing deletes it for us.
+      //
+      // RECORDINGS DO NOT CASCADE — that foreign key is ON DELETE RESTRICT,
+      // because a recording row is the only handle on an audio object in R2 and
+      // cascading it away would orphan the audio. The smoke never records
+      // (RECORDING_ENABLED is off, and it seeds no recording rows), so nothing
+      // here is blocked today. If a run ever does produce one, this delete is
+      // refused and describeBlockingReferences() below names
+      // live_interview_recordings in the error. That is the correct outcome:
+      // --reset must not be taught to delete recording rows, because deleting
+      // one is only safe after its audio has actually been erased through the
+      // realtime service. Erase it there first, then re-run --reset.
       await tx.liveInterviewEvent.deleteMany({
         where: { sessionId: ids.realtimeSessionId },
       });

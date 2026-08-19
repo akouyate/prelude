@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/url"
 	"sort"
 	"strconv"
@@ -45,6 +46,21 @@ func (s *PostgresStore) Close() error {
 // PurgeExpiredCandidatePreviewData removes preview sessions first so their
 // transcript events cascade, then removes the corresponding immutable draft
 // snapshots. Preview audio is never recorded by the application service.
+//
+// This is one of only two places that delete a `live_interview_sessions` row, so
+// it is directly exposed to the recording foreign key, which is ON DELETE
+// RESTRICT (a recording row is the only handle on an R2 audio object; cascading
+// it away would orphan the audio — see the constraint in schema.prisma).
+//
+// A preview can never hold a recording: startRecordingIfNeeded returns early for
+// SessionKindPreview, so no egress is ever started for one. The `not exists`
+// guard below is therefore about what happens if that ever stops being true.
+// Without it, a single such row would raise 23503 and roll the whole transaction
+// back — taking the preview-snapshot cleanup with it — and the sweep would stay
+// wedged on every subsequent tick, for every workspace. Stepping around the row
+// instead keeps storage limitation working for everyone else, and the skipped
+// session is logged loudly: its audio still exists, and only the erasure path
+// (EraseRecordingsForSession) may remove it.
 func (s *PostgresStore) PurgeExpiredCandidatePreviewData(ctx context.Context, cutoff time.Time) (int64, error) {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
@@ -57,10 +73,25 @@ func (s *PostgresStore) PurgeExpiredCandidatePreviewData(ctx context.Context, cu
 		where kind = 'preview'
 		  and expires_at is not null
 		  and expires_at <= $1
+		  and not exists (
+		    select 1
+		    from live_interview_recordings
+		    where live_interview_recordings.session_id = live_interview_sessions.id
+		  )
 	`, cutoff)
 	if err != nil {
 		return 0, err
 	}
+	if err := s.warnAboutUnpurgeablePreviews(ctx, tx, cutoff); err != nil {
+		return 0, err
+	}
+	// Deliberately not correlated with the sessions skipped above, unlike the
+	// console's own preview cleanup, which keeps a blocked preview's snapshot and
+	// session together so the pair stays resolvable. Here the asymmetry is
+	// harmless: a preview never records (startRecordingIfNeeded returns early on
+	// SessionKindPreview), so the skipped set is empty in practice, and even if
+	// drift made it non-empty the recording row and its object key would survive
+	// — which is the invariant this file exists to protect.
 	previewsResult, err := tx.ExecContext(ctx, `
 		delete from "CandidateExperiencePreview"
 		where coalesce("runtimeExpiresAt", "expiresAt") <= $1
@@ -81,6 +112,56 @@ func (s *PostgresStore) PurgeExpiredCandidatePreviewData(ctx context.Context, cu
 		return 0, err
 	}
 	return sessionsDeleted + previewsDeleted, nil
+}
+
+// warnAboutUnpurgeablePreviews names the expired preview sessions the sweep just
+// stepped over because they still hold recording rows. Silence would be the wrong
+// outcome twice over: storage limitation is not being honoured for those sessions,
+// and their existence means a preview got recorded, which the application is not
+// supposed to allow. Logged at ERROR because both facts want a human.
+//
+// Reading inside the same transaction keeps the count consistent with the delete
+// that just ran.
+func (s *PostgresStore) warnAboutUnpurgeablePreviews(ctx context.Context, tx *sql.Tx, cutoff time.Time) error {
+	rows, err := tx.QueryContext(ctx, `
+		select live_interview_sessions.id
+		from live_interview_sessions
+		where kind = 'preview'
+		  and expires_at is not null
+		  and expires_at <= $1
+		  and exists (
+		    select 1
+		    from live_interview_recordings
+		    where live_interview_recordings.session_id = live_interview_sessions.id
+		  )
+		order by live_interview_sessions.id
+		limit 20
+	`, cutoff)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var blocked []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		blocked = append(blocked, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(blocked) > 0 {
+		slog.Error(
+			"expired preview sessions were not purged because they still hold recording rows; erase their audio via the realtime erasure path, then remove the recording rows explicitly before the session",
+			"session_ids", strings.Join(blocked, ","),
+			"count", len(blocked),
+		)
+	}
+
+	return nil
 }
 
 // DeleteEventsForSession erases a session's transcript by deleting its event
