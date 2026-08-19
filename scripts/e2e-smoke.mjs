@@ -94,23 +94,34 @@ async function runSmoke({ allowLiveLlm, baseUrl, language, reset, runId }) {
   const publicToken = `iv_e2e_${runId}`;
   const candidateInvitationToken = `ci_e2e_${runId}`;
   const resumeToken = `resume_e2e_${runId}`;
-  const realtimeSessionId = `is_e2e_${runId}`;
-  const candidateSessionId = `cs_e2e_${runId}`;
+  // Same source of truth the reset path deletes from.
+  const { candidateSessionId, realtimeSessionId } = ids;
 
   await prisma.$transaction(async (tx) => {
+    // SHARED ROW. `user_demo` is the local dev identity, not a run fixture, so
+    // its name and email are seeded once and never overwritten — a smoke run
+    // must not rename the person sitting in front of the console.
     const user = await tx.user.upsert({
       create: {
         clerkUserId: ids.clerkUserId,
         email: recruiterEmail,
         name: "HireCall E2E Recruiter",
       },
-      update: {
-        email: recruiterEmail,
-        name: "HireCall E2E Recruiter",
-      },
+      update: {},
       where: { clerkUserId: ids.clerkUserId },
     });
 
+    // SHARED ROW — see deleteSmokeData(). The workspace belongs to whoever uses
+    // the local console, so its identity (name), its onboarding profile and its
+    // onboarding progress are seeded on CREATE only. A run that renamed an
+    // existing workspace to "HireCall E2E <runId>" is exactly the surprise this
+    // avoids. The ONLY field refreshed on update is `settings`, because the
+    // run's Pass decision asserts the workspace language matches the run's
+    // language — and it is merged, so unrelated settings keys survive.
+    const existingOrganization = await tx.organization.findUnique({
+      select: { settings: true },
+      where: { clerkOrganizationId: ids.clerkOrganizationId },
+    });
     const organization = await tx.organization.upsert({
       create: {
         clerkOrganizationId: ids.clerkOrganizationId,
@@ -131,13 +142,10 @@ async function runSmoke({ allowLiveLlm, baseUrl, language, reset, runId }) {
         settings: organizationLanguageSettings(language),
       },
       update: {
-        companySize: "11-50",
-        defaultInterviewMode: "audio",
-        hiringFocus: "recruiting",
-        name: `HireCall E2E ${runId}`,
-        onboardingCompletedAt: now,
-        onboardingStep: "done",
-        settings: organizationLanguageSettings(language),
+        settings: organizationLanguageSettings(
+          language,
+          existingOrganization?.settings,
+        ),
       },
       where: { clerkOrganizationId: ids.clerkOrganizationId },
     });
@@ -150,11 +158,9 @@ async function runSmoke({ allowLiveLlm, baseUrl, language, reset, runId }) {
         status: "active",
         userId: user.id,
       },
-      update: {
-        onboardingRole: "owner",
-        role: "owner",
-        status: "active",
-      },
+      // SHARED ROW. If the membership already exists, its role and status are
+      // the dev's own — a smoke run must not silently promote or reactivate it.
+      update: {},
       where: {
         organizationId_userId: {
           organizationId: organization.id,
@@ -170,10 +176,9 @@ async function runSmoke({ allowLiveLlm, baseUrl, language, reset, runId }) {
         provider: "manual",
         status: "manual",
       },
-      update: {
-        externalLabel: "Manual smoke role",
-        status: "manual",
-      },
+      // SHARED ROW: keyed by (organization, provider), not by run. Its label is
+      // seeded once and left alone afterwards.
+      update: {},
       where: {
         organizationId_provider: {
           organizationId: organization.id,
@@ -888,9 +893,17 @@ function smokeContent(language) {
   return language === "fr" ? frenchSmokeContent() : englishSmokeContent();
 }
 
-function organizationLanguageSettings(language) {
+/**
+ * The two language keys the run asserts, merged over whatever the workspace
+ * already had. Replacing the settings blob wholesale would drop unrelated keys
+ * a developer set by hand — the shared org is not the run's to overwrite.
+ */
+function organizationLanguageSettings(language, existingSettings) {
+  const base = isRecord(existingSettings) ? existingSettings : {};
+  const interview = isRecord(base.interview) ? base.interview : {};
   return {
-    interview: { defaultLanguage: language },
+    ...base,
+    interview: { ...interview, defaultLanguage: language },
     workspaceLanguage: language,
   };
 }
@@ -1225,79 +1238,192 @@ function frenchSmokeContent() {
   };
 }
 
+/**
+ * Undo exactly one run's fixtures — and nothing else.
+ *
+ * The organization (`org_demo` by default) and the recruiter user (`user_demo`)
+ * are SHARED with local development, by design: the smoke seeds into them so
+ * its data appears under the mock identity the console signs you in as. Every
+ * run upserts them; no run owns them. Deleting the org would take the entire
+ * local workspace with it, because Prisma cascades an Organization delete into
+ * CandidateBrief, CandidateSessionReviewEvent, CandidateExperiencePreview,
+ * CandidateScheduledCall, ConnectedAccount, RoleIntake, NotificationDelivery,
+ * OrganizationInvitation and OrganizationBillingState — hand-made dev data no
+ * smoke run created. The billing tables (CreditWallet/-Lot/-LedgerEntry/
+ * -Reservation) are `onDelete: Restrict`, which is the only reason that
+ * deletion has been failing loudly instead of silently destroying the rest.
+ *
+ * So --reset removes run-scoped rows by their `*_e2e_<runId>` ids and leaves
+ * the workspace, its members and its billing state untouched. This is also what
+ * the Makefile documents: "resets only that run's data".
+ *
+ * Deletion order is FK-safe on purpose: children first, the job last.
+ */
 async function deleteSmokeData(runId) {
   const ids = idsFor(runId);
-  const organization = await prisma.organization.findUnique({
-    select: { id: true },
-    where: { clerkOrganizationId: ids.clerkOrganizationId },
-  });
-  const user = await prisma.user.findUnique({
-    select: { id: true },
-    where: { clerkUserId: ids.clerkUserId },
-  });
 
-  if (!organization && !user) {
-    return;
-  }
-
-  await prisma.$transaction(async (tx) => {
-    if (organization) {
-      const runtimeIds = await tx.candidateSession.findMany({
-        select: { realtimeSessionId: true },
-        where: { organizationId: organization.id },
-      });
-      const sessionIds = runtimeIds
-        .map((session) => session.realtimeSessionId)
-        .filter(Boolean);
-
-      await tx.candidateBrief.deleteMany({
-        where: { organizationId: organization.id },
-      });
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Runtime evidence. Events and recordings cascade from the session, but
+      // the session itself is tied to the candidate session by a plain id
+      // column (no FK), so nothing deletes it for us.
       await tx.liveInterviewEvent.deleteMany({
-        where: { sessionId: { in: sessionIds } },
+        where: { sessionId: ids.realtimeSessionId },
       });
       await tx.liveInterviewSession.deleteMany({
-        where: { id: { in: sessionIds } },
+        where: { id: ids.realtimeSessionId },
+      });
+
+      // Everything hanging off this run's candidate session.
+      await tx.candidateBrief.deleteMany({
+        where: { candidateSessionId: ids.candidateSessionId },
+      });
+      await tx.candidateSessionReviewEvent.deleteMany({
+        where: { candidateSessionId: ids.candidateSessionId },
+      });
+      await tx.candidateScheduledCall.deleteMany({
+        where: { candidateSessionId: ids.candidateSessionId },
+      });
+      await tx.notificationDelivery.deleteMany({
+        where: { candidateSessionId: ids.candidateSessionId },
       });
       await tx.candidateSession.deleteMany({
-        where: { organizationId: organization.id },
+        where: { id: ids.candidateSessionId },
       });
       await tx.candidateInvitation.deleteMany({
-        where: { organizationId: organization.id },
+        where: { id: ids.candidateInvitationId },
       });
-      await tx.interview.deleteMany({
-        where: { organizationId: organization.id },
-      });
-      await tx.interviewDraft.deleteMany({
-        where: { organizationId: organization.id },
-      });
-      await tx.jobSourceConnection.deleteMany({
-        where: { organizationId: organization.id },
-      });
-      await tx.job.deleteMany({ where: { organizationId: organization.id } });
-      await tx.organizationMembership.deleteMany({
-        where: { organizationId: organization.id },
-      });
-      await tx.organization.delete({ where: { id: organization.id } });
-    }
 
-    if (user) {
-      await tx.organizationMembership.deleteMany({
-        where: { userId: user.id },
+      // The published snapshot, then the draft it was published from.
+      await tx.candidateExperiencePreview.deleteMany({
+        where: { draftId: ids.draftId },
       });
-      await tx.user.delete({ where: { id: user.id } });
+      await tx.interview.deleteMany({ where: { id: ids.interviewId } });
+      await tx.interviewDraft.deleteMany({ where: { id: ids.draftId } });
+
+      // The job is the last parent standing.
+      await tx.job.deleteMany({ where: { id: ids.jobId } });
+    });
+  } catch (error) {
+    if (!isForeignKeyViolation(error)) {
+      throw error;
     }
-  });
+    // A model was added that points at one of the rows above, and the list was
+    // never extended. Name the table that is actually holding the row, so the
+    // next schema addition fails with something you can act on rather than a
+    // bare constraint name.
+    const blocking = await describeBlockingReferences(ids);
+    if (blocking.length === 0) {
+      throw error;
+    }
+    throw new Error(
+      `e2e-smoke --reset could not remove run "${runId}": rows still reference it in ` +
+        `${blocking.join(", ")}. Add those table(s) to deleteSmokeData() in scripts/e2e-smoke.mjs.`,
+      { cause: error },
+    );
+  }
+}
+
+/**
+ * The run-scoped rows --reset owns, keyed by their PHYSICAL table name (three
+ * live-interview models are @@map-ed, so the Prisma model name is not the table
+ * name the Postgres catalog knows).
+ */
+function resetTargets(ids) {
+  return [
+    { ids: [ids.candidateInvitationId], table: "CandidateInvitation" },
+    { ids: [ids.candidateSessionId], table: "CandidateSession" },
+    { ids: [ids.interviewId], table: "Interview" },
+    { ids: [ids.draftId], table: "InterviewDraft" },
+    { ids: [ids.jobId], table: "Job" },
+    { ids: [ids.realtimeSessionId], table: "live_interview_sessions" },
+  ];
+}
+
+function isForeignKeyViolation(error) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+  // P2003 is Prisma's foreign-key error; 23503 is the Postgres SQLSTATE that
+  // reaches us when a raw query is what tripped.
+  return error.code === "P2003" || error.code === "23503";
+}
+
+function quoteSqlLiteral(value) {
+  return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+/**
+ * Ask the database — not a hand-maintained list — which tables still hold rows
+ * that BLOCK deleting this run's rows. Reads pg_constraint, so a model added
+ * tomorrow is discovered without touching this function.
+ */
+async function describeBlockingReferences(ids) {
+  const targets = resetTargets(ids);
+  const parentList = targets
+    .map((target) => quoteSqlLiteral(target.table))
+    .join(", ");
+  const references = await prisma.$queryRawUnsafe(`
+    SELECT child.relname::text AS child_table,
+           attribute.attname::text AS child_column,
+           parent.relname::text AS parent_table
+    FROM pg_constraint constraint_row
+    JOIN pg_class child ON child.oid = constraint_row.conrelid
+    JOIN pg_class parent ON parent.oid = constraint_row.confrelid
+    JOIN LATERAL unnest(constraint_row.conkey) AS key(attnum) ON true
+    JOIN pg_attribute attribute
+      ON attribute.attrelid = child.oid AND attribute.attnum = key.attnum
+    WHERE constraint_row.contype = 'f'
+      AND parent.relname IN (${parentList})
+      -- Only constraints that can actually BLOCK a delete. 'c' (cascade), 'n'
+      -- (set null) and 'd' (set default) resolve themselves, so listing them
+      -- would bury the one table that is really in the way.
+      AND constraint_row.confdeltype IN ('a', 'r')
+  `);
+
+  const idsByTable = new Map(
+    targets.map((target) => [target.table, target.ids]),
+  );
+  const blocking = [];
+  for (const reference of references) {
+    const parentIds = idsByTable.get(reference.parent_table);
+    if (!parentIds || parentIds.length === 0) {
+      continue;
+    }
+    const valueList = parentIds.map(quoteSqlLiteral).join(", ");
+    const [row] = await prisma.$queryRawUnsafe(
+      `SELECT count(*)::int AS count FROM "${reference.child_table}" ` +
+        `WHERE "${reference.child_column}" IN (${valueList})`,
+    );
+    const count = Number(row?.count ?? 0);
+    if (count > 0) {
+      blocking.push(
+        `${reference.child_table}.${reference.child_column} (${count} row${
+          count === 1 ? "" : "s"
+        } referencing ${reference.parent_table})`,
+      );
+    }
+  }
+
+  return [...new Set(blocking)].sort();
 }
 
 function idsFor(runId) {
   return {
+    // The workspace identity is SHARED with local development on purpose: the
+    // smoke seeds into the org the mock recruiter signs in as, so the seeded
+    // data is visible in the console. It is therefore never run-owned, and
+    // never deleted by --reset. See deleteSmokeData().
     clerkOrganizationId: process.env.MOCK_CLERK_ORG_ID || "org_demo",
     clerkUserId: process.env.MOCK_CLERK_USER_ID || "user_demo",
+    // Everything below is scoped to THIS run, and is exactly what --reset
+    // removes. Keep this list and deleteSmokeData() in sync.
     candidateInvitationId: `cinv_e2e_${runId}`,
+    candidateSessionId: `cs_e2e_${runId}`,
     draftId: `idraft_e2e_${runId}`,
     interviewId: `interview_e2e_${runId}`,
     jobId: `job_e2e_${runId}`,
+    realtimeSessionId: `is_e2e_${runId}`,
   };
 }
 
