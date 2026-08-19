@@ -1,10 +1,6 @@
 "use client";
 
 import {
-  candidateConsentCopy,
-  candidateConsentCopyVersion,
-  candidateDisclosureCopy,
-  candidateDisclosureCopyVersion,
   textViolatesPolicy,
   type InterviewAgentDraft,
   type InterviewFocus,
@@ -62,6 +58,7 @@ import {
   candidateLinkLabel as formatCandidateLinkLabel,
 } from "../../libs/candidate-app-url";
 import { useCopyLinkFeedback } from "../../libs/use-copy-link-feedback";
+import { candidateTrustCopyFor } from "./candidate-trust-copy";
 import { resolveInterviewLanguage } from "../../server/organizations/content-language";
 import {
   addInterviewQuestionAction,
@@ -211,6 +208,12 @@ type InterviewAgentBuilderProps = {
   initialJobLocation?: string;
   initialJobTitle?: string;
   initialSourceUrl?: string;
+  // Resolved SERVER-side from `RECORDING_ENABLED` (one of the three readers —
+  // see src/server/interviews/recording-state.ts) and threaded down, because a
+  // client component cannot read the deployment config. It picks which of the
+  // two v3 consent variants the trust panel quotes; defaulting it to `false`
+  // keeps the fail-closed direction if a caller ever forgets to pass it.
+  recordingActive?: boolean;
   // Recruiter-bound copy written client-side follows the WORKSPACE language,
   // never the interview language (plan 2026-08-18, rule 1).
   workspaceLanguage?: WorkspaceLanguage;
@@ -263,6 +266,7 @@ export function InterviewAgentBuilder({
   initialJobLocation = "",
   initialJobTitle = "",
   initialSourceUrl,
+  recordingActive = false,
   workspaceLanguage = "en",
 }: InterviewAgentBuilderProps) {
   const router = useRouter();
@@ -1109,11 +1113,13 @@ export function InterviewAgentBuilder({
               companyName={companyName}
               complianceReview={complianceReview}
               draft={draft}
+              interviewLanguage={interviewLanguage}
               isPublishing={isPublishingDraft}
               isPreviewing={isOpeningPreview}
               isSaving={isSavingDraft}
               modes={modes}
               publishedInterview={publishedInterview}
+              recordingActive={recordingActive}
               roleBrief={jobDescription}
               roleTitle={jobTitle}
               saveError={saveError}
@@ -2048,11 +2054,13 @@ function ShareStep({
   companyName,
   complianceReview,
   draft,
+  interviewLanguage,
   isPublishing,
   isPreviewing,
   isSaving,
   modes,
   publishedInterview,
+  recordingActive,
   roleBrief,
   roleTitle,
   saveError,
@@ -2067,11 +2075,13 @@ function ShareStep({
   companyName: string;
   complianceReview?: ComplianceReviewPrompt;
   draft: InterviewAgentDraft;
+  interviewLanguage: WorkspaceLanguage;
   isPublishing: boolean;
   isPreviewing: boolean;
   isSaving: boolean;
   modes: ResponseMode[];
   publishedInterview?: Extract<PublishInterviewDraftResult, { ok: true }>;
+  recordingActive: boolean;
   roleBrief: string;
   roleTitle: string;
   saveError?: string;
@@ -2165,7 +2175,10 @@ function ShareStep({
         )}
       </div>
 
-      <CandidateTrustPanel />
+      <CandidateTrustPanel
+        interviewLanguage={interviewLanguage}
+        recordingActive={recordingActive}
+      />
 
       {complianceReview ? (
         <ComplianceOverridePanel
@@ -2346,44 +2359,71 @@ function ComplianceOverridePanel({
 }
 
 // N15: read-only transparency panel. Shows the recruiter the exact AI
-// disclosure + consent copy the candidate is shown before they start, sourced
-// verbatim from @prelude/core (candidate-disclosure-v2 / candidate-consent-v2).
-// No new persistence — this is a confirmation surface only.
-function CandidateTrustPanel() {
+// disclosure + consent copy the candidate is shown before they start, resolved
+// through the same two @prelude/core selectors the candidate app calls
+// (`candidate-trust-copy.ts`). It used to print the frozen v2 English constants,
+// which broke the panel's own promise on both axes: a French screen was quoted
+// in English, and a deployment with recording off was quoted a variant that
+// promises a recording. No new persistence — this is a confirmation surface.
+//
+// Two languages meet in this component on purpose. The statutory TEXTS render
+// in the INTERVIEW language, because that is what the candidate reads and
+// quoting them in any other language would defeat the panel. The panel's own
+// chrome (heading, lead, section labels) renders in the RECRUITER's console
+// language, like every other label in this file.
+function CandidateTrustPanel({
+  interviewLanguage,
+  recordingActive,
+}: {
+  interviewLanguage: WorkspaceLanguage;
+  recordingActive: boolean;
+}) {
+  const { t } = useTranslation();
+  const { consent, disclosure } = candidateTrustCopyFor(
+    interviewLanguage,
+    recordingActive,
+  );
+
   return (
     <div className="rounded-3xl border border-ink-100 bg-white/72 p-5">
       <div className="flex items-center gap-2 text-sm font-semibold text-ink-900">
         <ShieldCheck aria-hidden="true" className="h-4 w-4 text-ink-700" />
-        Candidate trust &amp; disclosure
+        {t("interviewBuilder.trustHeading")}
       </div>
       <p className="mt-2 text-sm leading-6 text-ink-600">
-        Before publishing, confirm exactly what every candidate is told and
-        agrees to when they start this screen. This copy is shown to the
-        candidate and can&apos;t be edited here.
+        {t("interviewBuilder.trustLead")}
       </p>
 
       <div className="mt-4 space-y-3">
         <div className="rounded-2xl border border-ink-100 bg-white/80 p-4">
           <p className="text-xs font-semibold uppercase tracking-[0.06em] text-ink-400">
-            AI disclosure
+            {t("interviewBuilder.trustDisclosureLabel")}
           </p>
-          <p className="mt-2 text-sm leading-6 text-ink-700">
-            {candidateDisclosureCopy}
+          {/* `lang` so a screen reader announces the candidate's text in the
+              candidate's language, not the recruiter's. */}
+          <p
+            className="mt-2 text-sm leading-6 text-ink-700"
+            lang={interviewLanguage}
+          >
+            {disclosure.text}
           </p>
           <p className="mt-2 text-[11.5px] font-medium text-ink-400">
-            {candidateDisclosureCopyVersion}
+            {disclosure.version}
           </p>
         </div>
 
         <div className="rounded-2xl border border-ink-100 bg-white/80 p-4">
           <p className="text-xs font-semibold uppercase tracking-[0.06em] text-ink-400">
-            Candidate consent
+            {t("interviewBuilder.trustConsentLabel")}
           </p>
-          <p className="mt-2 text-sm leading-6 text-ink-700">
-            {candidateConsentCopy}
+          <p
+            className="mt-2 text-sm leading-6 text-ink-700"
+            lang={interviewLanguage}
+          >
+            {consent.text}
           </p>
           <p className="mt-2 text-[11.5px] font-medium text-ink-400">
-            {candidateConsentCopyVersion}
+            {consent.version}
           </p>
         </div>
       </div>

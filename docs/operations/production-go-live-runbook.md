@@ -56,10 +56,11 @@ also refuses to start without:
   at boot** (#161).
 - `RECORDING_RETENTION_DAYS` ≠ `0` — production refuses that too, since it
   contradicts the 90-day deletion promise in the consent copy.
-- ⚠️ **`RECORDING_ENABLED` must carry the same value on the candidate app.** See
-  the candidate app section below: this service decides whether to record, the
-  candidate app decides what the candidate is told, and only one of the two can
-  be right if they disagree.
+- ⚠️ **`RECORDING_ENABLED` must carry the same value on the candidate app *and*
+  the console.** See both app sections below: this service decides whether to
+  record, the candidate app decides what the candidate is told, the console
+  decides what the recruiter is shown before publishing — and only one of the
+  three can be right if they disagree.
 
 **Python interviewer agent** (`services/interviewer-agent`, the autoworker):
 
@@ -75,23 +76,38 @@ also refuses to start without:
   is set, the candidate app falls back to `http://127.0.0.1:8080` and live
   interviews break. Set `PRELUDE_REALTIME_API_URL` to the deployed Go API.
 - `APP_ENV=production`, `DATABASE_URL`.
-- ⚠️ `RECORDING_ENABLED` — **the same value as the Go realtime service**, set from
-  the same deployment config. The realtime service reads it to decide whether to
-  start an egress; the candidate app reads it to decide what the candidate is
-  told, choosing between the two v3 consent variants and stamping the one it
-  rendered (`candidate-consent-v3` with recording, `candidate-consent-v3-no-recording`
-  without). A mismatch cannot open a hole: the realtime recording gate accepts
-  only the audio-disclosing consent ids, so an app with the flag off stamps a
-  no-recording version and the service then declines to record — the mismatch
-  fails **closed**, never into a recording the candidate was not told about. What
-  it does produce is a deployment that pays for egress config and captures
-  nothing, or promises a replay recruiters never get. Set both, or neither.
+- ⚠️ `RECORDING_ENABLED` — **the same value as the Go realtime service and the
+  console**, set from the same deployment config. Three processes read this flag:
+  the realtime service, to decide whether to start an egress; the candidate app,
+  to decide what the candidate is told, choosing between the two v3 consent
+  variants and stamping the one it rendered (`candidate-consent-v3` with
+  recording, `candidate-consent-v3-no-recording` without); and the console, to
+  quote that same variant back to the recruiter before they publish. They cannot
+  disagree about what "on" **means** — the two TypeScript readers share one parse
+  rule, `parseRecordingEnabled` in `@prelude/core` (`policies/recording.ts`),
+  whose accepted spellings are pinned by test against the Go switch, so drift
+  fails the build instead of shipping. A mismatch in the flag's **value** cannot
+  open a hole either: the realtime recording gate accepts only the
+  audio-disclosing consent ids, so an app with the flag off stamps a no-recording
+  version and the service then declines to record — the mismatch fails
+  **closed**, never into a recording the candidate was not told about. What it
+  does produce is a deployment that pays for egress config and captures nothing,
+  or promises a replay recruiters never get. Set all three, or none.
 
 **Console app** (`apps/console`):
 
 - `CONSOLE_AUTH_PROVIDER=clerk` with real Clerk keys (mock auth is refused in
   production), `DATABASE_URL`, `INTERVIEW_DRAFT_GENERATOR=openai` +
   `OPENAI_API_KEY`, and the protected-topic classifier config.
+- ⚠️ `RECORDING_ENABLED` — **the same value as the Go realtime service and the
+  candidate app**, for the same reason and from the same deployment config. The
+  console is the third reader: the pre-publish trust panel quotes the AI
+  disclosure and consent text a candidate will actually be shown, in the
+  interview's own language, and it picks between the two v3 variants with this
+  flag. Leave it unset here and recruiters approve copy their candidates never
+  see. The parse rule is shared with the candidate app
+  (`@prelude/core`, `policies/recording.ts`); the read is
+  `apps/console/src/server/interviews/recording-state.ts`.
 - `CLERK_WEBHOOK_SIGNING_SECRET`, plus a webhook endpoint configured in the
   Clerk Dashboard pointing at `apps/console/app/api/clerk/webhook/route.ts`
   (Svix-signed; see `apps/console/src/server/organizations/clerk-webhook-sync.ts`

@@ -956,7 +956,11 @@
       "editDraft": "Edit draft",
       "openDetail": "Open detail",
       "protectedTopic": "Protected topic",
-      "generationFailedRetry": "HireCall could not generate the role draft. Please retry in a moment."
+      "generationFailedRetry": "HireCall could not generate the role draft. Please retry in a moment.",
+      "trustHeading": "Candidate trust & disclosure",
+      "trustLead": "Before publishing, confirm exactly what every candidate is told and agrees to when they start this screen. It is shown in the interview language and can’t be edited here.",
+      "trustDisclosureLabel": "AI disclosure",
+      "trustConsentLabel": "Candidate consent"
     },
     "candidateReview": {
       "decision": "Decision",
