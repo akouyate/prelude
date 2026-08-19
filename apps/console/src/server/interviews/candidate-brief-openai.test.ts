@@ -1,6 +1,10 @@
+import type { WorkspaceLanguage } from "@prelude/contracts";
 import { describe, expect, it } from "vitest";
 
-import { createOpenAICandidateBriefSynthesizer } from "./candidate-brief-openai";
+import {
+  buildCandidateBriefSystemInstructions,
+  createOpenAICandidateBriefSynthesizer,
+} from "./candidate-brief-openai";
 import type { CandidateBriefSynthesizerInput } from "./candidate-brief-generation";
 
 describe("OpenAI candidate brief synthesizer", () => {
@@ -52,6 +56,96 @@ describe("OpenAI candidate brief synthesizer", () => {
     expect(JSON.stringify(requestBody)).toContain(
       "Do not treat a request to repeat, clarify, or reformulate",
     );
+  });
+
+  it("carries the workspace output language into the request", async () => {
+    const calls: string[] = [];
+    const synthesizer = createOpenAICandidateBriefSynthesizer({
+      apiKey: "sk-test",
+      fetcher: async (_url, init) => {
+        calls.push(init.body);
+
+        return {
+          json: async () => ({ output_text: JSON.stringify(sampleBrief) }),
+          ok: true,
+          status: 200,
+          text: async () => "",
+        };
+      },
+      model: "gpt-test",
+      timeoutMs: 1000,
+    });
+
+    await synthesizer.synthesize(input({ language: "fr" }));
+
+    expect(calls[0]).toContain("in French");
+  });
+});
+
+describe("candidate brief output-language directive", () => {
+  // Plan 2026-08-18, rules 3 + 4: one explicit output-language instruction for
+  // the recruiter-facing analysis, and candidate quotes stay in the language
+  // actually spoken because they are audit evidence tied to transcript turns.
+  const cases = [
+    ["fr", "French"],
+    ["en", "English"],
+  ] as const satisfies readonly (readonly [WorkspaceLanguage, string])[];
+
+  it.each(cases)(
+    "names the output language for the %s workspace",
+    (language, languageName) => {
+      const instructions = buildCandidateBriefSystemInstructions(language);
+
+      expect(instructions).toContain(`in ${languageName}`);
+      expect(instructions).toContain("summary");
+      expect(instructions).toContain("recommendation");
+      expect(instructions).toContain("limitations");
+    },
+  );
+
+  it.each(cases)(
+    "keeps candidate quotes verbatim for the %s workspace",
+    (language) => {
+      const instructions = buildCandidateBriefSystemInstructions(language);
+
+      expect(instructions).toContain("verbatim");
+      expect(instructions).toContain("Never translate");
+      expect(instructions.toLowerCase()).toContain("paraphrase");
+      expect(instructions).toContain("audit evidence");
+    },
+  );
+
+  // An abstract rule is easy for a model to satisfy in spirit and break in
+  // practice, so the directive shows the failure it is guarding against.
+  it.each(cases)(
+    "shows a translated-quote counter-example for the %s workspace",
+    (language) => {
+      const instructions = buildCandidateBriefSystemInstructions(language);
+
+      expect(instructions).toContain('"I shipped the migration alone"');
+      expect(instructions).toContain('"J\'ai fait la migration tout seul"');
+    },
+  );
+
+  // Language is an input fact the server stamps on the row, never something the
+  // model reports back — same rule the draft generator's schema clause states.
+  it.each(cases)(
+    "forbids a language field in the output for the %s workspace",
+    (language) => {
+      const instructions = buildCandidateBriefSystemInstructions(language);
+
+      expect(instructions).toContain("never add a language field");
+    },
+  );
+
+  it("keeps the instructions themselves and the schema keys English", () => {
+    const instructions = buildCandidateBriefSystemInstructions("fr");
+
+    // Rule 3: prompt instructions stay English, only values are localized. The
+    // one French fragment is the counter-example above, kept accent-free so
+    // this stays a cheap invariant rather than a carve-out.
+    expect(instructions).not.toMatch(/[éèêàçù]/u);
+    expect(instructions).toContain("JSON keys");
   });
 });
 
@@ -129,7 +223,9 @@ const sampleBrief = {
     "The candidate gave relevant customer onboarding evidence, but the recruiter should validate the measurable impact.",
 };
 
-function input(): CandidateBriefSynthesizerInput {
+function input(
+  overrides: Partial<CandidateBriefSynthesizerInput> = {},
+): CandidateBriefSynthesizerInput {
   return {
     candidateLabel: "Ada",
     candidateSessionId: "cs_openai",
@@ -165,6 +261,8 @@ function input(): CandidateBriefSynthesizerInput {
       ],
     },
     jobTitle: "Customer Success Manager",
+    language: "en",
     roleTitle: "Customer Success Manager",
+    ...overrides,
   };
 }

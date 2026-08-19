@@ -8,6 +8,7 @@ import {
 } from "@prelude/core";
 import { prisma } from "@prelude/db";
 import { createNotificationDispatcher } from "@prelude/notifications";
+import type { WorkspaceLanguage } from "@prelude/contracts";
 import type { Prisma } from "@prelude/db";
 
 import {
@@ -15,6 +16,7 @@ import {
   resumeEntitledCandidateSession,
 } from "./billing-admission";
 import { settleCandidateSessionCredit } from "./credit-settlement";
+import { resolveCandidateRenderingLanguage } from "./interview-language";
 
 const notificationDispatcher = createNotificationDispatcher();
 
@@ -43,6 +45,10 @@ export type PublicInterviewContext =
         id: string;
         jobId: string;
         jobTitle: string;
+        // Already resolved by `resolveCandidateRenderingLanguage`, never the raw
+        // column: one server-side resolution feeds both the rendered copy and
+        // the recorded `consentLanguage`.
+        language: WorkspaceLanguage;
         organizationId: string;
         publicToken: string;
         questions: PublicInterviewQuestion[];
@@ -60,6 +66,7 @@ export type PublicInterviewContext =
         id: string;
         jobId: string;
         jobTitle: string;
+        language: WorkspaceLanguage;
         organizationId: string;
         publicToken: string;
         questions: PublicInterviewQuestion[];
@@ -291,6 +298,11 @@ export async function prepareCandidateSession(
     };
   }
 
+  // One resolution, three writes. `context.interview.language` is what the
+  // welcome and preflight screens rendered this request in, so stamping it here
+  // records the language the candidate actually read the consent in — never a
+  // language re-derived after the fact.
+  const consentLanguage = context.interview.language;
   const candidateEmail = normalizeEmail(input.candidateEmail);
   const candidateName = normalizeName(input.candidateName);
   const existingSession = input.resumeToken
@@ -346,6 +358,7 @@ export async function prepareCandidateSession(
           candidateName,
           candidateInvitationId: context.invitation?.id,
           consentCopyVersion: candidateConsentCopyVersion,
+          consentLanguage,
           // Resuming requires accepting the current consent copy again.
           consentedAt: now,
           startedAt: existingSession.startedAt ?? now,
@@ -363,6 +376,7 @@ export async function prepareCandidateSession(
           candidateName,
           candidateInvitationId: context.invitation?.id,
           consentCopyVersion: candidateConsentCopyVersion,
+          consentLanguage,
           consentedAt: now,
           interviewId: context.interview.id,
           jobId: context.interview.jobId,
@@ -389,6 +403,7 @@ export async function prepareCandidateSession(
         candidateEmail,
         candidateName,
         consentCopyVersion: candidateConsentCopyVersion,
+        consentLanguage,
         consentedAt: now,
         status: "starting",
       },
@@ -766,6 +781,7 @@ function toPublishedInterviewContext({
     id: string;
     job: { title: string };
     jobId: string;
+    language: string | null;
     organization: { name: string };
     organizationId: string;
     publicToken: string;
@@ -782,6 +798,7 @@ function toPublishedInterviewContext({
       id: interview.id,
       jobId: interview.jobId,
       jobTitle: interview.job.title,
+      language: resolveCandidateRenderingLanguage(interview.language),
       organizationId: interview.organizationId,
       publicToken: interview.publicToken,
       questions: resolvePublicQuestions(interview.questions),

@@ -1,3 +1,5 @@
+import type { WorkspaceLanguage } from "@prelude/contracts";
+
 export type SettingsSection =
   | "billing"
   | "integrations"
@@ -65,6 +67,11 @@ export type WorkspaceSettingsData = {
     published: number;
   };
   notificationPreferences: SettingsNotificationPreferences;
+  // Generated-content language for SHARED artifacts (plan 2026-08-18, rule 2).
+  // Top-level like the other settings-JSON reads, not under `organization`:
+  // that block mirrors real Organization columns, and this setting deliberately
+  // has none. See the wall comment in workspace-settings-data.ts.
+  workspaceLanguage: WorkspaceLanguage;
   organization: {
     companySize: string | null;
     // Declared jurisdiction hint (organizationCountrySchema in

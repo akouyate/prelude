@@ -33,6 +33,32 @@ describe("parseOrganizationSettings", () => {
       screensReadyForReview: true,
       weeklyDigest: false,
     });
+    expect(settings.workspaceLanguage).toBe("en");
+  });
+
+  // Plan 2026-08-18, rule 2: `workspaceLanguage` lives at the ROOT of the
+  // settings JSON, not under `interview` — it governs recruiter-bound shared
+  // artifacts, not the candidate-facing interview default it sits next to.
+  it("reads a persisted workspace generated-content language", () => {
+    expect(
+      parseOrganizationSettings({ workspaceLanguage: "fr" }).workspaceLanguage,
+    ).toBe("fr");
+  });
+
+  it.each(["de", "en-US", "", 42, null])(
+    "falls back to English for the unreadable workspaceLanguage %j",
+    (value) => {
+      expect(
+        parseOrganizationSettings({ workspaceLanguage: value })
+          .workspaceLanguage,
+      ).toBe("en");
+    },
+  );
+
+  it("folds a legacy uppercase workspaceLanguage", () => {
+    expect(
+      parseOrganizationSettings({ workspaceLanguage: "FR" }).workspaceLanguage,
+    ).toBe("fr");
   });
 
   it("reads persisted preferences defensively and migrates the legacy completion key", () => {

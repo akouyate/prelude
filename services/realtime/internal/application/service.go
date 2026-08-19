@@ -2017,8 +2017,13 @@ func demoInterviewPlan(planID string) InterviewPlan {
 	}
 
 	return InterviewPlan{
-		ID:                      planID,
-		RoleTitle:               "Product Manager B2B SaaS",
+		ID:        planID,
+		RoleTitle: "Product Manager B2B SaaS",
+		// Not a pin to unthread (plan 2026-08-18, rule 7): this is the hardcoded
+		// `plan-demo-*` fixture used when no plan repository is configured, and
+		// its questions below are literally written in French. There is no stored
+		// snapshot to read a language from, and announcing anything but "fr"
+		// would make the agent speak a language its own prompts are not in.
 		Language:                "fr",
 		AllowVideo:              true,
 		AllowAudioOnly:          true,

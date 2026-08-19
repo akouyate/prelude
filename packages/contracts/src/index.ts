@@ -67,7 +67,10 @@ export {
 } from "./schemas/onboarding";
 export {
   organizationCountrySchema,
+  parseWorkspaceLanguage,
+  workspaceLanguageSchema,
   type OrganizationCountry,
+  type WorkspaceLanguage,
 } from "./schemas/organization";
 export {
   importedRoleDraftSchema,

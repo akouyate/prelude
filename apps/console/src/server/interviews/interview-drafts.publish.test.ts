@@ -945,3 +945,40 @@ describe("publishInterviewDraft N6b reviewable override", () => {
     expect(tx.complianceOverrideEvent.create).not.toHaveBeenCalled();
   });
 });
+
+// GL-T4.1 — the published snapshot copies the draft's language stamp VERBATIM.
+// Publish is a snapshot operation, not a generation one: resolving or
+// backfilling a legacy null here would invent a language the questions were
+// never written in (plan 2026-08-18, rule 6 — never backfill).
+describe("publishInterviewDraft language stamp", () => {
+  const publishedInterviewData = () =>
+    (
+      tx.interview.create.mock.calls[0]?.[0] as
+        | { data: Record<string, unknown> }
+        | undefined
+    )?.data;
+
+  it("copies the draft language onto the published interview", async () => {
+    draftRecord.current = { ...publishableDraft(), language: "fr" };
+
+    const result = await publishInterviewDraft(
+      "draft_1",
+      passThroughClassifier(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(publishedInterviewData()?.language).toBe("fr");
+  });
+
+  it("publishes a legacy null-language draft as a null-language interview", async () => {
+    draftRecord.current = { ...publishableDraft(), language: null };
+
+    const result = await publishInterviewDraft(
+      "draft_1",
+      passThroughClassifier(),
+    );
+
+    expect(result.ok).toBe(true);
+    expect(publishedInterviewData()).toHaveProperty("language", null);
+  });
+});

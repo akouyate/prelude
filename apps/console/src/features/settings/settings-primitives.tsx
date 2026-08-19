@@ -102,12 +102,18 @@ export function SettingsUrlField({
 }
 
 export function SettingsSelectField({
+  description,
   disabled = false,
   label,
   name,
   options,
   value,
 }: {
+  // Optional passthrough to the design system's own field description
+  // (`SelectField` -> `Field` -> `BaseField.Description`), so a select that
+  // needs a clarifying line gets one wired to the control via
+  // `aria-describedby` rather than as a loose sibling paragraph.
+  description?: string;
   disabled?: boolean;
   label: string;
   name: string;
@@ -122,6 +128,7 @@ export function SettingsSelectField({
 
   return (
     <SelectField
+      description={description}
       disabled={disabled}
       label={label}
       name={name}

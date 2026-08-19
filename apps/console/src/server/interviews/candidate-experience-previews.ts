@@ -68,6 +68,11 @@ export async function createCandidateExperiencePreview(
       estimatedMinutes: draft.estimatedMinutes,
       focus: draft.focus,
       guardrails: draft.guardrails,
+      // The preview snapshot is the ONLY plan payload the Go store reads for a
+      // `pv_` session, so the draft's language stamp has to ride along with it
+      // (plan 2026-08-18, rule 7). Passed honestly, null included: resolving it
+      // here would claim a language the questions were never written in.
+      language: draft.language,
       questions: draft.questions,
       rationale: draft.rationale ?? "",
       responseModes: draft.responseModes,

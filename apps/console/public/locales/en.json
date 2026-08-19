@@ -577,6 +577,8 @@
           "otherEu": "Other (EU)",
           "otherNonEu": "Other (non-EU)"
         },
+        "workspaceLanguage": "Generated content language",
+        "workspaceLanguageDescription": "The language HireCall writes the candidate brief and analysis in. The candidate interview language is set separately, per role.",
         "residency": "Data residency",
         "residencyDescription": "Where candidate data and recordings are stored.",
         "euResidency": "European Union",
@@ -887,6 +889,8 @@
       "locationPlaceholder": "Paris, France · Remote · Hybrid (optional)",
       "locationHint": "Where the role is based. Shown and searchable on your roles list.",
       "jobDescriptionLabel": "Job description",
+      "interviewLanguageHeading": "Interview language",
+      "interviewLanguageHint": "The language the candidate is interviewed in, and the language HireCall writes the questions and criteria in.",
       "seniorityHeading": "Seniority",
       "candidateFormatsHeading": "Candidate formats",
       "hiringSignalsHeading": "Hiring signals",
@@ -1011,7 +1015,15 @@
       "reviewWorkspaceIntro": "Switch between the recruiter summary, answers, next steps, and evidence.",
       "summaryShortRead": "A short read before opening the candidate profile.",
       "recruiterNextStep": "Recruiter next step",
-      "recruiterNextStepIntro": "Use this checklist to keep the follow-up short and focused."
+      "recruiterNextStepIntro": "Use this checklist to keep the follow-up short and focused.",
+      "briefLanguageUnknown": "Original language unknown",
+      "briefLanguageOther": "Generated in {{language}}",
+      "languageNameEnglish": "English",
+      "languageNameFrench": "French",
+      "regenerationFailedTitle": "Regeneration failed — showing the previous version",
+      "regenerationFailedBody": "The brief above is the last analysis that succeeded, not the one you just asked for. Retry when you are ready.",
+      "regenerationFailedRetry": "Retry analysis",
+      "quoteLanguageNote": "Candidate quotes are reproduced verbatim, in {{language}}."
     },
     "schedule": {
       "closeDialog": "Close scheduling dialog",

@@ -271,7 +271,7 @@ live-smoke-report-strict: ## Fail if a live interview SESSION_ID has lifecycle a
 		--session-id "$(SESSION_ID)" \
 		--realtime-api-url "$$realtime_api_url"
 
-e2e-smoke: env-up ## Create a repeatable V1 E2E smoke dataset with mocked LLM by default.
+e2e-smoke: env-up ## Create a repeatable V1 E2E smoke dataset with mocked LLM by default. E2E_SMOKE_LANGUAGE=fr seeds a French workspace end to end.
 	@$(LOAD_ENV); \
 	database_url="$${DATABASE_URL:-$(DATABASE_URL)}"; \
 	if [ "$(origin DATABASE_URL)" = "command line" ] || [ "$(origin DATABASE_URL)" = "environment" ]; then \
@@ -286,6 +286,9 @@ e2e-smoke: env-up ## Create a repeatable V1 E2E smoke dataset with mocked LLM by
 	fi; \
 	if [ "$(E2E_SMOKE_LIVE_LLM)" = "1" ]; then \
 		args="$$args --live-llm"; \
+	fi; \
+	if [ -n "$(E2E_SMOKE_LANGUAGE)" ]; then \
+		args="$$args --language $(E2E_SMOKE_LANGUAGE)"; \
 	fi; \
 	DATABASE_URL="$$database_url" node scripts/e2e-smoke.mjs $$args
 

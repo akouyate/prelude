@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { aiGuardrails } from "@prelude/core";
+import { aiGuardrails, getInterviewPlanGuardrails } from "@prelude/core";
 
 import {
   getInterviewPlanPublicationIssues,
@@ -119,6 +119,34 @@ describe("interview plan publication policy", () => {
     const issues = getInterviewPlanPublicationIssues({
       ...publishablePlan,
       guardrails: ["Be nice."],
+    });
+
+    expect(issues).toContain(
+      "Keep the required compliance guardrails before publishing.",
+    );
+  });
+
+  // Plan 2026-08-18, rule 1: guardrails follow the INTERVIEW language, so a
+  // French plan carries the French guardrail set. The gate checks that one
+  // complete catalogue is present, not that the English strings are.
+  it("accepts a French plan carrying the French guardrail set", () => {
+    const issues = getInterviewPlanPublicationIssues({
+      ...publishablePlan,
+      guardrails: getInterviewPlanGuardrails("fr"),
+    });
+
+    expect(issues).not.toContain(
+      "Keep the required compliance guardrails before publishing.",
+    );
+  });
+
+  it("rejects a plan carrying only part of a guardrail catalogue", () => {
+    const issues = getInterviewPlanPublicationIssues({
+      ...publishablePlan,
+      guardrails: [
+        ...getInterviewPlanGuardrails("fr").slice(0, 3),
+        ...getInterviewPlanGuardrails("en").slice(3),
+      ],
     });
 
     expect(issues).toContain(

@@ -577,6 +577,8 @@
           "otherEu": "Autre (UE)",
           "otherNonEu": "Autre (hors UE)"
         },
+        "workspaceLanguage": "Langue des contenus générés",
+        "workspaceLanguageDescription": "La langue du brief candidat et des analyses générées par HireCall. La langue de l'entretien candidat se règle séparément, par poste.",
         "residency": "Résidence des données",
         "residencyDescription": "Où les données candidats et les enregistrements sont stockés.",
         "euResidency": "Union européenne",
@@ -887,6 +889,8 @@
       "locationPlaceholder": "Paris, France · Télétravail · Hybride (facultatif)",
       "locationHint": "Où le poste est basé. Affiché et recherchable dans votre liste de postes.",
       "jobDescriptionLabel": "Description du poste",
+      "interviewLanguageHeading": "Langue de l'entretien",
+      "interviewLanguageHint": "La langue dans laquelle le candidat passe l'entretien, et celle dans laquelle HireCall rédige les questions et les critères.",
       "seniorityHeading": "Séniorité",
       "candidateFormatsHeading": "Formats de réponse",
       "hiringSignalsHeading": "Signaux de recrutement",
@@ -1011,7 +1015,15 @@
       "reviewWorkspaceIntro": "Basculez entre la synthèse recruteur, les réponses, les prochaines étapes et les preuves.",
       "summaryShortRead": "Une lecture rapide avant d’ouvrir le profil du candidat.",
       "recruiterNextStep": "Prochaine étape recruteur",
-      "recruiterNextStepIntro": "Servez-vous de cette liste pour garder un suivi court et ciblé."
+      "recruiterNextStepIntro": "Servez-vous de cette liste pour garder un suivi court et ciblé.",
+      "briefLanguageUnknown": "Langue d'origine inconnue",
+      "briefLanguageOther": "Généré en {{language}}",
+      "languageNameEnglish": "anglais",
+      "languageNameFrench": "français",
+      "regenerationFailedTitle": "La régénération a échoué — version précédente affichée",
+      "regenerationFailedBody": "Le brief ci-dessus est la dernière analyse réussie, pas celle que vous venez de demander. Relancez quand vous le souhaitez.",
+      "regenerationFailedRetry": "Relancer l'analyse",
+      "quoteLanguageNote": "Les citations du candidat sont reproduites telles qu'exprimées, en {{language}}."
     },
     "schedule": {
       "closeDialog": "Fermer la fenêtre de planification",

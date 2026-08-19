@@ -391,6 +391,14 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
       value: "OTHER_NON_EU",
     },
   ];
+  // Same catalogue pair as the interview default and the account preference,
+  // but a different question: this one is the language SHARED generated
+  // artifacts are written in (plan 2026-08-18, rule 2) — never the language a
+  // given teammate reads the console in.
+  const workspaceLanguageOptions = [
+    { label: t("settings.language.english"), value: "en" },
+    { label: t("settings.language.french"), value: "fr" },
+  ];
 
   return (
     <form action={formAction} className="flex flex-col gap-[18px]">
@@ -448,6 +456,19 @@ function WorkspaceSection({ data }: { data: WorkspaceSettingsData }) {
             name="country"
             options={countryOptions}
             value={data.organization.country ?? ""}
+          />
+          <SettingsSelectField
+            // HR gate: the page already carries a differently-scoped language
+            // setting (`settings.interview.defaultLanguage`, the candidate
+            // interview default), so an unlabelled select here reads as "this
+            // sets the interview language" — the exact confusion the rule-2
+            // wall exists to prevent. The description names the split.
+            description={t("settings.workspace.workspaceLanguageDescription")}
+            disabled={!canEdit}
+            label={t("settings.workspace.workspaceLanguage")}
+            name="workspaceLanguage"
+            options={workspaceLanguageOptions}
+            value={data.workspaceLanguage}
           />
         </div>
       </SettingsPanel>

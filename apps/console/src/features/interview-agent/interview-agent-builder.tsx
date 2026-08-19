@@ -14,6 +14,7 @@ import {
 import {
   COMPLIANCE_OVERRIDE_MIN_JUSTIFICATION,
   COMPLIANCE_OVERRIDE_MIN_JUSTIFICATION_WORDS,
+  type WorkspaceLanguage,
 } from "@prelude/contracts";
 import {
   Badge,
@@ -61,6 +62,7 @@ import {
   candidateLinkLabel as formatCandidateLinkLabel,
 } from "../../libs/candidate-app-url";
 import { useCopyLinkFeedback } from "../../libs/use-copy-link-feedback";
+import { resolveInterviewLanguage } from "../../server/organizations/content-language";
 import {
   addInterviewQuestionAction,
   generateInterviewDraftAction,
@@ -84,7 +86,9 @@ import {
   InterviewBuilderStepHeader,
   InterviewBuilderStepRail,
 } from "./interview-builder-layout";
+import { buildQuestionEditRationale } from "../../server/interviews/interview-draft-rationale";
 import { buildCandidateInviteMailto } from "./candidate-invite";
+import { draftLanguagePatch } from "./draft-language-stamp";
 import { nextDraftSaveStatus, type DraftSaveStatus } from "./draft-save-status";
 
 type StepId = "brief" | "calibrate" | "questions" | "evaluation" | "share";
@@ -166,6 +170,17 @@ const seniorityOptions: Array<{
   { value: "senior", labelKey: "interviewBuilder.senioritySenior" },
 ];
 
+// The language the CANDIDATE will be interviewed in (plan 2026-08-18, rule 1) —
+// not the language this console is displayed in. Endonyms, reusing the generic
+// catalogue keys the settings page already ships.
+const interviewLanguageOptions: Array<{
+  value: WorkspaceLanguage;
+  labelKey: string;
+}> = [
+  { value: "en", labelKey: "settings.language.english" },
+  { value: "fr", labelKey: "settings.language.french" },
+];
+
 const responseModes: Array<{ value: ResponseMode; labelKey: string }> = [
   { value: "text", labelKey: "interviewBuilder.modeForm" },
   { value: "audio", labelKey: "interviewBuilder.modeAudio" },
@@ -188,17 +203,23 @@ const GENERATION_STEP_COUNT = generationStepKeys.length;
 
 type InterviewAgentBuilderProps = {
   companyName?: string;
+  // Where the language selector starts for a draft that has no stamp yet.
+  defaultInterviewLanguage?: WorkspaceLanguage;
   initialDraft?: PersistedInterviewDraft;
   initialJobDescription?: string;
   initialJobId?: string;
   initialJobLocation?: string;
   initialJobTitle?: string;
   initialSourceUrl?: string;
+  // Recruiter-bound copy written client-side follows the WORKSPACE language,
+  // never the interview language (plan 2026-08-18, rule 1).
+  workspaceLanguage?: WorkspaceLanguage;
 };
 
 type PersistedInterviewDraft = {
   id: string;
   jobId: string;
+  language: string | null;
   roleTitle: string;
   roleBrief: string;
   location: string | null;
@@ -235,12 +256,14 @@ function normalizeBuilderResponseModes(modes: ResponseMode[] | undefined) {
 
 export function InterviewAgentBuilder({
   companyName = "Acme",
+  defaultInterviewLanguage = "en",
   initialDraft,
   initialJobDescription = "",
   initialJobId,
   initialJobLocation = "",
   initialJobTitle = "",
   initialSourceUrl,
+  workspaceLanguage = "en",
 }: InterviewAgentBuilderProps) {
   const router = useRouter();
   const { t } = useTranslation();
@@ -266,6 +289,17 @@ export function InterviewAgentBuilder({
   const [seniority, setSeniority] = React.useState<InterviewSeniority>(
     initialDraft?.seniority ?? "mid",
   );
+  // A per-draft fact: the draft's own stamp wins, then the workspace default.
+  // A legacy draft with a null stamp DISPLAYS the workspace default — the
+  // selector has to render on something — but that displayed value must not
+  // reach the database on its own; `draftLanguagePatch` is what keeps the two
+  // apart (plan rule 6: never backfill).
+  const [interviewLanguage, setInterviewLanguage] =
+    React.useState<WorkspaceLanguage>(
+      resolveInterviewLanguage(initialDraft?.language, defaultInterviewLanguage),
+    );
+  const [languageTouched, setLanguageTouched] = React.useState(false);
+  const hasPersistedLanguage = Boolean(initialDraft?.language);
   const [focus, setFocus] = React.useState<InterviewFocus[]>([
     ...(initialDraft?.focus.length
       ? initialDraft.focus
@@ -339,6 +373,7 @@ export function InterviewAgentBuilder({
       result = await generateInterviewDraftAction({
         companyName,
         focus,
+        interviewLanguage,
         responseModes: modes,
         roleBrief: jobDescription,
         roleTitle: jobTitle,
@@ -375,6 +410,7 @@ export function InterviewAgentBuilder({
     attachmentName,
     companyName,
     focus,
+    interviewLanguage,
     jobDescription,
     jobTitle,
     modes,
@@ -443,6 +479,12 @@ export function InterviewAgentBuilder({
           generatorProvider,
           guardrails: draftToSave.guardrails,
           jobId,
+          ...draftLanguagePatch({
+            hasPersistedDraft: Boolean(persistedDraftId),
+            hasPersistedLanguage,
+            language: interviewLanguage,
+            languageTouched,
+          }),
           location,
           questions: draftToSave.questions,
           rationale: draftToSave.rationale,
@@ -486,9 +528,12 @@ export function InterviewAgentBuilder({
       focus,
       generatorModel,
       generatorProvider,
+      hasPersistedLanguage,
+      interviewLanguage,
       jobDescription,
       jobId,
       jobTitle,
+      languageTouched,
       location,
       modes,
       persistedDraftId,
@@ -653,6 +698,19 @@ export function InterviewAgentBuilder({
     [markDraftDirty],
   );
 
+  // Switching the interview language does NOT retranslate the draft on screen —
+  // nothing is ever post-translated (plan rule 3). It re-stamps the draft, and
+  // the next generation writes in the new language.
+  const changeInterviewLanguage = React.useCallback(
+    (value: WorkspaceLanguage) => {
+      setInterviewLanguage(value);
+      // The explicit act that earns the right to write the column.
+      setLanguageTouched(true);
+      markDraftDirty();
+    },
+    [markDraftDirty],
+  );
+
   const refineQuestion = React.useCallback(
     async (questionId: string, action: QuestionAction) => {
       if (!draft) {
@@ -668,6 +726,7 @@ export function InterviewAgentBuilder({
           companyName,
           draft,
           focus,
+          interviewLanguage,
           questionId,
           responseModes: modes,
           roleBrief: jobDescription,
@@ -695,6 +754,7 @@ export function InterviewAgentBuilder({
       companyName,
       draft,
       focus,
+      interviewLanguage,
       jobDescription,
       jobTitle,
       markDraftDirty,
@@ -742,6 +802,7 @@ export function InterviewAgentBuilder({
           companyName,
           draft,
           focus,
+          interviewLanguage,
           responseModes: modes,
           roleBrief: jobDescription,
           roleTitle: jobTitle,
@@ -771,6 +832,7 @@ export function InterviewAgentBuilder({
       companyName,
       draft,
       focus,
+      interviewLanguage,
       jobDescription,
       jobTitle,
       markDraftDirty,
@@ -796,12 +858,16 @@ export function InterviewAgentBuilder({
         return {
           ...current,
           questions,
-          rationale: `HireCall prepared ${questions.length} focused questions for this first-screening role screen.`,
+          rationale: buildQuestionEditRationale({
+            change: "removed",
+            questionCount: questions.length,
+            workspaceLanguage,
+          }),
         };
       });
       markDraftDirty();
     },
-    [markDraftDirty],
+    [markDraftDirty, workspaceLanguage],
   );
 
   const updateCriterion = React.useCallback(
@@ -996,10 +1062,12 @@ export function InterviewAgentBuilder({
           {currentStep === "calibrate" ? (
             <CalibrateStep
               focus={focus}
+              interviewLanguage={interviewLanguage}
               modes={modes}
               seniority={seniority}
               toggleFocus={toggleFocus}
               toggleMode={toggleMode}
+              onInterviewLanguageChange={changeInterviewLanguage}
               onSeniorityChange={changeSeniority}
             />
           ) : null}
@@ -1302,15 +1370,19 @@ function BriefStep({
 
 function CalibrateStep({
   focus,
+  interviewLanguage,
   modes,
   seniority,
+  onInterviewLanguageChange,
   onSeniorityChange,
   toggleFocus,
   toggleMode,
 }: {
   focus: InterviewFocus[];
+  interviewLanguage: WorkspaceLanguage;
   modes: ResponseMode[];
   seniority: InterviewSeniority;
+  onInterviewLanguageChange: (value: WorkspaceLanguage) => void;
   onSeniorityChange: (value: InterviewSeniority) => void;
   toggleFocus: (value: InterviewFocus) => void;
   toggleMode: (value: ResponseMode) => void;
@@ -1321,6 +1393,26 @@ function CalibrateStep({
     <div className="grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
       <div>
         <p className="text-sm font-medium text-ink-700">
+          {t("interviewBuilder.interviewLanguageHeading")}
+        </p>
+        <p className="mt-1 text-sm leading-6 text-ink-500">
+          {t("interviewBuilder.interviewLanguageHint")}
+        </p>
+        <RadioCardGroup
+          ariaLabel={t("interviewBuilder.interviewLanguageHeading")}
+          cardClassName="h-12 items-center justify-center rounded-[18px] px-4 py-0"
+          className="mt-2 grid gap-2 sm:grid-cols-2"
+          contentClassName="text-center"
+          onValueChange={onInterviewLanguageChange}
+          options={interviewLanguageOptions.map((option) => ({
+            label: t(option.labelKey),
+            value: option.value,
+          }))}
+          showIndicator={false}
+          value={interviewLanguage}
+        />
+
+        <p className="mt-6 text-sm font-medium text-ink-700">
           {t("interviewBuilder.seniorityHeading")}
         </p>
         <RadioCardGroup

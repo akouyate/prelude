@@ -24,9 +24,11 @@ describe("interview generation telemetry", () => {
     logInterviewGenerationEvent(
       {
         event: "ai_draft_fallback",
+        interviewLanguage: "en",
         provider: "openai_responses",
         model: "gpt-test",
         reason: "openai_error",
+        workspaceLanguage: "en",
       },
       sink,
     );
@@ -90,9 +92,11 @@ describe("interview generation telemetry", () => {
     expect(() =>
       logInterviewGenerationEvent({
         event: "ai_draft_fallback",
+        interviewLanguage: "en",
         provider: "openai_responses",
         model: "gpt-test",
         reason: "openai_error",
+        workspaceLanguage: "en",
       }),
     ).not.toThrow();
 

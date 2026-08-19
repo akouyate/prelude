@@ -21,8 +21,10 @@ import {
   interviewPlanSchema,
   parseStoredInterviewPlan,
   toLiveInterviewPlan,
+  workspaceLanguageSchema,
   type ComplianceOverrideRecord,
   type ComplianceOverrideRequest,
+  type WorkspaceLanguage,
 } from "@prelude/contracts";
 import { revalidatePath } from "next/cache";
 
@@ -35,6 +37,8 @@ import {
 import { canManageRoles } from "../../domain/organization-permissions";
 import { getServerT } from "../../libs/i18n-server";
 import { getAuthenticatedUserLocale } from "../users/user-locale";
+import { resolveInterviewLanguage } from "../organizations/content-language";
+import { readOrganizationContentLanguages } from "../organizations/organization-content-languages";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import {
   logInterviewGenerationEvent,
@@ -73,6 +77,10 @@ export type SaveInterviewDraftInput = {
   guardrails: string[];
   estimatedMinutes: number;
   rationale: string;
+  // The builder's language selector (plan 2026-08-18, rule 1). Absent means
+  // "the recruiter did not choose": a new draft then takes the workspace's
+  // interview default, and an existing draft keeps whatever it was stamped with.
+  language?: WorkspaceLanguage;
   sourceAttachmentName?: string;
   // N9: provenance of the engine that produced this draft. Optional so manual
   // edits (no generation) and legacy callers keep working; schemaVersion is
@@ -210,13 +218,38 @@ export async function saveInterviewDraft(
         })
       : null;
 
+    // Only the explicit selector may move an already-stamped draft: a plain
+    // save (autosave, question edit, publish prerequisite) must leave the column
+    // alone, or a workspace-default change would retro-relabel drafts whose
+    // questions are already written in the other language.
+    const selectedLanguage = normalized.data.language ?? null;
+
     const draft = existingDraft
       ? await tx.interviewDraft.update({
-          data: draftData,
+          data: selectedLanguage
+            ? { ...draftData, language: selectedLanguage }
+            : draftData,
           where: { id: existingDraft.id },
         })
       : await tx.interviewDraft.create({
-          data: draftData,
+          data: {
+            ...draftData,
+            language: resolveInterviewLanguage(
+              selectedLanguage,
+              // Read through `tx`, not the global client: the transaction is
+              // already open here, and going through `prisma` would check out a
+              // SECOND pooled connection while holding this one — the classic
+              // way to deadlock a saturated pool under load.
+              readOrganizationContentLanguages(
+                (
+                  await tx.organization.findUniqueOrThrow({
+                    select: { settings: true },
+                    where: { id: scope.organizationId },
+                  })
+                ).settings,
+              ).interviewDefault,
+            ),
+          },
         });
 
     return {
@@ -589,6 +622,12 @@ export async function publishInterviewDraft(
           generatorProvider: draft.generatorProvider,
           guardrails: guardrails as unknown as Prisma.InputJsonValue,
           jobId: draft.jobId,
+          // Copied VERBATIM, null included (plan 2026-08-18, rule 6). Publishing
+          // is a snapshot operation: resolving or backfilling here would stamp a
+          // language the questions were never written in. A legacy null draft
+          // therefore yields a null-language interview, and the live pipeline's
+          // own fallback decides what the worker speaks.
+          language: draft.language,
           organizationId: scope.organizationId,
           publicToken,
           questions: questions as unknown as Prisma.InputJsonValue,
@@ -819,6 +858,9 @@ function normalizeDraftInput(
       generatorProvider: input.generatorProvider?.trim() || undefined,
       guardrails,
       jobId: input.jobId,
+      // A client-supplied value: anything outside the en/fr catalogue is dropped
+      // here rather than trusted into the column.
+      language: readSelectedLanguage(input.language),
       location,
       questions: plan.data.questions as InterviewQuestionDraft[],
       rationale,
@@ -829,6 +871,12 @@ function normalizeDraftInput(
       sourceAttachmentName,
     },
   };
+}
+
+function readSelectedLanguage(value: unknown): WorkspaceLanguage | undefined {
+  const parsed = workspaceLanguageSchema.safeParse(value);
+
+  return parsed.success ? parsed.data : undefined;
 }
 
 function coerceQuestion(

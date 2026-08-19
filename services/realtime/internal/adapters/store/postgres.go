@@ -133,12 +133,13 @@ func (s *PostgresStore) GetInterviewPlan(ctx context.Context, planID string) (ap
 	var plan application.InterviewPlan
 	var seniority sql.NullString
 	var roleBrief sql.NullString
+	var language sql.NullString
 	var responseModesBytes []byte
 	var questionsBytes []byte
 	var guardrailsBytes []byte
 
 	err := s.db.QueryRowContext(ctx, `
-		select id, "roleTitle", seniority, "responseModes", questions, guardrails, "roleBrief"
+		select id, "roleTitle", seniority, "responseModes", questions, guardrails, "roleBrief", language
 		from "Interview"
 		where id = $1 and status = 'published'
 	`, planID).Scan(
@@ -149,6 +150,7 @@ func (s *PostgresStore) GetInterviewPlan(ctx context.Context, planID string) (ap
 		&questionsBytes,
 		&guardrailsBytes,
 		&roleBrief,
+		&language,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return application.InterviewPlan{}, application.ErrPlanNotFound
@@ -161,6 +163,7 @@ func (s *PostgresStore) GetInterviewPlan(ctx context.Context, planID string) (ap
 		ID:            plan.ID,
 		RoleTitle:     plan.RoleTitle,
 		Seniority:     seniority.String,
+		Language:      language.String,
 		ResponseModes: responseModesBytes,
 		Questions:     questionsBytes,
 		Guardrails:    guardrailsBytes,
@@ -173,6 +176,7 @@ type candidatePreviewSnapshot struct {
 		RoleTitle     string          `json:"roleTitle"`
 		RoleBrief     string          `json:"roleBrief"`
 		Seniority     *string         `json:"seniority"`
+		Language      *string         `json:"language"`
 		ResponseModes json.RawMessage `json:"responseModes"`
 		Questions     json.RawMessage `json:"questions"`
 		Guardrails    json.RawMessage `json:"guardrails"`
@@ -180,9 +184,13 @@ type candidatePreviewSnapshot struct {
 }
 
 type storedInterviewPlan struct {
-	ID            string
-	RoleTitle     string
-	Seniority     string
+	ID        string
+	RoleTitle string
+	Seniority string
+	// The interview language stamped on the published snapshot. Empty means the
+	// snapshot predates language stamping; buildStoredInterviewPlan decides what
+	// that falls back to — the caller never guesses on its behalf.
+	Language      string
 	ResponseModes []byte
 	Questions     []byte
 	Guardrails    []byte
@@ -217,11 +225,19 @@ func decodeCandidatePreviewPlan(planID string, snapshotBytes []byte) (applicatio
 	if snapshot.Plan.Seniority != nil {
 		seniority = *snapshot.Plan.Seniority
 	}
+	// A recruiter preview runs the draft the recruiter is editing, so it must be
+	// spoken in the draft's own language. A null/absent value is a legacy or
+	// never-stamped draft and takes the same fallback as a legacy Interview row.
+	language := ""
+	if snapshot.Plan.Language != nil {
+		language = *snapshot.Plan.Language
+	}
 
 	return buildStoredInterviewPlan(storedInterviewPlan{
 		ID:            planID,
 		RoleTitle:     snapshot.Plan.RoleTitle,
 		Seniority:     seniority,
+		Language:      language,
 		ResponseModes: snapshot.Plan.ResponseModes,
 		Questions:     snapshot.Plan.Questions,
 		Guardrails:    snapshot.Plan.Guardrails,
@@ -231,10 +247,11 @@ func decodeCandidatePreviewPlan(planID string, snapshotBytes []byte) (applicatio
 
 func buildStoredInterviewPlan(stored storedInterviewPlan) (application.InterviewPlan, error) {
 	responseModes := decodeStringArray(stored.ResponseModes)
-	// Language is pinned for V1 (see plan.Language below). Thread it into question
-	// decoding so the category follow-up fallback is authored in the interview
-	// language rather than defaulting to English.
-	language := "fr"
+	// The interview language comes from the snapshot the recruiter published
+	// (plan 2026-08-18, rule 7). It is threaded into question decoding too, so
+	// the category follow-up fallback is authored in the language the agent
+	// actually speaks instead of drifting to English mid-interview.
+	language := resolveStoredLanguage(stored.Language)
 	questions := decodeInterviewQuestions(stored.Questions, language)
 	if len(questions) == 0 {
 		return application.InterviewPlan{}, application.ErrPlanNotFound
@@ -255,6 +272,18 @@ func buildStoredInterviewPlan(stored storedInterviewPlan) (application.Interview
 			RoleConstraints: decodeStringArray(stored.Guardrails),
 		},
 	}, nil
+}
+
+// resolveStoredLanguage keeps the historic "fr" for any snapshot that carries no
+// language: those rows were published before stamping existed, and every one of
+// them ran a French interview. Falling back to anything else would silently
+// switch the spoken language of an already-published role.
+func resolveStoredLanguage(language string) string {
+	if trimmed := strings.TrimSpace(language); trimmed != "" {
+		return trimmed
+	}
+
+	return "fr"
 }
 
 func (s *PostgresStore) AppendEvent(ctx context.Context, event domain.Event) (application.AppendEventResult, error) {

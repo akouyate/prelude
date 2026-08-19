@@ -1,12 +1,14 @@
 import {
   candidateBriefSchema,
   type CandidateBriefDto,
+  type WorkspaceLanguage,
 } from "@prelude/contracts";
 import {
   aiCompliancePolicyVersion,
   buildAiCompliancePromptContext,
   defaultComplianceFlags,
   disallowedQuestionTopics,
+  promptLanguageNames,
   recruiterLimitationCopy,
   sensitiveInformationHandlingRule,
 } from "@prelude/core";
@@ -93,7 +95,7 @@ function buildOpenAIRequestBody({
   return {
     input: [
       {
-        content: openAISystemInstructions(),
+        content: buildCandidateBriefSystemInstructions(input.language),
         role: "system",
       },
       {
@@ -108,6 +110,14 @@ function buildOpenAIRequestBody({
       format: {
         name: "candidate_brief",
         schema: candidateBriefJsonSchema,
+        // Strict mode requires every property to be listed in `required`, and
+        // the evidence object deliberately leaves its citation ids out of it
+        // (eventId, questionId, transcriptTurnId). The house workaround —
+        // `type: ["string", "null"]` plus required, as interviewQuestionJsonSchema
+        // does for followUpPrompt — is unavailable here: those ids are
+        // `.optional()` in candidateBriefEvidenceSchema, so an emitted null
+        // would fail the Zod parse and drop every LLM brief to the local
+        // fallback. Flipping this needs a contracts change, not a flag change.
         strict: false,
         type: "json_schema",
       },
@@ -135,10 +145,24 @@ function buildPromptInput(input: CandidateBriefSynthesizerInput) {
   };
 }
 
-function openAISystemInstructions() {
+/**
+ * Plan 2026-08-18, rules 3 + 4: the analysis is generated natively in the
+ * workspace language (never post-translated), while candidate quotes stay in
+ * the language actually spoken. The instructions themselves stay English —
+ * models follow English instructions best — and so do the JSON schema keys.
+ */
+export function buildCandidateBriefSystemInstructions(
+  language: WorkspaceLanguage,
+) {
+  const languageName = promptLanguageNames[language];
+
   // Source rationale: docs/sources/evaluation-matrix.md and docs/sources/compliance-guardrails.md.
   return [
     "You write concise first-screening recruiter briefs for HireCall.",
+    `Write every recruiter-facing value in ${languageName}: the summary, strengths, risks, points to clarify, criterion rationales, limitations, missing information, follow-up questions, and the recommendation rationale.`,
+    `Keep the JSON keys, enum values, criterion ids, and status labels exactly as the schema defines them, and never add a language field; only free-text values are written in ${languageName}.`,
+    "Candidate quotes are audit evidence tied to transcript turns: copy every evidence text verbatim, in the language the candidate actually spoke. Never translate, paraphrase, correct, or condense a quote, even when it is in a different language from the analysis.",
+    'Example: a French analysis embeds the spoken answer "I shipped the migration alone" exactly as it was said, never "J\'ai fait la migration tout seul".',
     "Return only JSON that matches the requested schema.",
     "Use only transcript evidence from the input. Do not invent facts.",
     "Separate facts, inferred job-related signals, risks, missing information, and recruiter next step.",

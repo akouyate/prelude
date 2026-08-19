@@ -4,6 +4,7 @@ import {
   type CandidateBriefDto,
   interviewPlanCriterionSchema,
   interviewPlanQuestionSchema,
+  type WorkspaceLanguage,
 } from "@prelude/contracts";
 import { prisma } from "@prelude/db";
 import type {
@@ -33,6 +34,7 @@ import {
 import {
   getCandidateReviewSignals,
   toCandidateBriefDto,
+  toCandidateBriefView,
   type CriteriaDistribution,
 } from "./candidate-review-signals";
 import {
@@ -46,10 +48,19 @@ import {
 } from "./candidate-review-display";
 import { toScheduledCallSummary } from "./candidate-call-scheduling";
 import { findCandidateSessionSpineForOrganization } from "./candidate-session-spine";
+import { readOrganizationContentLanguages } from "../organizations/organization-content-languages";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 
 export type InterviewBuilderContext = {
   companyName: string;
+  // What the builder's language selector starts on for a NEW draft (plan
+  // 2026-08-18, rule 1). An existing draft uses its own stamp instead.
+  defaultInterviewLanguage: WorkspaceLanguage;
+  // The workspace language, for the recruiter-bound copy the builder writes
+  // client-side (the rationale it rewrites when a question is removed). Kept
+  // separate from `defaultInterviewLanguage` on purpose: one is candidate-bound
+  // and per-draft, the other is recruiter-bound and per-workspace.
+  workspaceLanguage: WorkspaceLanguage;
   initialDraft?: PersistedInterviewBuilderDraft;
   initialJob?: {
     description: string;
@@ -62,6 +73,9 @@ export type InterviewBuilderContext = {
 export type PersistedInterviewBuilderDraft = {
   id: string;
   jobId: string;
+  // Null on drafts generated before stamping existed; never backfilled, so the
+  // builder resolves it against the workspace default on read.
+  language: string | null;
   roleTitle: string;
   roleBrief: string;
   location: string | null;
@@ -101,11 +115,18 @@ export type InterviewDetailData =
   | {
       kind: "candidate_session";
       organizationName: string;
+      // The language shared recruiter-bound analysis is generated in. Compared
+      // against the brief's own stamp to decide whether a caveat badge is owed.
+      workspaceLanguage: WorkspaceLanguage;
       candidateSession: CandidateSessionSummary & {
         brief: CandidateBriefDto | null;
         candidateEmail: string | null;
         evidence: CandidateSessionEvidence;
         interviewId: string;
+        // The published interview's own stamp. Compared against the workspace
+        // language to explain why verbatim quotes are not in the brief's
+        // language; null means the role predates stamping.
+        interviewLanguage: string | null;
         jobTitle: string;
         questions: InterviewQuestionDraft[];
         reviewNote: string | null;
@@ -127,6 +148,13 @@ export type CandidateSessionSummary = {
   billedAnsweredCount: number | null;
   billedOutcome: string | null;
   billedRequiredCount: number | null;
+  // The two brief facts that live on the ROW rather than inside `summaryJson`
+  // (see `toCandidateBriefView`). `briefLanguage` is the stamp — null means
+  // "generated before stamping existed" — and `briefRegenerationFailed` marks a
+  // regeneration that failed OVER a previous success, which the JSON-embedded
+  // status cannot express because it still describes the surviving content.
+  briefLanguage: string | null;
+  briefRegenerationFailed: boolean;
   candidateLabel: string;
   completedAt: string | null;
   eventCount: number;
@@ -156,9 +184,11 @@ export async function getInterviewBuilderContext({
   const scope = await getCompletedOrganizationScope();
 
   const organization = await prisma.organization.findUniqueOrThrow({
-    select: { name: true },
+    select: { name: true, settings: true },
     where: { id: scope.organizationId },
   });
+  const { interviewDefault: defaultInterviewLanguage, workspace: workspaceLanguage } =
+    readOrganizationContentLanguages(organization.settings);
 
   if (draftId) {
     const draft = await prisma.interviewDraft.findFirst({
@@ -172,6 +202,8 @@ export async function getInterviewBuilderContext({
     if (draft) {
       return {
         companyName: organization.name,
+        defaultInterviewLanguage,
+        workspaceLanguage,
         initialDraft: {
           draft: {
             criteria: readCriteria(draft.criteria),
@@ -183,6 +215,7 @@ export async function getInterviewBuilderContext({
           focus: readFocus(draft.focus),
           id: draft.id,
           jobId: draft.jobId,
+          language: draft.language,
           location: draft.job.location,
           responseModes: readResponseModes(draft.responseModes),
           roleBrief: draft.roleBrief,
@@ -205,6 +238,8 @@ export async function getInterviewBuilderContext({
 
   return {
     companyName: organization.name,
+    defaultInterviewLanguage,
+    workspaceLanguage,
     initialJob: job
       ? {
           description: job.description,
@@ -221,7 +256,9 @@ export async function getInterviewDetail(
 ): Promise<InterviewDetailData | null> {
   const scope = await getCompletedOrganizationScope();
   const organization = await prisma.organization.findUniqueOrThrow({
-    select: { name: true },
+    // `settings` carries the workspace language the recruiter brief is written
+    // in — the review page needs it to tell an honest brief from a stale one.
+    select: { name: true, settings: true },
     where: { id: scope.organizationId },
   });
 
@@ -373,6 +410,7 @@ export async function getInterviewDetail(
         eventCount: evidence.eventCount,
         evidence,
         interviewId: candidateSession.interviewId,
+        interviewLanguage: candidateSession.interview.language,
         jobTitle: candidateSession.job.title,
         questions: readQuestions(candidateSession.interview.questions),
         questionCompletionRate: evidence.questionCompletionRate,
@@ -396,6 +434,12 @@ export async function getInterviewDetail(
       },
       kind: "candidate_session",
       organizationName: organization.name,
+      // Resolved server-side: the badge decision is "does this brief disagree
+      // with what the workspace reads", never "what locale is this recruiter's
+      // UI in" (plan 2026-08-18, rule 2 — the workspace language governs shared
+      // artifacts, the user's own locale governs the interface).
+      workspaceLanguage: readOrganizationContentLanguages(organization.settings)
+        .workspace,
     };
   }
 
@@ -451,6 +495,7 @@ function toCandidateSessionSummary({
     billedRequiredCount: number | null;
     candidateBrief?: {
       candidateSessionId: string;
+      language?: string | null;
       limitations: unknown;
       status: string;
       summaryJson: unknown;
@@ -469,8 +514,8 @@ function toCandidateSessionSummary({
     updatedAt: Date;
   };
 }): CandidateSessionSummary {
-  const brief = toCandidateBriefDto(session.candidateBrief ?? null);
-  const reviewSignals = getCandidateReviewSignals(brief);
+  const briefView = toCandidateBriefView(session.candidateBrief ?? null);
+  const reviewSignals = getCandidateReviewSignals(briefView.content);
   const status =
     (session.realtimeSessionId
       ? liveStatusById.get(session.realtimeSessionId)
@@ -488,6 +533,8 @@ function toCandidateSessionSummary({
     billedAnsweredCount: session.billedAnsweredCount,
     billedOutcome: session.billedOutcome,
     billedRequiredCount: session.billedRequiredCount,
+    briefLanguage: briefView.language,
+    briefRegenerationFailed: briefView.regenerationFailed,
     candidateLabel:
       session.candidateName ??
       session.candidateEmail ??

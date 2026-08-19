@@ -530,3 +530,56 @@ describe("N10 question category enum stays in lockstep with the live schema", ()
     );
   });
 });
+
+// GL-T4.2 — the plan carries the interview language so the realtime snapshot
+// can hand it to the live worker instead of the Go store pinning "fr".
+describe("interview plan language", () => {
+  it("keeps an explicit language on a stored plan", () => {
+    const plan = parseStoredInterviewPlan({
+      criteria: [
+        {
+          description: "Explains a concrete production investigation.",
+          id: "criterion_1",
+          label: "Problem solving",
+        },
+      ],
+      guardrails: [],
+      language: "fr",
+      questions: [
+        {
+          id: "q1",
+          prompt: "Racontez un incident de production que vous avez traite.",
+        },
+      ],
+      responseModes: ["audio"],
+      roleBrief: "Own backend services.",
+      roleTitle: "Backend Engineer",
+    });
+
+    expect(plan.language).toBe("fr");
+  });
+
+  it("reads a legacy plan with no language as null rather than guessing", () => {
+    const plan = parseStoredInterviewPlan({
+      criteria: [
+        {
+          description: "Explains a concrete production investigation.",
+          id: "criterion_1",
+          label: "Problem solving",
+        },
+      ],
+      guardrails: [],
+      questions: [
+        {
+          id: "q1",
+          prompt: "Describe a production incident you investigated.",
+        },
+      ],
+      responseModes: ["audio"],
+      roleBrief: "Own backend services.",
+      roleTitle: "Backend Engineer",
+    });
+
+    expect(plan.language).toBeNull();
+  });
+});

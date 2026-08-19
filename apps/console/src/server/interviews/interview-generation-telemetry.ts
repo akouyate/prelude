@@ -19,6 +19,12 @@ export type AiDraftFallbackEvent = {
   provider: string;
   model: string;
   reason: InterviewGenerationFallbackReason;
+  // The language pair the fallback draft was written in (plan 2026-08-18,
+  // rule 5). Recorded here because "AI tailoring was unavailable" and "which
+  // language answered instead" are only auditable together — a silent language
+  // switch is exactly the regression the deterministic FR templates prevent.
+  interviewLanguage: string;
+  workspaceLanguage: string;
 };
 
 export type PolicyViolationDroppedEvent = {

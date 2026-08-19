@@ -59,6 +59,11 @@ export const interviewPlanSchema = z.object({
     .default(INTERVIEW_PLAN_SCHEMA_VERSION),
   roleTitle: z.string().trim().min(2).max(160),
   roleBrief: z.string().trim().default(""),
+  // The interview language this plan's candidate-facing copy is written in
+  // (plan 2026-08-18, rules 1 + 7). Nullable and never guessed: `null` means
+  // "authored before stamping existed", and the live pipeline's own fallback —
+  // not this contract — decides what such a plan is spoken in.
+  language: z.string().trim().min(2).max(16).nullable().default(null),
   seniority: interviewSeniorityCanonicalSchema.nullable().default(null),
   focus: z.array(interviewFocusCanonicalSchema).default([]),
   responseModes: z.array(interviewResponseModeSchema).default([]),
@@ -168,6 +173,10 @@ export const storedInterviewPlanSchema = z.preprocess((raw) => {
         : INTERVIEW_PLAN_SCHEMA_VERSION,
     roleTitle: raw.roleTitle,
     roleBrief: typeof raw.roleBrief === "string" ? raw.roleBrief : "",
+    // A legacy row has no language column value at all; it stays null rather
+    // than inheriting a default, so nothing downstream can mistake "unknown"
+    // for "authored in English".
+    language: typeof raw.language === "string" ? raw.language : null,
     seniority: typeof raw.seniority === "string" ? raw.seniority : null,
     focus: asArray(focus),
     // "video" was dropped as a selectable/publishable mode. Filter it out of

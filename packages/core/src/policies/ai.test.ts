@@ -5,8 +5,12 @@ import {
   audioRecordingConsentCopyVersions,
   buildAiCompliancePromptContext,
   candidateConsentCopy,
+  candidateConsentCopyFor,
+  candidateConsentCopyFr,
   candidateConsentCopyVersion,
   candidateDisclosureCopy,
+  candidateDisclosureCopyFor,
+  candidateDisclosureCopyFr,
   candidateDisclosureCopyVersion,
   complianceFlagCodes,
   defaultComplianceFlags,
@@ -73,7 +77,9 @@ describe("AI compliance policy", () => {
     // The current consent version MUST be in the allowlist, or the Go recording
     // gate — which mirrors this list — would refuse to record freshly consented
     // candidates. Bumping the version without extending the allowlist fails here.
-    expect(audioRecordingConsentCopyVersions).toContain(candidateConsentCopyVersion);
+    expect(audioRecordingConsentCopyVersions).toContain(
+      candidateConsentCopyVersion,
+    );
   });
 
   it("keeps protected and biometric topics out of automated review", () => {
@@ -159,7 +165,10 @@ describe("protected-topic proxy coverage (EU + US)", () => {
       false,
     ],
     ["Do you meet the minimum years of experience for this role?", false],
-    ["Can you work the required schedule, including occasional weekends?", false],
+    [
+      "Can you work the required schedule, including occasional weekends?",
+      false,
+    ],
     ["Describe your experience building cloud-native applications.", false],
     ["Tell me about supporting a family of products at scale.", false],
     ["Walk me through your credit risk modeling track record.", false],
@@ -282,5 +291,70 @@ describe("French protected-topic proxy coverage", () => {
 
   it.each(cases)("textViolatesPolicy(%j) === %s", (text, shouldFlag) => {
     expect(textViolatesPolicy(text)).toBe(shouldFlag);
+  });
+});
+
+describe("French candidate consent surface", () => {
+  it("keeps the French disclosure a faithful restatement of the English one", () => {
+    // Meaning parity, not word parity: the FR text has to carry the same three
+    // commitments as `candidateDisclosureCopy` — AI-guided first screening,
+    // audio recording for later recruiter review, and the exclusion of
+    // protected attributes.
+    expect(candidateDisclosureCopyFr).toContain("guidé par l'IA");
+    expect(candidateDisclosureCopyFr).toContain("première présélection");
+    expect(candidateDisclosureCopyFr).toContain("enregistré en audio");
+    expect(candidateDisclosureCopyFr).toContain("revues par un recruteur");
+    expect(candidateDisclosureCopyFr).toContain("caractéristiques protégées");
+  });
+
+  it("keeps every commitment of the French consent text", () => {
+    expect(candidateConsentCopyFr).toContain("caractéristiques protégées");
+    expect(candidateConsentCopyFr).toContain("Union européenne");
+    expect(candidateConsentCopyFr).toContain("90 jours");
+    expect(candidateConsentCopyFr).toContain("effacement");
+    expect(candidateConsentCopyFr).toContain("enregistrement audio");
+    expect(candidateConsentCopyFr).toContain("transcription");
+  });
+
+  it("excludes the same seven assessment targets as the English consent", () => {
+    // The English consent excludes: protected attributes, appearance, accent,
+    // tone, emotion, personality, biometric signals. All seven must survive the
+    // French rendering — a missing one is a narrower promise, not a translation
+    // nuance.
+    [
+      "caractéristiques protégées",
+      "l'apparence",
+      "l'accent",
+      "le ton",
+      "les émotions",
+      "la personnalité",
+      "les signaux biométriques",
+    ].forEach((exclusion) => {
+      expect(candidateConsentCopyFr).toContain(exclusion);
+    });
+  });
+
+  it("keeps the French copy on the same version ids as the English copy", () => {
+    // The version stamps commitments, never language: an FR rendering of the
+    // same promises is still candidate-disclosure-v2 / candidate-consent-v2.
+    expect(candidateDisclosureCopyVersion).toBe("candidate-disclosure-v2");
+    expect(candidateConsentCopyVersion).toBe("candidate-consent-v2");
+  });
+
+  it("selects the copy for the rendering language", () => {
+    expect(candidateDisclosureCopyFor("en")).toBe(candidateDisclosureCopy);
+    expect(candidateDisclosureCopyFor("fr")).toBe(candidateDisclosureCopyFr);
+    expect(candidateConsentCopyFor("en")).toBe(candidateConsentCopy);
+    expect(candidateConsentCopyFor("fr")).toBe(candidateConsentCopyFr);
+  });
+
+  it("keeps the French texts single-line and free of typographic apostrophes", () => {
+    // The sibling FR policy constants are single-line strings with straight
+    // apostrophes; a smart quote here would silently break byte-equality with
+    // the legally reviewed text.
+    [candidateDisclosureCopyFr, candidateConsentCopyFr].forEach((copy) => {
+      expect(copy).not.toContain("\n");
+      expect(copy).not.toContain("’");
+    });
   });
 });

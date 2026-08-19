@@ -198,6 +198,8 @@ model InterviewDraft {
   guardrails           Json                         @default("[]")
   estimatedMinutes     Int?
   rationale            String?
+  // Language the generated content was written in. Null means "generated before stamping existed" — never a default, never a backfill.
+  language             String?
   sourceAttachmentName String?
   schemaVersion        Int                          @default(1)
   generatorProvider    String?
@@ -252,6 +254,8 @@ model Interview {
   guardrails           Json                  @default("[]")
   estimatedMinutes     Int?
   rationale            String?
+  // Language the generated content was written in, copied from the draft at publish. Null means "generated before stamping existed" — never a default, never a backfill.
+  language             String?
   schemaVersion        Int                   @default(1)
   generatorProvider    String?
   generatorModel       String?
@@ -304,6 +308,8 @@ model CandidateInvitation {
   openedAt           DateTime?
   consentedAt        DateTime?
   consentCopyVersion String?
+  // Language of the consent copy actually shown at consent time, written by the server that rendered it. Null = consented before language was recorded — never backfill.
+  consentLanguage    String?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
   organization       Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -328,6 +334,8 @@ model CandidateSession {
   resumeToken             String?                       @unique
   consentedAt             DateTime?
   consentCopyVersion      String?
+  // Language of the consent copy actually shown at consent time, written by the server that rendered it. Null = consented before language was recorded — never backfill.
+  consentLanguage         String?
   recordingEntitled       Boolean                       @default(false)
   status                  String                        @default("created")
   reviewStatus            String                        @default("to_review")
@@ -570,6 +578,8 @@ model CandidateBrief {
   recommendation     String?
   limitations        Json             @default("[]")
   evidence           Json             @default("[]")
+  // Language the generated brief was written in. Null means "generated before stamping existed" — never a default, never a backfill.
+  language           String?
   modelProvider      String?
   modelName          String?
   schemaVersion      Int              @default(1)

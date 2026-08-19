@@ -190,6 +190,92 @@ describe("updateWorkspaceSettingsAction — country", () => {
   });
 });
 
+// Plan 2026-08-18 (generated-content language), rule 2: the workspace language
+// is written by THIS action only — the same owner/admin gate as the rest of the
+// workspace profile — and lands in the settings JSON, never in a new
+// Organization column.
+describe("updateWorkspaceSettingsAction — workspaceLanguage", () => {
+  it.each(["en", "fr"])("persists %s into the settings JSON", async (value) => {
+    await updateWorkspaceSettingsAction(
+      IDLE_STATE,
+      formData({ name: "Acme", workspaceLanguage: value }),
+    );
+
+    expect(prismaMock.organization.update).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        settings: expect.objectContaining({ workspaceLanguage: value }),
+      }),
+      where: { id: "org_123" },
+    });
+  });
+
+  it("folds the casing of a legacy/hand-rolled submission", async () => {
+    await updateWorkspaceSettingsAction(
+      IDLE_STATE,
+      formData({ name: "Acme", workspaceLanguage: "FR" }),
+    );
+
+    const call = prismaMock.organization.update.mock.calls[0]?.[0];
+    expect(call.data.settings).toMatchObject({ workspaceLanguage: "fr" });
+  });
+
+  // Unlike `country` there is no "Not set" here: the setting always has a
+  // value. So an absent or unparseable field can only be a stale/tampered/
+  // non-browser submission, and must never silently flip a French workspace
+  // back to English — the persisted value is rewritten as-is.
+  it.each([
+    ["an absent", {}],
+    ["a blank", { workspaceLanguage: "" }],
+    ["an unknown", { workspaceLanguage: "de" }],
+  ])("keeps the persisted fr for %s submission", async (_label, fields) => {
+    prismaMock.organization.findUniqueOrThrow.mockResolvedValue({
+      settings: { workspaceLanguage: "fr" },
+    });
+
+    await updateWorkspaceSettingsAction(
+      IDLE_STATE,
+      formData({ name: "Acme", ...fields }),
+    );
+
+    const call = prismaMock.organization.update.mock.calls[0]?.[0];
+    expect(call.data.settings).toMatchObject({ workspaceLanguage: "fr" });
+  });
+
+  it("leaves the rest of the settings JSON untouched", async () => {
+    prismaMock.organization.findUniqueOrThrow.mockResolvedValue({
+      settings: {
+        interview: { defaultLanguage: "fr", interviewerVoice: "lea" },
+        notifications: { weeklyDigest: true },
+      },
+    });
+
+    await updateWorkspaceSettingsAction(
+      IDLE_STATE,
+      formData({ name: "Acme", workspaceLanguage: "en" }),
+    );
+
+    const call = prismaMock.organization.update.mock.calls[0]?.[0];
+    expect(call.data.settings).toMatchObject({
+      interview: { defaultLanguage: "fr", interviewerVoice: "lea" },
+      notifications: { weeklyDigest: true },
+      workspaceLanguage: "en",
+    });
+  });
+
+  it("refuses a non-managing role before reading or writing the settings JSON", async () => {
+    scopeMock.getCompletedOrganizationScope.mockResolvedValue(scope("recruiter"));
+
+    const result = await updateWorkspaceSettingsAction(
+      IDLE_STATE,
+      formData({ name: "Acme", workspaceLanguage: "fr" }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(prismaMock.organization.findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(prismaMock.organization.update).not.toHaveBeenCalled();
+  });
+});
+
 // Plan 2026-08-18, Part 2, site 4: these two actions used to just propagate
 // assertCanEditSettings's throw as an unhandled exception (same QA T8 finding
 // B.6 the workspace action was already fixed for). They now answer with the

@@ -124,3 +124,77 @@ function evidenceStartMs(
 
   return turn ? replayOffsetMs(turn.startedAt, originMs) : null;
 }
+
+// Case-folds a language tag for comparison only. Deliberately NOT the catalogue
+// validator: both functions below must keep surfacing out-of-catalogue tags
+// ("de", "en-US") rather than folding them into "unknown".
+const foldLanguage = (value: string | null | undefined) =>
+  (value ?? "").trim().toLowerCase();
+
+export type BriefLanguageBadge =
+  | { kind: "other"; language: string }
+  | { kind: "unknown" };
+
+/**
+ * When the brief's language deserves a visible caveat (plan 2026-08-18, rule 6).
+ *
+ * A brief is one shared artifact read by the whole team, so it is generated in
+ * the WORKSPACE language — the badge only appears when what the recruiter is
+ * about to read is not that language:
+ * - stamped and equal   -> null, no badge (the overwhelming majority)
+ * - stamped and different -> "other", naming the language it was written in
+ * - unstamped           -> "unknown", i.e. generated before stamping existed
+ *
+ * An out-of-catalogue stamp stays visible as `other` rather than being folded
+ * into "unknown": the honest statement is "not your language", not "no idea".
+ */
+export function resolveBriefLanguageBadge({
+  briefLanguage,
+  workspaceLanguage,
+}: {
+  briefLanguage: string | null;
+  workspaceLanguage: string;
+}): BriefLanguageBadge | null {
+  const stamped = foldLanguage(briefLanguage);
+  if (!stamped) {
+    return { kind: "unknown" };
+  }
+
+  return stamped === foldLanguage(workspaceLanguage)
+    ? null
+    : { kind: "other", language: stamped };
+}
+
+export type QuoteLanguageNote = { language: string };
+
+/**
+ * Whether the recruiter needs telling why the evidence quotes are not in the
+ * language the brief is written in (plan 2026-08-18, rules 1 + 4).
+ *
+ * A workspace screens candidates in whatever language each ROLE is published
+ * in, while the shared brief always follows the WORKSPACE language. When those
+ * two differ — a French workspace interviewing in English — the analysis is
+ * French and the blockquotes under it are verbatim English, because a candidate
+ * quote is audit evidence tied to a transcript turn and is never translated.
+ * Unexplained, that reads as a translation bug, or gets charged to the candidate
+ * as a communication weakness.
+ *
+ * Deliberately keyed off the INTERVIEW language, not `brief.language`: this is a
+ * statement about what the candidate actually said. An unstamped interview
+ * yields null — there is no honest claim to make about a language nobody
+ * recorded.
+ */
+export function resolveQuoteLanguageNote({
+  interviewLanguage,
+  workspaceLanguage,
+}: {
+  interviewLanguage: string | null;
+  workspaceLanguage: string;
+}): QuoteLanguageNote | null {
+  const spoken = foldLanguage(interviewLanguage);
+  if (!spoken || spoken === foldLanguage(workspaceLanguage)) {
+    return null;
+  }
+
+  return { language: spoken };
+}

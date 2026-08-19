@@ -1,23 +1,30 @@
 import {
   candidateBriefSchema,
   type CandidateBriefDto,
+  type WorkspaceLanguage,
 } from "@prelude/contracts";
 import {
   complianceFlagCodes,
   defaultComplianceFlags,
   disallowedQuestionTopics,
-  recruiterLimitationCopy,
-  sensitiveInformationHandlingRule,
 } from "@prelude/core";
 import { prisma, type Prisma } from "@prelude/db";
 import { createNotificationDispatcher } from "@prelude/notifications";
 
+import {
+  candidateBriefCopy,
+  type CandidateBriefCopy,
+} from "./candidate-brief-copy";
 import { createOpenAICandidateBriefSynthesizer } from "./candidate-brief-openai";
 import {
   getCandidateSessionEvidence,
   type CandidateSessionEvidence,
   type CandidateTranscriptTurn,
 } from "./live-session-evidence";
+import {
+  readWorkspaceLanguageValue,
+  resolveWorkspaceLanguage,
+} from "../organizations/content-language";
 
 export const candidateBriefPromptVersion = "candidate-brief-v1";
 export const candidateBriefSchemaVersion = 1;
@@ -32,6 +39,10 @@ export type CandidateBriefSynthesizerInput = {
   criteria: BriefCriterion[];
   evidence: CandidateSessionEvidence;
   jobTitle: string;
+  // Workspace language the recruiter-facing analysis is written in (plan
+  // 2026-08-18, rule 1). An input fact resolved server-side, never a model
+  // output: the brief is one shared artifact, so it cannot follow the reader.
+  language: WorkspaceLanguage;
   roleTitle: string;
 };
 
@@ -77,6 +88,7 @@ export async function generateCandidateBriefForSession({
       candidateBrief: true,
       interview: true,
       job: true,
+      organization: { select: { settings: true } },
     },
     where: {
       id: candidateSessionId,
@@ -88,6 +100,11 @@ export async function generateCandidateBriefForSession({
     return { reason: "candidate_session_not_found", status: "skipped" };
   }
 
+  // Resolved here, on every run: a regeneration writes today's workspace
+  // language, not whatever the previous attempt happened to be stamped with.
+  const language = resolveWorkspaceLanguage(
+    readWorkspaceLanguageValue(session.organization?.settings ?? null),
+  );
   const criteria = readCriteria(session.interview.criteria);
   const evidence = await getCandidateSessionEvidence({
     productSession: session,
@@ -124,6 +141,7 @@ export async function generateCandidateBriefForSession({
             criteria,
             evidence,
             jobTitle: session.job.title,
+            language,
             roleTitle: session.interview.roleTitle,
           })
         : await synthesizer.synthesize({
@@ -135,6 +153,7 @@ export async function generateCandidateBriefForSession({
             criteria,
             evidence,
             jobTitle: session.job.title,
+            language,
             roleTitle: session.interview.roleTitle,
           }),
     );
@@ -152,6 +171,7 @@ export async function generateCandidateBriefForSession({
         evidence: evidenceRefs,
         failedReason: null,
         generatedAt: new Date(),
+        language,
         limitations: brief.limitations,
         modelName: synthesizer.modelName,
         modelProvider: synthesizer.provider,
@@ -177,6 +197,11 @@ export async function generateCandidateBriefForSession({
     await prisma.candidateBrief.update({
       data: {
         failedReason: message,
+        // `language` is deliberately untouched: the stamp describes the
+        // summaryJson that survives this write. A first-ever failure never
+        // stamped anything (the column is null from birth), and a failed
+        // regeneration keeps the previous brief's content, so it keeps that
+        // content's language too.
         modelName: synthesizer.modelName,
         modelProvider: synthesizer.provider,
         status: "failed",
@@ -260,7 +285,7 @@ export function createFallbackCandidateBriefSynthesizer({
           ...brief,
           limitations: [
             ...brief.limitations,
-            "LLM synthesis was unavailable; a conservative local fallback was used.",
+            candidateBriefCopy(input.language).fallbackUsedLimitation,
           ].slice(0, 8),
         });
       }
@@ -271,6 +296,7 @@ export function createFallbackCandidateBriefSynthesizer({
 export function buildLocalCandidateBrief(
   input: CandidateBriefSynthesizerInput,
 ): CandidateBriefDto {
+  const copy = candidateBriefCopy(input.language);
   const candidateTurns = input.evidence.transcriptTurns.filter(
     (turn) => turn.speaker === "candidate",
   );
@@ -284,13 +310,15 @@ export function buildLocalCandidateBrief(
     evidence: input.evidence,
     reviewableCandidateTurns,
   });
-  const limitations = getLimitations(
-    input.evidence,
+  const limitations = getLimitations({
     candidateTurns,
+    copy,
+    evidence: input.evidence,
     hasSensitiveSignal,
-  );
+  });
   const criteria = input.criteria.map((criterion) =>
     evaluateCriterion({
+      copy,
       criterion,
       hasCandidateSpeech: candidateTurns.length > 0,
       reviewableCandidateTurns,
@@ -307,6 +335,7 @@ export function buildLocalCandidateBrief(
     candidateLabel: input.candidateLabel,
     candidateTurns,
     briefStatus,
+    copy,
     evidenceStatus: input.evidence.status,
     roleTitle: input.roleTitle,
   });
@@ -328,20 +357,19 @@ export function buildLocalCandidateBrief(
             criterion.status === "Weak" ||
             criterion.status === "Not assessable",
         )
-        .map((criterion) => `Clarify ${criterion.label.toLowerCase()}.`),
+        .map((criterion) => copy.pointToClarify(criterion.label)),
       ...(input.evidence.questionCompletionRate !== null &&
       input.evidence.questionCompletionRate < 100
-        ? ["Confirm the missing interview questions before making a decision."]
+        ? [copy.missingQuestionsPoint]
         : []),
     ].slice(0, 8),
     risks:
       notAssessable.length > 0 ||
       criteria.some((criterion) => criterion.status === "Weak")
-        ? [
-            "Some criteria are not assessable from reviewable, job-related transcript evidence.",
-          ]
+        ? [copy.notAssessableRisk]
         : [],
     evaluationMatrix: buildLocalEvaluationMatrix({
+      copy,
       criteria,
       roleTitle: input.roleTitle,
     }),
@@ -355,10 +383,12 @@ export function buildLocalCandidateBrief(
 }
 
 function evaluateCriterion({
+  copy,
   criterion,
   hasCandidateSpeech,
   reviewableCandidateTurns,
 }: {
+  copy: CandidateBriefCopy;
   criterion: BriefCriterion;
   hasCandidateSpeech: boolean;
   reviewableCandidateTurns: CandidateTranscriptTurn[];
@@ -382,8 +412,7 @@ function evaluateCriterion({
         criterionId: criterion.id,
         evidence: [],
         label: criterion.label,
-        rationale:
-          "Candidate speech was captured, but it did not contain reviewable job-related evidence.",
+        rationale: copy.criterionRationale.noReviewableEvidence,
         status: "Weak",
       };
     }
@@ -392,7 +421,7 @@ function evaluateCriterion({
       criterionId: criterion.id,
       evidence: [],
       label: criterion.label,
-      rationale: "Not assessable from the available transcript evidence.",
+      rationale: copy.criterionRationale.notAssessable,
       status: "Not assessable",
     };
   }
@@ -402,7 +431,7 @@ function evaluateCriterion({
       criterionId: criterion.id,
       evidence,
       label: criterion.label,
-      rationale: "Transcript includes concrete, reviewable evidence.",
+      rationale: copy.criterionRationale.strong,
       status: "Strong",
     };
   }
@@ -412,7 +441,7 @@ function evaluateCriterion({
       criterionId: criterion.id,
       evidence,
       label: criterion.label,
-      rationale: "Transcript includes relevant but limited evidence.",
+      rationale: copy.criterionRationale.medium,
       status: "Medium",
     };
   }
@@ -421,36 +450,31 @@ function evaluateCriterion({
     criterionId: criterion.id,
     evidence,
     label: criterion.label,
-    rationale: "Transcript evidence is brief and needs recruiter follow-up.",
+    rationale: copy.criterionRationale.weak,
     status: "Weak",
   };
 }
 
 function buildLocalEvaluationMatrix({
+  copy,
   criteria,
   roleTitle,
 }: {
+  copy: CandidateBriefCopy;
   criteria: CandidateBriefDto["criteria"];
   roleTitle: string;
 }): NonNullable<CandidateBriefDto["evaluationMatrix"]> {
   const matrixCriteria = criteria.map((criterion) => {
     const status = toMatrixStatus(criterion.status, criterion.evidence.length);
     const missingInfo =
-      status === "satisfied"
-        ? []
-        : [`Clarify ${criterion.label.toLowerCase()} with concrete evidence.`];
+      status === "satisfied" ? [] : [copy.matrixMissingInfo(criterion.label)];
 
     return {
       category: categorizeCriterion(criterion.label),
       confidence: toMatrixConfidence(criterion.status),
       criterionId: criterion.criterionId,
       evidence: criterion.evidence,
-      followUps:
-        status === "satisfied"
-          ? []
-          : [
-              `Can you share a concrete example for ${criterion.label.toLowerCase()}?`,
-            ],
+      followUps: status === "satisfied" ? [] : [copy.followUp(criterion.label)],
       label: criterion.label,
       missingInfo,
       rationale: criterion.rationale,
@@ -459,7 +483,9 @@ function buildLocalEvaluationMatrix({
   });
   const facts = criteria
     .flatMap((criterion) => criterion.evidence.slice(0, 1))
-    .map((item) => `Candidate stated: ${truncateShortText(item.text)}`)
+    // The quote itself stays exactly as the candidate said it (rule 4); only
+    // the sentence introducing it follows the workspace language.
+    .map((item) => copy.fact(truncateShortText(item.text)))
     .slice(0, 6);
   const inferredSignals = criteria
     .filter(
@@ -470,7 +496,7 @@ function buildLocalEvaluationMatrix({
     .map((criterion) => ({
       confidence: toMatrixConfidence(criterion.status),
       evidence: criterion.evidence,
-      label: `${criterion.label} signal`,
+      label: copy.inferredSignalLabel(criterion.label),
     }));
   const weakOrMissing = matrixCriteria.filter(
     (criterion) => criterion.status !== "satisfied",
@@ -498,10 +524,10 @@ function buildLocalEvaluationMatrix({
     recommendationLabel,
     recommendationRationale:
       recommendationLabel === "continue"
-        ? `The ${roleTitle} screen contains enough reviewable evidence to continue recruiter review.`
+        ? copy.recommendationRationale.continueReview(roleTitle)
         : facts.length === 0
-          ? `The ${roleTitle} screen did not produce enough reviewable evidence for a recruiter recommendation.`
-          : `The ${roleTitle} screen produced useful signal, but the recruiter should clarify missing details before advancing.`,
+          ? copy.recommendationRationale.inconclusive(roleTitle)
+          : copy.recommendationRationale.targetedFollowUp(roleTitle),
     recommendedNextStep:
       recommendationLabel === "continue" ? "to_call" : "to_review",
     risks: criteria
@@ -575,32 +601,38 @@ function buildSummary({
   candidateLabel,
   candidateTurns,
   briefStatus,
+  copy,
   evidenceStatus,
   roleTitle,
 }: {
   briefStatus: CandidateBriefDto["status"];
   candidateLabel: string;
   candidateTurns: CandidateTranscriptTurn[];
+  copy: CandidateBriefCopy;
   evidenceStatus: string;
   roleTitle: string;
 }) {
   if (briefStatus === "technical_failure") {
-    return `${candidateLabel}'s ${roleTitle} screen ended with a technical failure. Use any captured transcript only as context and invite a retry if the profile still matters.`;
+    return copy.summary.technicalFailure({ candidateLabel, roleTitle });
   }
 
   if (briefStatus === "partial") {
-    return `${candidateLabel}'s ${roleTitle} screen is partial (${evidenceStatus}). Review the captured evidence only as directional context before deciding the next human step.`;
+    return copy.summary.partial({ candidateLabel, evidenceStatus, roleTitle });
   }
 
   if (briefStatus === "insufficient_signal") {
-    return `${candidateLabel}'s ${roleTitle} screen does not contain enough reviewable candidate evidence for a substantive brief. Treat the result as insufficient signal.`;
+    return copy.summary.insufficientSignal({ candidateLabel, roleTitle });
   }
 
   if (candidateTurns.length === 0) {
-    return `${candidateLabel} completed the ${roleTitle} screen, but the transcript does not contain enough candidate evidence for a substantive brief.`;
+    return copy.summary.noCandidateTurns({ candidateLabel, roleTitle });
   }
 
-  return `${candidateLabel} completed the ${roleTitle} screen with ${candidateTurns.length} candidate transcript turn${candidateTurns.length > 1 ? "s" : ""}. Review the cited evidence before deciding the next step.`;
+  return copy.summary.completed({
+    candidateLabel,
+    roleTitle,
+    turnCount: candidateTurns.length,
+  });
 }
 
 function truncateEvidenceText(text: string) {
@@ -612,46 +644,46 @@ function truncateEvidenceText(text: string) {
   return `${normalized.slice(0, 1197).trimEnd()}...`;
 }
 
-function getLimitations(
-  evidence: CandidateSessionEvidence,
-  candidateTurns: CandidateTranscriptTurn[],
-  hasSensitiveSignal: boolean,
-) {
+function getLimitations({
+  candidateTurns,
+  copy,
+  evidence,
+  hasSensitiveSignal,
+}: {
+  candidateTurns: CandidateTranscriptTurn[];
+  copy: CandidateBriefCopy;
+  evidence: CandidateSessionEvidence;
+  hasSensitiveSignal: boolean;
+}) {
   const limitations: string[] = [
-    recruiterLimitationCopy,
-    sensitiveInformationHandlingRule,
+    copy.limitation.recruiterLimitation,
+    copy.limitation.sensitiveHandling,
   ];
 
   if (candidateTurns.length === 0) {
-    limitations.push("No candidate transcript turns were available.");
+    limitations.push(copy.limitation.noCandidateTurns);
   }
 
   if (evidence.status !== "completed") {
-    limitations.push(
-      `Interview status is ${evidence.status}; do not treat this as a full completed screen.`,
-    );
+    limitations.push(copy.limitation.statusNotCompleted(evidence.status));
   }
 
   if (
     evidence.status === "failed" ||
     evidence.terminalEventType === "session_failed"
   ) {
-    limitations.push(
-      "The interview had a technical failure; do not interpret this as candidate weakness.",
-    );
+    limitations.push(copy.limitation.technicalFailure);
   }
 
   if (
     evidence.questionCompletionRate !== null &&
     evidence.questionCompletionRate < 100
   ) {
-    limitations.push("The interview did not complete every planned question.");
+    limitations.push(copy.limitation.incompleteQuestions);
   }
 
   if (hasSensitiveSignal) {
-    limitations.push(
-      "Candidate-volunteered protected or sensitive information was excluded from recruiter-facing evidence.",
-    );
+    limitations.push(copy.limitation.sensitiveExcluded);
   }
 
   return limitations;

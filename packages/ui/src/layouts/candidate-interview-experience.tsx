@@ -16,34 +16,100 @@ import { CandidateMonoPill } from "./candidate-shell";
 
 type CandidateExperienceMode = string;
 
-type CandidateExperienceDetails = {
-  companyName: string;
-  description?: string;
-  estimatedMinutes: number | null;
-  jobTitle: string;
-  responseModes: CandidateExperienceMode[];
+/**
+ * Every user-visible string on the two candidate pre-join screens — the welcome
+ * (disclosure) screen and the setup (consent) screen.
+ *
+ * Same contract as `EnterpriseShellLabels`: finished copy, never catalogue keys,
+ * and required rather than defaulted. These screens carry the AI disclosure and
+ * the consent the candidate ticks, so a missing label must be a type error, not
+ * a silent fallback to English next to a French consent text.
+ *
+ * Interpolation happens on the caller's side (`durationPill`, `invitation`,
+ * `preflightSubtitle`, `formatValue`, …), for the same reason the shell receives
+ * `nextExpiryLabel` pre-formatted: composing a sentence is a translation
+ * concern, and only the app has the copy table.
+ *
+ * This is the ASSEMBLY type — what the app builds once and hands to all three
+ * screens. Each component's props narrow it to a `Pick` of the keys that
+ * component actually reads (the three sets partition this type exactly), so a
+ * label can never be listed here and silently rendered nowhere.
+ */
+export type CandidateInterviewExperienceLabels = {
+  answersBody: string;
+  answersTitle: string;
+  audioOnlyNotice: string;
+  durationPill: string;
+  emailLabel: string;
+  emailOptional: string;
+  emailPlaceholder: string;
+  evidenceBody: string;
+  evidenceTitle: string;
+  fairnessHeading: string;
+  fairnessKicker: string;
+  formatLabel: string;
+  formatValue: string;
+  humanReviewedPill: string;
+  introDescription: string;
+  introHeading: string;
+  introPill: string;
+  invitation: string;
+  lengthLabel: string;
+  lengthValue: string;
+  // Legal ruling R5.1: this fragment closes the statutory disclosure paragraph,
+  // so it travels with it. It is kept out of `@prelude/core` so the reviewed
+  // disclosure text there stays byte-exact.
+  listeningNoteEmphasis: string;
+  listeningNoteLead: string;
+  modesPill: string;
+  nameLabel: string;
+  namePlaceholder: string;
+  paceBody: string;
+  paceTitle: string;
+  preflightHeading: string;
+  preflightSubtitle: string;
+  privacyPill: string;
+  roleLabel: string;
+  startButton: string;
+  startFootnote: string;
+};
+
+/** The two response-mode words `formatCandidateModes` joins. */
+export type CandidateExperienceModeLabels = {
+  audio: string;
+  formFallback: string;
+};
+
+export type CandidateWelcomeExperienceProps = {
+  disclosureCopy: string;
+  labels: Pick<
+    CandidateInterviewExperienceLabels,
+    | "answersBody"
+    | "answersTitle"
+    | "durationPill"
+    | "evidenceBody"
+    | "evidenceTitle"
+    | "fairnessHeading"
+    | "fairnessKicker"
+    | "humanReviewedPill"
+    | "invitation"
+    | "listeningNoteEmphasis"
+    | "listeningNoteLead"
+    | "modesPill"
+    | "paceBody"
+    | "paceTitle"
+    | "privacyPill"
+    | "startButton"
+    | "startFootnote"
+  >;
+  onStart: () => void;
   roleTitle: string;
 };
 
-export type CandidateWelcomeExperienceProps = CandidateExperienceDetails & {
-  disclosureCopy: string;
-  evidenceNotice?: {
-    body: string;
-    title: string;
-  };
-  onStart: () => void;
-};
-
 export function CandidateWelcomeExperience({
-  companyName,
   disclosureCopy,
-  evidenceNotice = {
-    body: "Your words are saved as transcript evidence for recruiter review.",
-    title: "Transcribed for review",
-  },
-  estimatedMinutes,
+  labels,
   onStart,
-  responseModes,
   roleTitle,
 }: CandidateWelcomeExperienceProps) {
   return (
@@ -51,62 +117,53 @@ export function CandidateWelcomeExperience({
       <div className="flex w-full max-w-[580px] flex-col motion-safe:animate-[cc-in_.55s_cubic-bezier(.2,.7,.2,1)_both]">
         <CandidateMonoPill className="self-start" tone="tint">
           <ShieldCheckIcon className="h-[13px] w-[13px]" strokeWidth={1.9} />
-          Private interview
+          {labels.privacyPill}
         </CandidateMonoPill>
 
-        <p className="mt-6 text-[14.5px] text-ink-700">
-          {companyName} invites you to a first conversation
-        </p>
+        <p className="mt-6 text-[14.5px] text-ink-700">{labels.invitation}</p>
         <h1 className="mt-3.5 text-balance font-display text-[clamp(40px,8.4vw,68px)] font-normal leading-[1] tracking-[-0.022em] text-ink-950">
           {roleTitle}
         </h1>
         <p className="mt-5 max-w-[34rem] text-pretty text-[17px] leading-[1.62] text-ink-700">
-          {disclosureCopy} We listen to{" "}
+          {disclosureCopy} {labels.listeningNoteLead}{" "}
           <span className="font-display text-[21px] italic text-ink-950">
-            what you say
+            {labels.listeningNoteEmphasis}
           </span>
           .
         </p>
 
         <div className="mt-[26px] flex flex-wrap gap-2">
+          <CandidateSoftPill icon={MicIcon} label={labels.modesPill} />
+          <CandidateSoftPill icon={ClockIcon} label={labels.durationPill} />
           <CandidateSoftPill
-            icon={MicIcon}
-            label={formatCandidateModes(responseModes)}
+            icon={ShieldCheckIcon}
+            label={labels.humanReviewedPill}
           />
-          <CandidateSoftPill
-            icon={ClockIcon}
-            label={
-              estimatedMinutes
-                ? `About ${estimatedMinutes} minutes`
-                : "A few minutes"
-            }
-          />
-          <CandidateSoftPill icon={ShieldCheckIcon} label="Human reviewed" />
         </div>
 
         <div className="mt-[30px] rounded-[28px] border border-ink-200 bg-white px-[clamp(1.25rem,4vw,2rem)] py-[30px] motion-safe:animate-[cc-in_.6s_cubic-bezier(.2,.7,.2,1)_.1s_both]">
           <p className="font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-600">
-            How this interview works
+            {labels.fairnessKicker}
           </p>
           <h2 className="mt-3 font-display text-[27px] font-normal leading-[1.2] tracking-[-0.014em] text-ink-950">
-            Fair, calm, and transparent.
+            {labels.fairnessHeading}
           </h2>
           <div className="mt-[22px] flex flex-col">
             <CandidateFairnessRow
-              body="Only the content of your answers reaches the recruiter."
+              body={labels.answersBody}
               icon={ShieldCheckIcon}
-              title="Answers, not appearance"
+              title={labels.answersTitle}
             />
             <CandidateFairnessRow
-              body="There is no timer on answers. Pause and think."
+              body={labels.paceBody}
               icon={ClockIcon}
-              title="Go at your own pace"
+              title={labels.paceTitle}
             />
             <CandidateFairnessRow
-              body={evidenceNotice.body}
+              body={labels.evidenceBody}
               icon={TranscriptIcon}
               isLast
-              title={evidenceNotice.title}
+              title={labels.evidenceTitle}
             />
           </div>
         </div>
@@ -116,25 +173,36 @@ export function CandidateWelcomeExperience({
           data-cc-btn=""
           onClick={onStart}
         >
-          Get started
+          {labels.startButton}
           <MicIcon className="h-4 w-4" strokeWidth={1.8} />
         </Button>
         <p className="mt-3.5 text-center font-mono text-[10.5px] tracking-[0.06em] text-ink-500">
-          No account needed · Take your time on every answer
+          {labels.startFootnote}
         </p>
       </div>
     </div>
   );
 }
 
+export type CandidateInterviewIntroProps = {
+  jobTitle: string;
+  labels: Pick<
+    CandidateInterviewExperienceLabels,
+    | "formatLabel"
+    | "formatValue"
+    | "introDescription"
+    | "introHeading"
+    | "introPill"
+    | "lengthLabel"
+    | "lengthValue"
+    | "roleLabel"
+  >;
+};
+
 export function CandidateInterviewIntro({
-  companyName,
-  description,
-  estimatedMinutes,
   jobTitle,
-  responseModes,
-  roleTitle,
-}: CandidateExperienceDetails) {
+  labels,
+}: CandidateInterviewIntroProps) {
   return (
     <div className="max-w-[34rem]">
       <CandidateMonoPill>
@@ -142,32 +210,24 @@ export function CandidateInterviewIntro({
           className="h-[13px] w-[13px] text-spruce-600"
           strokeWidth={1.9}
         />
-        Private first screen
+        {labels.introPill}
       </CandidateMonoPill>
       <h1 className="mt-6 font-display text-[clamp(34px,5.4vw,52px)] font-normal leading-[1.04] tracking-[-0.02em] text-ink-950">
-        Let&apos;s get you ready
+        {labels.introHeading}
       </h1>
       <p className="mt-[18px] max-w-[32rem] text-pretty text-[16.5px] leading-[1.62] text-ink-700">
-        {description ?? (
-          <>
-            {roleTitle} at {companyName}. Answer naturally; the recruiter
-            reviews your answers, not your face, accent, tone, emotion, or
-            protected attributes.
-          </>
-        )}
+        {labels.introDescription}
       </p>
 
       <div className="mt-8 grid grid-cols-1 gap-2.5 sm:grid-cols-3">
-        <CandidateBriefFact label="Role" value={jobTitle} />
+        <CandidateBriefFact label={labels.roleLabel} value={jobTitle} />
         <CandidateBriefFact
-          label="Format"
-          value={formatCandidateModes(responseModes)}
+          label={labels.formatLabel}
+          value={labels.formatValue}
         />
         <CandidateBriefFact
-          label="Length"
-          value={
-            estimatedMinutes ? `About ${estimatedMinutes} min` : "A few minutes"
-          }
+          label={labels.lengthLabel}
+          value={labels.lengthValue}
         />
       </div>
     </div>
@@ -179,8 +239,17 @@ export type CandidatePreflightExperienceProps = {
   candidateName: string;
   consentAccepted: boolean;
   consentCopy: string;
-  estimatedMinutes: number | null;
-  jobTitle: string;
+  labels: Pick<
+    CandidateInterviewExperienceLabels,
+    | "audioOnlyNotice"
+    | "emailLabel"
+    | "emailOptional"
+    | "emailPlaceholder"
+    | "nameLabel"
+    | "namePlaceholder"
+    | "preflightHeading"
+    | "preflightSubtitle"
+  >;
   onCandidateEmailChange: (value: string) => void;
   onCandidateNameChange: (value: string) => void;
   onConsentChange: (value: boolean) => void;
@@ -191,8 +260,7 @@ export function CandidatePreflightExperience({
   candidateName,
   consentAccepted,
   consentCopy,
-  estimatedMinutes,
-  jobTitle,
+  labels,
   onCandidateEmailChange,
   onCandidateNameChange,
   onConsentChange,
@@ -205,11 +273,10 @@ export function CandidatePreflightExperience({
         </span>
         <div>
           <h2 className="font-display text-[26px] font-normal leading-[1.15] tracking-[-0.014em] text-ink-950">
-            Before you start
+            {labels.preflightHeading}
           </h2>
           <p className="mt-[5px] text-[13.5px] leading-[1.55] text-ink-600">
-            {jobTitle}
-            {estimatedMinutes ? ` · about ${estimatedMinutes} minutes` : ""}
+            {labels.preflightSubtitle}
           </p>
         </div>
       </div>
@@ -217,21 +284,24 @@ export function CandidatePreflightExperience({
       <div className="mt-[22px] grid grid-cols-1 gap-3 sm:grid-cols-2">
         <label className="block">
           <span className="mb-[7px] block font-title text-[12.5px] font-semibold tracking-[-0.006em] text-ink-950">
-            Your name
+            {labels.nameLabel}
           </span>
           <CandidateTextInput
             onChange={(event) => onCandidateNameChange(event.target.value)}
-            placeholder="Your name"
+            placeholder={labels.namePlaceholder}
             value={candidateName}
           />
         </label>
         <label className="block">
           <span className="mb-[7px] block font-title text-[12.5px] font-semibold tracking-[-0.006em] text-ink-950">
-            Email <span className="font-normal text-ink-500">optional</span>
+            {labels.emailLabel}{" "}
+            <span className="font-normal text-ink-500">
+              {labels.emailOptional}
+            </span>
           </span>
           <CandidateTextInput
             onChange={(event) => onCandidateEmailChange(event.target.value)}
-            placeholder="you@example.com"
+            placeholder={labels.emailPlaceholder}
             type="email"
             value={candidateEmail}
           />
@@ -243,7 +313,7 @@ export function CandidatePreflightExperience({
           <MicIcon className="h-4 w-4" strokeWidth={1.8} />
         </span>
         <p className="text-[13.5px] leading-[1.55] text-ink-700">
-          This interview is audio-first. You only need your microphone.
+          {labels.audioOnlyNotice}
         </p>
       </div>
 
@@ -342,18 +412,26 @@ function CandidateBriefFact({
   );
 }
 
-export function formatCandidateModes(modes: CandidateExperienceMode[]) {
-  const labels = modes.map((mode) => {
+/**
+ * Joins the builder's response modes into the one phrase the pills show. The
+ * words come from the caller so this package keeps no English of its own; the
+ * "audio when the list is empty" default is a product rule, not copy.
+ */
+export function formatCandidateModes(
+  modes: CandidateExperienceMode[],
+  labels: CandidateExperienceModeLabels,
+) {
+  const resolved = modes.map((mode) => {
     if (mode === "form" || mode === "text") {
-      return "form fallback";
+      return labels.formFallback;
     }
 
     if (mode === "audio") {
-      return "audio";
+      return labels.audio;
     }
 
     return mode;
   });
 
-  return labels.length > 0 ? labels.join(", ") : "audio";
+  return resolved.length > 0 ? resolved.join(", ") : labels.audio;
 }

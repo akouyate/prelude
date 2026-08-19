@@ -1,7 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { organizationCountrySchema } from "@prelude/contracts";
+import {
+  organizationCountrySchema,
+  workspaceLanguageSchema,
+} from "@prelude/contracts";
 import { prisma, type Prisma } from "@prelude/db";
 import type { OrganizationRole } from "@prelude/types";
 
@@ -63,6 +66,15 @@ export async function updateWorkspaceSettingsAction(
     return { error: null, ok: false };
   }
 
+  // Plan 2026-08-18, rule 2: the workspace generated-content language rides
+  // along with the workspace profile — same form, same owner/admin gate, no
+  // second action — and lands in the settings JSON rather than a column.
+  const organization = await prisma.organization.findUniqueOrThrow({
+    select: { settings: true },
+    where: { id: scope.organizationId },
+  });
+  const current = parseOrganizationSettings(organization.settings);
+
   await prisma.organization.update({
     data: {
       companySize: allowedCompanySizes.has(companySize ?? "")
@@ -83,6 +95,15 @@ export async function updateWorkspaceSettingsAction(
       ...(country !== undefined ? { country } : {}),
       hiringFocus,
       name,
+      settings: mergeSettings(organization.settings, {
+        // No "Not set" here, unlike `country`: the setting always has a value,
+        // so an absent/unparseable field can only be a stale, tampered or
+        // non-browser submission — it rewrites the persisted value instead of
+        // silently flipping a French workspace back to the "en" default.
+        workspaceLanguage:
+          cleanWorkspaceLanguage(formData.get("workspaceLanguage")) ??
+          current.workspaceLanguage,
+      }),
     },
     where: { id: scope.organizationId },
   });
@@ -238,6 +259,18 @@ function cleanDeclaredCountry(value: FormDataEntryValue | null) {
   }
 
   const result = organizationCountrySchema.safeParse(text);
+
+  return result.success ? result.data : undefined;
+}
+
+// `undefined` means "the submission said nothing usable" — the caller keeps the
+// persisted value. Case is folded because the persisted/submitted pair has to
+// survive legacy shapes ("FR"); anything outside the en/fr catalogue pair is
+// rejected outright rather than guessed at.
+function cleanWorkspaceLanguage(value: FormDataEntryValue | null) {
+  const result = workspaceLanguageSchema.safeParse(
+    cleanText(value, 8).toLowerCase(),
+  );
 
   return result.success ? result.data : undefined;
 }
