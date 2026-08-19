@@ -14,6 +14,7 @@ type ConsoleAuthConfiguration = {
 };
 
 export const consoleAuthConfiguration = resolveConsoleAuthConfiguration({
+  appEnv: process.env.APP_ENV,
   clerkConfigured: isClerkConfigured,
   nodeEnv: process.env.NODE_ENV,
   requestedProvider: process.env.CONSOLE_AUTH_PROVIDER,
@@ -38,14 +39,23 @@ export const afterSignUpUrl =
   "/onboarding/organization";
 
 export function resolveConsoleAuthConfiguration({
+  appEnv,
   clerkConfigured,
   nodeEnv,
   requestedProvider,
 }: {
+  appEnv?: string;
   clerkConfigured: boolean;
   nodeEnv?: string;
   requestedProvider?: string;
 }): ConsoleAuthConfiguration {
+  // Either switch closes the door on a mock identity. The console historically
+  // read production off NODE_ENV alone, while the rest of the stack (the Go
+  // realtime service, the candidate app, the Python interviewer worker) switches
+  // on APP_ENV: a deployment that sets APP_ENV=production and leaves NODE_ENV
+  // unset must still be refused. Purely additive — nothing refused before is
+  // allowed now.
+  const isProduction = nodeEnv === "production" || appEnv === "production";
   const setting = parseConsoleAuthProviderSetting(requestedProvider);
 
   if (!setting) {
@@ -57,7 +67,7 @@ export function resolveConsoleAuthConfiguration({
   }
 
   if (setting === "mock") {
-    if (nodeEnv === "production") {
+    if (isProduction) {
       return {
         error: "Mock Clerk auth is disabled in production.",
         provider: "clerk",
@@ -82,7 +92,7 @@ export function resolveConsoleAuthConfiguration({
     return { error: null, provider: "clerk", setting };
   }
 
-  if (nodeEnv === "production") {
+  if (isProduction) {
     return {
       error: "Clerk is not configured.",
       provider: "clerk",

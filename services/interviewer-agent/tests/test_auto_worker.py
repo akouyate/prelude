@@ -474,3 +474,84 @@ async def test_terminal_session_job_is_acknowledged_without_starting_an_agent(
     assert completed == 0
     assert queue.acked == [job]
     assert queue.retries == []
+
+
+def test_auto_worker_flags_win_over_environment_variables() -> None:
+    args = auto_worker.parse_args(
+        [
+            "--redis-url",
+            "redis://flag:6379/0",
+            "--realtime-api-url",
+            "http://flag.internal:8080",
+            "--api-key",
+            "flag-key",
+        ],
+        env={
+            "REDIS_URL": "redis://env:6379/0",
+            "REALTIME_API_URL": "http://env.internal:8080",
+            "REALTIME_API_KEY": "env-key",
+        },
+    )
+
+    # `make live-openai-autoworker` passes flags; they must keep winning.
+    assert args.redis_url == "redis://flag:6379/0"
+    assert args.realtime_api_url == "http://flag.internal:8080"
+    assert args.api_key == "flag-key"
+
+
+def test_auto_worker_falls_back_to_environment_variables() -> None:
+    # A container runs `python -m app.auto_worker` with nothing but env vars.
+    args = auto_worker.parse_args(
+        [],
+        env={
+            "REDIS_URL": "redis://env:6379/0",
+            "REALTIME_API_URL": "http://env.internal:8080",
+            "REALTIME_API_KEY": "env-key",
+            "AGENT_JOIN_CONSUMER_GROUP": "prelude-live-workers-eu",
+        },
+    )
+
+    assert args.redis_url == "redis://env:6379/0"
+    assert args.realtime_api_url == "http://env.internal:8080"
+    assert args.api_key == "env-key"
+    assert args.consumer_group == "prelude-live-workers-eu"
+
+
+def test_auto_worker_api_key_is_optional() -> None:
+    args = auto_worker.parse_args(
+        [],
+        env={
+            "REDIS_URL": "redis://env:6379/0",
+            "REALTIME_API_URL": "http://env.internal:8080",
+        },
+    )
+
+    assert args.api_key is None
+
+
+def test_auto_worker_missing_realtime_api_url_names_both_ways_to_supply_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc:
+        auto_worker.parse_args([], env={"REDIS_URL": "redis://env:6379/0"})
+
+    assert exc.value.code == 2
+    message = capsys.readouterr().err
+    assert "--realtime-api-url" in message
+    assert "REALTIME_API_URL" in message
+
+
+def test_auto_worker_missing_redis_url_names_both_ways_to_supply_it(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A blank deployment variable must fail as loudly as an absent one.
+    with pytest.raises(SystemExit) as exc:
+        auto_worker.parse_args(
+            [],
+            env={"REDIS_URL": "   ", "REALTIME_API_URL": "http://env.internal:8080"},
+        )
+
+    assert exc.value.code == 2
+    message = capsys.readouterr().err
+    assert "--redis-url" in message
+    assert "REDIS_URL" in message

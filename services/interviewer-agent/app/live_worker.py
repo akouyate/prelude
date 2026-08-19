@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from app.adapters.answer_inference import build_live_answer_inference_provider
 from app.adapters.livekit_room import LiveKitRoomAdapter
@@ -22,23 +22,78 @@ REQUIRED_OPENAI_ENV = (
 )
 
 
-def parse_args() -> argparse.Namespace:
+def option_from_env(
+    value: str | None,
+    env: Mapping[str, str],
+    env_var: str,
+) -> str | None:
+    """Resolve one CLI option: an explicit flag wins, else `env_var`.
+
+    A blank flag or a blank environment value counts as absent, so an empty
+    deployment variable fails loudly instead of being passed on as an empty URL.
+    """
+    if value is not None and value.strip():
+        return value
+    return env.get(env_var, "").strip() or None
+
+
+def parse_args(
+    argv: Sequence[str] | None = None,
+    *,
+    env: Mapping[str, str] | None = None,
+) -> argparse.Namespace:
+    worker_env = env if env is not None else os.environ
     parser = argparse.ArgumentParser(
         description="Run the OpenAI-only HireCall live interviewer worker for one session."
     )
-    parser.add_argument("--session-id", required=True, help="Go realtime session id.")
+    # Every deployment-critical option takes a flag OR an environment variable.
+    # `make live-openai-worker` passes flags; a container passes only env vars,
+    # which is the shape .env.example documents. An explicit flag always wins.
+    #
+    # REALTIME_API_URL is the Python worker's name for the Go realtime API base
+    # URL. The console and candidate apps reach that SAME service under
+    # PRELUDE_REALTIME_API_URL. The two names are deliberately distinct — one is
+    # read here, the other by Next.js — so do not merge them.
+    parser.add_argument(
+        "--session-id",
+        default=None,
+        help="Go realtime session id. Falls back to $SESSION_ID.",
+    )
     parser.add_argument(
         "--realtime-api-url",
-        required=True,
-        help="Go realtime API base URL.",
+        default=None,
+        help="Go realtime API base URL. Falls back to $REALTIME_API_URL.",
     )
-    parser.add_argument("--api-key", default=None, help="Optional bearer token for the Go API.")
+    parser.add_argument(
+        "--api-key",
+        default=None,
+        help="Optional bearer token for the Go API. Falls back to $REALTIME_API_KEY.",
+    )
     parser.add_argument(
         "--skip-openai-handshake",
         action="store_true",
         help="Join LiveKit and persist events without opening OpenAI Realtime.",
     )
-    return parser.parse_args()
+    args = parser.parse_args(argv)
+
+    args.session_id = option_from_env(args.session_id, worker_env, "SESSION_ID")
+    if not args.session_id:
+        parser.error(
+            "session id is required: pass --session-id or set the SESSION_ID "
+            "environment variable."
+        )
+
+    args.realtime_api_url = option_from_env(
+        args.realtime_api_url, worker_env, "REALTIME_API_URL"
+    )
+    if not args.realtime_api_url:
+        parser.error(
+            "Go realtime API base URL is required: pass --realtime-api-url or set "
+            "the REALTIME_API_URL environment variable."
+        )
+
+    args.api_key = option_from_env(args.api_key, worker_env, "REALTIME_API_KEY")
+    return args
 
 
 async def run_live_worker(
