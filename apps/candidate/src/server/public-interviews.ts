@@ -89,6 +89,22 @@ export type PublicInterviewContext =
       kind: "not_found";
     };
 
+export type PublicInterviewContextOptions = {
+  /**
+   * Whether resolving the token may also write what the visit implies: the lazy
+   * expiry flip, and the `openedAt` stamp that moves an invitation from
+   * `invited` to `opened`.
+   *
+   * The interview page leaves this on — reaching that URL IS the candidate
+   * opening their interview, and `opened` is exactly what the recruiter reads
+   * in the invitations panel. `/interview/<token>/privacy` passes `false`: it
+   * is a second URL on the same token, and a more casually fetched one (email
+   * scanners, link-preview bots), so resolving it stays a pure read rather than
+   * manufacturing a "the candidate opened it" signal nobody earned.
+   */
+  recordVisit?: boolean;
+};
+
 export type StartCandidateInterviewInput = {
   candidateEmail?: string;
   candidateName?: string;
@@ -149,7 +165,9 @@ const activeCandidateSessionStatuses = [
 
 export async function getPublicInterviewContext(
   candidateToken: string,
+  options: PublicInterviewContextOptions = {},
 ): Promise<PublicInterviewContext> {
+  const recordVisit = options.recordVisit ?? true;
   const token = candidateToken.trim();
 
   if (!token) {
@@ -174,23 +192,28 @@ export async function getPublicInterviewContext(
 
   if (invitation?.interview.status === "published") {
     const now = new Date();
-    if (invitation.expiresAt <= now) {
-      await prisma.candidateInvitation.updateMany({
-        data: { status: "expired" },
-        where: {
-          id: invitation.id,
-          status: { notIn: ["completed", "expired", "superseded"] },
-        },
-      });
-    } else if (!invitation.openedAt) {
-      await prisma.candidateInvitation.updateMany({
-        data: {
-          openedAt: now,
-          status:
-            invitation.status === "invited" ? "opened" : invitation.status,
-        },
-        where: { id: invitation.id },
-      });
+    // The read below returns the same context either way — the `expired` status
+    // it reports is derived from `expiresAt`, not from the write. So skipping
+    // the writes costs the caller nothing but the side effect.
+    if (recordVisit) {
+      if (invitation.expiresAt <= now) {
+        await prisma.candidateInvitation.updateMany({
+          data: { status: "expired" },
+          where: {
+            id: invitation.id,
+            status: { notIn: ["completed", "expired", "superseded"] },
+          },
+        });
+      } else if (!invitation.openedAt) {
+        await prisma.candidateInvitation.updateMany({
+          data: {
+            openedAt: now,
+            status:
+              invitation.status === "invited" ? "opened" : invitation.status,
+          },
+          where: { id: invitation.id },
+        });
+      }
     }
 
     return toPublishedInterviewContext({

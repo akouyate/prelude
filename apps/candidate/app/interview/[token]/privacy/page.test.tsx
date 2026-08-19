@@ -71,7 +71,9 @@ describe("candidate privacy notice page", () => {
 
     const markup = await renderNotice("ci_token");
 
-    expect(getPublicInterviewContextMock).toHaveBeenCalledWith("ci_token");
+    expect(getPublicInterviewContextMock).toHaveBeenCalledWith("ci_token", {
+      recordVisit: false,
+    });
     expect(markup).toContain(
       "Notice de confidentialité — entretien de présélection",
     );
@@ -80,6 +82,20 @@ describe("candidate privacy notice page", () => {
     expect(markup).toContain("Dernière mise à jour");
     expect(markup).not.toContain("Who is responsible for your data");
     expect(markup).not.toContain("{companyName}");
+  });
+
+  it("reads the link without recording it as opened", async () => {
+    // This URL is fetched by things that are not the candidate — email
+    // scanners, link-preview bots — so reaching it must not be what stamps
+    // `openedAt` and flips the invitation to `opened`. The recruiter reads that
+    // signal as "the candidate looked at it"; only the interview page earns it.
+    getPublicInterviewContextMock.mockResolvedValue(publishedContext("fr"));
+
+    await renderNotice("ci_token");
+
+    expect(getPublicInterviewContextMock).toHaveBeenCalledWith("ci_token", {
+      recordVisit: false,
+    });
   });
 
   it("renders an English interview in English", async () => {
