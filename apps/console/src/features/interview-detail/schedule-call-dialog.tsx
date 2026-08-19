@@ -4,7 +4,6 @@ import * as React from "react";
 import { useTranslation } from "react-i18next";
 import {
   Calendar,
-  CheckCircle,
   Mail,
   NavArrowRight,
   RefreshCircle,
@@ -18,6 +17,7 @@ import {
   SelectField,
   Switch,
   TextField,
+  useToastOnce,
 } from "@prelude/ui";
 
 import {
@@ -25,6 +25,12 @@ import {
   scheduleCandidateCallAction,
   type ScheduleCandidateCallActionState,
 } from "../../server/interviews/candidate-call-scheduling-actions";
+import {
+  resolveScheduleCallPrefill,
+  toBrowserIsoInstant,
+  type ScheduleCallFormPrefill,
+  type ScheduledCallSummary,
+} from "./scheduled-call-presentation";
 
 type CalendarConnectionStatus =
   | "connected"
@@ -64,23 +70,16 @@ export function ScheduleCallDialog({
     open: () => void;
   }) => React.ReactNode;
   roleTitle: string;
-  scheduledCall: {
-    conferenceJoinUrl: string | null;
-    conferencePending: boolean;
-    eventUrl: string | null;
-    invitationSent: boolean;
-    startsAt: string;
-    status: "provider_error" | "scheduled";
-    timeZone: string;
-  } | null;
+  // Read by the caller to pick the trigger (call-to-action vs compact chip);
+  // the dialog itself keeps one flow whether it books or rebooks.
+  scheduledCall: ScheduledCallSummary | null;
   sessionId: string;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
-
-  if (scheduledCall?.status === "scheduled") {
-    return <ScheduledCallAction scheduledCall={scheduledCall} />;
-  }
+  // One record in, one set of starting values out — for the copy at the top of
+  // the dialog as much as for the fields inside it.
+  const prefill = resolveScheduleCallPrefill({ candidateEmail, scheduledCall });
 
   return (
     <>
@@ -104,10 +103,19 @@ export function ScheduleCallDialog({
             <div className="flex items-start justify-between gap-5 border-b border-[#e7e2d8] px-6 py-5">
               <div>
                 <Dialog.Title className="text-lg font-semibold text-ink-950">
-                  Schedule a follow-up call
+                  {t(
+                    prefill.isReschedule
+                      ? "schedule.dialogTitleReschedule"
+                      : "schedule.dialogTitle",
+                  )}
                 </Dialog.Title>
                 <Dialog.Description className="mt-1 text-sm leading-6 text-ink-600">
-                  Arrange the next conversation with {candidateLabel}.
+                  {t(
+                    prefill.isReschedule
+                      ? "schedule.dialogDescriptionReschedule"
+                      : "schedule.dialogDescription",
+                    { name: candidateLabel },
+                  )}
                 </Dialog.Description>
               </div>
               <button
@@ -121,9 +129,10 @@ export function ScheduleCallDialog({
             </div>
             {connectionStatus === "connected" ? (
               <ScheduleCallForm
-                candidateEmail={candidateEmail}
                 candidateLabel={candidateLabel}
                 detailPath={detailPath}
+                onScheduled={() => setOpen(false)}
+                prefill={prefill}
                 roleTitle={roleTitle}
                 sessionId={sessionId}
               />
@@ -147,51 +156,116 @@ export function ScheduleCallDialog({
 }
 
 function ScheduleCallForm({
-  candidateEmail,
   candidateLabel,
   detailPath,
+  onScheduled,
+  prefill,
   roleTitle,
   sessionId,
 }: {
-  candidateEmail: string | null;
   candidateLabel: string;
   detailPath: string;
+  onScheduled: () => void;
+  prefill: ScheduleCallFormPrefill;
   roleTitle: string;
   sessionId: string;
 }) {
   const { t } = useTranslation();
+  const { toastOnce } = useToastOnce();
   const [state, formAction, pending] = React.useActionState(
     scheduleCandidateCallAction,
     initialScheduleCandidateCallState,
   );
-  const [dateTime, setDateTime] = React.useState("");
-  const [timeZone, setTimeZone] = React.useState("UTC");
+  /*
+   * Every field starts from the booked call, because the server reads a
+   * submission as the event's COMPLETE state: an unchecked switch or an empty
+   * guest box is a REMOVAL to it, and it refuses removals. A form that opened
+   * blank would turn "move this by an hour" into `reschedule_unsupported` for
+   * something the recruiter never touched.
+   *
+   * These are initial values, read once per mount — which is once per opening,
+   * since the dialog's portal unmounts on close.
+   */
+  const [dateTime, setDateTime] = React.useState(prefill.dateTime);
+  const [timeZone, setTimeZone] = React.useState(prefill.timeZone ?? "UTC");
   const [candidateAddress, setCandidateAddress] = React.useState(
-    candidateEmail ?? "",
+    prefill.candidateEmail,
   );
   const [inviteCandidate, setInviteCandidate] = React.useState(
-    Boolean(candidateEmail),
+    prefill.inviteCandidate,
   );
-  const [addConference, setAddConference] = React.useState(true);
+  const [addConference, setAddConference] = React.useState(
+    prefill.addConference,
+  );
   const [confirming, setConfirming] = React.useState(false);
-  const [durationMinutes, setDurationMinutes] = React.useState("30");
-  const [guestEmails, setGuestEmails] = React.useState("");
+  const [durationMinutes, setDurationMinutes] = React.useState(
+    prefill.durationMinutes,
+  );
+  const [guestEmails, setGuestEmails] = React.useState(prefill.guestEmails);
+  const [location, setLocation] = React.useState(prefill.location);
 
   React.useEffect(() => {
-    setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
-  }, []);
+    // A booked call carries its own zone, and a move must not quietly rewrite
+    // it to wherever the recruiter happens to be sitting today. Only a call
+    // that does not exist yet asks the browser.
+    if (prefill.timeZone) {
+      return;
+    }
 
-  const startsAt = toBrowserIsoDate(dateTime);
+    setTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+  }, [prefill.timeZone]);
+
+  /*
+   * "The invitation went out" is a moment, not a state: it deserves a toast,
+   * not a screen. The durable facts — when the call is, whether the candidate
+   * was invited, the Calendar and Meet links — are rendered by the banner
+   * under the page header, which `revalidatePath` has already refreshed by the
+   * time this fires. So the dialog announces and closes onto that banner.
+   *
+   * `t` is held in a ref for the reason the voice player states: the effect's
+   * only real trigger is a new settle, and letting a locale switch change `t`
+   * would re-run it for a reason that is not a new outcome. `toastOnce` keys
+   * on the settle object itself — a new submit produces a genuinely new one.
+   */
+  const tRef = React.useRef(t);
+  tRef.current = t;
+  const onScheduledRef = React.useRef(onScheduled);
+  onScheduledRef.current = onScheduled;
+  const settled = state.scheduled;
+
+  React.useEffect(() => {
+    if (!settled) {
+      return;
+    }
+
+    toastOnce(settled, {
+      dismissLabel: tRef.current("toast.dismiss"),
+      message: tRef.current(
+        settled.invitationSent
+          ? "toast.callScheduledInvitationSent"
+          : "toast.callScheduled",
+      ),
+      tone: "success",
+    });
+    onScheduledRef.current();
+  }, [settled, toastOnce]);
+
+  const startsAt = toBrowserIsoInstant(dateTime);
+  // The service's own messages are written for a log. These two refusals need
+  // to say what the product cannot do and where to go instead, so the console
+  // owns their wording — and their translation.
+  const refusal =
+    state.code === "reschedule_unsupported"
+      ? t("schedule.errorRescheduleUnsupported")
+      : state.code === "not_calendar_owner"
+        ? t("schedule.errorNotCalendarOwner")
+        : state.error;
 
   function requestConfirmation(event: React.FormEvent<HTMLFormElement>) {
     if (!confirming) {
       event.preventDefault();
       setConfirming(true);
     }
-  }
-
-  if (state.scheduled) {
-    return <ScheduledCallResult scheduledCall={state.scheduled} />;
   }
 
   return (
@@ -256,7 +330,11 @@ function ScheduleCallForm({
         disabled={pending}
         label={t("schedule.locationLabel")}
         name="location"
+        onChange={(event) =>
+          setLocation((event.target as HTMLInputElement).value)
+        }
         placeholder={t("schedule.locationPlaceholder")}
+        value={location}
       />
 
       <div className="space-y-3 rounded-[15px] border border-[#e7e2d8] bg-white p-4">
@@ -333,9 +411,9 @@ function ScheduleCallForm({
         />
       </div>
 
-      {state.error ? (
+      {refusal ? (
         <Notice role="alert" tone="danger">
-          {state.error}
+          {refusal}
         </Notice>
       ) : null}
       {state.code === "reconnect_required" ? (
@@ -343,7 +421,13 @@ function ScheduleCallForm({
       ) : null}
       {confirming ? (
         <Notice tone="warning">
-          <span className="font-semibold">{t("schedule.readyToSend")}</span>{" "}
+          <span className="font-semibold">
+            {t(
+              prefill.isReschedule
+                ? "schedule.readyToMove"
+                : "schedule.readyToSend",
+            )}
+          </span>{" "}
           {dateTime
             ? t("schedule.confirmSlot", {
                 minutes: durationMinutes,
@@ -351,9 +435,15 @@ function ScheduleCallForm({
               })
             : t("schedule.confirmNoSlot")}{" "}
           {inviteCandidate && candidateAddress.trim()
-            ? t("schedule.confirmInvitationTo", {
-                email: candidateAddress.trim(),
-              })
+            ? t(
+                // A move re-notifies the same people rather than inviting them
+                // for the first time; saying "invitation" would misdescribe
+                // the mail Google is about to send.
+                prefill.isReschedule
+                  ? "schedule.confirmUpdateTo"
+                  : "schedule.confirmInvitationTo",
+                { email: candidateAddress.trim() },
+              )
             : t("schedule.confirmNoInvitation")}{" "}
           {guestEmails.trim() ? t("schedule.confirmGuestsToo") : ""}
         </Notice>
@@ -377,10 +467,22 @@ function ScheduleCallForm({
         >
           <Calendar aria-hidden={true} className="h-4 w-4" />
           {pending
-            ? t("schedule.scheduling")
+            ? t(
+                prefill.isReschedule
+                  ? "schedule.moving"
+                  : "schedule.scheduling",
+              )
             : confirming
-              ? t("schedule.createAndSend")
-              : t("schedule.reviewInvitation")}
+              ? t(
+                  prefill.isReschedule
+                    ? "schedule.moveCall"
+                    : "schedule.createAndSend",
+                )
+              : t(
+                  prefill.isReschedule
+                    ? "schedule.reviewChange"
+                    : "schedule.reviewInvitation",
+                )}
         </Button>
       </div>
     </form>
@@ -445,91 +547,24 @@ function ReconnectCalendarButton({
   );
 }
 
-function ScheduledCallAction({
+// The one rendering of "where the call lives" in the product. It moved out of
+// the decision bar with the rest of the result card, but it stayed here so the
+// banner links out through the same markup the scheduling flow always used.
+//
+// `action` joins the same wrapping row rather than sitting in a row of its own:
+// changing the call belongs beside opening it, and a nested flex container
+// would double the gap and break the wrap on a narrow screen.
+export function ScheduledCallLinks({
+  action,
   scheduledCall,
 }: {
-  scheduledCall: NonNullable<
-    React.ComponentProps<typeof ScheduleCallDialog>["scheduledCall"]
-  >;
+  action?: React.ReactNode;
+  scheduledCall: ScheduledCallSummary;
 }) {
   const { t } = useTranslation();
-  return (
-    <div className="mt-3 rounded-xl border border-[#d6e2c5] bg-[#f4f8ec] p-3">
-      <div className="flex items-center gap-2 text-[12.5px] font-semibold text-[#38551a]">
-        <CheckCircle aria-hidden={true} className="h-4 w-4" />
-        {t("schedule.nextCallScheduled")}
-      </div>
-      <p className="mt-1.5 text-[12px] leading-5 text-[#5a6846]">
-        {t(
-          scheduledCall.invitationSent
-            ? "schedule.nextCallInvitationSent"
-            : "schedule.nextCallPrivateEvent",
-          {
-            date: formatScheduledDate(
-              scheduledCall.startsAt,
-              scheduledCall.timeZone,
-            ),
-          },
-        )}
-      </p>
-      {scheduledCall.conferencePending ? (
-        <p className="mt-1 text-[12px] leading-5 text-[#5a6846]">
-          {t("schedule.meetPreparing")}
-        </p>
-      ) : null}
-      <ScheduledCallLinks scheduledCall={scheduledCall} />
-    </div>
-  );
-}
 
-function ScheduledCallResult({
-  scheduledCall,
-}: {
-  scheduledCall: NonNullable<
-    React.ComponentProps<typeof ScheduleCallDialog>["scheduledCall"]
-  >;
-}) {
-  const { t } = useTranslation();
   return (
-    <div className="space-y-5 px-6 py-6">
-      <div className="grid h-11 w-11 place-items-center rounded-full bg-[#eef0e3] text-olive-900">
-        <CheckCircle aria-hidden={true} className="h-5 w-5" />
-      </div>
-      <div>
-        <Dialog.Title className="text-lg font-semibold text-ink-950">
-          {t("schedule.callScheduled")}
-        </Dialog.Title>
-        <p className="mt-1 text-sm leading-6 text-ink-600">
-          {t(
-            scheduledCall.invitationSent
-              ? "schedule.resultWithInvitation"
-              : "schedule.resultWithoutInvitation",
-            {
-              date: formatScheduledDate(
-                scheduledCall.startsAt,
-                scheduledCall.timeZone,
-              ),
-            },
-          )}
-          {scheduledCall.conferencePending
-            ? ` ${t("schedule.resultMeetPending")}`
-            : ""}
-        </p>
-      </div>
-      <ScheduledCallLinks scheduledCall={scheduledCall} />
-    </div>
-  );
-}
-
-function ScheduledCallLinks({
-  scheduledCall,
-}: {
-  scheduledCall: NonNullable<
-    React.ComponentProps<typeof ScheduleCallDialog>["scheduledCall"]
-  >;
-}) {
-  return (
-    <div className="flex flex-wrap gap-3">
+    <div className="flex flex-wrap gap-2.5">
       {scheduledCall.eventUrl ? (
         <a
           className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-full border border-[#d6e2c5] bg-white px-3 text-[12px] font-semibold text-olive-900 transition hover:border-olive-700"
@@ -537,7 +572,7 @@ function ScheduledCallLinks({
           rel="noreferrer"
           target="_blank"
         >
-          Open Calendar
+          {t("schedule.openCalendar")}
           <NavArrowRight aria-hidden={true} className="h-3.5 w-3.5" />
         </a>
       ) : null}
@@ -548,10 +583,11 @@ function ScheduledCallLinks({
           rel="noreferrer"
           target="_blank"
         >
-          Join Meet
+          {t("schedule.joinMeet")}
           <NavArrowRight aria-hidden={true} className="h-3.5 w-3.5" />
         </a>
       ) : null}
+      {action}
     </div>
   );
 }
@@ -569,14 +605,6 @@ function toBrowserIsoDate(value: string) {
 
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
-}
-
-function formatScheduledDate(startsAt: string, timeZone: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone,
-  }).format(new Date(startsAt));
 }
 
 function formatLocalPreview(value: string, timeZone: string) {

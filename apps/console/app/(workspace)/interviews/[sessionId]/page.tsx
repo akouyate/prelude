@@ -62,6 +62,8 @@ import { InterviewReplayProvider } from "../../../../src/features/interview-deta
 import { DeleteRecordingButton } from "../../../../src/features/interview-detail/delete-recording-button";
 import { EraseCandidateDataButton } from "../../../../src/features/interview-detail/erase-candidate-data-button";
 import { CandidateScheduleCta } from "../../../../src/features/interview-detail/candidate-schedule-cta";
+import { ScheduledCallBanner } from "../../../../src/features/interview-detail/scheduled-call-banner";
+import type { ScheduledCallSummary } from "../../../../src/features/interview-detail/scheduled-call-presentation";
 import { canDeleteRecording } from "../../../../src/domain/recording-policy";
 import { canEraseCandidateData } from "../../../../src/domain/candidate-erasure-policy";
 
@@ -200,21 +202,32 @@ function CandidateSessionReview({
     reviewStatusUpdatedAt: string | null;
     reviewStatusUpdatedBy: string | null;
     roleTitle: string;
-    scheduledCall: {
-      conferenceJoinUrl: string | null;
-      conferencePending: boolean;
-      eventUrl: string | null;
-      invitationSent: boolean;
-      startsAt: string;
-      status: "provider_error" | "scheduled";
-      timeZone: string;
-    } | null;
+    // The shared shape rather than a copy of it: this record now feeds the
+    // scheduling form as well as the banner, and a hand-written duplicate here
+    // would let the two drift apart silently.
+    scheduledCall: ScheduledCallSummary | null;
     startedAt: string | null;
     status: string;
     transcriptTurnCount: number;
   };
 }) {
   const detailPath = `/interviews/${session.realtimeSessionId ?? session.id}`;
+  /*
+   * The scheduling surfaces read one record, so they take one set of props.
+   * Exactly one of them mounts the dialog at any time — the banner owns it
+   * once a call is booked, the decision bar's call-to-action owns it before
+   * then — which is what keeps a single dialog in charge of the flow.
+   */
+  const scheduleCallProps = {
+    candidateEmail: session.candidateEmail,
+    candidateLabel: session.candidateLabel,
+    canSchedule: canManageReview,
+    connectionStatus: calendarConnectionStatus,
+    detailPath,
+    roleTitle: session.roleTitle,
+    scheduledCall: session.scheduledCall,
+    sessionId: session.id,
+  };
   // Bound to primitives only: the inline action below serialises whatever it
   // closes over, and `session` carries the whole transcript and brief.
   const candidateSessionId = session.id;
@@ -327,6 +340,11 @@ function CandidateSessionReview({
             t={t}
           />
         ) : null}
+
+        {/* The next thing that happens with this candidate, read before the
+            verdict rather than out of a floating bar at the bottom of the page.
+            It renders nothing when no call is booked. */}
+        <ScheduledCallBanner {...scheduleCallProps} />
 
         <CandidateVerdictSection
           criteria={criteria}
@@ -475,16 +493,7 @@ function CandidateSessionReview({
           onDecide={updateCandidateReviewStatusAction}
           reviewStatus={session.reviewStatus}
           scheduleAction={
-            <CandidateScheduleCta
-              candidateEmail={session.candidateEmail}
-              candidateLabel={session.candidateLabel}
-              canSchedule={canManageReview}
-              connectionStatus={calendarConnectionStatus}
-              detailPath={detailPath}
-              roleTitle={session.roleTitle}
-              scheduledCall={session.scheduledCall}
-              sessionId={session.id}
-            />
+            <CandidateScheduleCta {...scheduleCallProps} />
           }
           sessionId={session.id}
         />
