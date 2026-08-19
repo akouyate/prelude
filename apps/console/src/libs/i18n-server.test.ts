@@ -149,3 +149,47 @@ describe("compliance messages", () => {
     );
   });
 });
+
+// The US residency card is decorative — no onClick, no form field, no server
+// wiring — so the section must not read as an available choice. Every candidate
+// is told their data is stored in the European Union («stockés dans l'Union
+// européenne»); copy offering a Virginia option contradicts that consent.
+describe("data residency copy", () => {
+  const locales: ConsoleLocale[] = ["en", "fr"];
+
+  it("states EU storage as a fact rather than asking where data is stored", () => {
+    expect(getServerT("en")("settings.workspace.residencyDescription")).toBe(
+      "Candidate data and recordings are stored in the European Union. A United States region is planned.",
+    );
+    expect(getServerT("fr")("settings.workspace.residencyDescription")).toBe(
+      "Les données candidats et les enregistrements sont stockés dans l'Union européenne. Une région États-Unis est prévue.",
+    );
+  });
+
+  it("names the European Union in the section description in every locale", () => {
+    for (const locale of locales) {
+      const description = getServerT(locale)(
+        "settings.workspace.residencyDescription",
+      );
+      expect(description).toMatch(/European Union|Union européenne/);
+    }
+  });
+
+  it("resolves a non-empty unavailable tag for the US card in every locale", () => {
+    for (const locale of locales) {
+      const tag = getServerT(locale)("settings.workspace.residencyComingSoon");
+      expect(tag.trim().length).toBeGreaterThan(0);
+      expect(tag).not.toBe("settings.workspace.residencyComingSoon");
+    }
+  });
+
+  // SOC 2 Type II is an audited attestation. Claiming it for a region that does
+  // not exist yet is the same false-claim defect as the card itself.
+  it("claims no certification for the unavailable US region", () => {
+    for (const locale of locales) {
+      expect(
+        getServerT(locale)("settings.workspace.usResidencyDescription"),
+      ).not.toMatch(/SOC ?2/i);
+    }
+  });
+});

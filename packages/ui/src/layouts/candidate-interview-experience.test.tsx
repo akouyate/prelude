@@ -18,6 +18,8 @@ const labels: CandidateInterviewExperienceLabels = {
   answersTitle: "Vos réponses, pas votre apparence",
   audioOnlyNotice:
     "Cet entretien se déroule à la voix. Vous n'avez besoin que de votre microphone.",
+  controllerLine:
+    "Cet entretien est mené pour Acme, responsable du traitement de vos données. HireCall le conduit pour son compte.",
   durationPill: "Environ 6 minutes",
   emailLabel: "E-mail",
   emailOptional: "facultatif",
@@ -45,6 +47,7 @@ const labels: CandidateInterviewExperienceLabels = {
   paceTitle: "Avancez à votre rythme",
   preflightHeading: "Avant de commencer",
   preflightSubtitle: "Product Designer · environ 6 minutes",
+  privacyNoticeLink: "Consulter la notice de confidentialité",
   privacyPill: "Entretien confidentiel",
   roleLabel: "Poste",
   startButton: "Commencer",
@@ -61,6 +64,7 @@ describe("candidate interview experience", () => {
         disclosureCopy="Vous parlez avec un intervieweur guidé par l'IA."
         labels={labels}
         onStart={onStart}
+        privacyNoticeHref="/interview/tok_1/privacy"
         roleTitle="Product Designer"
       />,
     );
@@ -94,6 +98,7 @@ describe("candidate interview experience", () => {
         disclosureCopy={disclosureCopy}
         labels={labels}
         onStart={vi.fn()}
+        privacyNoticeHref="/interview/tok_1/privacy"
         roleTitle="Product Designer"
       />,
     );
@@ -103,6 +108,51 @@ describe("candidate interview experience", () => {
     expect(paragraph.textContent).toBe(
       `${disclosureCopy} Nous écoutons ce que vous dites.`,
     );
+  });
+
+  it("prints the controller line and links it to the privacy notice", () => {
+    // GDPR art. 13 layer 1: who the controller is, right under the disclosure,
+    // with a route to the full notice. The package receives finished copy and a
+    // href — it composes neither.
+    const { container } = render(
+      <CandidateWelcomeExperience
+        disclosureCopy="Vous parlez avec un intervieweur guidé par l'IA."
+        labels={labels}
+        onStart={vi.fn()}
+        privacyNoticeHref="/interview/tok_1/privacy"
+        roleTitle="Product Designer"
+      />,
+    );
+
+    const line = within(container).getByText(/responsable du traitement/u);
+    const link = within(container).getByRole("link", {
+      name: "Consulter la notice de confidentialité",
+    });
+
+    expect(line).toBeVisible();
+    expect(link).toHaveAttribute("href", "/interview/tok_1/privacy");
+  });
+
+  it("keeps the controller line when no notice route exists", () => {
+    // The recruiter preview runs on a preview token, which no public notice
+    // route answers. The controller statement is still true, so it stays; only
+    // the link goes.
+    const { container } = render(
+      <CandidateWelcomeExperience
+        disclosureCopy="Vous parlez avec un intervieweur guidé par l'IA."
+        labels={labels}
+        onStart={vi.fn()}
+        privacyNoticeHref={null}
+        roleTitle="Product Designer"
+      />,
+    );
+
+    expect(within(container).getByText(/responsable du traitement/u)).toBeVisible();
+    expect(
+      within(container).queryByRole("link", {
+        name: "Consulter la notice de confidentialité",
+      }),
+    ).toBeNull();
   });
 
   it("renders the setup intro facts from the labels it is given", () => {

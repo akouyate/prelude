@@ -39,15 +39,73 @@ export const aiCompliancePolicyVersion = "ai-compliance-v1";
 // v2 introduces audio-recording disclosure + consent (voice capture, retention,
 // erasure, EU residency). v1 is retained only as the historical label stamped on
 // already-consented sessions — never reuse the v1 label for new copy.
+//
+// v2 IS FROZEN. Nothing renders it any more (the selectors below serve v3), but
+// it stays valid for every session already consented under it: the id and the
+// four strings it labels are the promise those candidates actually read, so
+// they are history, not current copy. Never edit a shipped id in place.
 export const candidateDisclosureCopyVersion = "candidate-disclosure-v2";
 export const candidateConsentCopyVersion = "candidate-consent-v2";
 export const recruiterLimitationCopyVersion = "recruiter-limitation-v1";
 
+// v3 ships as a VARIANT PAIR rather than a single revision, because the promise
+// itself differs with the deployment's recording reality: with recording on the
+// candidate is told an audio object of their voice is kept for 90 days; with it
+// off, that the interview is NOT audio-recorded and their voice is processed in
+// real time without being retained. Both variants carry the same 12-month
+// transcript + brief horizon, the same rights address, and the same seven-item
+// exclusion — only the audio object separates them.
+//
+// Which variant applies is a SERVER-SIDE fact, resolved once (from
+// `RECORDING_ENABLED`) at the same point as the rendering language, so one
+// value feeds both the copy the candidate reads and the `consentCopyVersion`
+// stamped on their session. An unreadable flag resolves to the no-recording
+// pair: fail-closed means describing the smaller processing, never the larger.
+export const candidateDisclosureCopyV3Version = "candidate-disclosure-v3";
+export const candidateConsentCopyV3Version = "candidate-consent-v3";
+export const candidateDisclosureCopyV3NoRecordingVersion =
+  "candidate-disclosure-v3-no-recording";
+export const candidateConsentCopyV3NoRecordingVersion =
+  "candidate-consent-v3-no-recording";
+
 // Audio-consent versions accepted by the recording subsystem: only sessions
 // consented under one of these may be audio-recorded (v1 disclosed transcript
 // evidence only, not voice capture).
+//
+// The `-no-recording` ids are deliberately ABSENT, and must never be added. A
+// candidate who read that variant was told their voice is not retained, so a
+// session stamped with it can never be recorded — whatever any deployment flag
+// says afterwards. That is what makes under-disclosure impossible by
+// CONSTRUCTION rather than by convention: the recording gate keys on the
+// version of the copy the candidate actually read, not on the flag the recorder
+// happens to see. A candidate app and a realtime service that disagree about
+// `RECORDING_ENABLED` therefore fail CLOSED — no recording, accurate copy —
+// instead of capturing someone who was never told.
+//
+// Mirrored in Go as `audioConsentCopyVersions`
+// (services/realtime/internal/application/service.go); the two lists must move
+// together, and a Go test pins the mirror.
 export const audioRecordingConsentCopyVersions = [
   "candidate-consent-v2",
+  "candidate-consent-v3",
+] as const;
+
+// The consent copy versions still recognised as a VALID candidate consent —
+// what `resolveCandidateConsentGate` checks a stamped session against.
+//
+// Wider than `audioRecordingConsentCopyVersions` and answering a different
+// question: this one asks "did this candidate give a consent we still stand
+// behind", the other asks "were they told their voice would be recorded". A
+// no-recording consent is perfectly valid; it simply does not authorize audio.
+//
+// v1 is excluded: it predates the voice disclosure entirely. v2 stays in, frozen,
+// because a session consented under it gave a real consent to the same
+// candidate-facing flow — dropping it would silently stop recognising sessions
+// that were mid-interview when v3 shipped.
+export const validCandidateConsentCopyVersions = [
+  "candidate-consent-v2",
+  "candidate-consent-v3",
+  "candidate-consent-v3-no-recording",
 ] as const;
 
 export const candidateDisclosureCopy =
@@ -74,6 +132,67 @@ export const candidateDisclosureCopyFr =
 // requires a v3, never an in-place edit of this string.
 export const candidateConsentCopyFr =
   "Je comprends que je participe à un entretien de première présélection guidé par l'IA. Un enregistrement audio de ma voix ainsi qu'une transcription seront créés et stockés dans l'Union européenne, comme éléments consultables pour la revue du recruteur. Ils pourront être traités à cette fin par le prestataire d'enregistrement de HireCall. L'enregistrement est conservé pendant 90 jours au maximum, puis définitivement supprimé. Je peux demander l'effacement de mon enregistrement à tout moment. HireCall ne doit pas évaluer les caractéristiques protégées, l'apparence, l'accent, le ton, les émotions, la personnalité ni les signaux biométriques.";
+
+// --- v3, recording active (`candidate-disclosure-v3` / `candidate-consent-v3`)
+//
+// Rendered only where `RECORDING_ENABLED` is on. Same version=commitments rule
+// as the v2 constants below it: an EN and an FR rendering of the same promises
+// share one id, because the language is a separate recorded fact
+// (`consentLanguage` on the session and the invitation). A translation is not a
+// new promise. Changing any commitment here — the EU storage location, the
+// 90-day audio horizon, the 12-month transcript/brief horizon, the erasure
+// address, or the seven excluded assessment targets — requires a v4, never an
+// in-place edit of this string.
+export const candidateDisclosureCopyV3 =
+  "You are speaking with an AI-guided interviewer for a first screening. This interview is audio-recorded so a recruiter can review your answers later. Your answers are reviewed by a recruiter; HireCall does not assess protected attributes, appearance, accent, tone, emotion, personality, or biometric signals.";
+
+// French rendering of `candidateDisclosureCopyV3`, same version id
+// (`candidateDisclosureCopyV3Version`) for the reason stated above.
+export const candidateDisclosureCopyV3Fr =
+  "Vous parlez avec un intervieweur guidé par l'IA, dans le cadre d'une première présélection. Cet entretien est enregistré en audio pour qu'un recruteur puisse consulter vos réponses plus tard. Vos réponses sont revues par un recruteur ; HireCall n'évalue pas les caractéristiques protégées, l'apparence, l'accent, le ton, les émotions, la personnalité ni les signaux biométriques.";
+
+// The consent the candidate ticks where recording is on. Commitments:
+// EU-stored audio + transcript, 90-day audio deletion, 12-month transcript and
+// brief deletion, erasure on request at privacy@hirecall.ai, and the seven-item
+// assessment exclusion. Changing any of them requires a v4.
+export const candidateConsentCopyV3 =
+  "I understand that I am joining an AI-guided first-screening interview. An audio recording of my voice, together with a transcript, will be created and stored in the EU, as material the recruiter can consult for their review. They may be processed for that purpose by HireCall's recording provider. The recording is kept for up to 90 days and then permanently deleted. The transcript and the recruiter's brief are kept for up to 12 months and then permanently deleted. I can request erasure of my data at any time, at privacy@hirecall.ai. HireCall commits to not assessing protected attributes, appearance, accent, tone, emotion, personality, or biometric signals.";
+
+// French rendering of `candidateConsentCopyV3`, same version id
+// (`candidateConsentCopyV3Version`): version = commitments, language = separate
+// recorded fact.
+export const candidateConsentCopyV3Fr =
+  "Je comprends que je participe à un entretien de première présélection guidé par l'IA. Un enregistrement audio de ma voix ainsi qu'une transcription seront créés et stockés dans l'Union européenne, comme éléments consultables pour la revue du recruteur. Ils pourront être traités à cette fin par le prestataire d'enregistrement de HireCall. L'enregistrement est conservé pendant 90 jours au maximum, puis définitivement supprimé. La transcription et le compte rendu destiné au recruteur sont conservés pendant 12 mois au maximum, puis définitivement supprimés. Je peux demander l'effacement de mes données à tout moment, à l'adresse privacy@hirecall.ai. HireCall s'engage à ne pas évaluer les caractéristiques protégées, l'apparence, l'accent, le ton, les émotions, la personnalité ni les signaux biométriques.";
+
+// --- v3, no recording (`candidate-disclosure-v3-no-recording` /
+// `candidate-consent-v3-no-recording`)
+//
+// The pair that ships as the live one today, since `RECORDING_ENABLED` is
+// globally off. It promises LESS than the recording variant, which is exactly
+// why its ids are absent from `audioRecordingConsentCopyVersions`: a session
+// stamped here can never be recorded. Same version=commitments rule; a v4 is
+// required to change what is promised.
+export const candidateDisclosureCopyV3NoRecording =
+  "You are speaking with an AI-guided interviewer for a first screening. This interview is not audio-recorded; a written transcript of the conversation is created so a recruiter can review your answers later. Your answers are reviewed by a recruiter; HireCall does not assess protected attributes, appearance, accent, tone, emotion, personality, or biometric signals.";
+
+// French rendering of `candidateDisclosureCopyV3NoRecording`, same version id
+// (`candidateDisclosureCopyV3NoRecordingVersion`).
+export const candidateDisclosureCopyV3NoRecordingFr =
+  "Vous parlez avec un intervieweur guidé par l'IA, dans le cadre d'une première présélection. Cet entretien n'est pas enregistré en audio ; une transcription écrite de la conversation est créée pour qu'un recruteur puisse consulter vos réponses plus tard. Vos réponses sont revues par un recruteur ; HireCall n'évalue pas les caractéristiques protégées, l'apparence, l'accent, le ton, les émotions, la personnalité ni les signaux biométriques.";
+
+// The consent the candidate ticks where recording is off. It does not merely
+// drop the audio sentences: it states positively that the interview is not
+// audio-recorded and that the voice is processed in real time WITHOUT being
+// retained — silence about the voice would be the under-disclosure this variant
+// exists to prevent. Commitments: EU-stored transcript, 12-month transcript and
+// brief deletion, erasure at privacy@hirecall.ai, seven-item exclusion.
+export const candidateConsentCopyV3NoRecording =
+  "I understand that I am joining an AI-guided first-screening interview. This interview is not audio-recorded. A written transcript of my answers will be created and stored in the EU, as material the recruiter can consult for their review. My voice is processed in real time to conduct the conversation and produce that transcript; it is not retained. The transcript and the recruiter's brief are kept for up to 12 months and then permanently deleted. I can request erasure of my data at any time, at privacy@hirecall.ai. HireCall commits to not assessing protected attributes, appearance, accent, tone, emotion, personality, or biometric signals.";
+
+// French rendering of `candidateConsentCopyV3NoRecording`, same version id
+// (`candidateConsentCopyV3NoRecordingVersion`).
+export const candidateConsentCopyV3NoRecordingFr =
+  "Je comprends que je participe à un entretien de première présélection guidé par l'IA. Cet entretien n'est pas enregistré en audio. Une transcription écrite de mes réponses sera créée et stockée dans l'Union européenne, comme élément consultable pour la revue du recruteur. Ma voix est traitée en temps réel pour conduire la conversation et produire cette transcription ; elle n'est pas conservée. La transcription et le compte rendu destiné au recruteur sont conservés pendant 12 mois au maximum, puis définitivement supprimés. Je peux demander l'effacement de mes données à tout moment, à l'adresse privacy@hirecall.ai. HireCall s'engage à ne pas évaluer les caractéristiques protégées, l'apparence, l'accent, le ton, les émotions, la personnalité ni les signaux biométriques.";
 
 export const recruiterLimitationCopy =
   "HireCall supports human screening review only. It must not be used as an automated hiring or rejection decision, and it excludes protected traits, appearance, accent, tone, emotion, personality, and biometric signals.";
@@ -475,31 +594,83 @@ export function getInterviewPlanGuardrails(
 }
 
 /**
- * The statutory AI disclosure shown on the candidate welcome screen, in the
- * language that screen renders in.
+ * A chosen statutory text together with the id that labels its commitments.
  *
- * No default argument, unlike `getInterviewPlanGuardrails`: a caller that has
+ * The two travel as one value on purpose: the caller that renders the copy is
+ * the only place that knows which of the four variants the candidate actually
+ * read, and the row that records the consent has to say the same thing. Handing
+ * back the text alone is what let a stamp drift from a rendering.
+ */
+export type CandidateCopySelection = {
+  text: string;
+  version: string;
+};
+
+/**
+ * The statutory AI disclosure shown on the candidate welcome screen: the
+ * language that screen renders in, and the variant that matches what this
+ * deployment actually does with the candidate's voice.
+ *
+ * No default arguments, unlike `getInterviewPlanGuardrails`: a caller that has
  * not decided which language it is rendering has not decided which text the
- * candidate is being asked to read, and silently defaulting that to English is
- * exactly the failure this selector exists to prevent.
+ * candidate is being asked to read, and a caller that has not resolved
+ * `recordingActive` has not decided what they are being asked to agree to.
+ * Silently defaulting either is exactly the failure this selector exists to
+ * prevent. `recordingActive` is resolved server-side, once, from the
+ * deployment's `RECORDING_ENABLED`; a recruiter preview passes `false`, because
+ * a preview records nothing whatever the flag says.
  */
 export function candidateDisclosureCopyFor(
   language: GeneratedContentLanguage,
-): string {
-  return language === "fr"
-    ? candidateDisclosureCopyFr
-    : candidateDisclosureCopy;
+  recordingActive: boolean,
+): CandidateCopySelection {
+  if (recordingActive) {
+    return {
+      text:
+        language === "fr"
+          ? candidateDisclosureCopyV3Fr
+          : candidateDisclosureCopyV3,
+      version: candidateDisclosureCopyV3Version,
+    };
+  }
+
+  return {
+    text:
+      language === "fr"
+        ? candidateDisclosureCopyV3NoRecordingFr
+        : candidateDisclosureCopyV3NoRecording,
+    version: candidateDisclosureCopyV3NoRecordingVersion,
+  };
 }
 
 /**
- * The consent text the candidate ticks, in the language that screen renders in.
- * The language actually used is recorded alongside the consent
- * (`consentLanguage`), because the version id deliberately does not carry it.
+ * The consent text the candidate ticks, with the version id to stamp on their
+ * session. Same two axes as the disclosure, and deliberately the same shape:
+ * the two surfaces must never disagree about which processing reality this
+ * interview is.
+ *
+ * The language actually used is recorded separately (`consentLanguage`),
+ * because the version id carries commitments, not language.
  */
 export function candidateConsentCopyFor(
   language: GeneratedContentLanguage,
-): string {
-  return language === "fr" ? candidateConsentCopyFr : candidateConsentCopy;
+  recordingActive: boolean,
+): CandidateCopySelection {
+  if (recordingActive) {
+    return {
+      text:
+        language === "fr" ? candidateConsentCopyV3Fr : candidateConsentCopyV3,
+      version: candidateConsentCopyV3Version,
+    };
+  }
+
+  return {
+    text:
+      language === "fr"
+        ? candidateConsentCopyV3NoRecordingFr
+        : candidateConsentCopyV3NoRecording,
+    version: candidateConsentCopyV3NoRecordingVersion,
+  };
 }
 
 export const defaultComplianceFlags = [
@@ -571,7 +742,10 @@ function escapeRegExp(value: string) {
 export function buildAiCompliancePromptContext() {
   return [
     `Policy version: ${aiCompliancePolicyVersion}.`,
-    `Candidate disclosure version: ${candidateDisclosureCopyVersion}.`,
+    // The prompt context tracks the current FULLEST disclosure regime, not the
+    // variant this deployment renders: it anchors what the generator may
+    // produce, and the with-recording v3 is the complete commitments set.
+    `Candidate disclosure version: ${candidateDisclosureCopyV3Version}.`,
     `Recruiter limitation version: ${recruiterLimitationCopyVersion}.`,
     `Human review boundary: ${humanInLoopRule}`,
     `Recruiter limitation: ${recruiterLimitationCopy}`,

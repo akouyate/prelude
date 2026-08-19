@@ -67,6 +67,10 @@ Responsibilities:
 - Persist transcript turns, provider metadata, status, and costs.
 - Expose recruiter-facing session results.
 - Enforce product permissions: video required, audio fallback allowed, form fallback allowed.
+- Execute its share of the right to erasure: delete a session's audio objects and
+  its transcript events (`DELETE /v1/interview-sessions/{id}/personal-data`).
+  Orchestrated by the console, which owns the candidate aggregate; this service
+  is never told which organization is asking.
 
 Non-goals:
 
@@ -248,7 +252,10 @@ Exploitability rubric for each metric:
 
 Store:
 
-- Append-only events.
+- Append-only events. Append-only means nothing REWRITES an event: erasure
+  therefore DELETES a session's event rows outright rather than redacting
+  payloads in place, and leaves the session row standing as a content-free
+  tombstone (an interview happened, and when).
 - Final transcript turns.
 - Question IDs and follow-up IDs.
 - Provider metadata needed for debugging.

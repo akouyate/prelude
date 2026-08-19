@@ -48,10 +48,13 @@ BILLING_SWEEP_MAX_TIME ?= 90
 BILLING_SWEEP_LIMIT ?=
 BILLING_SWEEP_CURSOR ?=
 BILLING_ADMIN_QUEUE_LIMIT ?=
+RETENTION_SWEEP_URL ?= http://localhost:3000/api/internal/retention-sweep
+RETENTION_SWEEP_MAX_TIME ?= 120
+RETENTION_SWEEP_LIMIT ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell role-intake-env-up role-intake-worker db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke billing-packs-sync billing-sweep billing-admin-queue dev
+.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell role-intake-env-up role-intake-worker db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke billing-packs-sync billing-sweep retention-sweep billing-admin-queue dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "HireCall local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -336,6 +339,18 @@ billing-sweep: ## Release expired credit holds, expire due lots, reconcile walle
 	if [ -n "$$query" ]; then url="$$url?$$query"; fi; \
 	curl -sS --fail-with-body --max-time $(BILLING_SWEEP_MAX_TIME) -X POST \
 		-H "Authorization: Bearer $$BILLING_SWEEP_SECRET" "$$url" \
+		| node -e 'let b="";process.stdin.on("data",c=>{b+=c}).on("end",()=>{try{console.log(JSON.stringify(JSON.parse(b),null,2))}catch{console.log(b)}})'
+
+retention-sweep: ## Erase transcripts + briefs past the 12-month horizon (needs console running + RETENTION_SWEEP_SECRET).
+	@$(LOAD_ENV); \
+	if [ -z "$$RETENTION_SWEEP_SECRET" ]; then \
+		printf 'RETENTION_SWEEP_SECRET is not set; the endpoint answers 503 without it.\nGenerate one with: openssl rand -hex 32\n' >&2; \
+		exit 1; \
+	fi; \
+	url="$(RETENTION_SWEEP_URL)"; \
+	if [ -n "$(RETENTION_SWEEP_LIMIT)" ]; then url="$$url?limit=$(RETENTION_SWEEP_LIMIT)"; fi; \
+	curl -sS --fail-with-body --max-time $(RETENTION_SWEEP_MAX_TIME) -X POST \
+		-H "Authorization: Bearer $$RETENTION_SWEEP_SECRET" "$$url" \
 		| node -e 'let b="";process.stdin.on("data",c=>{b+=c}).on("end",()=>{try{console.log(JSON.stringify(JSON.parse(b),null,2))}catch{console.log(b)}})'
 
 billing-admin-queue: ## List Stripe webhook events parked for an operator (needs_admin / failed).

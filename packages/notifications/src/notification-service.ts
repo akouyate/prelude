@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { createElement } from "react";
 import {
-  candidateConsentCopyVersion,
   normalizeCandidateLifecycleStatus,
   resolveCandidateConsentGate,
+  validCandidateConsentCopyVersions,
 } from "@prelude/core";
 import { prisma } from "@prelude/db";
 
@@ -177,7 +177,7 @@ export function createNotificationDispatcher({
       const consent = resolveCandidateConsentGate({
         consentCopyVersion: session.consentCopyVersion,
         consentedAt: session.consentedAt,
-        requiredConsentCopyVersion: candidateConsentCopyVersion,
+        requiredConsentCopyVersion: validCandidateConsentCopyVersions,
       });
 
       return dispatchDelivery({

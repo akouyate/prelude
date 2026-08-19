@@ -580,11 +580,12 @@
         "workspaceLanguage": "Langue des contenus générés",
         "workspaceLanguageDescription": "La langue du brief candidat et des analyses générées par HireCall. La langue de l'entretien candidat se règle séparément, par poste.",
         "residency": "Résidence des données",
-        "residencyDescription": "Où les données candidats et les enregistrements sont stockés.",
+        "residencyDescription": "Les données candidats et les enregistrements sont stockés dans l'Union européenne. Une région États-Unis est prévue.",
         "euResidency": "Union européenne",
         "euResidencyDescription": "Francfort · conforme RGPD",
         "usResidency": "États-Unis",
-        "usResidencyDescription": "Virginie · SOC 2 Type II"
+        "usResidencyDescription": "Virginie",
+        "residencyComingSoon": "Bientôt"
       },
       "team": {
         "title": "Équipe et rôles",
@@ -1106,6 +1107,27 @@
       "creditMeterTitleWithTotal": "{{available}} crédits disponibles, sur {{total}}.",
       "creditMeterExpiry": "{{base}} {{expiry}}.",
       "creditsExpiring": "{{count}} expirent le {{date}}"
+    },
+    "erasure": {
+      "action": "Effacer les données du candidat",
+      "pending": "Effacement…",
+      "dialogTitle": "Effacer les données de ce candidat ?",
+      "dialogIntro": "Cette action supprime définitivement, pour {{candidate}} :",
+      "deletesTranscript": "la transcription de l'entretien, et l'enregistrement audio s'il existe",
+      "deletesBrief": "le compte rendu destiné au recruteur, et toutes les appréciations qu'il contient",
+      "deletesIdentity": "le nom, l'adresse e-mail et le lien d'entretien du candidat",
+      "keepsIntro": "Ce qui subsiste, et rien d'autre :",
+      "keepsRecord": "une trace technique indiquant qu'un entretien a eu lieu, et à quelle date",
+      "keepsBilling": "la trace de facturation en crédits de cette session",
+      "irreversible": "Cette action est irréversible.",
+      "cancel": "Annuler",
+      "confirm": "Effacer définitivement",
+      "tombstoneTitle": "Données du candidat effacées",
+      "tombstoneBody": "La transcription, le compte rendu et l'identité de ce candidat ont été définitivement supprimés le {{date}}. Seule subsiste la trace qu'un entretien a eu lieu.",
+      "tombstoneReasonRequest": "Effacement à la demande.",
+      "tombstoneReasonRetention": "Effacement automatique au terme de la période de conservation de 12 mois.",
+      "toastSuccess": "Données du candidat effacées.",
+      "toastFailed": "Les données du candidat n'ont pas pu être effacées. Rien n'a été supprimé — veuillez réessayer."
     }
   }
 }

@@ -140,6 +140,25 @@ func (s *MemoryStore) AppendEvent(_ context.Context, event domain.Event) (applic
 	return application.AppendEventResult{Event: event, Duplicate: false}, nil
 }
 
+// DeleteEventsForSession removes every event of a session, leaving the session
+// row itself in place — the content-free tombstone. Idempotent: a session with
+// no events (or one that never existed) deletes nothing and reports 0.
+func (s *MemoryStore) DeleteEventsForSession(_ context.Context, sessionID string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	deleted := len(s.events[sessionID])
+	if _, exists := s.sessions[sessionID]; exists {
+		// Keep the (now empty) bucket so AppendEvent's sequence check still starts
+		// from 1 rather than hitting a nil map.
+		s.events[sessionID] = map[string]domain.Event{}
+	} else {
+		delete(s.events, sessionID)
+	}
+
+	return deleted, nil
+}
+
 func (s *MemoryStore) CreateRecording(_ context.Context, recording domain.Recording) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

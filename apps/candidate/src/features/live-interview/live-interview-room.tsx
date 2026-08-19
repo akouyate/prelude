@@ -707,6 +707,16 @@ export function LiveInterviewRoom({
    */
   const renderingLanguage =
     context.kind === "not_found" ? "fr" : context.interview.language;
+  /*
+   * The second axis of the statutory copy, resolved server-side on the same
+   * context as the language and stamped from the same value
+   * (`prepareCandidateSession`). A preview is pinned to `false` here as well as
+   * on its own context: a preview starts no egress, so it must never claim one
+   * — and pinning it at the render site means turning `RECORDING_ENABLED` on
+   * cannot make a preview describe a recording that will not happen.
+   */
+  const recordingActive =
+    context.kind === "published" ? context.interview.recordingActive : false;
   // `candidateExperienceCopy` hands back the module-level table for the
   // language, so `copy` is a stable reference and a legitimate memo dependency.
   const copy = candidateExperienceCopy(renderingLanguage);
@@ -735,6 +745,7 @@ export function LiveInterviewRoom({
       answersBody: copy.answersBody,
       answersTitle: copy.answersTitle,
       audioOnlyNotice: copy.audioOnlyNotice,
+      controllerLine: copy.controllerLine(interview?.companyName ?? ""),
       durationPill: estimatedMinutes
         ? copy.durationLong(estimatedMinutes)
         : copy.durationUnknown,
@@ -773,6 +784,7 @@ export function LiveInterviewRoom({
         jobTitle: interview?.jobTitle ?? "",
         minutes: estimatedMinutes,
       }),
+      privacyNoticeLink: copy.privacyNoticeLink,
       privacyPill: copy.privacyPill,
       roleLabel: copy.roleLabel,
       startButton: copy.startButton,
@@ -986,10 +998,21 @@ export function LiveInterviewRoom({
           disclosureCopy={
             isPreview
               ? copy.previewDisclosureCopy
-              : candidateDisclosureCopyFor(renderingLanguage)
+              : candidateDisclosureCopyFor(renderingLanguage, recordingActive)
+                  .text
           }
           labels={preJoinLabels}
           onStart={() => setStep("setup")}
+          /*
+           * Sibling of the interview the candidate is already on, so the notice
+           * resolves the same token — same controller, same language — with no
+           * authentication. The recruiter preview runs on a preview token that
+           * no public notice route answers, so it gets no link (the controller
+           * line itself still renders).
+           */
+          privacyNoticeHref={
+            isPreview ? null : `/interview/${encodeURIComponent(token)}/privacy`
+          }
           roleTitle={interview.roleTitle}
         />
       </>
@@ -1095,7 +1118,8 @@ export function LiveInterviewRoom({
               consentCopy={
                 isPreview
                   ? copy.previewConsentCopy
-                  : candidateConsentCopyFor(renderingLanguage)
+                  : candidateConsentCopyFor(renderingLanguage, recordingActive)
+                      .text
               }
               labels={preJoinLabels}
               onCandidateEmailChange={setCandidateEmail}

@@ -8,10 +8,22 @@ import {
   candidateConsentCopyFor,
   candidateConsentCopyFr,
   candidateConsentCopyVersion,
+  candidateConsentCopyV3,
+  candidateConsentCopyV3Fr,
+  candidateConsentCopyV3NoRecording,
+  candidateConsentCopyV3NoRecordingFr,
+  candidateConsentCopyV3NoRecordingVersion,
+  candidateConsentCopyV3Version,
   candidateDisclosureCopy,
   candidateDisclosureCopyFor,
   candidateDisclosureCopyFr,
   candidateDisclosureCopyVersion,
+  candidateDisclosureCopyV3,
+  candidateDisclosureCopyV3Fr,
+  candidateDisclosureCopyV3NoRecording,
+  candidateDisclosureCopyV3NoRecordingFr,
+  candidateDisclosureCopyV3NoRecordingVersion,
+  candidateDisclosureCopyV3Version,
   complianceFlagCodes,
   defaultComplianceFlags,
   disallowedProxyPhrases,
@@ -24,6 +36,7 @@ import {
   sensitiveInformationHandlingRule,
   protectedTopicCategories,
   textViolatesPolicy,
+  validCandidateConsentCopyVersions,
 } from "./ai";
 
 describe("protected topic categories", () => {
@@ -106,7 +119,11 @@ describe("AI compliance policy", () => {
     expect(promptContext).toContain(humanInLoopRule);
     expect(promptContext).toContain(sensitiveInformationHandlingRule);
     expect(promptContext).toContain("biometric or face analysis");
-    expect(promptContext).toContain("candidate-disclosure-v2");
+    // Pinned with the trailing period so the no-recording variant cannot
+    // satisfy it by prefix.
+    expect(promptContext).toContain(
+      "Candidate disclosure version: candidate-disclosure-v3.",
+    );
   });
 
   it("detects risky automated-decision wording", () => {
@@ -341,11 +358,15 @@ describe("French candidate consent surface", () => {
     expect(candidateConsentCopyVersion).toBe("candidate-consent-v2");
   });
 
-  it("selects the copy for the rendering language", () => {
-    expect(candidateDisclosureCopyFor("en")).toBe(candidateDisclosureCopy);
-    expect(candidateDisclosureCopyFor("fr")).toBe(candidateDisclosureCopyFr);
-    expect(candidateConsentCopyFor("en")).toBe(candidateConsentCopy);
-    expect(candidateConsentCopyFor("fr")).toBe(candidateConsentCopyFr);
+  it("keeps the v2 texts frozen even though nothing renders them any more", () => {
+    // The selectors now serve the v3 variant pair (see the v3 suite below), so
+    // these four strings are history: they are the copy already-consented
+    // sessions were shown, and their bytes must never move. Reachable, not
+    // rendered.
+    expect(candidateDisclosureCopy).toContain("audio-recorded");
+    expect(candidateDisclosureCopyFr).toContain("enregistré en audio");
+    expect(candidateConsentCopy).toContain("HireCall must not assess");
+    expect(candidateConsentCopyFr).toContain("HireCall ne doit pas évaluer");
   });
 
   it("keeps the French texts single-line and free of typographic apostrophes", () => {
@@ -356,5 +377,248 @@ describe("French candidate consent surface", () => {
       expect(copy).not.toContain("\n");
       expect(copy).not.toContain("’");
     });
+  });
+});
+
+describe("v3 statutory copy — the recording variant pair", () => {
+  const consents = [
+    candidateConsentCopyV3,
+    candidateConsentCopyV3Fr,
+    candidateConsentCopyV3NoRecording,
+    candidateConsentCopyV3NoRecordingFr,
+  ];
+  const recordingPair = [
+    candidateDisclosureCopyV3,
+    candidateDisclosureCopyV3Fr,
+    candidateConsentCopyV3,
+    candidateConsentCopyV3Fr,
+  ];
+  const noRecordingPair = [
+    candidateDisclosureCopyV3NoRecording,
+    candidateDisclosureCopyV3NoRecordingFr,
+    candidateConsentCopyV3NoRecording,
+    candidateConsentCopyV3NoRecordingFr,
+  ];
+
+  it("ships four ids, one per processing reality and none of them a v2 edit", () => {
+    expect(candidateDisclosureCopyV3Version).toBe("candidate-disclosure-v3");
+    expect(candidateConsentCopyV3Version).toBe("candidate-consent-v3");
+    expect(candidateDisclosureCopyV3NoRecordingVersion).toBe(
+      "candidate-disclosure-v3-no-recording",
+    );
+    expect(candidateConsentCopyV3NoRecordingVersion).toBe(
+      "candidate-consent-v3-no-recording",
+    );
+    // v2 is frozen, not replaced: already-consented sessions keep their id.
+    expect(candidateDisclosureCopyVersion).toBe("candidate-disclosure-v2");
+    expect(candidateConsentCopyVersion).toBe("candidate-consent-v2");
+  });
+
+  it("prints the rights address and the 12-month horizon in every consent", () => {
+    // Art. 13(2)(a)+(b): a retention period and a working address for exercising
+    // erasure. Both variants keep the transcript + brief horizon; only the audio
+    // object differs between them.
+    consents.forEach((copy) => {
+      expect(copy).toContain("privacy@hirecall.ai");
+    });
+    expect(candidateConsentCopyV3).toContain("up to 12 months");
+    expect(candidateConsentCopyV3NoRecording).toContain("up to 12 months");
+    expect(candidateConsentCopyV3Fr).toContain("12 mois");
+    expect(candidateConsentCopyV3NoRecordingFr).toContain("12 mois");
+  });
+
+  it("promises the 90-day audio horizon only where audio is actually kept", () => {
+    // The horizon is a consent commitment; the disclosure only announces that
+    // the interview IS audio-recorded. Neither appears in the no-recording pair.
+    expect(candidateConsentCopyV3).toContain("90 days");
+    expect(candidateConsentCopyV3Fr).toContain("90 jours");
+    expect(candidateDisclosureCopyV3).toContain("is audio-recorded");
+    expect(candidateDisclosureCopyV3Fr).toContain("est enregistré en audio");
+    noRecordingPair.forEach((copy) => {
+      expect(copy).not.toContain("90");
+    });
+  });
+
+  it("tells the no-recording candidate their voice is not retained", () => {
+    expect(candidateDisclosureCopyV3NoRecording).toContain(
+      "not audio-recorded",
+    );
+    expect(candidateConsentCopyV3NoRecording).toContain("not audio-recorded");
+    expect(candidateDisclosureCopyV3NoRecordingFr).toContain(
+      "n'est pas enregistré en audio",
+    );
+    expect(candidateConsentCopyV3NoRecordingFr).toContain(
+      "n'est pas enregistré en audio",
+    );
+    // The real-time voice sentence is what keeps the no-recording variant
+    // honest: the voice IS processed, it is simply not retained.
+    expect(candidateConsentCopyV3NoRecording).toContain(
+      "My voice is processed in real time",
+    );
+    expect(candidateConsentCopyV3NoRecording).toContain("it is not retained");
+    expect(candidateConsentCopyV3NoRecordingFr).toContain(
+      "Ma voix est traitée en temps réel",
+    );
+    expect(candidateConsentCopyV3NoRecordingFr).toContain(
+      "elle n'est pas conservée",
+    );
+    // The with-recording variant must never carry the no-recording claim.
+    recordingPair.forEach((copy) => {
+      expect(copy).not.toContain("not audio-recorded");
+      expect(copy).not.toContain("n'est pas enregistré");
+    });
+  });
+
+  it("keeps the seven-item exclusion, as a commitment, in every consent", () => {
+    // v2 said "must not assess" / "ne doit pas évaluer" (a rule imposed on
+    // HireCall); v3 says HireCall COMMITS to not assessing — the same seven
+    // targets, restated as an undertaking to the candidate.
+    [candidateConsentCopyV3, candidateConsentCopyV3NoRecording].forEach(
+      (copy) => {
+        expect(copy).toContain("HireCall commits to not assessing");
+        [
+          "protected attributes",
+          "appearance",
+          "accent",
+          "tone",
+          "emotion",
+          "personality",
+          "biometric signals",
+        ].forEach((exclusion) => {
+          expect(copy).toContain(exclusion);
+        });
+      },
+    );
+
+    [candidateConsentCopyV3Fr, candidateConsentCopyV3NoRecordingFr].forEach(
+      (copy) => {
+        expect(copy).toContain("HireCall s'engage à ne pas évaluer");
+        [
+          "caractéristiques protégées",
+          "l'apparence",
+          "l'accent",
+          "le ton",
+          "les émotions",
+          "la personnalité",
+          "les signaux biométriques",
+        ].forEach((exclusion) => {
+          expect(copy).toContain(exclusion);
+        });
+      },
+    );
+  });
+
+  it("keeps every v3 text single-line with straight apostrophes", () => {
+    // A legal sign-off re-verifies these by hash: a smart quote or a wrapped
+    // line silently breaks byte-equality with the reviewed text.
+    [...recordingPair, ...noRecordingPair].forEach((copy) => {
+      expect(copy).not.toContain("\n");
+      expect(copy).not.toContain("\u2019");
+      expect(copy.trim()).toBe(copy);
+    });
+  });
+
+  it("selects one of eight texts from the language and the recording reality", () => {
+    expect(candidateDisclosureCopyFor("en", true)).toEqual({
+      text: candidateDisclosureCopyV3,
+      version: candidateDisclosureCopyV3Version,
+    });
+    expect(candidateDisclosureCopyFor("fr", true)).toEqual({
+      text: candidateDisclosureCopyV3Fr,
+      version: candidateDisclosureCopyV3Version,
+    });
+    expect(candidateDisclosureCopyFor("en", false)).toEqual({
+      text: candidateDisclosureCopyV3NoRecording,
+      version: candidateDisclosureCopyV3NoRecordingVersion,
+    });
+    expect(candidateDisclosureCopyFor("fr", false)).toEqual({
+      text: candidateDisclosureCopyV3NoRecordingFr,
+      version: candidateDisclosureCopyV3NoRecordingVersion,
+    });
+
+    expect(candidateConsentCopyFor("en", true)).toEqual({
+      text: candidateConsentCopyV3,
+      version: candidateConsentCopyV3Version,
+    });
+    expect(candidateConsentCopyFor("fr", true)).toEqual({
+      text: candidateConsentCopyV3Fr,
+      version: candidateConsentCopyV3Version,
+    });
+    expect(candidateConsentCopyFor("en", false)).toEqual({
+      text: candidateConsentCopyV3NoRecording,
+      version: candidateConsentCopyV3NoRecordingVersion,
+    });
+    expect(candidateConsentCopyFor("fr", false)).toEqual({
+      text: candidateConsentCopyV3NoRecordingFr,
+      version: candidateConsentCopyV3NoRecordingVersion,
+    });
+
+    // Eight distinct texts, four distinct version ids: no variant may collapse
+    // into another, or a candidate would be stamped with copy they never read.
+    const texts = new Set(
+      (["en", "fr"] as const).flatMap((language) =>
+        [true, false].flatMap((recordingActive) => [
+          candidateDisclosureCopyFor(language, recordingActive).text,
+          candidateConsentCopyFor(language, recordingActive).text,
+        ]),
+      ),
+    );
+    expect(texts.size).toBe(8);
+  });
+
+  it("keeps the recording allowlist a strict subset of the valid consent ids", () => {
+    // Direction is the whole point. An id that authorizes RECORDING while not
+    // being a valid consent is a recording with no legal basis behind it; the
+    // reverse is intended and harmless — a no-recording consent is perfectly
+    // valid, it simply does not authorize audio. Guard the direction that kills
+    // the basis.
+    expect(
+      audioRecordingConsentCopyVersions.filter(
+        (version) => !validCandidateConsentCopyVersions.includes(version),
+      ),
+    ).toEqual([]);
+
+    // Non-vacuous: both lists have entries, and the subset is STRICT, so this
+    // is not two names for one list agreeing with itself.
+    expect(audioRecordingConsentCopyVersions.length).toBeGreaterThan(0);
+    expect(validCandidateConsentCopyVersions.length).toBeGreaterThan(
+      audioRecordingConsentCopyVersions.length,
+    );
+  });
+
+  it("keeps every no-recording id out of the recording allowlist", () => {
+    expect(
+      audioRecordingConsentCopyVersions.filter((version) =>
+        version.includes("no-recording"),
+      ),
+    ).toEqual([]);
+
+    // Non-vacuous: such an id exists, and it IS a valid consent — so the empty
+    // result above is the allowlist excluding it, not the id being absent
+    // everywhere.
+    expect(
+      validCandidateConsentCopyVersions.filter((version) =>
+        version.includes("no-recording"),
+      ),
+    ).toEqual(["candidate-consent-v3-no-recording"]);
+  });
+
+  it("never lets a no-recording consent into the recording allowlist", () => {
+    // The gate keys on the version of the copy the candidate actually read, so
+    // under-disclosure is impossible by construction: a candidate told they are
+    // not audio-recorded carries an id the recorder does not accept.
+    expect([...audioRecordingConsentCopyVersions]).toEqual([
+      "candidate-consent-v2",
+      "candidate-consent-v3",
+    ]);
+    expect(audioRecordingConsentCopyVersions).toContain(
+      candidateConsentCopyV3Version,
+    );
+    expect(audioRecordingConsentCopyVersions).not.toContain(
+      candidateConsentCopyV3NoRecordingVersion,
+    );
+    expect(audioRecordingConsentCopyVersions).not.toContain(
+      candidateDisclosureCopyV3NoRecordingVersion,
+    );
   });
 });

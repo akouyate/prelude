@@ -1,6 +1,8 @@
 import {
-  candidateDisclosureCopy,
-  candidateDisclosureCopyFr,
+  candidateDisclosureCopyV3,
+  candidateDisclosureCopyV3Fr,
+  candidateDisclosureCopyV3NoRecording,
+  candidateDisclosureCopyV3NoRecordingFr,
 } from "@prelude/core";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
@@ -13,7 +15,7 @@ import { LiveInterviewRoom } from "./live-interview-room";
 // screen, so static markup is enough to pin what language a candidate is
 // greeted in. `renderToStaticMarkup` escapes apostrophes, so assertions compare
 // against the escaped form of the expected copy.
-function renderWelcome(language: "en" | "fr") {
+function renderWelcome(language: "en" | "fr", recordingActive = false) {
   const context: PublicInterviewContext = {
     interview: {
       companyName: "Acme",
@@ -27,6 +29,7 @@ function renderWelcome(language: "en" | "fr") {
       questions: [
         { id: "q1", prompt: "Parlez-moi d'un incident.", signal: null },
       ],
+      recordingActive,
       responseModes: ["audio"],
       roleTitle: "Ingénieur backend",
     },
@@ -47,7 +50,7 @@ describe("live interview welcome screen language", () => {
   it("greets a French interview with the French disclosure and chrome", () => {
     const markup = renderWelcome("fr");
 
-    expect(markup).toContain(escaped(candidateDisclosureCopyFr));
+    expect(markup).toContain(escaped(candidateDisclosureCopyV3NoRecordingFr));
     expect(markup).toContain("Nous écoutons");
     expect(markup).toContain("ce que vous dites");
     expect(markup).toContain("Entretien confidentiel");
@@ -62,7 +65,7 @@ describe("live interview welcome screen language", () => {
   it("greets an English interview with the English disclosure and chrome", () => {
     const markup = renderWelcome("en");
 
-    expect(markup).toContain(escaped(candidateDisclosureCopy));
+    expect(markup).toContain(escaped(candidateDisclosureCopyV3NoRecording));
     expect(markup).toContain("We listen to");
     expect(markup).toContain("Private interview");
     expect(markup).toContain("About 6 minutes");
@@ -70,4 +73,85 @@ describe("live interview welcome screen language", () => {
     expect(markup).toContain("Get started");
     expect(markup).not.toContain("Revu par un humain");
   });
+
+  it("greets a candidate with the variant that matches what the deployment does", () => {
+    // The defect this replaces: the room rendered the v2 copy — which announces
+    // an audio recording — on a deployment that records nothing. Over-disclosure
+    // is still a false statement, so the variant follows the resolved flag.
+    const off = renderWelcome("fr");
+    expect(off).toContain(escaped(candidateDisclosureCopyV3NoRecordingFr));
+    expect(off).not.toContain(escaped(candidateDisclosureCopyV3Fr));
+
+    const on = renderWelcome("fr", true);
+    expect(on).toContain(escaped(candidateDisclosureCopyV3Fr));
+    expect(on).not.toContain(escaped(candidateDisclosureCopyV3NoRecordingFr));
+
+    expect(renderWelcome("en", true)).toContain(
+      escaped(candidateDisclosureCopyV3),
+    );
+    expect(renderWelcome("en")).toContain(
+      escaped(candidateDisclosureCopyV3NoRecording),
+    );
+  });
+
+  it("names the controller and links the notice, in the interview language", () => {
+    // GDPR art. 13 layer 1. The href is built from the candidate's own token,
+    // so the notice resolves the same interview — and the same controller —
+    // without asking the candidate to authenticate.
+    expect(renderWelcome("fr")).toContain(
+      escaped(
+        "Cet entretien est mené pour Acme, responsable du traitement de vos données. HireCall le conduit pour son compte.",
+      ),
+    );
+    expect(renderWelcome("fr")).toContain(
+      "Consulter la notice de confidentialité",
+    );
+    expect(renderWelcome("fr")).toContain(
+      'href="/interview/tok_candidate/privacy"',
+    );
+
+    expect(renderWelcome("en")).toContain(
+      "This interview is run for Acme, the data controller. HireCall conducts it on their behalf.",
+    );
+    expect(renderWelcome("en")).toContain("Read the privacy notice");
+  });
+
+  it("drops the notice link in the recruiter preview, keeping the controller line", () => {
+    // A preview token is not a published-interview token: no public notice
+    // route answers it, so linking there would 404 the recruiter.
+    const markup = renderToStaticMarkup(
+      <LiveInterviewRoom context={previewContext()} token="prev_token" />,
+    );
+
+    expect(markup).toContain(
+      escaped(
+        "Cet entretien est mené pour Acme, responsable du traitement de vos données. HireCall le conduit pour son compte.",
+      ),
+    );
+    expect(markup).not.toContain("Consulter la notice de confidentialité");
+    expect(markup).not.toContain("/privacy");
+  });
 });
+
+function previewContext(): PublicInterviewContext {
+  return {
+    expiresAt: new Date(Date.now() + 60_000),
+    interview: {
+      companyName: "Acme",
+      estimatedMinutes: 6,
+      id: "preview_1",
+      jobId: "job_1",
+      jobTitle: "Ingénieur backend",
+      language: "fr",
+      organizationId: "org_1",
+      publicToken: "prev_token",
+      questions: [],
+      // A recruiter preview records nothing, whatever the deployment flag says.
+      recordingActive: false,
+      responseModes: ["audio"],
+      roleTitle: "Ingénieur backend",
+    },
+    kind: "preview",
+    returnPath: "/roles/new?draftId=draft_1",
+  };
+}

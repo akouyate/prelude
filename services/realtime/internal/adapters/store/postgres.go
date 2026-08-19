@@ -83,6 +83,32 @@ func (s *PostgresStore) PurgeExpiredCandidatePreviewData(ctx context.Context, cu
 	return sessionsDeleted + previewsDeleted, nil
 }
 
+// DeleteEventsForSession erases a session's transcript by deleting its event
+// rows. The event log is append-only by construction — AppendEvent only ever
+// inserts — so erasure is a delete, never an in-place redaction; that is also
+// what the right-to-erasure ruling requires (deletion, not redaction).
+//
+// The `live_interview_sessions` row is deliberately NOT touched: deleting it
+// would cascade the recording tombstones away with it, and the row is the
+// content-free trace Art. 17(3) lets us keep (an interview happened, and when).
+// Idempotent — a second call deletes nothing and returns 0.
+func (s *PostgresStore) DeleteEventsForSession(ctx context.Context, sessionID string) (int, error) {
+	result, err := s.db.ExecContext(ctx, `
+		delete from live_interview_events
+		where session_id = $1
+	`, sessionID)
+	if err != nil {
+		return 0, err
+	}
+
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
+	return int(deleted), nil
+}
+
 func (s *PostgresStore) CreateSession(ctx context.Context, session domain.Session) error {
 	modalities, err := json.Marshal(session.AllowedModalities)
 	if err != nil {

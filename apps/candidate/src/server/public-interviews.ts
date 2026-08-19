@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 
 import {
-  candidateConsentCopyVersion,
+  candidateConsentCopyFor,
   mapRealtimeStatusToCandidateLifecycleStatus,
   normalizeCandidateLifecycleStatus,
   resolveCandidateStartPolicy,
@@ -17,6 +17,7 @@ import {
 } from "./billing-admission";
 import { settleCandidateSessionCredit } from "./credit-settlement";
 import { resolveCandidateRenderingLanguage } from "./interview-language";
+import { isRecordingActive } from "./recording-state";
 
 const notificationDispatcher = createNotificationDispatcher();
 
@@ -52,6 +53,12 @@ export type PublicInterviewContext =
         organizationId: string;
         publicToken: string;
         questions: PublicInterviewQuestion[];
+        // Resolved once here, exactly like `language`, from the deployment's
+        // `RECORDING_ENABLED`. It picks which v3 consent variant the pre-join
+        // screens render AND which version id is stamped on the session, so the
+        // copy the candidate read and the record of what they agreed to are one
+        // resolution, never two.
+        recordingActive: boolean;
         responseModes: string[];
         roleTitle: string;
       };
@@ -70,6 +77,10 @@ export type PublicInterviewContext =
         organizationId: string;
         publicToken: string;
         questions: PublicInterviewQuestion[];
+        // Always false for a preview: a recruiter preview starts no egress
+        // whatever the deployment flag says, so it must show the no-recording
+        // truth.
+        recordingActive: boolean;
         responseModes: string[];
         roleTitle: string;
       };
@@ -298,11 +309,17 @@ export async function prepareCandidateSession(
     };
   }
 
-  // One resolution, three writes. `context.interview.language` is what the
-  // welcome and preflight screens rendered this request in, so stamping it here
-  // records the language the candidate actually read the consent in — never a
-  // language re-derived after the fact.
+  // One resolution, three writes — for both facts that decide what the candidate
+  // was shown. `context.interview.language` is what the welcome and preflight
+  // screens rendered this request in, and `context.interview.recordingActive` is
+  // the recording reality those same screens described. Stamping the version the
+  // SELECTOR returned for that pair records the copy the candidate actually
+  // read, never a version re-derived after the fact.
   const consentLanguage = context.interview.language;
+  const consentCopy = candidateConsentCopyFor(
+    consentLanguage,
+    context.interview.recordingActive,
+  );
   const candidateEmail = normalizeEmail(input.candidateEmail);
   const candidateName = normalizeName(input.candidateName);
   const existingSession = input.resumeToken
@@ -357,7 +374,7 @@ export async function prepareCandidateSession(
           candidateEmail,
           candidateName,
           candidateInvitationId: context.invitation?.id,
-          consentCopyVersion: candidateConsentCopyVersion,
+          consentCopyVersion: consentCopy.version,
           consentLanguage,
           // Resuming requires accepting the current consent copy again.
           consentedAt: now,
@@ -375,7 +392,7 @@ export async function prepareCandidateSession(
           candidateEmail,
           candidateName,
           candidateInvitationId: context.invitation?.id,
-          consentCopyVersion: candidateConsentCopyVersion,
+          consentCopyVersion: consentCopy.version,
           consentLanguage,
           consentedAt: now,
           interviewId: context.interview.id,
@@ -402,7 +419,7 @@ export async function prepareCandidateSession(
       data: {
         candidateEmail,
         candidateName,
-        consentCopyVersion: candidateConsentCopyVersion,
+        consentCopyVersion: consentCopy.version,
         consentLanguage,
         consentedAt: now,
         status: "starting",
@@ -802,6 +819,7 @@ function toPublishedInterviewContext({
       organizationId: interview.organizationId,
       publicToken: interview.publicToken,
       questions: resolvePublicQuestions(interview.questions),
+      recordingActive: isRecordingActive(),
       responseModes: resolvePublicResponseModes(interview.responseModes),
       roleTitle: interview.roleTitle,
     },

@@ -117,7 +117,39 @@ test("a French interview renders both pre-join surfaces in French", async ({
     await expect(page.getByText("Entretien confidentiel")).toBeVisible();
     await expect(page.getByText("Revu par un humain")).toBeVisible();
     await expect(page.getByText(/Nous écoutons/)).toBeVisible();
+    // RECORDING_ENABLED is off in this harness, so the disclosure the candidate
+    // reads is the no-recording variant of v3: it states positively that the
+    // interview is not audio-recorded, rather than announcing a recording that
+    // will never happen.
+    await expect(
+      page.getByText(/Cet entretien n'est pas enregistré en audio/),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/une transcription écrite de la conversation est créée/),
+    ).toBeVisible();
     await expect(page.getByText(/HireCall n'évalue pas/)).toBeVisible();
+    await expect(page.getByText(/responsable du traitement/)).toBeVisible();
+
+    // Layer 2: the notice is a sibling of the interview and resolves the same
+    // token, so a French interview reaches a French notice without signing in.
+    await page
+      .getByRole("link", { name: "Consulter la notice de confidentialité" })
+      .click();
+    await expect(
+      page.getByRole("heading", {
+        name: "Notice de confidentialité — entretien de présélection",
+      }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Qui est responsable de vos données"),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Acme Talent", { exact: false }).first(),
+    ).toBeVisible();
+    // RECORDING_ENABLED is off in this harness, so no recording block renders.
+    await expect(page.getByText(/enregistrement audio/i)).toHaveCount(0);
+    await page.getByRole("link", { name: "Retour" }).click();
+    await expect(page.getByText("Entretien confidentiel")).toBeVisible();
 
     await page.getByRole("button", { name: "Commencer" }).click();
 
@@ -125,6 +157,11 @@ test("a French interview renders both pre-join surfaces in French", async ({
     await page.getByLabel("Votre nom").fill("Ada Lovelace");
     await expect(
       page.getByLabel(/Je comprends que je participe/),
+    ).toBeVisible();
+    // Same variant on the consent the candidate ticks — and it is this text's
+    // version id that gets stamped on the session.
+    await expect(
+      page.getByLabel(/Ma voix est traitée en temps réel/),
     ).toBeVisible();
     await expect(
       page.getByRole("button", {

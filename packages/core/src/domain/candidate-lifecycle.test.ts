@@ -8,6 +8,7 @@ import {
   resolveCandidateStartPolicy,
   transitionCandidateLifecycle,
 } from "./candidate-lifecycle";
+import { validCandidateConsentCopyVersions } from "../policies/ai";
 
 describe("candidate lifecycle policy", () => {
   it("normalizes legacy runtime/product statuses into the V1 candidate lifecycle", () => {
@@ -99,6 +100,39 @@ describe("candidate lifecycle policy", () => {
       accepted: true,
       reason: null,
       status: "ready",
+    });
+  });
+
+  it("recognises every consent version still in force, not just one", () => {
+    // The v3 variant pair means there is no single "current" id any more: a
+    // session carries the id of the variant its candidate actually read. A gate
+    // pinned to one string would silently stop recognising freshly consented
+    // candidates the day v3 shipped.
+    expect(validCandidateConsentCopyVersions).toEqual([
+      "candidate-consent-v2",
+      "candidate-consent-v3",
+      "candidate-consent-v3-no-recording",
+    ]);
+
+    validCandidateConsentCopyVersions.forEach((version) => {
+      expect(
+        resolveCandidateConsentGate({
+          consentCopyVersion: version,
+          consentedAt: new Date("2026-08-19T10:00:00.000Z"),
+        }),
+      ).toEqual({ accepted: true, reason: null, status: "ready" });
+    });
+
+    // v1 predates the voice disclosure entirely and is not a valid consent.
+    expect(
+      resolveCandidateConsentGate({
+        consentCopyVersion: "candidate-consent-v1",
+        consentedAt: new Date("2026-06-20T10:00:00.000Z"),
+      }),
+    ).toEqual({
+      accepted: false,
+      reason: "outdated",
+      status: "consent_required",
     });
   });
 

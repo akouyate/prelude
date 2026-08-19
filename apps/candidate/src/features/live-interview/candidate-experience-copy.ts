@@ -35,6 +35,12 @@ export type CandidateExperienceCopy = {
   audioBlockedTitle: string;
   audioOnlyNotice: string;
   back: string;
+  /**
+   * GDPR art. 13 layer 1 (legal ruling, issue #161): the two-sentence
+   * controller statement rendered under the disclosure paragraph, followed by
+   * `privacyNoticeLink` pointing at the layer-2 notice.
+   */
+  controllerLine: (companyName: string) => string;
   durationLong: (minutes: number) => string;
   durationShort: (minutes: number) => string;
   durationUnknown: string;
@@ -75,6 +81,7 @@ export type CandidateExperienceCopy = {
   previewEvidenceTitle: string;
   previewIntroDescription: string;
   previewStart: string;
+  privacyNoticeLink: string;
   privacyPill: string;
   quit: string;
   roleLabel: string;
@@ -107,6 +114,8 @@ const englishCandidateCopy: CandidateExperienceCopy = {
   audioOnlyNotice:
     "This interview is audio-first. You only need your microphone.",
   back: "Back",
+  controllerLine: (companyName) =>
+    `This interview is run for ${companyName}, the data controller. HireCall conducts it on their behalf.`,
   durationLong: (minutes) => `About ${minutes} minutes`,
   durationShort: (minutes) => `About ${minutes} min`,
   durationUnknown: "A few minutes",
@@ -149,6 +158,7 @@ const englishCandidateCopy: CandidateExperienceCopy = {
   previewIntroDescription:
     "This is the same setup candidates see. Your test answers stay outside the candidate pipeline.",
   previewStart: "Start live test",
+  privacyNoticeLink: "Read the privacy notice",
   privacyPill: "Private interview",
   quit: "Quit",
   roleLabel: "Role",
@@ -178,6 +188,8 @@ const frenchCandidateCopy: CandidateExperienceCopy = {
   audioOnlyNotice:
     "Cet entretien se déroule à la voix. Vous n'avez besoin que de votre microphone.",
   back: "Retour",
+  controllerLine: (companyName) =>
+    `Cet entretien est mené pour ${companyName}, responsable du traitement de vos données. HireCall le conduit pour son compte.`,
   durationLong: (minutes) => `Environ ${minutes} minutes`,
   durationShort: (minutes) => `Environ ${minutes} min`,
   durationUnknown: "Quelques minutes",
@@ -220,6 +232,7 @@ const frenchCandidateCopy: CandidateExperienceCopy = {
   previewIntroDescription:
     "Voici exactement l'écran que voient les candidats. Vos réponses de test restent en dehors du vivier de candidats.",
   previewStart: "Lancer le test en direct",
+  privacyNoticeLink: "Consulter la notice de confidentialité",
   privacyPill: "Entretien confidentiel",
   quit: "Quitter",
   roleLabel: "Poste",

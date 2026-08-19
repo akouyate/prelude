@@ -107,7 +107,9 @@ describe("POST /api/live-interview-sessions", () => {
         data: expect.objectContaining({
           candidateEmail: "ada@example.com",
           candidateName: "Ada Lovelace",
-          consentCopyVersion: "candidate-consent-v2",
+          // RECORDING_ENABLED is unset in this suite, so the pre-join screens
+          // rendered the no-recording variant and the stamp says so.
+          consentCopyVersion: "candidate-consent-v3-no-recording",
           consentedAt: expect.any(Date),
           interviewId: "int_123",
           jobId: "job_123",
@@ -201,7 +203,7 @@ describe("POST /api/live-interview-sessions", () => {
     expect(prismaMock.candidateInvitation.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          consentCopyVersion: "candidate-consent-v2",
+          consentCopyVersion: "candidate-consent-v3-no-recording",
           status: "starting",
         }),
         where: expect.objectContaining({ id: "cinv_123" }),
@@ -262,7 +264,7 @@ describe("POST /api/live-interview-sessions", () => {
     expect(prismaMock.candidateSession.update).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          consentCopyVersion: "candidate-consent-v2",
+          consentCopyVersion: "candidate-consent-v3-no-recording",
           consentedAt: expect.any(Date),
           startedAt: existingSession.startedAt,
           status: "starting",

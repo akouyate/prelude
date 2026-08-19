@@ -131,6 +131,22 @@ type RecordingRepository interface {
 	RecordingsForSession(ctx context.Context, sessionID string) ([]domain.Recording, error)
 }
 
+// TranscriptRepository erases a session's transcript. The event log is
+// append-only BY DESIGN — nothing in the ingest path ever rewrites an event —
+// so "erasing the transcript" cannot mean redacting payloads in place: it means
+// deleting the session's event rows outright, which is also what the ruling
+// requires (erasure = deletion, not redaction). The session row itself is left
+// standing as the content-free tombstone.
+//
+// It is a separate contract from SessionRepository for the same reason
+// RecordingRepository is: appending is the hot path every worker uses, whereas
+// erasure is a rare, privileged operation wired only where it is needed.
+type TranscriptRepository interface {
+	// DeleteEventsForSession deletes every event row of a session and returns how
+	// many were removed. It is idempotent: a re-run deletes nothing and reports 0.
+	DeleteEventsForSession(ctx context.Context, sessionID string) (int, error)
+}
+
 type FinalizeRecordingInput struct {
 	EgressID   string
 	Status     domain.RecordingStatus
@@ -207,14 +223,24 @@ const recordingAudioFormat = "audio/ogg"
 // discloses that the candidate's voice is audio-recorded (with EU retention and
 // a right to erasure). Only sessions consented under one of these may be
 // audio-recorded; candidate-consent-v1 disclosed transcript evidence only, so a
-// session consented under it must never be recorded. This mirrors
-// @prelude/core's exported audioRecordingConsentCopyVersions (a core unit test
-// pins that list to the live candidateConsentCopyVersion); keep this Go copy in
-// lockstep when the consent version is revised. It is a code constant, not env
-// config, on purpose: an env knob here could silently re-enable recording of
-// transcript-only consent and break the legal basis.
+// session consented under it must never be recorded.
+//
+// v3 ships as a variant pair, and only its recording variant is listed here.
+// candidate-consent-v3-no-recording tells the candidate their voice is NOT
+// retained, so its absence is deliberate and load-bearing: this service records
+// on the version of the copy the candidate actually read, not on its own
+// RECORDING_ENABLED. A candidate app running with recording off while this
+// service runs with it on therefore stamps a no-recording version and gets no
+// egress — the mismatch fails CLOSED (accurate copy, no recording) instead of
+// capturing someone who was never told.
+//
+// This mirrors @prelude/core's exported audioRecordingConsentCopyVersions; keep
+// the two lists in lockstep when the consent version is revised. It is a code
+// constant, not env config, on purpose: an env knob here could silently
+// re-enable recording of under-disclosing consent and break the legal basis.
 var audioConsentCopyVersions = map[string]bool{
 	"candidate-consent-v2": true,
+	"candidate-consent-v3": true,
 }
 
 type Service struct {
@@ -224,6 +250,7 @@ type Service struct {
 	livekit        LiveKitGateway
 	recorder       EgressGateway
 	recordings     RecordingRepository
+	transcripts    TranscriptRepository
 	consent        RecordingConsentGate
 	objectStore    ObjectStore
 	clock          Clock
@@ -271,6 +298,14 @@ func (s *Service) SetRecordingConsentGate(gate RecordingConsentGate) {
 // no-ops.
 func (s *Service) SetObjectStore(store ObjectStore) {
 	s.objectStore = store
+}
+
+// SetTranscriptRepository wires transcript erasure. Without it,
+// ErasePersonalDataForSession refuses rather than silently erasing only the
+// audio and reporting success — a right-to-erasure call that quietly leaves the
+// transcript behind is worse than one that fails loudly.
+func (s *Service) SetTranscriptRepository(repository TranscriptRepository) {
+	s.transcripts = repository
 }
 
 // SetProvider configures the live voice provider reported to the agent worker.
@@ -876,6 +911,52 @@ func (s *Service) EraseRecordingsForSession(ctx context.Context, sessionID strin
 	}
 
 	return erased, firstErr
+}
+
+// SessionErasureReport counts what one erasure physically removed. Both numbers
+// are zero on a re-run, which is how a caller tells "already erased" from
+// "nothing was ever there" only by looking at the first run — the operation is
+// deliberately idempotent, not stateful.
+type SessionErasureReport struct {
+	EventsErased     int `json:"events_erased"`
+	RecordingsErased int `json:"recordings_erased"`
+}
+
+// ErasePersonalDataForSession is the realtime service's whole share of the
+// right to erasure: every audio object for the session (tombstoning its row) and
+// every transcript event row. The console orchestrates the rest — it owns the
+// CandidateSession, the brief and the candidate's identity — so this endpoint
+// deliberately knows nothing about organizations or briefs.
+//
+// The session row is NOT deleted. Deleting it would cascade away the recording
+// tombstones, losing the audit trace that audio existed and was erased, and it
+// would erase the one fact Art. 17(3) lets us keep: an interview happened, on
+// this date. What survives here carries no content and no assessment.
+//
+// Audio is erased FIRST, transcript second, and the transcript is erased even
+// when the audio fails: the two rest on different legal bases (consent for the
+// recording, pre-contractual measures for the transcript), so a broken object
+// store must not hold the transcript hostage. The audio error is still returned,
+// so the caller retries — and every step is idempotent, so a retry is safe.
+func (s *Service) ErasePersonalDataForSession(ctx context.Context, sessionID string) (SessionErasureReport, error) {
+	if strings.TrimSpace(sessionID) == "" {
+		return SessionErasureReport{}, fmt.Errorf("%w: session_id is required", ErrInvalidInput)
+	}
+	if s.transcripts == nil {
+		return SessionErasureReport{}, errors.New("transcript erasure is not configured")
+	}
+
+	report := SessionErasureReport{}
+	recordingsErased, recordingErr := s.EraseRecordingsForSession(ctx, sessionID)
+	report.RecordingsErased = recordingsErased
+
+	eventsErased, err := s.transcripts.DeleteEventsForSession(ctx, sessionID)
+	if err != nil {
+		return report, err
+	}
+	report.EventsErased = eventsErased
+
+	return report, recordingErr
 }
 
 // PurgeExpiredRecordings enforces audio retention: it erases the audio object of

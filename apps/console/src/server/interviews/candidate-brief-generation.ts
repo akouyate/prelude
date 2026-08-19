@@ -66,7 +66,10 @@ export type GenerateCandidateBriefResult =
       status: CandidateBriefDto["status"];
     }
   | {
-      reason: "candidate_session_not_found" | "runtime_not_ready";
+      reason:
+        | "candidate_session_erased"
+        | "candidate_session_not_found"
+        | "runtime_not_ready";
       status: "skipped";
     }
   | {
@@ -98,6 +101,24 @@ export async function generateCandidateBriefForSession({
 
   if (!session) {
     return { reason: "candidate_session_not_found", status: "skipped" };
+  }
+
+  /*
+   * An erased candidate has no brief, and must not acquire one.
+   *
+   * The detail page hides the generate/regenerate affordances once `erasedAt`
+   * is set, but that is UI, not enforcement: a tab opened before the erasure
+   * still holds a live server action, and `auto-generate-brief` fires one from
+   * an effect. Either would land here and `upsert` the very row the erasure
+   * deleted — recreating it EMPTY (the Go transcript events are gone), so the
+   * recruiter would be shown a fresh, content-free assessment of a person whose
+   * data we told them was destroyed.
+   *
+   * The guard sits immediately after the session lookup, before the `processing`
+   * upsert, because that upsert is itself the write that resurrects the row.
+   */
+  if (session.erasedAt) {
+    return { reason: "candidate_session_erased", status: "skipped" };
   }
 
   // Resolved here, on every run: a regeneration writes today's workspace

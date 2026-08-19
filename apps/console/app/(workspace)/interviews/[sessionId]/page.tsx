@@ -60,8 +60,10 @@ import {
 } from "../../../../src/features/interview-detail/interview-replay";
 import { InterviewReplayProvider } from "../../../../src/features/interview-detail/interview-replay-controller";
 import { DeleteRecordingButton } from "../../../../src/features/interview-detail/delete-recording-button";
+import { EraseCandidateDataButton } from "../../../../src/features/interview-detail/erase-candidate-data-button";
 import { CandidateScheduleCta } from "../../../../src/features/interview-detail/candidate-schedule-cta";
 import { canDeleteRecording } from "../../../../src/domain/recording-policy";
+import { canEraseCandidateData } from "../../../../src/domain/candidate-erasure-policy";
 
 type InterviewDetailPageProps = {
   params: Promise<{
@@ -108,6 +110,7 @@ export default async function InterviewDetailPage({
   return (
     <CandidateSessionReview
       canDelete={canDeleteRecording(account.role)}
+      canErase={canEraseCandidateData(account.role)}
       canManageReview={canManageCandidateReview(account.role)}
       calendarConnectionStatus={calendarConnectionStatus}
       session={detail.candidateSession}
@@ -120,6 +123,7 @@ export default async function InterviewDetailPage({
 
 function CandidateSessionReview({
   canDelete,
+  canErase,
   canManageReview,
   calendarConnectionStatus,
   session,
@@ -128,6 +132,7 @@ function CandidateSessionReview({
   workspaceLanguage,
 }: {
   canDelete: boolean;
+  canErase: boolean;
   canManageReview: boolean;
   siblings: CandidateSessionSiblings;
   t: TFunction;
@@ -159,6 +164,10 @@ function CandidateSessionReview({
     candidateEmail: string | null;
     candidateLabel: string;
     completedAt: string | null;
+    // The Art. 17(3) tombstone stamp — non-null once this candidate's
+    // transcript, brief and identity have been permanently deleted.
+    erasedAt: string | null;
+    erasureReason: string | null;
     criteriaDistribution: {
       "Not assessable": number;
       Medium: number;
@@ -311,6 +320,14 @@ function CandidateSessionReview({
           </div>
         </header>
 
+        {session.erasedAt ? (
+          <CandidateErasedNotice
+            erasedAt={session.erasedAt}
+            erasureReason={session.erasureReason}
+            t={t}
+          />
+        ) : null}
+
         <CandidateVerdictSection
           criteria={criteria}
           languageBadge={
@@ -343,7 +360,11 @@ function CandidateSessionReview({
             previous version, not the attempt that just failed. The row-level
             flag is checked FIRST so that failure is never hidden behind the
             stale content it left standing. */}
-        {session.briefRegenerationFailed ? (
+        {/* An erased session has no brief and never will: offering to generate
+            one, or saying the transcript is being analysed, would contradict
+            the notice above and invite a recruiter to try. The tombstone is
+            the only explanation the absence needs. */}
+        {session.erasedAt ? null : session.briefRegenerationFailed ? (
           <BriefRegenerationFailedSection
             detailPath={detailPath}
             sessionId={session.id}
@@ -380,7 +401,10 @@ function CandidateSessionReview({
           reviewNote={session.reviewNote}
         />
 
-        {limitations.length > 0 ? (
+        {/* Same reason: after erasure the evidence limitations ("no transcript
+            turns are available") describe the erasure, not a degraded
+            interview, and reading them as quality caveats would be wrong. */}
+        {limitations.length > 0 && !session.erasedAt ? (
           <section className="mt-5 flex items-start gap-[11px] rounded-[14px] bg-[#f1efe8] px-4 py-3.5">
             <WarningTriangle
               aria-hidden={true}
@@ -425,13 +449,25 @@ function CandidateSessionReview({
               </span>
             ) : null}
           </p>
-          {canDelete && session.evidence.recording?.status === "available" ? (
-            <DeleteRecordingButton
-              canDelete={canDelete}
-              candidateSessionId={session.id}
-              recordingStatus={session.evidence.recording.status}
-            />
-          ) : null}
+          <div className="flex flex-col items-end gap-2">
+            {canDelete && session.evidence.recording?.status === "available" ? (
+              <DeleteRecordingButton
+                canDelete={canDelete}
+                candidateSessionId={session.id}
+                recordingStatus={session.evidence.recording.status}
+              />
+            ) : null}
+            {/* Right-to-erasure. Hidden once erased — the act is idempotent, but
+                offering it again over a tombstone would suggest something is
+                left to delete. The notice above says what happened instead. */}
+            {session.erasedAt ? null : (
+              <EraseCandidateDataButton
+                candidateLabel={session.candidateLabel}
+                candidateSessionId={session.id}
+                canErase={canErase}
+              />
+            )}
+          </div>
         </div>
 
         <CandidateDecisionBar
@@ -459,6 +495,43 @@ function CandidateSessionReview({
         />
       </main>
     </InterviewReplayProvider>
+  );
+}
+
+// The tombstone, rendered honestly: an erased session is not a broken one, and
+// a page that merely showed "Candidate 4f21ac" with no brief would read as a
+// failure. It says what was deleted, when, and why.
+function CandidateErasedNotice({
+  erasedAt,
+  erasureReason,
+  t,
+}: {
+  erasedAt: string;
+  erasureReason: string | null;
+  t: TFunction;
+}) {
+  return (
+    <section className="mt-6 flex items-start gap-[11px] rounded-[14px] border border-[#e7e2d8] bg-[#f1efe8] px-4 py-3.5">
+      <WarningTriangle
+        aria-hidden={true}
+        className="mt-0.5 h-4 w-4 shrink-0 text-ink-500"
+      />
+      <div className="min-w-0">
+        <p className="text-sm font-semibold text-ink-950">
+          {t("erasure.tombstoneTitle")}
+        </p>
+        <p className="mt-1 text-[13px] leading-[1.6] text-[#8a8178]">
+          {t("erasure.tombstoneBody", { date: formatDateCompact(erasedAt) })}
+        </p>
+        {erasureReason ? (
+          <p className="mt-1 text-[12px] leading-[1.6] text-ink-400">
+            {erasureReason === "retention"
+              ? t("erasure.tombstoneReasonRetention")
+              : t("erasure.tombstoneReasonRequest")}
+          </p>
+        ) : null}
+      </div>
+    </section>
   );
 }
 

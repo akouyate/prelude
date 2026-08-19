@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -75,6 +76,85 @@ func recordingEnabled(getenv func(string) string) bool {
 	default:
 		return false
 	}
+}
+
+// euR2Regions are the EGRESS_R2_REGION values that attest EU placement for the
+// recording bucket: Cloudflare's "eu" jurisdiction plus its two European
+// location hints ("weur"/"eeur"). The remaining R2 hints (wnam, enam, apac, oc)
+// and the "us"/"fedramp" jurisdictions all place data outside the EU.
+var euR2Regions = map[string]bool{
+	"eu":   true,
+	"weur": true,
+	"eeur": true,
+}
+
+// euR2EndpointSuffix is the host suffix of Cloudflare's EU-jurisdiction S3
+// endpoint, https://<account_id>.eu.r2.cloudflarestorage.com. A jurisdictional
+// bucket is the only R2 feature that *guarantees* objects are stored and
+// processed inside the EU, and the jurisdiction is carried by the endpoint host
+// rather than by any region string — so this is the strongest EU-residency fact
+// that is visible from configuration alone, at boot.
+const euR2EndpointSuffix = ".eu.r2.cloudflarestorage.com"
+
+// isEUJurisdictionEndpoint reports whether an S3 endpoint addresses Cloudflare's
+// EU jurisdiction. It matches on the host suffix, never as a substring, so a
+// lookalike host (acct.eu.r2.cloudflarestorage.com.example.net) cannot pass.
+func isEUJurisdictionEndpoint(raw string) bool {
+	endpoint := strings.ToLower(strings.TrimSpace(raw))
+	if endpoint == "" {
+		return false
+	}
+
+	// Tolerate a scheme-less endpoint; url.Parse would read it as a path.
+	if !strings.Contains(endpoint, "://") {
+		endpoint = "https://" + endpoint
+	}
+
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+
+	return strings.HasSuffix(parsed.Hostname(), euR2EndpointSuffix)
+}
+
+// recordingStorageOutsideEU reports whether audio recording is enabled while
+// nothing in the egress configuration attests that the bucket lives in the EU.
+// Every candidate is told their recording is stored in the European Union
+// («stockés dans l'Union européenne»), so a destination that does not attest EU
+// placement must refuse to boot rather than quietly store candidate audio
+// wherever Cloudflare lands it. EGRESS_R2_REGION defaults to "auto", which is
+// exactly that unspecified case, so the default is refused: fail closed.
+//
+// EU placement is attested by either
+//   - EGRESS_R2_ENDPOINT addressing the "eu" jurisdiction (the binding
+//     guarantee, and the shape production is expected to run), or
+//   - EGRESS_R2_REGION naming an EU value, for a non-jurisdictional bucket or
+//     for S3-compatible storage that is not R2 at all.
+//
+// Residual gap — this validates the operator's *declared* destination, not the
+// bucket's observed placement, and it cannot be tightened to the endpoint alone:
+//
+//   - R2's S3 API requires the region "auto" (empty and "us-east-1" alias to
+//     it), so EGRESS_R2_REGION is a signing region, not a placement fact. An
+//     EU-jurisdiction deployment legitimately leaves it at "auto".
+//   - An R2 location hint is best-effort placement, not a guarantee; only the
+//     jurisdiction binds.
+//
+// So an operator can still point an EU-looking config at a bucket that was
+// created elsewhere. The bucket's real jurisdiction must be confirmed once, by
+// hand, against the Cloudflare dashboard — that step is mandatory in
+// docs/operations/production-go-live-runbook.md.
+func recordingStorageOutsideEU(getenv func(string) string) bool {
+	if !recordingEnabled(getenv) {
+		return false
+	}
+
+	if euR2Regions[strings.ToLower(strings.TrimSpace(getenv("EGRESS_R2_REGION")))] {
+		return false
+	}
+
+	return !isEUJurisdictionEndpoint(getenv("EGRESS_R2_ENDPOINT"))
 }
 
 // missingProductionConfig returns the required env vars that are absent, so the

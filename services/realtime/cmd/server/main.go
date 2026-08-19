@@ -32,6 +32,10 @@ func main() {
 			slog.Error("refusing to start in production with recording enabled but retention disabled — RECORDING_RETENTION_DAYS=0 contradicts the 90-day consent promise")
 			os.Exit(1)
 		}
+		if recordingStorageOutsideEU(os.Getenv) {
+			slog.Error("refusing to start in production with recording enabled but no EU storage destination — every candidate is told their recording is stored in the European Union, so set EGRESS_R2_ENDPOINT to the eu-jurisdiction endpoint (https://<account_id>.eu.r2.cloudflarestorage.com) or EGRESS_R2_REGION to eu/weur/eeur; the default \"auto\" region stores audio wherever Cloudflare lands it")
+			os.Exit(1)
+		}
 	}
 
 	repository := application.SessionRepository(store.NewMemoryStore())
@@ -87,6 +91,15 @@ func main() {
 		service.SetAgentDispatchQueue(dispatcher)
 		slog.Info("using redis agent dispatcher")
 	}
+	// Transcript erasure is wired unconditionally, unlike recording: the
+	// transcript exists in every interview, recorded or not, so the right to
+	// erasure must work with RECORDING_ENABLED off. Both stores implement it.
+	if transcripts, ok := repository.(application.TranscriptRepository); ok {
+		service.SetTranscriptRepository(transcripts)
+	} else {
+		slog.Warn("session store does not support transcript erasure; the erasure endpoint will refuse")
+	}
+
 	var egressWebhookParser httpapi.EgressWebhookParser
 	if recordingEnabled(os.Getenv) {
 		realGateway, gatewayOK := livekitGateway.(*livekit.RealGateway)

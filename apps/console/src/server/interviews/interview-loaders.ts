@@ -121,6 +121,11 @@ export type InterviewDetailData =
       candidateSession: CandidateSessionSummary & {
         brief: CandidateBriefDto | null;
         candidateEmail: string | null;
+        // The Art. 17(3) tombstone stamp. Non-null means this session's
+        // transcript, brief and identity were permanently deleted — the detail
+        // page must say so rather than render an emptied row as a broken one.
+        erasedAt: string | null;
+        erasureReason: string | null;
         evidence: CandidateSessionEvidence;
         interviewId: string;
         // The published interview's own stamp. Compared against the workspace
@@ -407,6 +412,8 @@ export async function getInterviewDetail(
           candidateSession.candidateEmail ??
           candidateSession.candidateInvitation?.candidateEmail ??
           null,
+        erasedAt: candidateSession.erasedAt?.toISOString() ?? null,
+        erasureReason: candidateSession.erasureReason,
         eventCount: evidence.eventCount,
         evidence,
         interviewId: candidateSession.interviewId,
