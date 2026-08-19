@@ -1,7 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { candidateConsentCopy, candidateDisclosureCopy } from "@prelude/core";
+import {
+  candidateConsentCopyFor,
+  candidateDisclosureCopyFor,
+} from "@prelude/core";
 import {
   AlertIcon,
   ArrowLeftIcon,
@@ -21,9 +24,15 @@ import {
   RestartIcon,
   SkipForwardIcon,
   TranscriptIcon,
+  formatCandidateModes,
+  type CandidateInterviewExperienceLabels,
 } from "@prelude/ui";
 
 import type { PublicInterviewContext } from "../../server/public-interviews";
+import {
+  candidateExperienceCopy,
+  type CandidateExperienceCopy,
+} from "./candidate-experience-copy";
 import {
   completeProductSession,
   connectRoom,
@@ -64,11 +73,6 @@ type CandidateInterview = Exclude<
   PublicInterviewContext,
   { kind: "not_found" }
 >["interview"];
-
-const previewDisclosureCopy =
-  "You are viewing the real candidate experience in recruiter preview mode. Nothing is added to your candidate pipeline. You can continue to run a live test with the interviewer.";
-const previewConsentCopy =
-  "I understand that this is a recruiter live test. My microphone audio is transmitted to the AI interviewer for this session, but it is not recorded, retained, evaluated as a candidate, or added to the candidate pipeline.";
 
 // Shared button shapes for the light screens. The pill, the Figtree label and
 // the sheen (data-cc-btn, see globals.css) are the candidate signature.
@@ -692,15 +696,84 @@ export function LiveInterviewRoom({
     allowedModes.includes("form") && formQuestions.length > 0;
   const canStart = hasAcceptedConsent && candidateName.trim().length > 1;
   const isLiveExperience = isBusy || isRoomActive;
-  const candidateStartLabel = startButtonLabel({
-    canStart,
-    candidateName,
-    hasAcceptedConsent,
+  const isPreview = context.kind === "preview";
+  /*
+   * The pre-join surfaces render in the INTERVIEW's language, resolved once
+   * server-side (`resolveCandidateRenderingLanguage`) and carried on the
+   * context. The same resolved value is what the server stamps as
+   * `consentLanguage`, so what the candidate read and what the record says can
+   * never drift apart. A `not_found` context never reaches those screens; it
+   * falls through to `UnavailableInterview`.
+   */
+  const renderingLanguage =
+    context.kind === "not_found" ? "fr" : context.interview.language;
+  const copy = candidateExperienceCopy(renderingLanguage);
+  const modesLabel = formatCandidateModes(allowedModes, {
+    audio: copy.modeAudio,
+    formFallback: copy.modeFormFallback,
   });
+  const estimatedMinutes = interview?.estimatedMinutes ?? null;
+  /*
+   * Assembled here rather than inside @prelude/ui, for the same reason the
+   * console assembles `EnterpriseShellLabels`: the package takes finished copy,
+   * and composing a sentence is a translation concern only this side can do.
+   */
+  const preJoinLabels: CandidateInterviewExperienceLabels = {
+    answersBody: copy.answersBody,
+    answersTitle: copy.answersTitle,
+    audioOnlyNotice: copy.audioOnlyNotice,
+    durationPill: estimatedMinutes
+      ? copy.durationLong(estimatedMinutes)
+      : copy.durationUnknown,
+    emailLabel: copy.emailLabel,
+    emailOptional: copy.emailOptional,
+    emailPlaceholder: copy.emailPlaceholder,
+    evidenceBody: isPreview ? copy.previewEvidenceBody : copy.evidenceBody,
+    evidenceTitle: isPreview ? copy.previewEvidenceTitle : copy.evidenceTitle,
+    fairnessHeading: copy.fairnessHeading,
+    fairnessKicker: copy.fairnessKicker,
+    formatLabel: copy.formatLabel,
+    formatValue: modesLabel,
+    humanReviewedPill: copy.humanReviewedPill,
+    introDescription: isPreview
+      ? copy.previewIntroDescription
+      : copy.introDescription({
+          companyName: interview?.companyName ?? "",
+          roleTitle: interview?.roleTitle ?? "",
+        }),
+    introHeading: copy.introHeading,
+    introPill: copy.introPill,
+    invitation: copy.invitation(interview?.companyName ?? ""),
+    lengthLabel: copy.lengthLabel,
+    lengthValue: estimatedMinutes
+      ? copy.durationShort(estimatedMinutes)
+      : copy.durationUnknown,
+    listeningNoteEmphasis: copy.listeningNoteEmphasis,
+    listeningNoteLead: copy.listeningNoteLead,
+    modesPill: modesLabel,
+    nameLabel: copy.nameLabel,
+    namePlaceholder: copy.namePlaceholder,
+    paceBody: copy.paceBody,
+    paceTitle: copy.paceTitle,
+    preflightHeading: copy.preflightHeading,
+    preflightSubtitle: copy.preflightSubtitle({
+      jobTitle: interview?.jobTitle ?? "",
+      minutes: estimatedMinutes,
+    }),
+    privacyPill: copy.privacyPill,
+    roleLabel: copy.roleLabel,
+    startButton: copy.startButton,
+    startFootnote: copy.startFootnote,
+  };
   const primaryStartLabel =
-    context.kind === "preview" && candidateStartLabel === "Join the interview"
-      ? "Start live test"
-      : candidateStartLabel;
+    isPreview && canStart
+      ? copy.previewStart
+      : startButtonLabel({
+          canStart,
+          candidateName,
+          copy,
+          hasAcceptedConsent,
+        });
 
   const submitWrittenAnswers = React.useCallback(async () => {
     if (context.kind === "not_found" || !canStart || !isFormFallbackAvailable) {
@@ -892,27 +965,16 @@ export function LiveInterviewRoom({
       <>
         <CandidateScreenHeader
           left={<CandidateWordmark className="h-[23px]" />}
-          right={<CandidateMonoPill>Candidate interview</CandidateMonoPill>}
+          right={<CandidateMonoPill>{copy.headerPill}</CandidateMonoPill>}
         />
         <CandidateWelcomeExperience
-          companyName={interview.companyName}
           disclosureCopy={
-            context.kind === "preview"
-              ? previewDisclosureCopy
-              : candidateDisclosureCopy
+            isPreview
+              ? copy.previewDisclosureCopy
+              : candidateDisclosureCopyFor(renderingLanguage)
           }
-          evidenceNotice={
-            context.kind === "preview"
-              ? {
-                  body: "A temporary transcript powers this live test and never enters the candidate pipeline.",
-                  title: "Temporary live-test transcript",
-                }
-              : undefined
-          }
-          estimatedMinutes={interview.estimatedMinutes}
-          jobTitle={interview.jobTitle}
+          labels={preJoinLabels}
           onStart={() => setStep("setup")}
-          responseModes={allowedModes}
           roleTitle={interview.roleTitle}
         />
       </>
@@ -934,6 +996,7 @@ export function LiveInterviewRoom({
     return (
       <AbandonedPanel
         companyName={interview.companyName}
+        copy={copy}
         onRetry={retryAfterAbandon}
       />
     );
@@ -972,11 +1035,12 @@ export function LiveInterviewRoom({
         isAudioPlaybackBlocked={isAudioPlaybackBlocked}
         inactivityNotice={inactivityNotice}
         isFormFallbackAvailable={isFormFallbackAvailable}
-        isPreview={context.kind === "preview"}
+        isPreview={isPreview}
         isRoomActive={isRoomActive}
         isStreaming={interviewerView.isStreaming}
         localStream={localStream}
         onEnableAudio={enableAudio}
+        quitLabel={copy.quit}
         onEndInterview={endInterview}
         onConfirmPresence={confirmCandidatePresence}
         onContinueInWriting={continueInWriting}
@@ -997,7 +1061,7 @@ export function LiveInterviewRoom({
             type="button"
           >
             <ArrowLeftIcon className="h-4 w-4" />
-            Back
+            {copy.back}
           </button>
         }
         right={<CandidateWordmark />}
@@ -1005,16 +1069,8 @@ export function LiveInterviewRoom({
       <div className="flex flex-1 items-center justify-center px-[clamp(1.125rem,5vw,2.75rem)] pb-16 pt-2">
         <div className="grid w-full max-w-[1120px] grid-cols-1 items-center gap-[clamp(1.75rem,4vw,3.5rem)] motion-safe:animate-[cc-in_.5s_cubic-bezier(.2,.7,.2,1)_both] min-[1000px]:grid-cols-[minmax(0,1fr)_minmax(380px,430px)]">
           <CandidateInterviewIntro
-            companyName={interview.companyName}
-            description={
-              context.kind === "preview"
-                ? "This is the same setup candidates see. Your test answers stay outside the candidate pipeline."
-                : undefined
-            }
-            estimatedMinutes={interview.estimatedMinutes}
             jobTitle={interview.jobTitle}
-            responseModes={allowedModes}
-            roleTitle={interview.roleTitle}
+            labels={preJoinLabels}
           />
           <div className="rounded-[32px] border border-ink-200 bg-white p-[clamp(1.25rem,3vw,1.625rem)]">
             <CandidatePreflightExperience
@@ -1022,12 +1078,11 @@ export function LiveInterviewRoom({
               candidateName={candidateName}
               consentAccepted={hasAcceptedConsent}
               consentCopy={
-                context.kind === "preview"
-                  ? previewConsentCopy
-                  : candidateConsentCopy
+                isPreview
+                  ? copy.previewConsentCopy
+                  : candidateConsentCopyFor(renderingLanguage)
               }
-              estimatedMinutes={interview.estimatedMinutes}
-              jobTitle={interview.jobTitle}
+              labels={preJoinLabels}
               onCandidateEmailChange={setCandidateEmail}
               onCandidateNameChange={setCandidateName}
               onConsentChange={setHasAcceptedConsent}
@@ -1038,10 +1093,10 @@ export function LiveInterviewRoom({
             {isAudioPlaybackBlocked ? (
               <div className="mt-4 rounded-[18px] border border-clay-300 bg-clay-50 p-4">
                 <p className="font-title text-[14.5px] font-semibold tracking-[-0.008em] text-ink-950">
-                  Audio paused by your browser
+                  {copy.audioBlockedTitle}
                 </p>
                 <p className="mt-1 text-[13.5px] leading-[1.55] text-ink-700">
-                  Tap once to hear the interviewer on this device.
+                  {copy.audioBlockedBody}
                 </p>
                 <Button
                   className={`mt-3 h-11 text-[14.5px] ${quietActionClass} w-full`}
@@ -1050,7 +1105,7 @@ export function LiveInterviewRoom({
                   variant="secondary"
                 >
                   <MicIcon className="h-4 w-4" />
-                  Enable audio
+                  {copy.audioBlockedEnable}
                 </Button>
               </div>
             ) : null}
@@ -1077,7 +1132,7 @@ export function LiveInterviewRoom({
                 variant="secondary"
               >
                 <PencilIcon className="h-4 w-4" />
-                Use written fallback
+                {copy.writtenFallback}
               </Button>
             ) : null}
           </div>
@@ -1164,11 +1219,18 @@ function CompletionRow({
   );
 }
 
+/*
+ * Legal ruling R5.2/R5.3: withdrawing consent has to be as easy as giving it
+ * (GDPR art. 7(3)), which includes being readable — so the Quit control and the
+ * panel it leads to follow the consent language, not the room's English.
+ */
 function AbandonedPanel({
   companyName,
+  copy,
   onRetry,
 }: {
   companyName: string;
+  copy: CandidateExperienceCopy;
   onRetry: () => void;
 }) {
   return (
@@ -1180,11 +1242,10 @@ function AbandonedPanel({
             <HangUpIcon className="h-7 w-7" strokeWidth={1.8} />
           </span>
           <h1 className="mb-3.5 font-display text-[clamp(32px,5vw,44px)] font-normal leading-[1.05] tracking-[-0.02em] text-ink-950">
-            Interview ended
+            {copy.abandonedTitle}
           </h1>
           <p className="mx-auto max-w-[28rem] text-pretty text-[16px] leading-[1.62] text-ink-700">
-            We stopped this attempt and did not mark it as complete. If that was
-            accidental, you can start a new attempt for {companyName}.
+            {copy.abandonedBody(companyName)}
           </p>
           <Button
             className={`mt-7 h-[52px] w-full text-[15.5px] ${primaryActionClass}`}
@@ -1192,11 +1253,10 @@ function AbandonedPanel({
             onClick={onRetry}
           >
             <RestartIcon className="h-4 w-4" />
-            Start a new attempt
+            {copy.abandonedRetry}
           </Button>
           <p className="mt-4 text-[13.5px] text-ink-500">
-            You can also close this window and use the latest link from the
-            recruiter.
+            {copy.abandonedClosing}
           </p>
         </div>
       </div>
@@ -1235,7 +1295,9 @@ function FormFallbackPanel({
     <>
       <CandidateScreenHeader
         left={<CandidateWordmark />}
-        right={<CandidateMonoPill tone="tint">Written fallback</CandidateMonoPill>}
+        right={
+          <CandidateMonoPill tone="tint">Written fallback</CandidateMonoPill>
+        }
       />
       <div className="flex flex-1 items-start justify-center px-[clamp(1.125rem,5vw,2.75rem)] pb-16 pt-2">
         <div className="w-full max-w-[720px] motion-safe:animate-[cc-in_.5s_cubic-bezier(.2,.7,.2,1)_both]">
@@ -1357,6 +1419,7 @@ export function LiveInterviewStage({
   onEndInterview,
   onRepeatQuestion,
   onSkipQuestion,
+  quitLabel,
   status,
 }: {
   activeText: string | null;
@@ -1375,6 +1438,9 @@ export function LiveInterviewStage({
   onEndInterview: () => void;
   onRepeatQuestion: () => void;
   onSkipQuestion: () => void;
+  // Legal ruling R5.2: the only in-interview way to withdraw. It follows the
+  // consent language even though the rest of the stage is still English.
+  quitLabel: string;
   status: RoomStatus;
 }) {
   const hasInterviewerLine = activeText !== null;
@@ -1399,7 +1465,9 @@ export function LiveInterviewStage({
   // outside the states where the worker has a current question to move on from
   // — a greyed control is honest, one that silently does nothing is not.
   const canSendSkip =
-    isCandidateTurn || status === "interviewer_speaking" || status === "processing";
+    isCandidateTurn ||
+    status === "interviewer_speaking" ||
+    status === "processing";
 
   return (
     <section className="fixed inset-0 z-50 flex h-[100svh] flex-col overflow-hidden bg-[radial-gradient(circle_at_50%_-12%,#0E4438_0%,#0A2A22_34%,#08150F_100%)] px-[clamp(1.125rem,5vw,2.75rem)] pb-[calc(env(safe-area-inset-bottom)+clamp(1rem,3vh,1.625rem))] pt-[calc(env(safe-area-inset-top)+clamp(1rem,3vh,1.625rem))] font-sans text-[#F4F3EF] supports-[height:100dvh]:h-[100dvh]">
@@ -1554,7 +1622,7 @@ export function LiveInterviewStage({
           onClick={onEndInterview}
         >
           <HangUpIcon className="h-[15px] w-[15px]" />
-          Quit
+          {quitLabel}
         </Button>
         <span className="h-[22px] w-px bg-[rgba(244,243,239,0.12)]" />
         <span className="px-2 font-mono text-[13px] tabular-nums text-[#F4F3EF]">
@@ -1708,25 +1776,27 @@ function ConnectingInterviewState({ status }: { status: RoomStatus }) {
 function startButtonLabel({
   canStart,
   candidateName,
+  copy,
   hasAcceptedConsent,
 }: {
   canStart: boolean;
   candidateName: string;
+  copy: CandidateExperienceCopy;
   hasAcceptedConsent: boolean;
 }) {
   if (canStart) {
-    return "Join the interview";
+    return copy.startJoin;
   }
 
   if (candidateName.trim().length <= 1) {
-    return "Enter your name to join";
+    return copy.startNameRequired;
   }
 
   if (!hasAcceptedConsent) {
-    return "Accept consent to join";
+    return copy.startConsentRequired;
   }
 
-  return "Join the interview";
+  return copy.startJoin;
 }
 
 function blockingInvitationCopy(status: string | null | undefined) {

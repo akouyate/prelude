@@ -56,6 +56,25 @@ export const candidateDisclosureCopy =
 export const candidateConsentCopy =
   "I understand that I am joining an AI-guided first-screening interview. An audio recording of my voice, together with a transcript, will be created and stored in the EU as evidence for recruiter review, and may be processed by HireCall's recording provider for that purpose. The recording is kept for up to 90 days and then permanently deleted, and I can request deletion of my recording at any time. HireCall must not assess protected attributes, appearance, accent, tone, emotion, personality, or biometric signals.";
 
+// French rendering of `candidateDisclosureCopy`. Same version id
+// (`candidateDisclosureCopyVersion`, "candidate-disclosure-v2") on purpose: the
+// version stamps the COMMITMENTS made to the candidate, and the language is a
+// separate recorded fact (`consentLanguage` on the session and the invitation).
+// A translation is not a new promise, so it is not a new version — and any
+// change to what is promised requires a v3, never an in-place edit of this
+// string.
+export const candidateDisclosureCopyFr =
+  "Vous parlez avec un intervieweur guidé par l'IA, dans le cadre d'une première présélection. Cet entretien est enregistré en audio pour qu'un recruteur puisse consulter vos réponses plus tard. Vos réponses sont revues par un recruteur ; HireCall n'évalue pas les caractéristiques protégées, l'apparence, l'accent, le ton ni les émotions.";
+
+// French rendering of `candidateConsentCopy`. Same version id
+// (`candidateConsentCopyVersion`, "candidate-consent-v2") for the same reason as
+// the disclosure above: version = commitments, language = separate recorded
+// fact. Changing any commitment here — the EU storage location, the 90-day
+// retention, the erasure right, or the seven excluded assessment targets —
+// requires a v3, never an in-place edit of this string.
+export const candidateConsentCopyFr =
+  "Je comprends que je participe à un entretien de première présélection guidé par l'IA. Un enregistrement audio de ma voix ainsi qu'une transcription seront créés et stockés dans l'Union européenne, comme éléments consultables pour la revue du recruteur. Ils pourront être traités à cette fin par le prestataire d'enregistrement de HireCall. L'enregistrement est conservé pendant 90 jours au maximum, puis définitivement supprimé. Je peux demander l'effacement de mon enregistrement à tout moment. HireCall ne doit pas évaluer les caractéristiques protégées, l'apparence, l'accent, le ton, les émotions, la personnalité ni les signaux biométriques.";
+
 export const recruiterLimitationCopy =
   "HireCall supports human screening review only. It must not be used as an automated hiring or rejection decision, and it excludes protected traits, appearance, accent, tone, emotion, personality, and biometric signals.";
 
@@ -440,6 +459,34 @@ export function getInterviewPlanGuardrails(
   return language === "fr"
     ? [sameQuestionOrderGuardrailFr, ...aiGuardrailsFr]
     : [sameQuestionOrderGuardrail, ...aiGuardrails];
+}
+
+/**
+ * The statutory AI disclosure shown on the candidate welcome screen, in the
+ * language that screen renders in.
+ *
+ * No default argument, unlike `getInterviewPlanGuardrails`: a caller that has
+ * not decided which language it is rendering has not decided which text the
+ * candidate is being asked to read, and silently defaulting that to English is
+ * exactly the failure this selector exists to prevent.
+ */
+export function candidateDisclosureCopyFor(
+  language: GeneratedContentLanguage,
+): string {
+  return language === "fr"
+    ? candidateDisclosureCopyFr
+    : candidateDisclosureCopy;
+}
+
+/**
+ * The consent text the candidate ticks, in the language that screen renders in.
+ * The language actually used is recorded alongside the consent
+ * (`consentLanguage`), because the version id deliberately does not carry it.
+ */
+export function candidateConsentCopyFor(
+  language: GeneratedContentLanguage,
+): string {
+  return language === "fr" ? candidateConsentCopyFr : candidateConsentCopy;
 }
 
 export const defaultComplianceFlags = [

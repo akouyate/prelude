@@ -8,6 +8,7 @@ import {
 } from "@prelude/core";
 import { prisma } from "@prelude/db";
 
+import { resolveCandidateRenderingLanguage } from "./interview-language";
 import {
   resolveAllowedModalities,
   type PublicInterviewContext,
@@ -49,6 +50,11 @@ export async function getCandidateExperiencePreviewContext(
       id: preview.id,
       jobId: snapshot.jobId,
       jobTitle: snapshot.jobTitle,
+      // The recruiter previews the candidate experience, so it renders in the
+      // draft's own language — same resolution (and same "fr" fallback) as a
+      // published interview, because the preview live test runs on the same
+      // realtime pipeline.
+      language: resolveCandidateRenderingLanguage(snapshot.plan.language),
       organizationId: preview.organizationId,
       publicToken: token,
       questions: snapshot.plan.questions.map((question) => ({

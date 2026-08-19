@@ -46,6 +46,7 @@ import { unconfiguredBilling } from "@prelude/billing";
 
 import {
   completeCandidateSession,
+  getPublicInterviewContext,
   markCandidateSessionLifecycle,
   prepareCandidateSession,
   submitCandidateFormInterview,
@@ -71,7 +72,10 @@ beforeEach(() => {
       ...data,
     }),
   );
-  reserveCreditForSession.mockResolvedValue({ ok: true, reservationId: "res_1" });
+  reserveCreditForSession.mockResolvedValue({
+    ok: true,
+    reservationId: "res_1",
+  });
   getWorkspaceBilling.mockResolvedValue(unconfiguredBilling(now));
   notifyCandidateInterviewCompleted.mockResolvedValue(undefined);
   settleCandidateSessionCredit.mockResolvedValue(undefined);
@@ -179,7 +183,9 @@ describe("terminal writes settle their credit", () => {
     });
 
     const result = await submitCandidateFormInterview({
-      answers: [{ questionId: "q1", text: "I paged, bisected, then rolled back." }],
+      answers: [
+        { questionId: "q1", text: "I paged, bisected, then rolled back." },
+      ],
       candidateToken: "tok_candidate",
       consentAccepted: true,
       resumeToken: "cs_resume",
@@ -220,8 +226,9 @@ function resumableSession() {
 }
 
 function openedInvitation({
+  language = "en",
   responseModes = ["audio"],
-}: { responseModes?: string[] } = {}) {
+}: { language?: string | null; responseModes?: string[] } = {}) {
   return {
     candidateEmail: "ada@example.com",
     candidateName: "Ada",
@@ -230,6 +237,7 @@ function openedInvitation({
     interview: {
       estimatedMinutes: 10,
       id: "interview_1",
+      language,
       job: { title: "Backend Engineer" },
       jobId: "job_1",
       organization: { name: "Acme" },
@@ -245,3 +253,115 @@ function openedInvitation({
     token: "tok_candidate",
   };
 }
+
+describe("the rendering language reaches the candidate surfaces", () => {
+  it("resolves the published interview's stamped language", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      openedInvitation({ language: "FR" }),
+    );
+
+    const context = await getPublicInterviewContext("tok_candidate");
+
+    expect(context).toMatchObject({
+      interview: { language: "fr" },
+      kind: "published",
+    });
+  });
+
+  it("falls back to French for an interview published before stamping existed", async () => {
+    // Same fallback as the Go realtime store: those interviews are conducted in
+    // French, so the consent the candidate reads has to be French too.
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      openedInvitation({ language: null }),
+    );
+
+    const context = await getPublicInterviewContext("tok_candidate");
+
+    expect(context).toMatchObject({
+      interview: { language: "fr" },
+      kind: "published",
+    });
+  });
+});
+
+describe("consent language is recorded as evidence", () => {
+  it("stamps the rendered language on a resumed session", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      openedInvitation({ language: "fr" }),
+    );
+
+    await expect(
+      prepareCandidateSession(resumeAttempt()),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(prismaMock.candidateSession.update).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        consentCopyVersion: "candidate-consent-v2",
+        consentLanguage: "fr",
+      }),
+      where: { id: "cs_1" },
+    });
+  });
+
+  it("stamps the rendered language on a newly created session", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      openedInvitation({ language: "en" }),
+    );
+    prismaMock.candidateSession.findFirst.mockResolvedValue(null);
+    prismaMock.candidateSession.create.mockResolvedValue({
+      id: "cs_new",
+      interviewId: "interview_1",
+      resumeToken: "cs_new_resume",
+    });
+
+    await expect(
+      prepareCandidateSession({
+        candidateToken: "tok_candidate",
+        consentAccepted: true,
+      }),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(prismaMock.candidateSession.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        consentCopyVersion: "candidate-consent-v2",
+        consentLanguage: "en",
+      }),
+    });
+  });
+
+  it("stamps the rendered language on the invitation consent row", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      openedInvitation({ language: "fr" }),
+    );
+
+    await expect(
+      prepareCandidateSession(resumeAttempt()),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(prismaMock.candidateInvitation.updateMany).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        consentCopyVersion: "candidate-consent-v2",
+        consentLanguage: "fr",
+      }),
+      where: {
+        id: "inv_1",
+        status: { notIn: ["completed", "expired", "superseded"] },
+      },
+    });
+  });
+
+  it("records the fallback language when the interview carries no stamp", async () => {
+    prismaMock.candidateInvitation.findUnique.mockResolvedValue(
+      openedInvitation({ language: null }),
+    );
+
+    await expect(
+      prepareCandidateSession(resumeAttempt()),
+    ).resolves.toMatchObject({ ok: true });
+
+    expect(prismaMock.candidateSession.update).toHaveBeenCalledWith({
+      data: expect.objectContaining({ consentLanguage: "fr" }),
+      where: { id: "cs_1" },
+    });
+  });
+});

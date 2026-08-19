@@ -32,6 +32,7 @@ function renderStage({
       onEndInterview={() => undefined}
       onRepeatQuestion={() => undefined}
       onSkipQuestion={() => undefined}
+      quitLabel="Quitter"
       status={status}
     />,
   );

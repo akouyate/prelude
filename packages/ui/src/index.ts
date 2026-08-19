@@ -92,6 +92,9 @@ export {
   CandidatePreflightExperience,
   CandidateWelcomeExperience,
   formatCandidateModes,
+  type CandidateExperienceModeLabels,
+  type CandidateInterviewExperienceLabels,
+  type CandidateInterviewIntroProps,
   type CandidatePreflightExperienceProps,
   type CandidateWelcomeExperienceProps,
 } from "./layouts/candidate-interview-experience";

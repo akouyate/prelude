@@ -308,6 +308,8 @@ model CandidateInvitation {
   openedAt           DateTime?
   consentedAt        DateTime?
   consentCopyVersion String?
+  // Language of the consent copy actually shown at consent time, written by the server that rendered it. Null = consented before language was recorded — never backfill.
+  consentLanguage    String?
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
   organization       Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -332,6 +334,8 @@ model CandidateSession {
   resumeToken             String?                       @unique
   consentedAt             DateTime?
   consentCopyVersion      String?
+  // Language of the consent copy actually shown at consent time, written by the server that rendered it. Null = consented before language was recorded — never backfill.
+  consentLanguage         String?
   recordingEntitled       Boolean                       @default(false)
   status                  String                        @default("created")
   reviewStatus            String                        @default("to_review")

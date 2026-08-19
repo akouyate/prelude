@@ -7,6 +7,8 @@ type CandidateFixture = {
   organizationId: string;
 };
 
+type SeedLanguage = "en" | "fr";
+
 test.use({ viewport: { width: 390, height: 844 } });
 
 let fixture: CandidateFixture;
@@ -101,7 +103,42 @@ test("candidate can complete the written fallback when microphone permission is 
   ).toBeVisible();
 });
 
-async function seedPublishedInterview(): Promise<CandidateFixture> {
+test("a French interview renders both pre-join surfaces in French", async ({
+  page,
+}) => {
+  // The disclosure and the consent follow the INTERVIEW's language, never the
+  // reader's browser. `beforeEach` already seeded the English fixture; this
+  // test brings its own French one and cleans it up itself.
+  const frenchFixture = await seedPublishedInterview("fr");
+
+  try {
+    await page.goto(`/interview/${frenchFixture.candidateToken}`);
+
+    await expect(page.getByText("Entretien confidentiel")).toBeVisible();
+    await expect(page.getByText("Revu par un humain")).toBeVisible();
+    await expect(page.getByText(/Nous écoutons/)).toBeVisible();
+    await expect(page.getByText(/HireCall n'évalue pas/)).toBeVisible();
+
+    await page.getByRole("button", { name: "Commencer" }).click();
+
+    await expect(page.getByText("Avant de commencer")).toBeVisible();
+    await page.getByLabel("Votre nom").fill("Ada Lovelace");
+    await expect(
+      page.getByLabel(/Je comprends que je participe/),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", {
+        name: /Saisissez votre nom|Acceptez le consentement|Rejoindre l'entretien/,
+      }),
+    ).toBeVisible();
+  } finally {
+    await cleanupPublishedInterview(frenchFixture);
+  }
+});
+
+async function seedPublishedInterview(
+  language: SeedLanguage = "en",
+): Promise<CandidateFixture> {
   loadRootEnv();
   const { prisma } = await import("@prelude/db");
   const id = randomUUID().replace(/-/g, "").slice(0, 12);
@@ -140,6 +177,9 @@ async function seedPublishedInterview(): Promise<CandidateFixture> {
         },
       ],
       jobId: job.id,
+      // The pre-join surfaces render in the interview's language, so the seed
+      // has to declare one: an unstamped interview resolves to French.
+      language,
       organizationId: organization.id,
       publicToken,
       questions: [
