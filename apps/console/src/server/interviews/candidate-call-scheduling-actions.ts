@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { validateCandidateCallSchedule } from "../../domain/candidate-call-scheduling-policy";
+import type { ScheduledCallSummary } from "../../features/interview-detail/scheduled-call-presentation";
 import { createGoogleCalendarAuthorizationUrl } from "../integrations/connected-account-service";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import {
@@ -24,15 +25,18 @@ export type ScheduleCandidateCallActionState = {
     | "reschedule_unsupported"
     | null;
   error: string | null;
-  scheduled: {
-    conferenceJoinUrl: string | null;
-    conferencePending: boolean;
-    eventUrl: string | null;
-    invitationSent: boolean;
-    startsAt: string;
-    status: "scheduled";
-    timeZone: string;
-  } | null;
+  /**
+   * The whole booked call, because that is what the success path below hands
+   * back — the service's summary, spread verbatim. The hand-written subset
+   * that used to stand here listed seven of those twelve fields, so the type
+   * was already describing something other than the value flowing through it.
+   *
+   * `status` is the one field genuinely narrower than the summary's: this is
+   * only ever set on the path where the provider confirmed the event.
+   */
+  scheduled:
+    | (Omit<ScheduledCallSummary, "status"> & { status: "scheduled" })
+    | null;
 };
 
 export async function scheduleCandidateCallAction(

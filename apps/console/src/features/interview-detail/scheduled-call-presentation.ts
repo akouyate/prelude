@@ -1,16 +1,21 @@
 /**
- * What a scheduled follow-up call looks like on the candidate review page,
- * decided in one pure place.
+ * The booked call, read out for the client: what the banner and the chip agree
+ * to show, what the scheduling form starts from, and the date formatting all
+ * three share. One pure module, no I/O — the components only paint it.
  *
- * The scheduled call used to be rendered entirely inside the floating decision
- * bar — a light result card, with links, sitting inside a dark bar whose only
- * job is advance / hold / pass. The durable facts now live in a banner under
- * the page header and the bar keeps a compact chip pointing at it, so two
- * surfaces read the same record and must agree on when there is anything to
- * show at all. That agreement is this module; the components only paint it.
+ * The agreement is here because the call is stated in two places at once. It
+ * used to be rendered entirely inside the floating decision bar — a light
+ * result card, with links, sitting inside a dark bar whose only job is advance
+ * / hold / pass. The durable facts now live in a banner under the page header
+ * and the bar keeps a compact chip pointing at it, so both surfaces read the
+ * same record and must agree on when there is anything to show at all.
+ *
+ * `ScheduledCallSummary` is the single declaration of that record: the server
+ * aliases it for what it returns, and the page hands it straight through.
  */
 
 import { candidateCallDurationOptions } from "../../domain/candidate-call-scheduling-policy";
+import { normalizeEmail } from "../../libs/email";
 
 /**
  * The anchor both surfaces share. The chip is fixed to the bottom of a long
@@ -40,8 +45,6 @@ export type ScheduledCallBannerView = {
     | "schedule.nextCallInvitationSent"
     | "schedule.nextCallPrivateEvent";
   showActions: boolean;
-  showMeetPending: boolean;
-  showReschedule: boolean;
 };
 
 export type ScheduleTriggerView =
@@ -75,21 +78,18 @@ export function resolveScheduledCallBanner(
   // A private event with no Meet link has nowhere to send the recruiter; the
   // banner must not reserve a row of whitespace for buttons that never come.
   const hasLinks = Boolean(call.eventUrl ?? call.conferenceJoinUrl);
-  // Moving the call belongs beside the links, not in the decision bar: this is
-  // the one surface that states where the call lives, so it is also where you
-  // change it. Viewers never see it — the server would refuse them anyway.
-  const showReschedule = options.canReschedule === true;
 
   return {
     call,
     invitationMessageKey: call.invitationSent
       ? "schedule.nextCallInvitationSent"
       : "schedule.nextCallPrivateEvent",
-    showActions: hasLinks || showReschedule,
-    // Calendar creates the Meet link asynchronously, so "no join link yet" is
-    // a wait, not a failure — but only while the request is still pending.
-    showMeetPending: call.conferencePending,
-    showReschedule,
+    // Moving the call belongs beside the links, not in the decision bar: this
+    // is the one surface that states where the call lives, so it is also where
+    // you change it. That is also the only reason `canReschedule` is here —
+    // whether to draw the row at all when there is no link to draw beside.
+    // Viewers never get the trigger; the server would refuse them anyway.
+    showActions: hasLinks || options.canReschedule === true,
   };
 }
 
@@ -249,10 +249,6 @@ export function toBrowserIsoInstant(dateTimeLocal: string) {
   return Number.isNaN(date.getTime()) ? "" : date.toISOString();
 }
 
-function normalizeEmail(value: string | null) {
-  return value?.trim().toLowerCase() || null;
-}
-
 /**
  * The stored zone comes from whichever browser booked the call, so it is not
  * guaranteed to be a zone this reader's `Intl` knows. Both formatters degrade
@@ -271,12 +267,47 @@ function safeFormat(
   }
 
   try {
-    return new Intl.DateTimeFormat(locale, { ...options, timeZone }).format(
-      date,
-    );
+    return dateTimeFormatter(locale, { ...options, timeZone }).format(date);
   } catch {
-    return new Intl.DateTimeFormat(locale, options).format(date);
+    return dateTimeFormatter(locale, options).format(date);
   }
+}
+
+/**
+ * Building an `Intl.DateTimeFormat` is the expensive half of formatting a date,
+ * and these are built in render bodies: once per render of the banner, twice
+ * per render of the chip, once more per render of the dialog's confirmation
+ * preview. A page only ever asks for a handful of (locale, zone, style)
+ * combinations — one reader, one call — so they are built once and kept.
+ *
+ * A zone this reader's `Intl` rejects throws out of the constructor, so it is
+ * never reached by `set` and never cached; the caller's fallback then asks for
+ * the zone-less formatter, which caches under its own key. Degrading to the
+ * reader's own zone therefore behaves exactly as it did uncached.
+ */
+const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function dateTimeFormatter(
+  locale: string | undefined,
+  options: Intl.DateTimeFormatOptions,
+) {
+  // Sorted, so two call sites spelling the same options in a different order
+  // share one formatter rather than quietly keeping two.
+  const key = [
+    locale ?? "",
+    ...Object.entries(options)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, value]) => `${name}=${String(value)}`),
+  ].join("|");
+
+  const cached = dateTimeFormatters.get(key);
+  if (cached) {
+    return cached;
+  }
+
+  const formatter = new Intl.DateTimeFormat(locale, options);
+  dateTimeFormatters.set(key, formatter);
+  return formatter;
 }
 
 /** The full, unambiguous statement of when the call happens — for the banner. */

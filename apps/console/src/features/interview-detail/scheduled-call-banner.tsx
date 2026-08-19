@@ -80,7 +80,12 @@ export function ScheduledCallBanner({
             {t(banner.invitationMessageKey, { date })}
           </p>
         ) : null}
-        {banner.showMeetPending ? (
+        {/*
+          Calendar creates the Meet link asynchronously, so "no join link yet"
+          is a wait, not a failure — but only while the request is still
+          pending.
+        */}
+        {banner.call.conferencePending ? (
           <p className="mt-1 text-[12px] leading-[1.6] text-ink-400">
             {t("schedule.meetPreparing")}
           </p>
@@ -89,7 +94,10 @@ export function ScheduledCallBanner({
           <div className="mt-3">
             <ScheduledCallLinks
               action={
-                banner.showReschedule ? (
+                // Viewers read the banner too, and the server would refuse
+                // them the move; `resolveScheduledCallBanner` reads the same
+                // flag to decide whether this row exists at all.
+                scheduleProps.canSchedule ? (
                   <ScheduleCallDialog
                     {...scheduleProps}
                     renderTrigger={({ disabled, open }) => (

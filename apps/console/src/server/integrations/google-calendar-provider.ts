@@ -31,30 +31,16 @@ export function createGoogleCalendarProvider(
 
       const response = await fetchImpl(url, {
         body: JSON.stringify({
-          attendees: hasAttendees
-            ? input.attendees.map((email) => ({ email }))
-            : undefined,
-          conferenceData: input.conferenceRequestId
-            ? {
-                createRequest: {
-                  requestId: input.conferenceRequestId,
-                },
-              }
-            : undefined,
+          attendees: toAttendees(input.attendees),
+          conferenceData: toConferenceData(input.conferenceRequestId),
           description: input.description,
-          end: {
-            dateTime: input.endsAt.toISOString(),
-            timeZone: input.timeZone,
-          },
+          end: toTimeField(input.endsAt, input.timeZone),
           extendedProperties: {
             private: input.privateExtendedProperties,
           },
           id: input.eventId,
           location: input.location ?? undefined,
-          start: {
-            dateTime: input.startsAt.toISOString(),
-            timeZone: input.timeZone,
-          },
+          start: toTimeField(input.startsAt, input.timeZone),
           summary: input.summary,
         }),
         headers: {
@@ -109,27 +95,13 @@ export function createGoogleCalendarProvider(
           // `sendUpdates` as notifying guests of the event — not guests it just
           // removed. Callers must not shrink this list; see
           // candidate-call-scheduling.ts.
-          attendees: hasAttendees
-            ? input.attendees.map((email) => ({ email }))
-            : undefined,
-          conferenceData: input.conferenceRequestId
-            ? {
-                createRequest: {
-                  requestId: input.conferenceRequestId,
-                },
-              }
-            : undefined,
-          end: {
-            dateTime: input.endsAt.toISOString(),
-            timeZone: input.timeZone,
-          },
+          attendees: toAttendees(input.attendees),
+          conferenceData: toConferenceData(input.conferenceRequestId),
+          end: toTimeField(input.endsAt, input.timeZone),
           // An empty string clears a location the recruiter emptied; omitting
           // the key would leave the stale one behind.
           location: input.location ?? "",
-          start: {
-            dateTime: input.startsAt.toISOString(),
-            timeZone: input.timeZone,
-          },
+          start: toTimeField(input.startsAt, input.timeZone),
           summary: input.summary,
         }),
         headers: {
@@ -147,6 +119,37 @@ export function createGoogleCalendarProvider(
       return readCalendarEvent(payload);
     },
   };
+}
+
+/*
+ * The three parts a create and a patch build identically. Everything they do
+ * NOT share — the method, the headers, `description`/`id`/`extendedProperties`,
+ * how each treats an emptied `location`, and when `conferenceDataVersion` is
+ * sent — stays written out at each call site, because those differences are
+ * deliberate and documented there.
+ */
+
+/** `undefined` omits the key, which leaves an existing guest list untouched. */
+function toAttendees(attendees: string[]) {
+  return attendees.length > 0
+    ? attendees.map((email) => ({ email }))
+    : undefined;
+}
+
+/** Only ever asks for a NEW conference; `null` omits the key entirely. */
+function toConferenceData(conferenceRequestId: string | null) {
+  return conferenceRequestId
+    ? { createRequest: { requestId: conferenceRequestId } }
+    : undefined;
+}
+
+/**
+ * Google reads `dateTime` as the instant and `timeZone` as the zone the event
+ * is *held* in — which is why the zone travels with both ends rather than
+ * being inferred from the offset.
+ */
+function toTimeField(instant: Date, timeZone: string) {
+  return { dateTime: instant.toISOString(), timeZone };
 }
 
 async function getExistingEvent({

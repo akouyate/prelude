@@ -7,6 +7,8 @@ import type { OrganizationRole } from "@prelude/types";
 
 import { canManageCandidateReview } from "../../domain/candidate-review-policy";
 import type { ValidatedCandidateCallSchedule } from "../../domain/candidate-call-scheduling-policy";
+import type { ScheduledCallSummary } from "../../features/interview-detail/scheduled-call-presentation";
+import { normalizeEmail } from "../../libs/email";
 import {
   CalendarProviderError,
   type CalendarEventResult,
@@ -27,21 +29,13 @@ import { createGoogleCalendarProvider } from "../integrations/google-calendar-pr
  * are here rather than only the headline facts: the server treats a submitted
  * schedule as the COMPLETE state of the event, so the form can only be honest
  * about a move if it can start from everything the row already holds.
+ *
+ * So it is the client's own declaration, aliased rather than copied out: a
+ * second hand-written list of these twelve fields is exactly the drift this
+ * record cannot afford. `import type` is erased at build time, so nothing of
+ * `server-only` travels back the other way.
  */
-export type CandidateScheduledCallSummary = {
-  attendeeEmails: string[];
-  conferenceJoinUrl: string | null;
-  conferencePending: boolean;
-  conferenceRequested: boolean;
-  endsAt: string;
-  eventUrl: string | null;
-  invitationSent: boolean;
-  inviteCandidate: boolean;
-  location: string | null;
-  startsAt: string;
-  status: "provider_error" | "scheduled";
-  timeZone: string;
-};
+export type CandidateScheduledCallSummary = ScheduledCallSummary;
 
 export class CandidateCallSchedulingError extends Error {
   readonly code:
@@ -274,27 +268,15 @@ export async function scheduleCandidateCall(input: {
 
     return toScheduledCallSummary(scheduled);
   } catch (error) {
-    const providerError = toProviderError(error);
-    await prisma.candidateScheduledCall.update({
-      data: {
-        lastProviderErrorAt: new Date(),
-        lastProviderErrorCode: providerError.code,
-        status: "provider_error",
-      },
-      where: { id: call.id },
+    throw await recordProviderFailure({
+      callId: call.id,
+      error,
+      message:
+        "Google Calendar could not schedule this call. Please try again.",
+      // Nothing exists on the calendar, so the row says so and the recruiter
+      // keeps the create-retry path.
+      status: "provider_error",
     });
-
-    if (providerError.isReconnectRequired) {
-      throw new CandidateCallSchedulingError(
-        "Reconnect Google Calendar before trying again.",
-        "reconnect_required",
-      );
-    }
-
-    throw new CandidateCallSchedulingError(
-      "Google Calendar could not schedule this call. Please try again.",
-      "provider_error",
-    );
   }
 }
 
@@ -437,31 +419,17 @@ async function rescheduleBookedCall(input: {
       updateEvent,
     );
   } catch (error) {
-    const providerError = toProviderError(error);
-    // Google still holds the original event at the original time, so the row
-    // goes back to claiming exactly that. Marking it `provider_error` would
-    // both lie about a booking that is still live and trap the recruiter in
-    // the create-retry path, which only accepts an identical resubmission.
-    await prisma.candidateScheduledCall.update({
-      data: {
-        lastProviderErrorAt: new Date(),
-        lastProviderErrorCode: providerError.code,
-        status: "scheduled",
-      },
-      where: { id: existingCall.id },
+    throw await recordProviderFailure({
+      callId: existingCall.id,
+      error,
+      message:
+        "Google Calendar could not move this call. The original time is still booked.",
+      // Google still holds the original event at the original time, so the row
+      // goes back to claiming exactly that. Marking it `provider_error` would
+      // both lie about a booking that is still live and trap the recruiter in
+      // the create-retry path, which only accepts an identical resubmission.
+      status: "scheduled",
     });
-
-    if (providerError.isReconnectRequired) {
-      throw new CandidateCallSchedulingError(
-        "Reconnect Google Calendar before trying again.",
-        "reconnect_required",
-      );
-    }
-
-    throw new CandidateCallSchedulingError(
-      "Google Calendar could not move this call. The original time is still booked.",
-      "provider_error",
-    );
   }
 
   // A patch response that omits conferenceData must never blank a Meet link
@@ -572,10 +540,6 @@ function readAttendeeEmails(value: unknown) {
     : [];
 }
 
-function normalizeEmail(value: string | null | undefined) {
-  return value?.trim().toLowerCase() || null;
-}
-
 function scheduleMatchesExistingCall(
   existingCall: {
     attendeeEmails: unknown;
@@ -618,6 +582,40 @@ function isUniqueConstraintError(error: unknown) {
     "code" in error &&
     error.code === "P2002"
   );
+}
+
+/**
+ * What both flows do when Google refuses: stamp what failed on the row, then
+ * hand back the refusal the caller throws.
+ *
+ * `status` is a parameter rather than a constant because the two flows differ
+ * there — and that difference is the load-bearing invariant of this file. A
+ * failed CREATE leaves `provider_error`: no event exists, and the recruiter
+ * retries. A failed RESCHEDULE goes back to `scheduled`: the original booking
+ * is still live on the calendar, and claiming otherwise would strand it.
+ */
+async function recordProviderFailure(input: {
+  callId: string;
+  error: unknown;
+  message: string;
+  status: "provider_error" | "scheduled";
+}): Promise<CandidateCallSchedulingError> {
+  const providerError = toProviderError(input.error);
+  await prisma.candidateScheduledCall.update({
+    data: {
+      lastProviderErrorAt: new Date(),
+      lastProviderErrorCode: providerError.code,
+      status: input.status,
+    },
+    where: { id: input.callId },
+  });
+
+  return providerError.isReconnectRequired
+    ? new CandidateCallSchedulingError(
+        "Reconnect Google Calendar before trying again.",
+        "reconnect_required",
+      )
+    : new CandidateCallSchedulingError(input.message, "provider_error");
 }
 
 function toProviderError(error: unknown) {

@@ -61,8 +61,6 @@ describe("resolveScheduledCallBanner", () => {
       call: scheduledCall(),
       invitationMessageKey: "schedule.nextCallInvitationSent",
       showActions: true,
-      showMeetPending: false,
-      showReschedule: true,
     });
   });
 
@@ -85,30 +83,37 @@ describe("resolveScheduledCallBanner", () => {
     // but "Reschedule" is still a real thing to do with it — the row must not
     // disappear along with the links.
     const call = scheduledCall({ conferenceJoinUrl: null, eventUrl: null });
-    const banner = resolveScheduledCallBanner(call, { canReschedule: true });
 
-    expect(banner?.showActions).toBe(true);
-    expect(banner?.showReschedule).toBe(true);
+    expect(
+      resolveScheduledCallBanner(call, { canReschedule: true })?.showActions,
+    ).toBe(true);
   });
 
-  it("hides the move from a reader who cannot manage the review", () => {
-    // Viewers read the banner too. Offering them a trigger the server would
-    // refuse with `unauthorized` is a promise the product cannot keep.
-    const banner = resolveScheduledCallBanner(scheduledCall(), {
-      canReschedule: false,
-    });
+  it("drops the action row for a reader who can neither open nor move the call", () => {
+    // Viewers read the banner too. A private event gives them nothing to open,
+    // and offering them a move the server would refuse with `unauthorized` is
+    // a promise the product cannot keep — so there is no row left to draw.
+    const call = scheduledCall({ conferenceJoinUrl: null, eventUrl: null });
 
-    expect(banner?.showReschedule).toBe(false);
-    expect(banner?.showActions).toBe(true);
+    expect(
+      resolveScheduledCallBanner(call, { canReschedule: false })?.showActions,
+    ).toBe(false);
+    // The same viewer still gets the row when there is a link on it.
+    expect(
+      resolveScheduledCallBanner(scheduledCall(), { canReschedule: false })
+        ?.showActions,
+    ).toBe(true);
   });
 
-  it("flags a Meet link Calendar is still preparing", () => {
+  it("carries the pending Meet state through to the banner", () => {
+    // The banner reads it off the record to say "Calendar is still preparing
+    // the link", so an announceable call has to arrive with it intact.
     const call = scheduledCall({
       conferenceJoinUrl: null,
       conferencePending: true,
     });
 
-    expect(resolveScheduledCallBanner(call)?.showMeetPending).toBe(true);
+    expect(resolveScheduledCallBanner(call)?.call.conferencePending).toBe(true);
   });
 });
 

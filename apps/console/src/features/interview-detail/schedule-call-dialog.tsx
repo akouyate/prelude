@@ -26,6 +26,7 @@ import {
   type ScheduleCandidateCallActionState,
 } from "../../server/interviews/candidate-call-scheduling-actions";
 import {
+  formatScheduledDate,
   resolveScheduleCallPrefill,
   toBrowserIsoInstant,
   type ScheduleCallFormPrefill,
@@ -47,16 +48,44 @@ const initialScheduleCandidateCallState: ScheduleCandidateCallActionState = {
   scheduled: null,
 };
 
+/*
+ * One flow, two voices. Booking a call and moving one are the same form and
+ * the same submission, but they cannot borrow each other's words — "Send the
+ * invitation" is not what a move does. The mode is decided once, from the
+ * prefill, instead of being re-asked at every sentence the dialog says.
+ */
+const callCopyByMode = {
+  reschedule: {
+    description: "schedule.dialogDescriptionReschedule",
+    pending: "schedule.moving",
+    ready: "schedule.readyToMove",
+    // A move re-notifies the same people rather than inviting them for the
+    // first time; saying "invitation" would misdescribe the mail Google is
+    // about to send.
+    recipient: "schedule.confirmUpdateTo",
+    review: "schedule.reviewChange",
+    submit: "schedule.moveCall",
+    title: "schedule.dialogTitleReschedule",
+  },
+  schedule: {
+    description: "schedule.dialogDescription",
+    pending: "schedule.scheduling",
+    ready: "schedule.readyToSend",
+    recipient: "schedule.confirmInvitationTo",
+    review: "schedule.reviewInvitation",
+    submit: "schedule.createAndSend",
+    title: "schedule.dialogTitle",
+  },
+} as const;
+
+function callCopy(isReschedule: boolean) {
+  return callCopyByMode[isReschedule ? "reschedule" : "schedule"];
+}
+
 export function ScheduleCallDialog({
-  candidateEmail,
-  candidateLabel,
   canSchedule,
-  connectionStatus,
-  detailPath,
   renderTrigger,
-  roleTitle,
-  scheduledCall,
-  sessionId,
+  ...content
 }: {
   candidateEmail: string | null;
   candidateLabel: string;
@@ -75,11 +104,7 @@ export function ScheduleCallDialog({
   scheduledCall: ScheduledCallSummary | null;
   sessionId: string;
 }) {
-  const { t } = useTranslation();
   const [open, setOpen] = React.useState(false);
-  // One record in, one set of starting values out — for the copy at the top of
-  // the dialog as much as for the fields inside it.
-  const prefill = resolveScheduleCallPrefill({ candidateEmail, scheduledCall });
 
   return (
     <>
@@ -100,57 +125,101 @@ export function ScheduleCallDialog({
         <Dialog.Portal>
           <Dialog.Backdrop className="fixed inset-0 z-50 bg-ink-950/25 backdrop-blur-[2px]" />
           <Dialog.Popup className="fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh-32px)] w-[calc(100%-32px)] max-w-[560px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[22px] border border-[#e7e2d8] bg-[#f9f8f3] shadow-2xl outline-none">
-            <div className="flex items-start justify-between gap-5 border-b border-[#e7e2d8] px-6 py-5">
-              <div>
-                <Dialog.Title className="text-lg font-semibold text-ink-950">
-                  {t(
-                    prefill.isReschedule
-                      ? "schedule.dialogTitleReschedule"
-                      : "schedule.dialogTitle",
-                  )}
-                </Dialog.Title>
-                <Dialog.Description className="mt-1 text-sm leading-6 text-ink-600">
-                  {t(
-                    prefill.isReschedule
-                      ? "schedule.dialogDescriptionReschedule"
-                      : "schedule.dialogDescription",
-                    { name: candidateLabel },
-                  )}
-                </Dialog.Description>
-              </div>
-              <button
-                aria-label={t("schedule.closeDialog")}
-                className="grid h-9 w-9 cursor-pointer place-items-center rounded-full text-ink-500 transition hover:bg-white hover:text-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-                onClick={() => setOpen(false)}
-                type="button"
-              >
-                <Xmark aria-hidden={true} className="h-5 w-5" />
-              </button>
-            </div>
-            {connectionStatus === "connected" ? (
-              <ScheduleCallForm
-                candidateLabel={candidateLabel}
-                detailPath={detailPath}
-                onScheduled={() => setOpen(false)}
-                prefill={prefill}
-                roleTitle={roleTitle}
-                sessionId={sessionId}
-              />
-            ) : (
-              <CalendarConnectionRequired
-                detailPath={detailPath}
-                isConnecting={connectionStatus === "connecting"}
-                isReconnect={
-                  connectionStatus === "needs_reconnect" ||
-                  connectionStatus === "expired" ||
-                  connectionStatus === "revoked" ||
-                  connectionStatus === "error"
-                }
-              />
-            )}
+            <ScheduleCallDialogBody
+              {...content}
+              onClose={() => setOpen(false)}
+            />
           </Dialog.Popup>
         </Dialog.Portal>
       </Dialog.Root>
+    </>
+  );
+}
+
+/*
+ * Everything inside the popup — and, deliberately, the only place the booked
+ * call is read.
+ *
+ * The prefill used to be resolved in the component above, whose body re-runs
+ * on every prop push. That dialog is mounted for the life of the page (in the
+ * banner once a call is booked, in the decision bar's call-to-action before
+ * then) and every `revalidatePath` on this route pushes fresh props — the
+ * review-note autosave fires one on a 700ms debounce, while the recruiter is
+ * still typing. A closed dialog was recomputing its starting values through
+ * all of that.
+ *
+ * Down here the portal has already unmounted on close, so reading the record
+ * once per mount is reading it once per opening: the only moment at which
+ * starting values can mean anything.
+ */
+function ScheduleCallDialogBody({
+  candidateEmail,
+  candidateLabel,
+  connectionStatus,
+  detailPath,
+  onClose,
+  roleTitle,
+  scheduledCall,
+  sessionId,
+}: {
+  candidateEmail: string | null;
+  candidateLabel: string;
+  connectionStatus: CalendarConnectionStatus;
+  detailPath: string;
+  onClose: () => void;
+  roleTitle: string;
+  scheduledCall: ScheduledCallSummary | null;
+  sessionId: string;
+}) {
+  const { t } = useTranslation();
+  // One record in, one set of starting values out — for the copy at the top of
+  // the dialog as much as for the fields inside it.
+  const [prefill] = React.useState(() =>
+    resolveScheduleCallPrefill({ candidateEmail, scheduledCall }),
+  );
+  const copy = callCopy(prefill.isReschedule);
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-5 border-b border-[#e7e2d8] px-6 py-5">
+        <div>
+          <Dialog.Title className="text-lg font-semibold text-ink-950">
+            {t(copy.title)}
+          </Dialog.Title>
+          <Dialog.Description className="mt-1 text-sm leading-6 text-ink-600">
+            {t(copy.description, { name: candidateLabel })}
+          </Dialog.Description>
+        </div>
+        <button
+          aria-label={t("schedule.closeDialog")}
+          className="grid h-9 w-9 cursor-pointer place-items-center rounded-full text-ink-500 transition hover:bg-white hover:text-ink-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
+          onClick={onClose}
+          type="button"
+        >
+          <Xmark aria-hidden={true} className="h-5 w-5" />
+        </button>
+      </div>
+      {connectionStatus === "connected" ? (
+        <ScheduleCallForm
+          candidateLabel={candidateLabel}
+          detailPath={detailPath}
+          onScheduled={onClose}
+          prefill={prefill}
+          roleTitle={roleTitle}
+          sessionId={sessionId}
+        />
+      ) : (
+        <CalendarConnectionRequired
+          detailPath={detailPath}
+          isConnecting={connectionStatus === "connecting"}
+          isReconnect={
+            connectionStatus === "needs_reconnect" ||
+            connectionStatus === "expired" ||
+            connectionStatus === "revoked" ||
+            connectionStatus === "error"
+          }
+        />
+      )}
     </>
   );
 }
@@ -170,8 +239,9 @@ function ScheduleCallForm({
   roleTitle: string;
   sessionId: string;
 }) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
   const { toastOnce } = useToastOnce();
+  const copy = callCopy(prefill.isReschedule);
   const [state, formAction, pending] = React.useActionState(
     scheduleCandidateCallAction,
     initialScheduleCandidateCallState,
@@ -202,7 +272,6 @@ function ScheduleCallForm({
     prefill.durationMinutes,
   );
   const [guestEmails, setGuestEmails] = React.useState(prefill.guestEmails);
-  const [location, setLocation] = React.useState(prefill.location);
 
   React.useEffect(() => {
     // A booked call carries its own zone, and a move must not quietly rewrite
@@ -325,16 +394,18 @@ function ScheduleCallForm({
         />
       </div>
 
+      {/*
+        Uncontrolled: nothing in this component reads the location back — the
+        form posts it under its own name — so holding it in React state only
+        bought a re-render per keystroke.
+      */}
       <TextField
+        defaultValue={prefill.location}
         description={t("schedule.timeZoneHint", { zone: timeZone })}
         disabled={pending}
         label={t("schedule.locationLabel")}
         name="location"
-        onChange={(event) =>
-          setLocation((event.target as HTMLInputElement).value)
-        }
         placeholder={t("schedule.locationPlaceholder")}
-        value={location}
       />
 
       <div className="space-y-3 rounded-[15px] border border-[#e7e2d8] bg-white p-4">
@@ -421,29 +492,22 @@ function ScheduleCallForm({
       ) : null}
       {confirming ? (
         <Notice tone="warning">
-          <span className="font-semibold">
-            {t(
-              prefill.isReschedule
-                ? "schedule.readyToMove"
-                : "schedule.readyToSend",
-            )}
-          </span>{" "}
+          <span className="font-semibold">{t(copy.ready)}</span>{" "}
           {dateTime
             ? t("schedule.confirmSlot", {
                 minutes: durationMinutes,
-                slot: formatLocalPreview(dateTime, timeZone),
+                // The same hardened formatter the banner uses: `timeZone` here
+                // is the booked call's own, which this reader's `Intl` is not
+                // guaranteed to know, and an unguarded `RangeError` in a render
+                // body would take the candidate review down. It answers `null`
+                // where this sentence needs a string, so the slot simply drops
+                // out of the copy rather than printing "null".
+                slot:
+                  formatScheduledDate(dateTime, timeZone, i18n.language) ?? "",
               })
             : t("schedule.confirmNoSlot")}{" "}
           {inviteCandidate && candidateAddress.trim()
-            ? t(
-                // A move re-notifies the same people rather than inviting them
-                // for the first time; saying "invitation" would misdescribe
-                // the mail Google is about to send.
-                prefill.isReschedule
-                  ? "schedule.confirmUpdateTo"
-                  : "schedule.confirmInvitationTo",
-                { email: candidateAddress.trim() },
-              )
+            ? t(copy.recipient, { email: candidateAddress.trim() })
             : t("schedule.confirmNoInvitation")}{" "}
           {guestEmails.trim() ? t("schedule.confirmGuestsToo") : ""}
         </Notice>
@@ -467,22 +531,10 @@ function ScheduleCallForm({
         >
           <Calendar aria-hidden={true} className="h-4 w-4" />
           {pending
-            ? t(
-                prefill.isReschedule
-                  ? "schedule.moving"
-                  : "schedule.scheduling",
-              )
+            ? t(copy.pending)
             : confirming
-              ? t(
-                  prefill.isReschedule
-                    ? "schedule.moveCall"
-                    : "schedule.createAndSend",
-                )
-              : t(
-                  prefill.isReschedule
-                    ? "schedule.reviewChange"
-                    : "schedule.reviewInvitation",
-                )}
+              ? t(copy.submit)
+              : t(copy.review)}
         </Button>
       </div>
     </form>
@@ -596,26 +648,4 @@ function minimumDateTimeValue() {
   const now = new Date(Date.now() + 5 * 60_000);
   const offset = now.getTimezoneOffset() * 60_000;
   return new Date(now.getTime() - offset).toISOString().slice(0, 16);
-}
-
-function toBrowserIsoDate(value: string) {
-  if (!value) {
-    return "";
-  }
-
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString();
-}
-
-function formatLocalPreview(value: string, timeZone: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return "";
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone,
-  }).format(date);
 }
