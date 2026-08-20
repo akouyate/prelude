@@ -23,6 +23,7 @@ from app.application.inactivity import (
 from app.application.ports import AnswerInferenceProvider
 from app.domain.models import (
     AgentConfig,
+    AgentSession,
     CandidateTurn,
     CandidateTurnIntent,
     EventActor,
@@ -637,6 +638,37 @@ class OpenAILiveWorkerConfig:
                 default=False,
             ),
         )
+
+
+def _effective_session_max_duration_seconds(
+    *,
+    configured_max_seconds: float | None,
+    session: AgentSession,
+    now: datetime | None = None,
+) -> float | None:
+    limits = []
+    if configured_max_seconds is not None and configured_max_seconds > 0:
+        limits.append(configured_max_seconds)
+
+    # Preview expiry is a server-authored admission value. Marketing demos use
+    # a twelve-minute value, while recruiter previews retain their longer
+    # window. The browser cannot extend either one and the worker closes at the
+    # earlier of this deadline and the deployment-wide ceiling.
+    if session.kind == "preview" and session.expires_at is not None:
+        current = now or datetime.now(timezone.utc)
+        limits.append(max(0.001, (session.expires_at - current).total_seconds()))
+
+    return min(limits) if limits else None
+
+
+def _max_duration_turn_boundary_timeout_seconds(plan: InterviewPlan) -> float:
+    # Marketing admission's expires_at is a hard public-demo ceiling. Do not
+    # add the recruiter experience's graceful turn-boundary allowance after
+    # that deadline; close_for_max_duration marks the controller terminal
+    # before it performs any asynchronous closing work.
+    if plan.preview_variant == "marketing_demo":
+        return 0.0
+    return MAX_TURN_BOUNDARY_WAIT_SECONDS
 
 
 @dataclass(frozen=True)
@@ -1490,6 +1522,7 @@ class LiveInterviewOrchestrationController:
         candidate_wait_seconds: float = CANDIDATE_WAIT_SECONDS,
         final_answer_grace_seconds: float = FINAL_ANSWER_GRACE_SECONDS,
         session_kind: str = "candidate",
+        preview_variant: str = "",
     ) -> None:
         self._plan = plan
         self._emitter = emitter
@@ -1498,6 +1531,7 @@ class LiveInterviewOrchestrationController:
         # publish any control payload they like, but only a preview session can
         # act on the recruiter-only ones.
         self._session_kind = session_kind
+        self._preview_variant = preview_variant
         self._transcript_publisher = transcript_publisher
         self._orchestrator = InterviewOrchestrator(plan)
         self._answer_inference = answer_inference or HeuristicAnswerInferenceProvider()
@@ -1809,7 +1843,10 @@ class LiveInterviewOrchestrationController:
         # the button would not stop a candidate from publishing the payload.
         # It is checked before the lock so a candidate spamming the topic cannot
         # serialise noise against the turn loop; the kind never changes.
-        if self._session_kind != "preview":
+        if (
+            self._session_kind != "preview"
+            or self._preview_variant == "marketing_demo"
+        ):
             return
         async with self._lock:
             if (
@@ -2721,6 +2758,7 @@ class OpenAILiveKitWorker:
                     self._worker_config.final_answer_grace_seconds
                 ),
                 session_kind=self._agent_config.session.kind,
+                preview_variant=self._agent_config.interview_plan.preview_variant,
             )
             inactivity_policy = CandidateInactivityPolicy(
                 user_away_after_seconds=(
@@ -2889,14 +2927,18 @@ class OpenAILiveKitWorker:
             await controller.start()
 
             try:
-                if self._worker_config.max_duration_seconds:
+                max_duration_seconds = _effective_session_max_duration_seconds(
+                    configured_max_seconds=self._worker_config.max_duration_seconds,
+                    session=self._agent_config.session,
+                )
+                if max_duration_seconds:
                     try:
                         await asyncio.wait_for(
                             _wait_until_room_disconnected_or_interview_closed(
                                 room,
                                 controller,
                             ),
-                            timeout=self._worker_config.max_duration_seconds,
+                            timeout=max_duration_seconds,
                         )
                     except TimeoutError:
                         logger.warning(
@@ -2904,15 +2946,21 @@ class OpenAILiveKitWorker:
                             extra={
                                 "session_id": self._agent_config.session.id,
                                 "max_duration_seconds": (
-                                    self._worker_config.max_duration_seconds
+                                    max_duration_seconds
                                 ),
                             },
                         )
-                        await _wait_for_turn_boundary(
-                            bridge,
-                            controller,
-                            timeout_seconds=MAX_TURN_BOUNDARY_WAIT_SECONDS,
+                        boundary_timeout = (
+                            _max_duration_turn_boundary_timeout_seconds(
+                                self._agent_config.interview_plan
+                            )
                         )
+                        if boundary_timeout > 0:
+                            await _wait_for_turn_boundary(
+                                bridge,
+                                controller,
+                                timeout_seconds=boundary_timeout,
+                            )
                         await controller.close_for_max_duration()
                 else:
                     await _wait_until_room_disconnected_or_interview_closed(

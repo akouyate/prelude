@@ -20,6 +20,8 @@ from app.adapters.livekit_openai_worker import (
     PreludeEventEmitter,
     _candidate_turn_from_live_transcript,
     _closing_message,
+    _effective_session_max_duration_seconds,
+    _max_duration_turn_boundary_timeout_seconds,
     _question_spoken_text,
     _repeat_response_for_candidate_intent,
     _soft_reprompt_line,
@@ -38,6 +40,7 @@ from app.application.inactivity import (
     InactivityTrigger,
 )
 from app.domain.models import (
+    AgentSession,
     CandidateTurnIntent,
     EventActor,
     EventType,
@@ -860,6 +863,31 @@ async def test_candidate_session_ignores_the_preview_skip_control() -> None:
         plan=_preview_skip_plan(),
         emitter=emitter,
         session=FakeLiveSession(),
+    )
+    await controller.start()
+    events.clear()
+
+    await controller.skip_current_question_from_control()
+
+    assert events == []
+    assert controller.current_question_id == "q1"
+
+
+@pytest.mark.asyncio
+async def test_marketing_demo_ignores_recruiter_preview_skip_control() -> None:
+    events: list[InterviewEvent] = []
+    emitter = PreludeEventEmitter(
+        session_id="session-marketing-demo",
+        candidate_id="candidate-test",
+        provider_metadata={"provider": "openai_realtime"},
+        emit_event=lambda event: _append_event(events, event),
+    )
+    controller = LiveInterviewOrchestrationController(
+        plan=_preview_skip_plan(),
+        emitter=emitter,
+        session=FakeLiveSession(),
+        session_kind="preview",
+        preview_variant="marketing_demo",
     )
     await controller.start()
     events.clear()
@@ -1712,6 +1740,55 @@ def test_live_worker_config_reads_max_duration_from_env() -> None:
     assert config.inactivity_warning_seconds == 20
     assert config.inactivity_terminate_seconds == 20
     assert config.candidate_wait_seconds == 60
+
+
+def test_preview_expiry_is_a_server_enforced_worker_duration_ceiling() -> None:
+    now = datetime(2026, 8, 20, 10, 0, tzinfo=timezone.utc)
+    preview = AgentSession(
+        id="is_demo",
+        interview_plan_id="pv_demo",
+        candidate_id="marketing_demo_candidate",
+        status="waiting_candidate",
+        livekit_room_name="room-demo",
+        allowed_modalities=["audio"],
+        kind="preview",
+        expires_at=datetime(2026, 8, 20, 10, 12, tzinfo=timezone.utc),
+        created_at=now,
+        updated_at=now,
+    )
+
+    assert (
+        _effective_session_max_duration_seconds(
+            configured_max_seconds=None,
+            session=preview,
+            now=now,
+        )
+        == 12 * 60
+    )
+    assert (
+        _effective_session_max_duration_seconds(
+            configured_max_seconds=300,
+            session=preview,
+            now=now,
+        )
+        == 300
+    )
+
+
+def test_marketing_demo_runtime_has_no_turn_boundary_grace() -> None:
+    plan = create_demo_plan().model_copy(
+        update={"preview_variant": "marketing_demo"}
+    )
+
+    assert _max_duration_turn_boundary_timeout_seconds(plan) == 0.0
+
+
+def test_recruiter_preview_retains_turn_boundary_grace() -> None:
+    plan = create_demo_plan().model_copy(
+        update={"preview_variant": "recruiter_preview"}
+    )
+
+    assert _max_duration_turn_boundary_timeout_seconds(plan) == 60.0
 
 
 def test_live_worker_config_uses_model_defaults_for_blank_env_values() -> None:

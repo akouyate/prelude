@@ -210,31 +210,118 @@ model InterviewDraft {
   job                  Job                          @relation(fields: [jobId], references: [id], onDelete: Cascade)
   interview            Interview?
   candidatePreviews    CandidateExperiencePreview[]
+  marketingDemoRoles   MarketingDemoRole[]
 
   @@index([organizationId, status, updatedAt])
   @@index([jobId, status])
 }
 
 model CandidateExperiencePreview {
-  id               String         @id
-  organizationId   String
-  draftId          String
-  createdByUserId  String
-  tokenDigest      String         @unique
-  snapshot         Json
-  schemaVersion    Int            @default(1)
-  expiresAt        DateTime
-  runtimeExpiresAt DateTime?
-  liveTestCount    Int            @default(0)
-  revokedAt        DateTime?
-  createdAt        DateTime       @default(now())
-  organization     Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  draft            InterviewDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
-  createdBy        User           @relation("CandidatePreviewCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  id                String                @id
+  organizationId    String
+  draftId           String
+  createdByUserId   String
+  tokenDigest       String                @unique
+  snapshot          Json
+  schemaVersion     Int                   @default(1)
+  expiresAt         DateTime
+  runtimeExpiresAt  DateTime?
+  liveTestCount     Int                   @default(0)
+  startedAt         DateTime?
+  completedAt       DateTime?
+  realtimeSessionId String?               @unique
+  revokedAt         DateTime?
+  createdAt         DateTime              @default(now())
+  organization      Organization          @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  draft             InterviewDraft        @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  createdBy         User                  @relation("CandidatePreviewCreator", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  marketingHandoff  MarketingDemoHandoff?
 
   @@index([organizationId, createdAt])
   @@index([expiresAt])
   @@index([runtimeExpiresAt])
+}
+
+// Public demo roles are configuration, not customer roles. Fixtures attach them
+// to one dedicated system draft; visitors can only select an enabled slug and
+// never submit plan, organization, prompt, or draft data themselves.
+model MarketingDemoRole {
+  id                     String         @id
+  slug                   String         @unique
+  enabled                Boolean        @default(false)
+  displayOrder           Int            @default(0)
+  publicTitle            String
+  publicSummary          String
+  publicBadge            String?
+  locale                 String
+  version                Int
+  draftId                String
+  postInterviewQuestions Json           @default("[]")
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  draft                  InterviewDraft @relation(fields: [draftId], references: [id], onDelete: Restrict)
+
+  @@index([enabled, displayOrder])
+}
+
+// The singleton row is deliberately database-backed and locked for every public
+// demo admission. A missing/unreadable row therefore closes admission instead
+// of silently falling back to environment defaults.
+model MarketingDemoControl {
+  id                     String    @id
+  enabled                Boolean   @default(false)
+  dailyStartedSessionCap Int
+  concurrentSessionCap   Int
+  lockedAt               DateTime?
+  updatedAt              DateTime  @updatedAt
+}
+
+model MarketingDemoDailyUsage {
+  day          DateTime @id @db.Date
+  startedCount Int      @default(0)
+  updatedAt    DateTime @updatedAt
+}
+
+// A launch nonce is short lived and one-use. Only its digest is persisted; it
+// binds a public role-card read to one authenticated website admission call.
+model MarketingDemoLaunch {
+  id          String    @id
+  nonceDigest String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([expiresAt])
+}
+
+// Transcript and supplemental answers exist here only as authenticated
+// encryption. Exchange deletes this row, its now-content-free preview runtime,
+// and the preview snapshot in the same single-use transaction.
+model MarketingDemoHandoff {
+  id               String                     @id
+  codeDigest       String                     @unique
+  previewId        String                     @unique
+  encryptedPayload String
+  returnTarget     String
+  expiresAt        DateTime
+  createdAt        DateTime                   @default(now())
+  preview          CandidateExperiencePreview @relation(fields: [previewId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+}
+
+// Optional marketing consent is intentionally separate from interview
+// processing consent. No transcript, answers, generated insight, or handoff
+// code is stored with the lead.
+model MarketingDemoLead {
+  id             String   @id @default(cuid())
+  email          String
+  roleSlug       String
+  consentVersion String
+  consentedAt    DateTime
+  createdAt      DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 model Interview {

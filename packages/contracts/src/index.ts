@@ -1,8 +1,21 @@
 export { createJobInputSchema, type CreateJobInput } from "./schemas/job";
 export {
   CANDIDATE_PREVIEW_SCHEMA_VERSION,
+  candidatePreviewVariantSchema,
   candidateExperiencePreviewSnapshotSchema,
+  marketingDemoHandoffExchangeSchema,
+  marketingDemoHandoffSubmissionSchema,
+  marketingDemoPostInterviewAnswerSchema,
+  marketingDemoPostInterviewQuestionSchema,
+  marketingDemoPostInterviewQuestionsSchema,
+  marketingDemoPublicRoleSchema,
+  marketingDemoRolesResponseSchema,
+  marketingDemoServiceAdmissionSchema,
+  marketingDemoSessionAdmissionSchema,
+  type CandidatePreviewVariant,
   type CandidateExperiencePreviewSnapshot,
+  type MarketingDemoPostInterviewQuestion,
+  type MarketingDemoPublicRole,
 } from "./schemas/candidate-preview";
 export {
   INTERVIEW_PLAN_SCHEMA_VERSION,

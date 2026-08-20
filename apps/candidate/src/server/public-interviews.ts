@@ -8,7 +8,10 @@ import {
 } from "@prelude/core";
 import { prisma } from "@prelude/db";
 import { createNotificationDispatcher } from "@prelude/notifications";
-import type { WorkspaceLanguage } from "@prelude/contracts";
+import type {
+  MarketingDemoPostInterviewQuestion,
+  WorkspaceLanguage,
+} from "@prelude/contracts";
 import type { Prisma } from "@prelude/db";
 
 import {
@@ -66,7 +69,14 @@ export type PublicInterviewContext =
   | {
       kind: "preview";
       expiresAt: Date;
+      previewVariant: "recruiter_preview" | "marketing_demo";
       returnPath: string;
+      marketingDemo: {
+        postInterviewQuestions: MarketingDemoPostInterviewQuestion[];
+        returnTarget: string;
+        roleSlug: string;
+        roleVersion: number;
+      } | null;
       interview: {
         companyName: string;
         estimatedMinutes: number | null;
@@ -87,6 +97,7 @@ export type PublicInterviewContext =
     }
   | {
       kind: "not_found";
+      previewVariant?: "marketing_demo";
     };
 
 export type PublicInterviewContextOptions = {

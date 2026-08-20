@@ -79,6 +79,32 @@ func TestDecodeCandidatePreviewPlanUsesTheCanonicalSnapshot(t *testing.T) {
 	if plan.InterviewStyle.Seniority != "mid" {
 		t.Fatalf("expected seniority to reach the agent, got %q", plan.InterviewStyle.Seniority)
 	}
+	if plan.PreviewVariant != "recruiter_preview" {
+		t.Fatalf("legacy preview must retain recruiter behavior, got %q", plan.PreviewVariant)
+	}
+}
+
+func TestDecodeCandidatePreviewPlanThreadsMarketingVariant(t *testing.T) {
+	raw := []byte(`{
+		"schemaVersion":2,
+		"variant":"marketing_demo",
+		"plan":{
+			"roleTitle":"Account Executive",
+			"roleBrief":"Own discovery.",
+			"language":"en",
+			"responseModes":["audio"],
+			"questions":[{"id":"q1","prompt":"Tell me about a discovery call.","category":"experience"}],
+			"guardrails":[]
+		}
+	}`)
+
+	plan, err := decodeCandidatePreviewPlan("pv_marketing", raw)
+	if err != nil {
+		t.Fatalf("expected marketing preview plan to decode: %v", err)
+	}
+	if plan.PreviewVariant != "marketing_demo" {
+		t.Fatalf("want marketing_demo preview marker, got %q", plan.PreviewVariant)
+	}
 }
 
 // The recruiter-approved stored category must win — never the old keyword
