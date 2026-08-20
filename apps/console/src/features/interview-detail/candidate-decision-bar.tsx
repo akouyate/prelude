@@ -43,6 +43,20 @@ const decisions: DecisionDefinition[] = [
 export const decisionCtaClassName =
   "inline-flex h-9 shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap rounded-full bg-white px-[17px] font-title text-[13px] font-semibold text-ink-950 transition hover:bg-[#f1efe8] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 disabled:cursor-not-allowed max-[680px]:w-full max-[680px]:justify-center";
 
+/*
+ * Once a call is booked the slot is a fact, not a call to action: the chip
+ * borrows the idle decision buttons' outline rather than the solid white CTA,
+ * so the bar reads "three decisions, one booked slot" and keeps the width it
+ * had before the scheduled call moved in. The stacking rules match the CTA's
+ * so the mobile layout below is unchanged either way.
+ *
+ * It dresses a link, not a button — the chip navigates to the call's banner —
+ * and carries no `disabled:` variants for that reason: reading what is already
+ * booked is not a privileged act, so nothing gates it.
+ */
+export const decisionChipClassName =
+  "inline-flex h-9 shrink-0 cursor-pointer items-center gap-[7px] whitespace-nowrap rounded-full border-[1.5px] border-white/25 bg-transparent px-[13px] font-title text-[12.5px] font-semibold text-white/80 no-underline transition hover:border-white/40 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50 max-[680px]:w-full max-[680px]:justify-center";
+
 export function CandidateDecisionBar({
   canManageReview,
   onDecide,

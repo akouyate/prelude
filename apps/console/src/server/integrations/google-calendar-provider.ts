@@ -31,30 +31,16 @@ export function createGoogleCalendarProvider(
 
       const response = await fetchImpl(url, {
         body: JSON.stringify({
-          attendees: hasAttendees
-            ? input.attendees.map((email) => ({ email }))
-            : undefined,
-          conferenceData: input.conferenceRequestId
-            ? {
-                createRequest: {
-                  requestId: input.conferenceRequestId,
-                },
-              }
-            : undefined,
+          attendees: toAttendees(input.attendees),
+          conferenceData: toConferenceData(input.conferenceRequestId),
           description: input.description,
-          end: {
-            dateTime: input.endsAt.toISOString(),
-            timeZone: input.timeZone,
-          },
+          end: toTimeField(input.endsAt, input.timeZone),
           extendedProperties: {
             private: input.privateExtendedProperties,
           },
           id: input.eventId,
           location: input.location ?? undefined,
-          start: {
-            dateTime: input.startsAt.toISOString(),
-            timeZone: input.timeZone,
-          },
+          start: toTimeField(input.startsAt, input.timeZone),
           summary: input.summary,
         }),
         headers: {
@@ -82,7 +68,88 @@ export function createGoogleCalendarProvider(
 
       return readCalendarEvent(payload);
     },
+
+    async updateEvent(input) {
+      const url = new URL(
+        `${calendarApiBaseUrl}/calendars/${encodeURIComponent(input.calendarId)}/events/${encodeURIComponent(input.eventId)}`,
+      );
+      const hasAttendees = input.attendees.length > 0;
+      // A moved meeting nobody was told about is worse than no meeting, so a
+      // reschedule re-notifies on exactly the same rule as a creation.
+      url.searchParams.set("sendUpdates", hasAttendees ? "all" : "none");
+      // Always version 1, even when we are not asking for a conference.
+      // Google documents version 0 as "assumes no conference data support and
+      // ignores conference data in the event's body": a version-0 client is
+      // not conference-aware, so the Meet link drops out of the patch response
+      // and we would persist a null join URL for an event that still has one.
+      // Version 1 is safe here because the request body below never carries a
+      // `conferenceData` key unless a new conference was asked for, and patch
+      // semantics leave an omitted field untouched. See
+      // docs/sources/google-calendar-scheduling.md.
+      url.searchParams.set("conferenceDataVersion", "1");
+
+      const response = await fetchImpl(url, {
+        body: JSON.stringify({
+          // Omitting `attendees` keeps the current guest list. Sending a
+          // shorter list would replace it wholesale, and Google only documents
+          // `sendUpdates` as notifying guests of the event — not guests it just
+          // removed. Callers must not shrink this list; see
+          // candidate-call-scheduling.ts.
+          attendees: toAttendees(input.attendees),
+          conferenceData: toConferenceData(input.conferenceRequestId),
+          end: toTimeField(input.endsAt, input.timeZone),
+          // An empty string clears a location the recruiter emptied; omitting
+          // the key would leave the stale one behind.
+          location: input.location ?? "",
+          start: toTimeField(input.startsAt, input.timeZone),
+          summary: input.summary,
+        }),
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "content-type": "application/json",
+        },
+        method: "PATCH",
+      });
+      const payload = await readJsonResponse(response);
+
+      if (!response.ok) {
+        throw providerError("Google Calendar event update failed.", payload);
+      }
+
+      return readCalendarEvent(payload);
+    },
   };
+}
+
+/*
+ * The three parts a create and a patch build identically. Everything they do
+ * NOT share — the method, the headers, `description`/`id`/`extendedProperties`,
+ * how each treats an emptied `location`, and when `conferenceDataVersion` is
+ * sent — stays written out at each call site, because those differences are
+ * deliberate and documented there.
+ */
+
+/** `undefined` omits the key, which leaves an existing guest list untouched. */
+function toAttendees(attendees: string[]) {
+  return attendees.length > 0
+    ? attendees.map((email) => ({ email }))
+    : undefined;
+}
+
+/** Only ever asks for a NEW conference; `null` omits the key entirely. */
+function toConferenceData(conferenceRequestId: string | null) {
+  return conferenceRequestId
+    ? { createRequest: { requestId: conferenceRequestId } }
+    : undefined;
+}
+
+/**
+ * Google reads `dateTime` as the instant and `timeZone` as the zone the event
+ * is *held* in — which is why the zone travels with both ends rather than
+ * being inferred from the offset.
+ */
+function toTimeField(instant: Date, timeZone: string) {
+  return { dateTime: instant.toISOString(), timeZone };
 }
 
 async function getExistingEvent({

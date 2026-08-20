@@ -9,9 +9,10 @@ import enCatalog from "../../public/locales/en.json";
 import frCatalog from "../../public/locales/fr.json";
 
 // Bundle the catalogs directly so `t()` is correct on the very first render
-// (no key flash, no hydration mismatch). The http-backend in i18n.ts still
-// serves /locales for cache-busting/runtime reloads, but having the resources
-// in-memory means SSR and the initial client paint agree.
+// (no key flash, no hydration mismatch), and so SSR and the initial client
+// paint agree. These bundled modules are the ONLY source of translations —
+// see the note in ../libs/i18n.ts for why fetching /locales on top of them
+// could never change an existing string, and was removed.
 if (!i18n.hasResourceBundle("en", "translation")) {
   i18n.addResourceBundle("en", "translation", enCatalog.translation, true, true);
 }

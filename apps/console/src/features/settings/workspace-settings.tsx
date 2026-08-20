@@ -982,25 +982,9 @@ function IntegrationsSection({
   );
   const integrations = [
     {
-      availability: "partner",
-      description: t("settings.integrations.jobPosts"),
-      logo: <IntegrationLogo brand="linkedin" />,
-      name: "LinkedIn",
-      provider: "linkedin",
-      type: "status",
-    },
-    {
-      availability: "partner",
-      description: t("settings.integrations.jobPosts"),
-      logo: <IntegrationLogo brand="indeed" />,
-      name: "Indeed",
-      provider: "indeed",
-      type: "status",
-    },
-    {
       availability: "coming_soon",
       description: t("settings.integrations.ats"),
-      logo: <IntegrationLogo brand="greenhouse" muted />,
+      logo: <IntegrationLogo brand="greenhouse" />,
       name: "Greenhouse",
       provider: "greenhouse",
       type: "status",
@@ -1016,7 +1000,7 @@ function IntegrationsSection({
     {
       availability: "planned",
       description: t("settings.integrations.gmail"),
-      logo: <IntegrationLogo brand="gmail" muted />,
+      logo: <IntegrationLogo brand="gmail" />,
       name: "Gmail",
       provider: "google_gmail",
       type: "status",
@@ -1024,7 +1008,7 @@ function IntegrationsSection({
     {
       availability: "coming_soon",
       description: t("settings.integrations.microsoft"),
-      logo: <IntegrationLogo brand="microsoft-teams" muted />,
+      logo: <IntegrationLogo brand="microsoft-teams" />,
       name: "Microsoft Teams",
       provider: "microsoft_teams",
       type: "status",

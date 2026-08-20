@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { validateCandidateCallSchedule } from "../../domain/candidate-call-scheduling-policy";
+import type { ScheduledCallSummary } from "../../features/interview-detail/scheduled-call-presentation";
 import { createGoogleCalendarAuthorizationUrl } from "../integrations/connected-account-service";
 import { getCompletedOrganizationScope } from "../organizations/organization-scope";
 import {
@@ -11,18 +12,31 @@ import {
   scheduleCandidateCall,
 } from "./candidate-call-scheduling";
 
+/**
+ * `code` is what the dialog renders its own copy from. The service's messages
+ * are written for a server log, and the two refusals a reschedule can hit need
+ * more than a sentence — where to go instead, and who can go there — so the
+ * code travels and the console owns the wording (and its translation).
+ */
 export type ScheduleCandidateCallActionState = {
-  code: "reconnect_required" | null;
+  code:
+    | "not_calendar_owner"
+    | "reconnect_required"
+    | "reschedule_unsupported"
+    | null;
   error: string | null;
-  scheduled: {
-    conferenceJoinUrl: string | null;
-    conferencePending: boolean;
-    eventUrl: string | null;
-    invitationSent: boolean;
-    startsAt: string;
-    status: "scheduled";
-    timeZone: string;
-  } | null;
+  /**
+   * The whole booked call, because that is what the success path below hands
+   * back — the service's summary, spread verbatim. The hand-written subset
+   * that used to stand here listed seven of those twelve fields, so the type
+   * was already describing something other than the value flowing through it.
+   *
+   * `status` is the one field genuinely narrower than the summary's: this is
+   * only ever set on the path where the provider confirmed the event.
+   */
+  scheduled:
+    | (Omit<ScheduledCallSummary, "status"> & { status: "scheduled" })
+    | null;
 };
 
 export async function scheduleCandidateCallAction(
@@ -76,11 +90,7 @@ export async function scheduleCandidateCallAction(
     };
   } catch (error) {
     return {
-      code:
-        error instanceof CandidateCallSchedulingError &&
-        error.code === "reconnect_required"
-          ? "reconnect_required"
-          : null,
+      code: toActionCode(error),
       error:
         error instanceof CandidateCallSchedulingError
           ? error.message
@@ -88,6 +98,20 @@ export async function scheduleCandidateCallAction(
       scheduled: null,
     };
   }
+}
+
+function toActionCode(
+  error: unknown,
+): ScheduleCandidateCallActionState["code"] {
+  if (!(error instanceof CandidateCallSchedulingError)) {
+    return null;
+  }
+
+  return error.code === "not_calendar_owner" ||
+    error.code === "reconnect_required" ||
+    error.code === "reschedule_unsupported"
+    ? error.code
+    : null;
 }
 
 export async function connectGoogleCalendarForCandidateAction(
