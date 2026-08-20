@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import type { MarketingDemoPostInterviewQuestion } from "@prelude/contracts";
 import {
   candidateConsentCopyFor,
   candidateDisclosureCopyFor,
@@ -43,6 +44,7 @@ import {
   resumeStorageKey,
   stopLocalStream,
   submitFormInterview,
+  submitMarketingDemoHandoff,
   toCandidateError,
 } from "./live-interview-client";
 import type {
@@ -117,6 +119,11 @@ export function LiveInterviewRoom({
   );
   const [candidateName, setCandidateName] = React.useState("");
   const [candidateEmail, setCandidateEmail] = React.useState("");
+  const [postInterviewAnswers, setPostInterviewAnswers] = React.useState<
+    Record<string, number | string>
+  >({});
+  const [isSubmittingDemoHandoff, setIsSubmittingDemoHandoff] =
+    React.useState(false);
   const [hasAcceptedConsent, setHasAcceptedConsent] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [isAudioPlaybackBlocked, setIsAudioPlaybackBlocked] =
@@ -127,6 +134,11 @@ export function LiveInterviewRoom({
   const [transcriptTurns, setTranscriptTurns] = React.useState<
     LiveTranscriptTurn[]
   >([]);
+  const isRecruiterPreview =
+    context.kind === "preview" &&
+    context.previewVariant === "recruiter_preview";
+  const isMarketingDemo =
+    context.kind === "preview" && context.previewVariant === "marketing_demo";
   // The interviewer's currently-spoken segment, streamed in from the LiveKit
   // transcription paced to the audio. It drives the live word-by-word reveal;
   // finalized turns remain in transcriptTurns for recruiter review, not for
@@ -666,6 +678,41 @@ export function LiveInterviewRoom({
     [],
   );
 
+  const submitDemoHandoff = React.useCallback(async () => {
+    const currentSession = sessionRef.current;
+    if (
+      !isMarketingDemo ||
+      !currentSession ||
+      context.kind !== "preview" ||
+      !context.marketingDemo
+    ) {
+      return;
+    }
+
+    setError(null);
+    setIsSubmittingDemoHandoff(true);
+    try {
+      const handoffUrl = await submitMarketingDemoHandoff({
+        answers: context.marketingDemo.postInterviewQuestions.flatMap(
+          (question) => {
+            const value = postInterviewAnswers[question.id];
+            return value === undefined
+              ? []
+              : [{ questionId: question.id, value }];
+          },
+        ),
+        previewToken: token,
+        sessionId: currentSession.sessionId,
+      });
+      window.location.assign(handoffUrl);
+    } catch {
+      setError(
+        "We could not prepare your private result. Your answers remain temporary; please try the handoff again.",
+      );
+      setIsSubmittingDemoHandoff(false);
+    }
+  }, [context, isMarketingDemo, postInterviewAnswers, token]);
+
   const enableAudio = React.useCallback(async () => {
     try {
       await roomRef.current?.startAudio();
@@ -696,7 +743,6 @@ export function LiveInterviewRoom({
     allowedModes.includes("form") && formQuestions.length > 0;
   const canStart = hasAcceptedConsent && candidateName.trim().length > 1;
   const isLiveExperience = isBusy || isRoomActive;
-  const isPreview = context.kind === "preview";
   /*
    * The pre-join surfaces render in the INTERVIEW's language, resolved once
    * server-side (`resolveCandidateRenderingLanguage`) and carried on the
@@ -742,32 +788,52 @@ export function LiveInterviewRoom({
    */
   const preJoinLabels: CandidateInterviewExperienceLabels = React.useMemo(
     () => ({
-      answersBody: copy.answersBody,
-      answersTitle: copy.answersTitle,
+      answersBody: isMarketingDemo
+        ? copy.marketingAnswersBody
+        : copy.answersBody,
+      answersTitle: isMarketingDemo
+        ? copy.marketingAnswersTitle
+        : copy.answersTitle,
       audioOnlyNotice: copy.audioOnlyNotice,
-      controllerLine: copy.controllerLine(interview?.companyName ?? ""),
+      controllerLine: isMarketingDemo
+        ? copy.marketingControllerLine
+        : copy.controllerLine(interview?.companyName ?? ""),
       durationPill: estimatedMinutes
         ? copy.durationLong(estimatedMinutes)
         : copy.durationUnknown,
       emailLabel: copy.emailLabel,
       emailOptional: copy.emailOptional,
       emailPlaceholder: copy.emailPlaceholder,
-      evidenceBody: isPreview ? copy.previewEvidenceBody : copy.evidenceBody,
-      evidenceTitle: isPreview ? copy.previewEvidenceTitle : copy.evidenceTitle,
+      evidenceBody: isMarketingDemo
+        ? copy.marketingEvidenceBody
+        : isRecruiterPreview
+          ? copy.previewEvidenceBody
+          : copy.evidenceBody,
+      evidenceTitle: isMarketingDemo
+        ? copy.marketingEvidenceTitle
+        : isRecruiterPreview
+          ? copy.previewEvidenceTitle
+          : copy.evidenceTitle,
       fairnessHeading: copy.fairnessHeading,
       fairnessKicker: copy.fairnessKicker,
       formatLabel: copy.formatLabel,
       formatValue: modesLabel,
-      humanReviewedPill: copy.humanReviewedPill,
-      introDescription: isPreview
-        ? copy.previewIntroDescription
-        : copy.introDescription({
-            companyName: interview?.companyName ?? "",
-            roleTitle: interview?.roleTitle ?? "",
-          }),
+      humanReviewedPill: isMarketingDemo
+        ? copy.marketingHumanReviewedPill
+        : copy.humanReviewedPill,
+      introDescription: isMarketingDemo
+        ? copy.marketingIntroDescription
+        : isRecruiterPreview
+          ? copy.previewIntroDescription
+          : copy.introDescription({
+              companyName: interview?.companyName ?? "",
+              roleTitle: interview?.roleTitle ?? "",
+            }),
       introHeading: copy.introHeading,
       introPill: copy.introPill,
-      invitation: copy.invitation(interview?.companyName ?? ""),
+      invitation: isMarketingDemo
+        ? copy.marketingInvitation
+        : copy.invitation(interview?.companyName ?? ""),
       lengthLabel: copy.lengthLabel,
       lengthValue: estimatedMinutes
         ? copy.durationShort(estimatedMinutes)
@@ -790,11 +856,20 @@ export function LiveInterviewRoom({
       startButton: copy.startButton,
       startFootnote: copy.startFootnote,
     }),
-    [copy, estimatedMinutes, interview, isPreview, modesLabel],
+    [
+      copy,
+      estimatedMinutes,
+      interview,
+      isMarketingDemo,
+      isRecruiterPreview,
+      modesLabel,
+    ],
   );
   const primaryStartLabel =
-    isPreview && canStart
-      ? copy.previewStart
+    (isRecruiterPreview || isMarketingDemo) && canStart
+      ? isMarketingDemo
+        ? copy.marketingStart
+        : copy.previewStart
       : startButtonLabel({
           canStart,
           candidateName,
@@ -972,7 +1047,15 @@ export function LiveInterviewRoom({
   }, [isRoomActive, mergeTranscriptTurns, scheduleServerCompletion, session]);
 
   if (!interview) {
-    return <UnavailableInterview />;
+    return context.kind === "not_found" &&
+      context.previewVariant === "marketing_demo" ? (
+      <UnavailableInterview
+        message="This one-use demo link is invalid, expired, or has already been started. Return to HireCall's demo roles to request a new link."
+        title="Demo interview unavailable"
+      />
+    ) : (
+      <UnavailableInterview />
+    );
   }
 
   const blockedInvitation = blockingInvitationCopy(
@@ -992,14 +1075,20 @@ export function LiveInterviewRoom({
       <>
         <CandidateScreenHeader
           left={<CandidateWordmark className="h-[23px]" />}
-          right={<CandidateMonoPill>{copy.headerPill}</CandidateMonoPill>}
+          right={
+            <CandidateMonoPill>
+              {isMarketingDemo ? copy.marketingHeaderPill : copy.headerPill}
+            </CandidateMonoPill>
+          }
         />
         <CandidateWelcomeExperience
           disclosureCopy={
-            isPreview
-              ? copy.previewDisclosureCopy
-              : candidateDisclosureCopyFor(renderingLanguage, recordingActive)
-                  .text
+            isMarketingDemo
+              ? copy.marketingDisclosureCopy
+              : isRecruiterPreview
+                ? copy.previewDisclosureCopy
+                : candidateDisclosureCopyFor(renderingLanguage, recordingActive)
+                    .text
           }
           labels={preJoinLabels}
           onStart={() => setStep("setup")}
@@ -1011,11 +1100,39 @@ export function LiveInterviewRoom({
            * line itself still renders).
            */
           privacyNoticeHref={
-            isPreview ? null : `/interview/${encodeURIComponent(token)}/privacy`
+            isMarketingDemo
+              ? `/preview/${encodeURIComponent(token)}/privacy`
+              : isRecruiterPreview
+                ? null
+                : `/interview/${encodeURIComponent(token)}/privacy`
           }
           roleTitle={interview.roleTitle}
         />
       </>
+    );
+  }
+
+  if (
+    status === "completed" &&
+    isMarketingDemo &&
+    context.kind === "preview" &&
+    context.marketingDemo
+  ) {
+    return (
+      <MarketingDemoPostInterviewPanel
+        answers={postInterviewAnswers}
+        error={error}
+        isSubmitting={isSubmittingDemoHandoff}
+        onAnswerChange={(questionId, value) =>
+          setPostInterviewAnswers((current) => ({
+            ...current,
+            [questionId]: value,
+          }))
+        }
+        onSubmit={submitDemoHandoff}
+        questions={context.marketingDemo.postInterviewQuestions}
+        roleTitle={interview.roleTitle}
+      />
     );
   }
 
@@ -1025,9 +1142,13 @@ export function LiveInterviewRoom({
         candidateName={candidateName}
         companyName={interview.companyName}
         elapsedSeconds={elapsedSeconds}
-        isPreview={context.kind === "preview"}
+        isPreview={isRecruiterPreview}
       />
     );
+  }
+
+  if (isMarketingDemo && (status === "abandoned" || status === "failed")) {
+    return <MarketingDemoEndedPanel failed={status === "failed"} />;
   }
 
   if (status === "abandoned") {
@@ -1073,7 +1194,7 @@ export function LiveInterviewRoom({
         isAudioPlaybackBlocked={isAudioPlaybackBlocked}
         inactivityNotice={inactivityNotice}
         isFormFallbackAvailable={isFormFallbackAvailable}
-        isPreview={isPreview}
+        isPreview={isRecruiterPreview}
         isRoomActive={isRoomActive}
         isStreaming={interviewerView.isStreaming}
         localStream={localStream}
@@ -1116,15 +1237,20 @@ export function LiveInterviewRoom({
               candidateName={candidateName}
               consentAccepted={hasAcceptedConsent}
               consentCopy={
-                isPreview
-                  ? copy.previewConsentCopy
-                  : candidateConsentCopyFor(renderingLanguage, recordingActive)
-                      .text
+                isMarketingDemo
+                  ? copy.marketingConsentCopy
+                  : isRecruiterPreview
+                    ? copy.previewConsentCopy
+                    : candidateConsentCopyFor(
+                        renderingLanguage,
+                        recordingActive,
+                      ).text
               }
               labels={preJoinLabels}
               onCandidateEmailChange={setCandidateEmail}
               onCandidateNameChange={setCandidateName}
               onConsentChange={setHasAcceptedConsent}
+              showCandidateEmail={!isMarketingDemo}
             />
 
             {error ? <InlineAlert message={error} /> : null}
@@ -1220,7 +1346,7 @@ function CompletionPanel({
             </CompletionRow>
             <CompletionRow icon={TranscriptIcon} isLast={!isPreview}>
               {isPreview
-                ? "Temporary live-test transcript, never stored"
+                ? "Temporary live-test transcript, automatically deleted after expiry"
                 : "Transcript saved for recruiter review"}
             </CompletionRow>
             {isPreview ? (
@@ -1255,6 +1381,204 @@ function CompletionRow({
       <Icon className="h-[17px] w-[17px] shrink-0 text-spruce-600" />
       <span className="text-[14px] text-ink-700">{children}</span>
     </div>
+  );
+}
+
+function MarketingDemoPostInterviewPanel({
+  answers,
+  error,
+  isSubmitting,
+  onAnswerChange,
+  onSubmit,
+  questions,
+  roleTitle,
+}: {
+  answers: Record<string, number | string>;
+  error: string | null;
+  isSubmitting: boolean;
+  onAnswerChange: (questionId: string, value: number | string) => void;
+  onSubmit: () => void;
+  questions: MarketingDemoPostInterviewQuestion[];
+  roleTitle: string;
+}) {
+  const isComplete = questions.every((question) => {
+    if (!question.required) {
+      return true;
+    }
+    const value = answers[question.id];
+    return (
+      typeof value === "number" ||
+      (typeof value === "string" && value.trim().length > 0)
+    );
+  });
+
+  return (
+    <>
+      <CandidateScreenHeader
+        left={<CandidateWordmark />}
+        right={
+          <CandidateMonoPill tone="tint">Final reflection</CandidateMonoPill>
+        }
+      />
+      <div className="flex flex-1 items-start justify-center px-[clamp(1.125rem,5vw,2.75rem)] pb-16 pt-6">
+        <div className="w-full max-w-[720px] motion-safe:animate-[cc-in_.5s_cubic-bezier(.2,.7,.2,1)_both]">
+          <p className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-spruce-700">
+            Voice interview complete
+          </p>
+          <h1 className="mt-3 font-display text-[clamp(34px,6vw,50px)] leading-[1.05] tracking-[-0.02em] text-ink-950">
+            A few questions before your insights
+          </h1>
+          <p className="mt-4 max-w-[40rem] text-[16px] leading-[1.65] text-ink-700">
+            Your {roleTitle} conversation is finished. These answers personalize
+            the result you&apos;ll see on HireCall; they stay inside the same
+            encrypted, one-use handoff as the temporary transcript.
+          </p>
+
+          <div className="mt-8 flex flex-col gap-4">
+            {questions.map((question, index) => (
+              <div
+                className="rounded-[24px] border border-ink-200 bg-white p-[clamp(1rem,3vw,1.5rem)]"
+                key={question.id}
+              >
+                <p className="font-mono text-[9.5px] uppercase tracking-[0.13em] text-ink-500">
+                  Question {index + 1}
+                  {question.required ? " · required" : " · optional"}
+                </p>
+                <p className="mt-2.5 font-display text-[23px] leading-[1.28] text-ink-950">
+                  {question.prompt}
+                </p>
+                <MarketingDemoQuestionInput
+                  onChange={(value) => onAnswerChange(question.id, value)}
+                  question={question}
+                  value={answers[question.id]}
+                />
+              </div>
+            ))}
+          </div>
+
+          {error ? <InlineAlert message={error} /> : null}
+
+          <Button
+            className={`mt-6 h-[52px] w-full text-[15.5px] ${primaryActionClass}`}
+            data-cc-btn=""
+            disabled={!isComplete || isSubmitting}
+            onClick={onSubmit}
+          >
+            {isSubmitting ? (
+              <RestartIcon className="h-4 w-4 motion-safe:animate-spin" />
+            ) : (
+              <CheckIcon className="h-4 w-4" />
+            )}
+            {isSubmitting ? "Preparing private insights" : "See my insights"}
+          </Button>
+          <p className="mt-3 text-center text-[12.5px] leading-[1.55] text-ink-500">
+            No email is required. The next page offers a separate, optional
+            marketing-email choice.
+          </p>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function MarketingDemoQuestionInput({
+  onChange,
+  question,
+  value,
+}: {
+  onChange: (value: number | string) => void;
+  question: MarketingDemoPostInterviewQuestion;
+  value: number | string | undefined;
+}) {
+  if (question.type === "short_text") {
+    return (
+      <textarea
+        aria-label={question.prompt}
+        className="mt-4 min-h-[110px] w-full resize-y rounded-[16px] border border-ink-300 bg-paper-sunken px-4 py-3 text-[14.5px] leading-[1.6] text-ink-950 outline-none focus:border-ink-900 focus:bg-white focus:ring-1 focus:ring-ink-900"
+        maxLength={question.maxLength}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Optional reflection"
+        value={typeof value === "string" ? value : ""}
+      />
+    );
+  }
+
+  if (question.type === "single_select") {
+    return (
+      <div className="mt-4 grid gap-2 sm:grid-cols-3">
+        {question.options.map((option) => (
+          <button
+            aria-pressed={value === option.value}
+            className={`rounded-[14px] border px-3 py-3 text-left font-title text-[13.5px] transition ${
+              value === option.value
+                ? "border-spruce-700 bg-spruce-50 text-spruce-900"
+                : "border-ink-200 bg-paper-sunken text-ink-700 hover:border-ink-500"
+            }`}
+            key={option.value}
+            onClick={() => onChange(option.value)}
+            type="button"
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  const values = Array.from(
+    { length: question.max - question.min + 1 },
+    (_, index) => question.min + index,
+  );
+  return (
+    <div className="mt-4">
+      <div className="flex gap-2">
+        {values.map((option) => (
+          <button
+            aria-label={`${question.prompt}: ${option}`}
+            aria-pressed={value === option}
+            className={`grid h-11 flex-1 place-items-center rounded-[13px] border font-mono text-[13px] transition ${
+              value === option
+                ? "border-spruce-700 bg-spruce-800 text-white"
+                : "border-ink-200 bg-paper-sunken text-ink-700 hover:border-ink-500"
+            }`}
+            key={option}
+            onClick={() => onChange(option)}
+            type="button"
+          >
+            {option}
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 flex justify-between text-[11.5px] text-ink-500">
+        <span>{question.minLabel}</span>
+        <span>{question.maxLabel}</span>
+      </div>
+    </div>
+  );
+}
+
+function MarketingDemoEndedPanel({ failed }: { failed: boolean }) {
+  return (
+    <>
+      <CandidateScreenHeader left={<CandidateWordmark />} />
+      <div className="flex flex-1 items-center justify-center px-6 pb-20">
+        <div className="max-w-[480px] text-center">
+          <span className="mb-6 inline-grid h-16 w-16 place-items-center rounded-full bg-paper-muted text-ink-700">
+            <HangUpIcon className="h-7 w-7" />
+          </span>
+          <h1 className="font-display text-[42px] leading-[1.05] text-ink-950">
+            {failed ? "This demo ended early" : "Demo interview ended"}
+          </h1>
+          <p className="mt-4 text-[16px] leading-[1.65] text-ink-700">
+            No candidate profile, recording, recruiter notification, or product
+            result was created. This one-use demo link cannot be restarted.
+          </p>
+          <p className="mt-6 font-mono text-[10.5px] uppercase tracking-[0.1em] text-ink-500">
+            You can close this window
+          </p>
+        </div>
+      </div>
+    </>
   );
 }
 

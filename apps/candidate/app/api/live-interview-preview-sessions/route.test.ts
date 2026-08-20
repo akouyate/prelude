@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const preparePreviewMock = vi.hoisted(() => vi.fn());
 const provisionMock = vi.hoisted(() => vi.fn());
 const releaseReservationMock = vi.hoisted(() => vi.fn());
+const confirmMarketingDemoMock = vi.hoisted(() => vi.fn());
 
 vi.mock("../../../src/server/candidate-experience-previews", () => ({
   prepareCandidateExperiencePreviewSession: preparePreviewMock,
@@ -11,12 +12,16 @@ vi.mock("../../../src/server/candidate-experience-previews", () => ({
 vi.mock("../../../src/server/realtime-session-provisioning", () => ({
   provisionRealtimeSession: provisionMock,
 }));
+vi.mock("../../../src/server/marketing-demo-admission", () => ({
+  confirmMarketingDemoProvisioning: confirmMarketingDemoMock,
+}));
 
 import { POST } from "./route";
 
 beforeEach(() => {
   vi.clearAllMocks();
   releaseReservationMock.mockResolvedValue(undefined);
+  confirmMarketingDemoMock.mockResolvedValue(undefined);
   preparePreviewMock.mockResolvedValue({
     allowedModalities: ["audio"],
     candidateId: "preview_candidate_1",
@@ -101,6 +106,45 @@ describe("POST /api/live-interview-preview-sessions", () => {
     expect(provisionMock).not.toHaveBeenCalled();
   });
 
+  it("confirms the one marketing room without creating product identity or resume data", async () => {
+    preparePreviewMock.mockResolvedValueOnce({
+      allowedModalities: ["audio"],
+      candidateId: "marketing_demo_candidate_1",
+      expiresAt: new Date("2026-08-03T10:12:00.000Z"),
+      interviewPlanId: "pv_marketing_1",
+      ok: true,
+      reservation: {
+        day: new Date("2026-08-03T00:00:00.000Z"),
+        kind: "marketing_demo",
+        previewId: "pv_marketing_1",
+        runtimeExpiresAt: new Date("2026-08-03T10:12:00.000Z"),
+      },
+    });
+
+    const response = await POST(
+      new Request("http://candidate.test/api/live-interview-preview-sessions", {
+        body: JSON.stringify({
+          consentAccepted: true,
+          previewToken: "pvtk_abcdefghijklmnopqrstuvwxyz",
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      productSessionId: null,
+      resumeToken: null,
+      sessionId: "is_preview_1",
+    });
+    expect(confirmMarketingDemoMock).toHaveBeenCalledWith({
+      previewId: "pv_marketing_1",
+      realtimeSessionId: "is_preview_1",
+      runtimeExpiresAt: new Date("2026-08-03T10:12:00.000Z"),
+    });
+  });
+
   it("releases the attempt when realtime provisioning fails", async () => {
     provisionMock.mockResolvedValueOnce({
       code: "realtime_api_unavailable",
@@ -126,5 +170,40 @@ describe("POST /api/live-interview-preview-sessions", () => {
       previewId: "pv_1",
       runtimeExpiresAt: new Date("2026-08-03T10:45:00.000Z"),
     });
+  });
+
+  it("keeps an ambiguous marketing reservation when realtime may have created a room", async () => {
+    preparePreviewMock.mockResolvedValueOnce({
+      allowedModalities: ["audio"],
+      candidateId: "marketing_demo_candidate_1",
+      expiresAt: new Date("2026-08-03T10:12:00.000Z"),
+      interviewPlanId: "pv_marketing_1",
+      ok: true,
+      reservation: {
+        day: new Date("2026-08-03T00:00:00.000Z"),
+        kind: "marketing_demo",
+        previewId: "pv_marketing_1",
+        runtimeExpiresAt: new Date("2026-08-03T10:12:00.000Z"),
+      },
+    });
+    provisionMock.mockResolvedValueOnce({
+      code: "realtime_api_unavailable",
+      ok: false,
+      status: 502,
+    });
+
+    const response = await POST(
+      new Request("http://candidate.test/api/live-interview-preview-sessions", {
+        body: JSON.stringify({
+          consentAccepted: true,
+          previewToken: "pvtk_abcdefghijklmnopqrstuvwxyz",
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      }),
+    );
+
+    expect(response.status).toBe(502);
+    expect(releaseReservationMock).not.toHaveBeenCalled();
   });
 });

@@ -285,6 +285,9 @@ export type CandidatePreflightExperienceProps = {
   onCandidateEmailChange: (value: string) => void;
   onCandidateNameChange: (value: string) => void;
   onConsentChange: (value: boolean) => void;
+  /** Recruiter invitations may collect optional contact context; anonymous
+   * marketing demos deliberately defer email to a separate post-demo consent. */
+  showCandidateEmail?: boolean;
 };
 
 export function CandidatePreflightExperience({
@@ -296,6 +299,7 @@ export function CandidatePreflightExperience({
   onCandidateEmailChange,
   onCandidateNameChange,
   onConsentChange,
+  showCandidateEmail = true,
 }: CandidatePreflightExperienceProps) {
   return (
     <>
@@ -313,7 +317,9 @@ export function CandidatePreflightExperience({
         </div>
       </div>
 
-      <div className="mt-[22px] grid grid-cols-1 gap-3 sm:grid-cols-2">
+      <div
+        className={`mt-[22px] grid grid-cols-1 gap-3 ${showCandidateEmail ? "sm:grid-cols-2" : ""}`}
+      >
         <label className="block">
           <span className="mb-[7px] block font-title text-[12.5px] font-semibold tracking-[-0.006em] text-ink-950">
             {labels.nameLabel}
@@ -324,20 +330,22 @@ export function CandidatePreflightExperience({
             value={candidateName}
           />
         </label>
-        <label className="block">
-          <span className="mb-[7px] block font-title text-[12.5px] font-semibold tracking-[-0.006em] text-ink-950">
-            {labels.emailLabel}{" "}
-            <span className="font-normal text-ink-500">
-              {labels.emailOptional}
+        {showCandidateEmail ? (
+          <label className="block">
+            <span className="mb-[7px] block font-title text-[12.5px] font-semibold tracking-[-0.006em] text-ink-950">
+              {labels.emailLabel}{" "}
+              <span className="font-normal text-ink-500">
+                {labels.emailOptional}
+              </span>
             </span>
-          </span>
-          <CandidateTextInput
-            onChange={(event) => onCandidateEmailChange(event.target.value)}
-            placeholder={labels.emailPlaceholder}
-            type="email"
-            value={candidateEmail}
-          />
-        </label>
+            <CandidateTextInput
+              onChange={(event) => onCandidateEmailChange(event.target.value)}
+              placeholder={labels.emailPlaceholder}
+              type="email"
+              value={candidateEmail}
+            />
+          </label>
+        ) : null}
       </div>
 
       <div className="mt-4 flex items-center gap-3 rounded-[18px] border border-ink-100 bg-paper-inset px-4 py-3.5">

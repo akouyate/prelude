@@ -336,9 +336,12 @@ type CreateSessionOutput struct {
 }
 
 type InterviewPlan struct {
-	ID                      string              `json:"id"`
-	RoleTitle               string              `json:"role_title"`
-	Language                string              `json:"language"`
+	ID        string `json:"id"`
+	RoleTitle string `json:"role_title"`
+	Language  string `json:"language"`
+	// Empty for published interviews. Legacy previews resolve to recruiter_preview;
+	// versioned snapshots distinguish recruiter-only controls from marketing demos.
+	PreviewVariant          string              `json:"preview_variant,omitempty"`
 	Questions               []InterviewQuestion `json:"questions"`
 	AllowVideo              bool                `json:"allow_video"`
 	AllowAudioOnly          bool                `json:"allow_audio_only"`

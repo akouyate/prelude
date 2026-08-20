@@ -147,7 +147,9 @@ describe("candidate interview experience", () => {
       />,
     );
 
-    expect(within(container).getByText(/responsable du traitement/u)).toBeVisible();
+    expect(
+      within(container).getByText(/responsable du traitement/u),
+    ).toBeVisible();
     expect(
       within(container).queryByRole("link", {
         name: "Consulter la notice de confidentialité",
@@ -197,6 +199,28 @@ describe("candidate interview experience", () => {
 
     expect(onCandidateNameChange).toHaveBeenCalled();
     expect(onConsentChange).toHaveBeenCalledWith(true);
+  });
+
+  it("can defer email collection for an anonymous marketing demo", () => {
+    const { container } = render(
+      <CandidatePreflightExperience
+        candidateEmail=""
+        candidateName="Ada"
+        consentAccepted={false}
+        consentCopy="I consent to temporary demo processing."
+        labels={labels}
+        onCandidateEmailChange={vi.fn()}
+        onCandidateNameChange={vi.fn()}
+        onConsentChange={vi.fn()}
+        showCandidateEmail={false}
+      />,
+    );
+
+    expect(within(container).getByPlaceholderText("Votre nom")).toBeVisible();
+    expect(
+      within(container).queryByPlaceholderText("vous@exemple.com"),
+    ).toBeNull();
+    expect(within(container).queryByText("E-mail")).toBeNull();
   });
 
   it("normalizes builder text mode to the caller's mode labels", () => {

@@ -279,7 +279,8 @@ func (s *PostgresStore) GetInterviewPlan(ctx context.Context, planID string) (ap
 }
 
 type candidatePreviewSnapshot struct {
-	Plan struct {
+	Variant string `json:"variant"`
+	Plan    struct {
 		RoleTitle     string          `json:"roleTitle"`
 		RoleBrief     string          `json:"roleBrief"`
 		Seniority     *string         `json:"seniority"`
@@ -291,9 +292,10 @@ type candidatePreviewSnapshot struct {
 }
 
 type storedInterviewPlan struct {
-	ID        string
-	RoleTitle string
-	Seniority string
+	ID             string
+	RoleTitle      string
+	Seniority      string
+	PreviewVariant string
 	// The interview language stamped on the published snapshot. Empty means the
 	// snapshot predates language stamping; buildStoredInterviewPlan decides what
 	// that falls back to — the caller never guesses on its behalf.
@@ -349,6 +351,12 @@ func decodeCandidatePreviewPlan(planID string, snapshotBytes []byte) (applicatio
 		Questions:     snapshot.Plan.Questions,
 		Guardrails:    snapshot.Plan.Guardrails,
 		RoleBrief:     snapshot.Plan.RoleBrief,
+		PreviewVariant: func() string {
+			if snapshot.Variant == "" {
+				return "recruiter_preview"
+			}
+			return snapshot.Variant
+		}(),
 	})
 }
 
@@ -368,6 +376,7 @@ func buildStoredInterviewPlan(stored storedInterviewPlan) (application.Interview
 		ID:                      stored.ID,
 		RoleTitle:               stored.RoleTitle,
 		Language:                language,
+		PreviewVariant:          stored.PreviewVariant,
 		Questions:               questions,
 		AllowVideo:              containsString(responseModes, "video"),
 		AllowAudioOnly:          containsString(responseModes, "audio") || len(responseModes) == 0,

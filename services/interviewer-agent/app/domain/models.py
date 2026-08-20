@@ -37,6 +37,10 @@ class InterviewPlan(BaseModel):
     id: str
     role_title: str
     language: str = "fr"
+    # Versioned candidate-preview marker. Published interviews and legacy
+    # payloads omit it; recruiter previews explicitly use recruiter_preview and
+    # anonymous website demos use marketing_demo.
+    preview_variant: str = ""
     questions: list[InterviewQuestion] = Field(min_length=1)
     allow_video: bool = True
     allow_audio_only: bool = True
@@ -140,6 +144,7 @@ class AgentSession(BaseModel):
     # interview, so recruiter-only controls gate on it. Defaults to the safe
     # value: an agent config without the field is treated as a real candidate.
     kind: str = "candidate"
+    expires_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

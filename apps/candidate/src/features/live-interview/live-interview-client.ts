@@ -107,6 +107,29 @@ export async function submitFormInterview(input: {
   };
 }
 
+export async function submitMarketingDemoHandoff(input: {
+  answers: Array<{ questionId: string; value: number | string }>;
+  previewToken: string;
+  sessionId: string;
+}) {
+  const response = await fetch("/api/marketing-demo-handoffs", {
+    body: JSON.stringify(input),
+    cache: "no-store",
+    headers: { "content-type": "application/json" },
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new Error(
+      (await readApiErrorCode(response)) ?? "demo_handoff_unavailable",
+    );
+  }
+  const payload = (await response.json()) as { handoffUrl?: unknown };
+  if (typeof payload.handoffUrl !== "string") {
+    throw new Error("demo_handoff_unavailable");
+  }
+  return payload.handoffUrl;
+}
+
 export async function markProductSessionLifecycle(
   session: LiveInterviewSession,
   action: "abandon" | "fail",

@@ -87,6 +87,7 @@ export async function createCandidateExperiencePreview(
       jobTitle: draft.job.title,
       plan,
       schemaVersion: CANDIDATE_PREVIEW_SCHEMA_VERSION,
+      variant: "recruiter_preview",
     });
 
     return tx.candidateExperiencePreview.create({

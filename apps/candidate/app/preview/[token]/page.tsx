@@ -7,11 +7,23 @@ import { getCandidateExperiencePreviewContext } from "../../../src/server/candid
 
 export const dynamic = "force-dynamic";
 
-export const metadata: Metadata = {
-  referrer: "no-referrer",
-  robots: { follow: false, index: false },
-  title: "Candidate experience preview · HireCall",
-};
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}): Promise<Metadata> {
+  const { token } = await params;
+  const context = await getCandidateExperiencePreviewContext(token);
+  return {
+    referrer: "no-referrer",
+    robots: { follow: false, index: false },
+    title:
+      context.kind !== "published" &&
+      context.previewVariant === "marketing_demo"
+        ? "Live demo interview · HireCall"
+        : "Candidate experience preview · HireCall",
+  };
+}
 
 export default async function CandidatePreviewPage({
   params,
@@ -23,7 +35,8 @@ export default async function CandidatePreviewPage({
 
   return (
     <CandidateShell>
-      {context.kind === "preview" ? (
+      {context.kind === "preview" &&
+      context.previewVariant === "recruiter_preview" ? (
         <CandidatePreviewToolbar returnPath={context.returnPath} />
       ) : null}
       <LiveInterviewRoom context={context} token={token} />

@@ -131,6 +131,37 @@ describe("live interview welcome screen language", () => {
     expect(markup).not.toContain("Consulter la notice de confidentialité");
     expect(markup).not.toContain("/privacy");
   });
+
+  it("renders marketing demo disclosure without recruiter-preview chrome or an eight-minute promise", () => {
+    const markup = renderToStaticMarkup(
+      <LiveInterviewRoom
+        context={marketingDemoContext()}
+        token="pvtk_marketing_secret"
+      />,
+    );
+
+    expect(markup).toContain("Practice interview");
+    expect(markup).toContain("real candidate-style AI voice interview");
+    expect(markup).toContain("A few minutes");
+    expect(markup).toContain('href="/preview/pvtk_marketing_secret/privacy"');
+    expect(markup).not.toContain("About 8 minutes");
+    expect(markup).not.toContain("recruiter preview mode");
+    expect(markup).not.toContain("Start live test");
+    expect(markup).not.toContain("Exit preview");
+  });
+
+  it("keeps expired marketing links free of recruiter instructions", () => {
+    const markup = renderToStaticMarkup(
+      <LiveInterviewRoom
+        context={{ kind: "not_found", previewVariant: "marketing_demo" }}
+        token="pvtk_expired"
+      />,
+    );
+
+    expect(markup).toContain("Demo interview unavailable");
+    expect(markup).toContain("Return to HireCall&#x27;s demo roles");
+    expect(markup).not.toContain("Ask the recruiter");
+  });
 });
 
 function previewContext(): PublicInterviewContext {
@@ -152,6 +183,48 @@ function previewContext(): PublicInterviewContext {
       roleTitle: "Ingénieur backend",
     },
     kind: "preview",
+    marketingDemo: null,
+    previewVariant: "recruiter_preview",
     returnPath: "/roles/new?draftId=draft_1",
+  };
+}
+
+function marketingDemoContext(): PublicInterviewContext {
+  return {
+    expiresAt: new Date(Date.now() + 60_000),
+    interview: {
+      companyName: "HireCall",
+      estimatedMinutes: null,
+      id: "preview_marketing_1",
+      jobId: "job_demo",
+      jobTitle: "Account Executive",
+      language: "en",
+      organizationId: "org_marketing_demo_system",
+      publicToken: "pvtk_marketing_secret",
+      questions: [],
+      recordingActive: false,
+      responseModes: ["audio"],
+      roleTitle: "Account Executive",
+    },
+    kind: "preview",
+    marketingDemo: {
+      postInterviewQuestions: [
+        {
+          id: "confidence",
+          max: 5,
+          maxLabel: "Very confident",
+          min: 1,
+          minLabel: "Not confident",
+          prompt: "How confident did you feel?",
+          required: true,
+          type: "scale",
+        },
+      ],
+      returnTarget: "https://www.hirecall.test/demo/result",
+      roleSlug: "account-executive",
+      roleVersion: 1,
+    },
+    previewVariant: "marketing_demo",
+    returnPath: "https://www.hirecall.test/demo/result",
   };
 }

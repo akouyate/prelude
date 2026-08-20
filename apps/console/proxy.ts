@@ -16,6 +16,7 @@ import {
  */
 export const publicRoutePatterns = [
   "/about(.*)",
+  "/demo(.*)",
   "/login(.*)",
   "/sign-up(.*)",
   // Svix-signed Clerk webhook — authenticated by signature, not a Clerk session.
@@ -35,6 +36,12 @@ export const publicRoutePatterns = [
   // closed with 503 while that secret is unset.
   "/api/stripe/webhook(.*)",
   "/api/internal/billing-sweep(.*)",
+  // Anonymous demo admission is public at the website edge. The role read is
+  // public metadata only; session POST verifies a bot proof before it calls the
+  // candidate service with a secret that never enters the browser.
+  "/api/demo-roles(.*)",
+  "/api/demo-sessions(.*)",
+  "/api/demo-leads(.*)",
 ] as const;
 
 // Spread into a mutable copy: `createRouteMatcher` takes a mutable array, and the

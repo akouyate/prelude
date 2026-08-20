@@ -66,6 +66,18 @@ export type CandidateExperienceCopy = {
   listeningNoteLead: string;
   modeAudio: string;
   modeFormFallback: string;
+  marketingAnswersBody: string;
+  marketingAnswersTitle: string;
+  marketingConsentCopy: string;
+  marketingControllerLine: string;
+  marketingDisclosureCopy: string;
+  marketingEvidenceBody: string;
+  marketingEvidenceTitle: string;
+  marketingHeaderPill: string;
+  marketingHumanReviewedPill: string;
+  marketingIntroDescription: string;
+  marketingInvitation: string;
+  marketingStart: string;
   nameLabel: string;
   namePlaceholder: string;
   paceBody: string;
@@ -141,6 +153,24 @@ const englishCandidateCopy: CandidateExperienceCopy = {
   listeningNoteLead: "We listen to",
   modeAudio: "audio",
   modeFormFallback: "form fallback",
+  marketingAnswersBody:
+    "Your answers are used only for this private practice result and never enter a recruiter workspace.",
+  marketingAnswersTitle: "Practice, not an application",
+  marketingConsentCopy:
+    "I agree to live microphone processing for this demo. Audio is not recorded. A transcript is processed and retained temporarily to run the interview and create my one-time result, then deleted after handoff or automatic expiry.",
+  marketingControllerLine:
+    "HireCall is the data controller for this public demo. Processing consent is required for the interview; any later marketing-email choice is separate and optional.",
+  marketingDisclosureCopy:
+    "You are trying HireCall through a real candidate-style AI voice interview. Your audio is not recorded; a temporary transcript powers the conversation and your one-time personalized result.",
+  marketingEvidenceBody:
+    "A temporary transcript is processed during the demo and deleted after its one-use handoff or automatic expiry.",
+  marketingEvidenceTitle: "Temporary processing",
+  marketingHeaderPill: "Practice interview",
+  marketingHumanReviewedPill: "No candidate profile",
+  marketingIntroDescription:
+    "Answer naturally, as you would in a real first interview. This demo stays outside every recruiter workspace.",
+  marketingInvitation: "Try the candidate experience for yourself",
+  marketingStart: "Start my interview",
   nameLabel: "Your name",
   namePlaceholder: "Your name",
   paceBody: "There is no timer on answers. Pause and think.",
@@ -149,7 +179,7 @@ const englishCandidateCopy: CandidateExperienceCopy = {
   preflightSubtitle: ({ jobTitle, minutes }) =>
     minutes ? `${jobTitle} · about ${minutes} minutes` : jobTitle,
   previewConsentCopy:
-    "I understand that this is a recruiter live test. My microphone audio is transmitted to the AI interviewer for this session, but it is not recorded, retained, evaluated as a candidate, or added to the candidate pipeline.",
+    "I understand that this is a recruiter live test. My microphone audio is transmitted to the AI interviewer but is not recorded. A transcript is retained temporarily for the live runtime, then automatically deleted; nothing is evaluated as a candidate or added to the candidate pipeline.",
   previewDisclosureCopy:
     "You are viewing the real candidate experience in recruiter preview mode. Nothing is added to your candidate pipeline. You can continue to run a live test with the interviewer.",
   previewEvidenceBody:
@@ -215,6 +245,24 @@ const frenchCandidateCopy: CandidateExperienceCopy = {
   listeningNoteLead: "Nous écoutons",
   modeAudio: "audio",
   modeFormFallback: "réponses écrites",
+  marketingAnswersBody:
+    "Vos réponses servent uniquement à ce résultat d'entraînement privé et n'entrent jamais dans un espace recruteur.",
+  marketingAnswersTitle: "Un entraînement, pas une candidature",
+  marketingConsentCopy:
+    "J'accepte le traitement en direct de mon microphone pour cette démo. Le son n'est pas enregistré. Une transcription est traitée et conservée temporairement pour mener l'entretien et créer mon résultat à usage unique, puis supprimée après le transfert ou l'expiration automatique.",
+  marketingControllerLine:
+    "HireCall est responsable du traitement pour cette démo publique. Le consentement au traitement est requis pour l'entretien ; tout choix ultérieur d'e-mail marketing est distinct et facultatif.",
+  marketingDisclosureCopy:
+    "Vous essayez HireCall dans un véritable entretien vocal avec IA, comme un candidat. Le son n'est pas enregistré ; une transcription temporaire alimente l'échange et votre résultat personnalisé à usage unique.",
+  marketingEvidenceBody:
+    "Une transcription temporaire est traitée pendant la démo, puis supprimée après son transfert à usage unique ou son expiration automatique.",
+  marketingEvidenceTitle: "Traitement temporaire",
+  marketingHeaderPill: "Entretien d'entraînement",
+  marketingHumanReviewedPill: "Aucun profil candidat",
+  marketingIntroDescription:
+    "Répondez naturellement, comme lors d'un premier entretien. Cette démo reste en dehors de tout espace recruteur.",
+  marketingInvitation: "Essayez vous-même l'expérience candidat",
+  marketingStart: "Commencer mon entretien",
   nameLabel: "Votre nom",
   namePlaceholder: "Votre nom",
   paceBody: "Aucun chronomètre sur vos réponses. Prenez le temps de réfléchir.",
@@ -223,7 +271,7 @@ const frenchCandidateCopy: CandidateExperienceCopy = {
   preflightSubtitle: ({ jobTitle, minutes }) =>
     minutes ? `${jobTitle} · environ ${minutes} minutes` : jobTitle,
   previewConsentCopy:
-    "Je comprends qu'il s'agit d'un test en direct côté recruteur. Le son de mon microphone est transmis à l'intervieweur IA pour cette session, mais il n'est ni enregistré, ni conservé, ni évalué comme une candidature, ni ajouté au vivier de candidats.",
+    "Je comprends qu'il s'agit d'un test en direct côté recruteur. Le son de mon microphone est transmis à l'intervieweur IA, mais n'est pas enregistré. Une transcription est conservée temporairement pendant l'exécution, puis supprimée automatiquement ; rien n'est évalué comme une candidature ni ajouté au vivier de candidats.",
   previewDisclosureCopy:
     "Vous consultez l'expérience candidat réelle en mode aperçu recruteur. Rien n'est ajouté à votre vivier de candidats. Vous pouvez poursuivre pour lancer un test en direct avec l'intervieweur.",
   previewEvidenceBody:
