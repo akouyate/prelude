@@ -1,6 +1,6 @@
 import {
   marketingDemoHandoffExchangeSchema,
-  marketingDemoHandoffResponseSchema,
+  marketingDemoHandoffExchangeResponseSchema,
   marketingDemoRolesResponseSchema,
   marketingDemoServiceAdmissionSchema,
 } from "@prelude/contracts";
@@ -88,7 +88,9 @@ export async function exchangeMarketingDemoHandoff(input: {
   if (!response.ok) {
     throw new MarketingDemoCandidateApiError(response.status);
   }
-  return marketingDemoHandoffResponseSchema.parse(await response.json());
+  return marketingDemoHandoffExchangeResponseSchema.parse(
+    await response.json(),
+  );
 }
 
 async function candidateFetch(path: string, init: RequestInit) {

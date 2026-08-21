@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { MarketingDemoLeadForm } from "../../../../src/features/marketing-demo/marketing-demo-lead-form";
+import { MarketingDemoSyntheticBrief } from "../../../../src/features/marketing-demo/marketing-demo-synthetic-brief";
 import { MarketingDemoUrlCleaner } from "../../../../src/features/marketing-demo/marketing-demo-url-cleaner";
 import { exchangeMarketingDemoHandoff } from "../../../../src/server/marketing-demos/marketing-demo-candidate-api";
 
@@ -47,16 +48,19 @@ export default async function MarketingDemoResultPage({
             real interview for your hiring team and review structured evidence
             from your own candidates.
           </p>
-          <a
-            className="mt-8 inline-flex rounded-full bg-[#0B4B3E] px-6 py-3 font-title font-medium text-white"
-            href="/sign-up"
-          >
-            Create my first interview
-          </a>
-          <MarketingDemoLeadForm roleSlug={payload.roleSlug} />
+          <MarketingDemoLeadForm captureToken={payload.leadCaptureToken} />
+          <p className="mt-4 text-[13px] text-[#52605A]">
+            Prefer to start now?{" "}
+            <a className="font-medium underline" href="/sign-up">
+              Create your HireCall account
+            </a>
+            .
+          </p>
+          <MarketingDemoSyntheticBrief roleSlug={payload.roleSlug} />
           <p className="mt-8 text-[12.5px] leading-[1.6] text-[#6E7772]">
             The one-use handoff contained only demo completion and predefined
-            role metadata. HireCall deleted the temporary transcript before the
+            role metadata. A separate short-lived proof allows one email setup
+            request. HireCall deleted the temporary transcript before the
             redirect, then consumed the relay and deleted the demo runtime
             before rendering this page.
           </p>

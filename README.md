@@ -32,8 +32,11 @@ make env-up
 pnpm dev
 ```
 
-The console app runs on `http://localhost:3000`.
-The candidate app runs on `http://localhost:3001`.
+`make init` assigns this checkout a stable `.localhost` namespace and an
+isolated port block. Run `make urls` for the exact Console, Candidate, landing,
+and realtime URLs. A feature worktree looks like
+`http://app.hirecall-issue-168.localhost:<port>`; `.localhost` resolves to the
+loopback interface without `/etc/hosts`, dnsmasq, or administrator access.
 
 Interview audio replay is disabled by default. To enable it, set
 `RECORDING_ENABLED=1` and configure the private `EGRESS_R2_*` destination from
@@ -71,23 +74,36 @@ manager; Codex is not required:
 ```bash
 make init      # idempotent setup
 make doctor    # validate decryption, permissions and generated keys
-make cleanup   # remove only files that make init created in this worktree
+make urls      # print non-secret local endpoints
+make landing-env # generate the server-only website integration file
+make cleanup   # restore/remove only setup-owned local files in this worktree
 ```
 
 `make init` copies the existing gitignored `.env.keys` from the primary
 worktree when necessary, creates `.env.worktree` with mode `0600`, generates
-independent marketing-demo and realtime secrets, installs locked dependencies,
-and regenerates Prisma Client. It never prints secret values. The first primary
+independent marketing-demo admission, handoff, lead-delivery, unsubscribe, and
+realtime secrets, a stable DNS-safe worktree ID, deterministic host ports, and
+an isolated Docker Compose project. It installs locked dependencies and
+regenerates Prisma Client. It never prints secret values. The first primary
 checkout still needs the team-provided `.env.keys`; third-party credentials
 such as LiveKit and OpenAI cannot be generated locally.
+
+The primary checkout keeps the legacy `prelude` Compose project, ports, and
+volume names. Linked worktrees use `prelude-<id>` and their own ports, volumes,
+networks, image tags, Redis stream, and cookie parent domain. To align a Prelude
+worktree with a separate marketing-site worktree, initialize both under the
+same explicit namespace, for example `HIRECALL_WORKTREE_ID=issue-168 make init`.
+Once persisted, an ID cannot be silently changed; clean the checkout first.
 
 After the repository hooks are configured by the first `pnpm install`, Git's
 `post-checkout` hook runs the same idempotent setup automatically for every new
 linked worktree. Codex and other worktree managers therefore share the exact
 same repository-owned initialization path.
 
-`make cleanup` leaves Docker volumes, databases, user-created environment files,
-and the primary worktree's `.env.keys` untouched.
+`make cleanup` removes checksum-owned generated files and restores a pre-init
+`.env.worktree` when one existed. It leaves Docker volumes, databases,
+modified/user-created environment files, and the primary worktree's `.env.keys`
+untouched.
 
 ## Scripts
 
@@ -103,18 +119,20 @@ pnpm test:e2e
 
 `packages/db` owns Prisma. Local development uses Postgres through Docker Compose.
 
-Postgres listens on host port **5440** by default — `docker compose` and the
-`Makefile` both default `POSTGRES_PORT` to 5440, and the encrypted `.env` points
-`DATABASE_URL` there. Override it if that port is taken (and align `DATABASE_URL`):
+Postgres listens on host port **5440** in the primary checkout. Linked worktrees
+receive a deterministic isolated port through `make init`; the generated
+`DATABASE_URL` and Compose mapping stay aligned automatically. If a generated
+block is occupied, choose another namespace before initialization:
 
 ```bash
-POSTGRES_PORT=5441 make env-up
+HIRECALL_WORKTREE_ID=issue-168b make init
 ```
 
 Useful local commands:
 
 ```bash
 make help
+make urls
 make env-up
 make db-generate
 make db-migrate

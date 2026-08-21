@@ -13,6 +13,8 @@ beforeEach(() => {
   vi.stubEnv("MARKETING_DEMO_SERVICE_SECRET", serviceSecret);
   exchangeHandoffMock.mockResolvedValue({
     completed: true,
+    leadCaptureToken: `mdlc_${"l".repeat(43)}`,
+    leadCaptureTokenExpiresAt: "2026-08-20T10:30:00.000Z",
     roleSlug: "account-executive",
     roleTitle: "Account Executive",
     roleVersion: 1,

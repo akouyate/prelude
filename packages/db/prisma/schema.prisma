@@ -271,6 +271,7 @@ model MarketingDemoControl {
   id                     String    @id
   enabled                Boolean   @default(false)
   dailyStartedSessionCap Int
+  dailyLeadCap           Int       @default(100)
   concurrentSessionCap   Int
   lockedAt               DateTime?
   updatedAt              DateTime  @updatedAt
@@ -279,6 +280,7 @@ model MarketingDemoControl {
 model MarketingDemoDailyUsage {
   day          DateTime @id @db.Date
   startedCount Int      @default(0)
+  leadCount    Int      @default(0)
   updatedAt    DateTime @updatedAt
 }
 
@@ -310,18 +312,59 @@ model MarketingDemoHandoff {
   @@index([expiresAt])
 }
 
+// Minted only after a completed handoff is consumed. The browser receives the
+// opaque value while the database keeps only its digest. It proves that an email
+// submission came from a real, completed demo without retaining interview data.
+model MarketingDemoLeadCapture {
+  id          String    @id
+  tokenDigest String    @unique
+  roleSlug    String
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([expiresAt])
+}
+
 // Optional marketing consent is intentionally separate from interview
 // processing consent. No transcript, answers, generated insight, or handoff
 // code is stored with the lead.
 model MarketingDemoLead {
-  id             String   @id @default(cuid())
-  email          String
-  roleSlug       String
-  consentVersion String
-  consentedAt    DateTime
-  createdAt      DateTime @default(now())
+  id               String                    @id @default(cuid())
+  email            String                    @unique
+  roleSlug         String
+  marketingConsent Boolean                   @default(false)
+  consentVersion   String?
+  consentedAt      DateTime?
+  lastSubmittedAt  DateTime
+  withdrawnAt      DateTime?
+  createdAt        DateTime                  @default(now())
+  updatedAt        DateTime                  @updatedAt
+  outbox           MarketingDemoLeadOutbox[]
 
-  @@index([createdAt])
+  @@index([consentedAt])
+  @@index([withdrawnAt])
+}
+
+// Provider delivery is asynchronous and idempotent. The row carries only an
+// operational event type and a relation to the setup request; candidate data
+// can never enter the payload because it is absent from this model boundary.
+model MarketingDemoLeadOutbox {
+  id                       String            @id
+  leadId                   String
+  eventType                String
+  status                   String            @default("pending")
+  attemptCount             Int               @default(0)
+  nextAttemptAt            DateTime          @default(now())
+  processingLeaseExpiresAt DateTime?
+  deliveredAt              DateTime?
+  lastErrorCode            String?
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+  lead                     MarketingDemoLead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([status, nextAttemptAt])
+  @@index([processingLeaseExpiresAt])
 }
 
 model Interview {

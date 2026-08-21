@@ -4,6 +4,7 @@ const tx = vi.hoisted(() => ({
   candidateExperiencePreview: { deleteMany: vi.fn() },
   liveInterviewSession: { deleteMany: vi.fn(), findMany: vi.fn() },
   marketingDemoHandoff: { deleteMany: vi.fn() },
+  marketingDemoLeadCapture: { create: vi.fn() },
 }));
 
 const prismaMock = vi.hoisted(() => ({
@@ -53,6 +54,7 @@ beforeEach(() => {
     count: 1,
   });
   tx.marketingDemoHandoff.deleteMany.mockResolvedValue({ count: 1 });
+  tx.marketingDemoLeadCapture.create.mockResolvedValue({});
   tx.liveInterviewSession.findMany.mockResolvedValue([{ id: "is_demo" }]);
   tx.liveInterviewSession.deleteMany.mockResolvedValue({ count: 1 });
   tx.candidateExperiencePreview.deleteMany.mockResolvedValue({ count: 1 });
@@ -116,14 +118,24 @@ describe("marketing demo handoff relay", () => {
       returnTarget: "https://www.hirecall.test/demo/result",
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       completed: true,
+      leadCaptureToken: expect.stringMatching(/^mdlc_/),
+      leadCaptureTokenExpiresAt: expect.any(String),
       roleSlug: "account-executive",
       roleTitle: "Account Executive",
       roleVersion: 1,
     });
     expect(result).not.toHaveProperty("answers");
     expect(result).not.toHaveProperty("transcript");
+    expect(tx.marketingDemoLeadCapture.create).toHaveBeenCalledWith({
+      data: {
+        expiresAt: expect.any(Date),
+        id: expect.stringMatching(/^mdlc_/),
+        roleSlug: "account-executive",
+        tokenDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      },
+    });
     expect(tx.marketingDemoHandoff.deleteMany).toHaveBeenCalledWith({
       where: expect.objectContaining({
         expiresAt: { gt: expect.any(Date) },

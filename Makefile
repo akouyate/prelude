@@ -1,15 +1,20 @@
 SHELL := /bin/sh
 
-COMPOSE ?= docker compose
-POSTGRES_PORT ?= 5440
-REDIS_PORT ?= 6380
+COMPOSE ?= ./scripts/worktree/compose.sh
+WORKTREE_POSTGRES_PORT := $(shell sed -n 's/^POSTGRES_PORT=//p' .worktree/metadata.env 2>/dev/null | tail -n 1)
+WORKTREE_REDIS_PORT := $(shell sed -n 's/^REDIS_PORT=//p' .worktree/metadata.env 2>/dev/null | tail -n 1)
+WORKTREE_CONSOLE_URL := $(shell sed -n 's/^CONSOLE_URL=//p' .worktree/metadata.env 2>/dev/null | tail -n 1)
+WORKTREE_REALTIME_URL := $(shell sed -n 's/^REALTIME_URL=//p' .worktree/metadata.env 2>/dev/null | tail -n 1)
+POSTGRES_PORT ?= $(if $(WORKTREE_POSTGRES_PORT),$(WORKTREE_POSTGRES_PORT),5440)
+REDIS_PORT ?= $(if $(WORKTREE_REDIS_PORT),$(WORKTREE_REDIS_PORT),6380)
 DATABASE_URL ?= postgresql://postgres:postgres@localhost:$(POSTGRES_PORT)/prelude?schema=public
 REDIS_URL ?= redis://localhost:$(REDIS_PORT)/0
 PYTHON_VERSION ?= 3.14
 MIGRATION_NAME ?= init
 # .env is dotenvx-encrypted; .env.worktree is a gitignored, generated override.
-# Later files win, so every process in one worktree shares the same local keys.
-ENV_FILE_ARGS := -f .env $(if $(wildcard .env.worktree),-f .env.worktree,)
+# dotenvx keeps the first value it encounters. List the generated worktree
+# override first so every process in one checkout receives its local identity.
+ENV_FILE_ARGS := $(if $(wildcard .env.worktree),-f .env.worktree,) -f .env
 LOAD_ENV := set -a; [ ! -f .env ] || eval "$$(dotenvx get --format eval $(ENV_FILE_ARGS) 2>/dev/null)"; set +a
 BENCHMARK_PROVIDER ?= mock_openai_realtime
 BENCHMARK_SCENARIO ?= normal
@@ -22,7 +27,7 @@ REALTIME_API_URL ?=
 AGENT_JOIN_STREAM_KEY ?=
 AGENT_JOIN_PENDING_IDLE_SECONDS ?=
 LIVE_WORKER_MAX_CONCURRENCY ?=
-LIVE_SMOKE_REALTIME_API_URL ?= http://127.0.0.1:8080
+LIVE_SMOKE_REALTIME_API_URL ?= $(if $(WORKTREE_REALTIME_URL),$(WORKTREE_REALTIME_URL),http://127.0.0.1:8080)
 SESSION_ID ?=
 LIVE_WORKER_SKIP_OPENAI ?=
 LIVE_WORKER_MAX_DURATION_SECONDS ?=
@@ -33,14 +38,14 @@ LIVE_WORKER_INACTIVITY_TERMINATE_SECONDS ?=
 LIVE_WORKER_CANDIDATE_WAIT_SECONDS ?=
 E2E_SMOKE_RUN_ID ?=
 E2E_SMOKE_RESET ?= 1
-E2E_SMOKE_CONSOLE_URL ?= http://localhost:3000
+E2E_SMOKE_CONSOLE_URL ?= $(if $(WORKTREE_CONSOLE_URL),$(WORKTREE_CONSOLE_URL),http://localhost:3000)
 E2E_SMOKE_LIVE_LLM ?=
 VOICE_SMOKE_TTS ?= pocket
 VOICE_SMOKE_INTERVIEW_PLAN_ID ?= interview_e2e_livekit-upgrade
 VOICE_SMOKE_VOICE ?=
 VOICE_SMOKE_MAX_SECONDS ?= 240
 VOICE_SMOKE_PYTHON ?= 3.13
-BILLING_SWEEP_URL ?= http://localhost:3000/api/internal/billing-sweep
+BILLING_SWEEP_URL ?= $(if $(WORKTREE_CONSOLE_URL),$(WORKTREE_CONSOLE_URL),http://localhost:3000)/api/internal/billing-sweep
 # Strictly above the route's LOCK_TRANSACTION_TIMEOUT_MS (60s), which is itself
 # above SWEEP_TIME_BUDGET_MS + ENTRY_PASS_TIME_BUDGET_MS (25s + 10s). See the
 # ordering invariant documented in the route: a client that gives up before the
@@ -49,13 +54,16 @@ BILLING_SWEEP_MAX_TIME ?= 90
 BILLING_SWEEP_LIMIT ?=
 BILLING_SWEEP_CURSOR ?=
 BILLING_ADMIN_QUEUE_LIMIT ?=
-RETENTION_SWEEP_URL ?= http://localhost:3000/api/internal/retention-sweep
+RETENTION_SWEEP_URL ?= $(if $(WORKTREE_CONSOLE_URL),$(WORKTREE_CONSOLE_URL),http://localhost:3000)/api/internal/retention-sweep
 RETENTION_SWEEP_MAX_TIME ?= 120
 RETENTION_SWEEP_LIMIT ?=
+MARKETING_DEMO_LEAD_OPERATIONS_URL ?= $(if $(WORKTREE_CONSOLE_URL),$(WORKTREE_CONSOLE_URL),http://localhost:3000)/api/internal/marketing-demo-leads/operations
+MARKETING_DEMO_LEAD_OPERATIONS_MAX_TIME ?= 60
+MARKETING_DEMO_LEAD_OPERATIONS_LIMIT ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help init doctor cleanup worktree-init worktree-check worktree-cleanup env-up env-down env-reset db-logs db-shell redis-shell role-intake-env-up role-intake-worker db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke billing-packs-sync billing-sweep retention-sweep billing-admin-queue dev
+.PHONY: help init doctor cleanup urls landing-env worktree-init worktree-check worktree-cleanup worktree-test env-up env-down env-reset demo-up demo-down demo-logs db-logs db-shell redis-shell role-intake-env-up role-intake-worker db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke billing-packs-sync billing-sweep retention-sweep marketing-demo-lead-operations billing-admin-queue dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "HireCall local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -66,6 +74,12 @@ doctor: worktree-check ## Validate this checkout's generated environment.
 
 cleanup: worktree-cleanup ## Remove only files created by worktree init.
 
+urls: ## Print this worktree's non-secret local endpoints.
+	@./scripts/worktree/urls.sh
+
+landing-env: ## Generate the server-only environment consumed by the marketing landing.
+	@./scripts/worktree/landing-env.sh
+
 worktree-init: ## Idempotently install dependencies and prepare local secrets.
 	@./scripts/worktree/init.sh
 
@@ -75,8 +89,11 @@ worktree-check: ## Validate shared decryption and generated worktree secrets.
 worktree-cleanup: ## Remove only worktree-managed secret copies and overrides.
 	@./scripts/worktree/cleanup.sh
 
+worktree-test: ## Test deterministic worktree domains, ports, and isolation.
+	@./scripts/worktree/test.sh
+
 env-up: ## Start local Docker services.
-	POSTGRES_PORT="$(POSTGRES_PORT)" REDIS_PORT="$(REDIS_PORT)" $(COMPOSE) up -d
+	$(COMPOSE) up -d
 	@printf "Waiting for Postgres to become healthy"
 	@container_id="$$( $(COMPOSE) ps -q postgres )"; \
 	if [ -z "$$container_id" ]; then \
@@ -119,6 +136,15 @@ env-down: ## Stop local Docker services without deleting volumes.
 
 env-reset: ## Stop local Docker services and delete local volumes.
 	$(COMPOSE) down --volumes --remove-orphans
+
+demo-up: ## Build and start the isolated marketing-demo runtime.
+	@./scripts/demo/up.sh
+
+demo-down: ## Stop only this worktree's marketing-demo application containers.
+	@./scripts/demo/down.sh
+
+demo-logs: ## Follow this worktree's marketing-demo application logs.
+	@./scripts/demo/logs.sh
 
 db-logs: ## Follow local Postgres logs.
 	$(COMPOSE) logs -f postgres
@@ -367,6 +393,18 @@ retention-sweep: ## Erase transcripts + briefs past the 12-month horizon (needs 
 	if [ -n "$(RETENTION_SWEEP_LIMIT)" ]; then url="$$url?limit=$(RETENTION_SWEEP_LIMIT)"; fi; \
 	curl -sS --fail-with-body --max-time $(RETENTION_SWEEP_MAX_TIME) -X POST \
 		-H "Authorization: Bearer $$RETENTION_SWEEP_SECRET" "$$url" \
+		| node -e 'let b="";process.stdin.on("data",c=>{b+=c}).on("end",()=>{try{console.log(JSON.stringify(JSON.parse(b),null,2))}catch{console.log(b)}})'
+
+marketing-demo-lead-operations: ## Deliver demo lead events and enforce lead retention.
+	@$(LOAD_ENV); \
+	if [ -z "$$MARKETING_DEMO_LEAD_OPERATIONS_SECRET" ]; then \
+		printf 'MARKETING_DEMO_LEAD_OPERATIONS_SECRET is not set.\nGenerate one with: openssl rand -hex 32\n' >&2; \
+		exit 1; \
+	fi; \
+	url="$(MARKETING_DEMO_LEAD_OPERATIONS_URL)"; \
+	if [ -n "$(MARKETING_DEMO_LEAD_OPERATIONS_LIMIT)" ]; then url="$$url?limit=$(MARKETING_DEMO_LEAD_OPERATIONS_LIMIT)"; fi; \
+	curl -sS --fail-with-body --max-time $(MARKETING_DEMO_LEAD_OPERATIONS_MAX_TIME) -X POST \
+		-H "Authorization: Bearer $$MARKETING_DEMO_LEAD_OPERATIONS_SECRET" "$$url" \
 		| node -e 'let b="";process.stdin.on("data",c=>{b+=c}).on("end",()=>{try{console.log(JSON.stringify(JSON.parse(b),null,2))}catch{console.log(b)}})'
 
 billing-admin-queue: ## List Stripe webhook events parked for an operator (needs_admin / failed).

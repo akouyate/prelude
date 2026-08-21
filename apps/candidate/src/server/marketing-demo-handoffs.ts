@@ -145,6 +145,12 @@ export async function exchangeMarketingDemoHandoff(
     throw new MarketingDemoRequestError("handoff_not_found", 404);
   }
 
+  const leadCaptureToken = `mdlc_${randomBytes(32).toString("base64url")}`;
+  const leadCaptureTokenExpiresAt = new Date(
+    now.getTime() + marketingDemoPolicy.leadCaptureTtlMs,
+  );
+  const leadCaptureId = `mdlc_${randomBytes(18).toString("base64url")}`;
+
   const consumed = await prisma.$transaction(async (tx) => {
     const deleted = await tx.marketingDemoHandoff.deleteMany({
       where: {
@@ -156,6 +162,15 @@ export async function exchangeMarketingDemoHandoff(
     if (deleted.count !== 1) {
       return false;
     }
+
+    await tx.marketingDemoLeadCapture.create({
+      data: {
+        expiresAt: leadCaptureTokenExpiresAt,
+        id: leadCaptureId,
+        roleSlug: payload.roleSlug,
+        tokenDigest: digestOpaqueSecret(leadCaptureToken),
+      },
+    });
 
     const sessions = await tx.liveInterviewSession.findMany({
       select: { id: true },
@@ -179,7 +194,11 @@ export async function exchangeMarketingDemoHandoff(
     throw new MarketingDemoRequestError("handoff_not_found", 404);
   }
 
-  return payload;
+  return {
+    ...payload,
+    leadCaptureToken,
+    leadCaptureTokenExpiresAt: leadCaptureTokenExpiresAt.toISOString(),
+  };
 }
 
 async function eraseRealtimePersonalData(sessionId: string) {

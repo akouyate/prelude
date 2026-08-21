@@ -87,7 +87,7 @@ services:
     profiles: ["marketing-demo"]
     # candidate owns the build for this shared image. Declaring the same build
     # twice makes BuildKit export two identical 500 MB images concurrently.
-    image: prelude-marketing-demo-candidate:local
+    image: "${COMPOSE_PROJECT_NAME:-prelude}-marketing-demo-candidate:local"
     restart: "no"
     environment:
       DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/prelude?schema=public"
@@ -105,7 +105,7 @@ services:
 
   realtime:
     profiles: ["marketing-demo"]
-    image: prelude-marketing-demo-realtime:local
+    image: "${COMPOSE_PROJECT_NAME:-prelude}-marketing-demo-realtime:local"
     build:
       context: .
       dockerfile: docker/realtime.Dockerfile
@@ -139,7 +139,7 @@ services:
 
   interviewer-agent:
     profiles: ["marketing-demo"]
-    image: prelude-marketing-demo-interviewer-agent:local
+    image: "${COMPOSE_PROJECT_NAME:-prelude}-marketing-demo-interviewer-agent:local"
     build:
       context: .
       dockerfile: docker/interviewer-agent.Dockerfile
@@ -183,7 +183,7 @@ services:
 
   candidate:
     profiles: ["marketing-demo"]
-    image: prelude-marketing-demo-candidate:local
+    image: "${COMPOSE_PROJECT_NAME:-prelude}-marketing-demo-candidate:local"
     build:
       context: .
       dockerfile: docker/candidate.Dockerfile
@@ -194,8 +194,8 @@ services:
       DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/prelude?schema=public"
       PRELUDE_REALTIME_API_URL: "http://realtime:8080"
       REALTIME_API_KEY: "${REALTIME_API_KEY:-}"
-      NEXT_PUBLIC_CANDIDATE_URL: "http://localhost:${CANDIDATE_PORT:-3101}"
-      MARKETING_DEMO_RETURN_TARGETS: "${MARKETING_DEMO_LOCAL_RETURN_TARGET:-http://localhost:3200/demo/result}"
+      NEXT_PUBLIC_CANDIDATE_URL: "${CANDIDATE_URL:-http://candidate.hirecall-main.localhost:3101}"
+      MARKETING_DEMO_RETURN_TARGETS: "${MARKETING_DEMO_RETURN_TARGETS:-http://www.hirecall-main.localhost:3200/demo/result,http://app.hirecall-main.localhost:3000/demo/result}"
       MARKETING_DEMO_SERVICE_SECRET: "${MARKETING_DEMO_SERVICE_SECRET:-}"
       MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY: "${MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY:-}"
       RECORDING_ENABLED: "0"
@@ -221,8 +221,8 @@ services:
 
 volumes:
   prelude_postgres_data:
-    name: prelude_postgres_data
+    name: "${COMPOSE_PROJECT_NAME:-prelude}_postgres_data"
   prelude_redis_data:
-    name: prelude_redis_data
+    name: "${COMPOSE_PROJECT_NAME:-prelude}_redis_data"
   prelude_clamav_data:
-    name: prelude_clamav_data
+    name: "${COMPOSE_PROJECT_NAME:-prelude}_clamav_data"

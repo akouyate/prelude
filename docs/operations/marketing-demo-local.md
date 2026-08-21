@@ -1,122 +1,162 @@
 # Local marketing demo stack
 
-The marketing landing page is a separate Next.js application. Keep it running
-on the host at `http://localhost:3200`; Prelude supplies the candidate interview
-runtime as a Docker Compose profile.
+The marketing landing is a separate Next.js repository. Prelude owns the
+Candidate, realtime, interviewer, Postgres, and Redis parts of the demo. Local
+development uses worktree-specific `.localhost` names and deterministic ports;
+no host-file or machine DNS change is required.
+
+Setup also appends `.localhost` to `NO_PROXY`/`no_proxy`, because otherwise a
+developer-wide HTTP proxy may intercept these loopback requests.
+
+## Namespace and isolation
+
+Run `make init` once in every Prelude checkout. It creates a mode-`0600`,
+gitignored `.env.worktree` and a non-secret `.worktree/metadata.env`.
+
+The primary checkout uses `main`. Linked worktrees derive a short DNS-safe ID
+from their path. For a cross-repository pair, choose the same explicit ID:
+
+```bash
+HIRECALL_WORKTREE_ID=issue-168 make init
+```
+
+`PRELUDE_WORKTREE_ID` is accepted as a compatibility alias. If both are set,
+they must match. An initialized checkout refuses a different override so a
+branch rename cannot silently point at another database or cookie namespace.
+
+For an ID such as `issue-168`, the endpoints are:
+
+- Landing: `http://www.hirecall-issue-168.localhost:<landing-port>`
+- Console: `http://app.hirecall-issue-168.localhost:<console-port>`
+- Candidate: `http://candidate.hirecall-issue-168.localhost:<candidate-port>`
+- Realtime: `http://realtime.hirecall-issue-168.localhost:<realtime-port>`
+
+The worktree ID is part of the parent cookie domain
+(`hirecall-issue-168.localhost`), so even an intentionally domain-scoped
+development cookie cannot cross into a different worktree. Do not set cookies
+on the broader `.localhost` domain.
+
+Non-primary worktrees receive one deterministic ten-port block in the range
+`20000..59999`. Setup rejects aliases, collisions with registered worktrees,
+and foreign listeners on Compose-owned ports. It also namespaces the Compose
+project, volumes, networks, application image tags, and Redis worker keys.
+The primary checkout retains the legacy ports and `prelude` volume names.
+
+Inspect the current assignment without printing a secret:
+
+```bash
+make urls
+make doctor
+```
 
 ## Prerequisites
 
 - Docker with Compose v2
 - pnpm 10.26.0
-- dotenvx; run `make init` once in each checkout
-- valid local LiveKit and OpenAI credentials
+- dotenvx
+- valid LiveKit and OpenAI credentials in the encrypted root `.env`
+- the team `.env.keys` in the primary checkout
 
-The committed `.env` remains the canonical encrypted environment file. Do not
-rename it to `.env.local` and do not create a decrypted copy. `make init`
-reuses the primary worktree's gitignored `.env.keys` and generates local-only
-values in a mode-`0600`, gitignored `.env.worktree`. The `demo:*` scripts load
-both files, with worktree values taking precedence, so every local service uses
-the same generated secrets. As with all Docker environment variables, a local
-operator with Docker access can inspect the running container configuration.
+`make init` copies `.env.keys` into linked worktrees when necessary and
+generates independent admission, handoff, lead-delivery, unsubscribe, realtime,
+and operations secrets. Secrets are never included in `make urls` output.
 
-The encrypted shared environment must define:
-
-- `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET`
-- `OPENAI_API_KEY`
-
-`make init` generates `MARKETING_DEMO_SERVICE_SECRET`,
-`MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY`, and `REALTIME_API_KEY` for the current
-worktree. Configure the landing page server with that worktree's
-`MARKETING_DEMO_SERVICE_SECRET`; never expose it to browser code.
-
-Never prefix these values with `NEXT_PUBLIC_` or send them to the browser.
-
-## Start and stop
+## Start and stop Prelude
 
 ```bash
 make doctor
-pnpm demo:up
+make demo-up
+make demo-logs
 ```
 
-This starts Postgres and Redis, applies committed Prisma migrations, seeds the
-predefined demo roles idempotently, then starts the Go realtime API, Python
-interviewer auto-worker, and Candidate app.
+`make demo-up` validates configuration, starts isolated Postgres and Redis,
+applies committed Prisma migrations, seeds the predefined roles idempotently,
+and starts realtime, the interviewer worker, and Candidate.
 
-A one-shot configuration check runs first and names any missing required
-variable without printing its value. No migration or application service starts
-when this check fails.
-
-The scripts preserve Prelude's established local infrastructure ports:
-Postgres on `5440` and Redis on `6380`.
-
-The stable host endpoints are:
-
-- Candidate: `http://localhost:3101`
-- Realtime health: `http://localhost:8080/health`
-- Landing page return target: `http://localhost:3200/demo/result`
-
-Follow the application logs with:
+Stop only the demo application containers while preserving infrastructure and
+data:
 
 ```bash
-pnpm demo:logs
+make demo-down
 ```
 
-Stop and remove only the marketing-demo application containers with:
+`make env-down` stops all containers in this worktree's Compose project.
+`make env-reset` additionally deletes only this worktree's volumes and must be
+used deliberately. `make cleanup` never removes containers, volumes, or data.
+
+### Migrating an already-running legacy checkout
+
+Do not regenerate `.env.worktree` while the old un-namespaced stack is still
+running. First stop that stack with the code/configuration that started it,
+then run `make init`, `make doctor`, `make urls`, and `make demo-up`. A linked
+worktree moves to a fresh isolated database. The primary checkout continues to
+use the existing `prelude_postgres_data` and `prelude_redis_data` volumes.
+
+## Connect the separate landing repository
+
+Generate a server-only integration file:
 
 ```bash
-pnpm demo:down
+make landing-env
 ```
 
-Postgres and Redis keep running and their named volumes are preserved. Use the
-existing `make env-down` or `make env-reset` commands only when intentionally
-stopping or deleting the shared local infrastructure.
+This writes `.worktree/marketing-landing.env` with mode `0600`. It contains the
+shared admission bearer plus the generated public URLs and exact return target;
+it is gitignored and `make cleanup` removes it only while its checksum still
+proves setup ownership. Never copy its bearer into a `NEXT_PUBLIC_` variable.
 
-## Port overrides
-
-The defaults can be overridden without editing Compose:
+Start the landing repository with its own local environment layered first:
 
 ```bash
-CANDIDATE_PORT=13101 REALTIME_PORT=18080 pnpm demo:up
+cd /path/to/hirecall/website
+dotenvx run \
+  -f /path/to/Prelude/.worktree/marketing-landing.env \
+  -f .env.local \
+  -- sh -c 'pnpm dev -- --hostname 0.0.0.0 --port "$PORT"'
 ```
 
-The Candidate-generated preview URL follows `CANDIDATE_PORT`. The realtime URL
-used inside Docker remains `http://realtime:8080`.
+Dotenvx keeps the first value it encounters, so the generated integration file
+must stay first. Landing-only values that are absent from it still come from
+the website's `.env.local`.
 
-To test a landing page on a different local port, override its exact return
-target:
+The generated landing variables match the existing Next.js contract:
+
+- `NEXT_PUBLIC_SITE_URL`
+- `NEXT_PUBLIC_APP_URL`
+- `PRELUDE_CANDIDATE_URL`
+- `MARKETING_DEMO_RETURN_TARGET`
+- server-only `MARKETING_DEMO_SERVICE_SECRET`
+
+No landing process needs database, Redis, realtime, encryption, or lead-worker
+secrets.
+
+## Exact return-target boundary
+
+Candidate receives exactly two local result URLs:
+
+1. the external landing: `www.<worktree-domain>/demo/result`;
+2. the built-in Console demo: `app.<worktree-domain>/demo/result`.
+
+They are generated as the comma-separated `MARKETING_DEMO_RETURN_TARGETS` value.
+There are no wildcard origins, path prefixes, or arbitrary ports. The dedicated
+`MARKETING_DEMO_LOCAL_RETURN_TARGET` remains the landing target used by the
+Docker demo flow.
+
+After Candidate redirects with an opaque `handoff` code, the landing BFF
+consumes it once. The response contains predefined role metadata and a separate
+short-lived, single-use lead-capture proof. Transcript, answers, email, prompt,
+plan, organization, and draft data never cross this boundary or enter URLs,
+browser storage, analytics, generic logs, or email metadata.
+
+## Local lead delivery
+
+Set `MARKETING_DEMO_LEAD_WEBHOOK_URL` to a local receiver. With Console running,
+deliver its outbox and enforce retention with:
 
 ```bash
-MARKETING_DEMO_LOCAL_RETURN_TARGET=http://localhost:3300/demo/result pnpm demo:up
+make marketing-demo-lead-operations
 ```
 
-Return-target matching is exact after URL normalization; do not add a trailing
-slash unless the landing page sends the same value.
-
-## Landing page contract
-
-The landing page browser calls its own same-origin BFF. The landing page server
-then calls Candidate's service-authenticated internal endpoints at
-`http://localhost:3101`. It must verify Turnstile before admission and keep
-`MARKETING_DEMO_SERVICE_SECRET` server-only.
-
-No landing-page process needs direct access to Postgres, Redis, or the realtime
-API.
-
-After Candidate redirects to the exact allow-listed result URL with an opaque
-`handoff` code, the landing page server consumes that code once through
-`POST /api/internal/marketing-demo-handoffs/exchange`. The response is limited
-to predefined, non-candidate metadata:
-
-```json
-{
-  "completed": true,
-  "roleSlug": "account-executive",
-  "roleTitle": "Account Executive",
-  "roleVersion": 1
-}
-```
-
-Transcript events are deleted before the redirect code is exposed. Transcript,
-answers and email must never be added to this response, URLs, browser storage,
-analytics or generic logs. The landing page selects its own role-specific
-synthetic sample from `roleSlug`.
+The command automatically uses this worktree's Console URL. The receiver must
+deduplicate on `Idempotency-Key`. Payloads contain email, predefined role,
+consent state/timestamps, event metadata, and a signed unsubscribe URL only.
