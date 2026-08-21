@@ -54,9 +54,11 @@ if ! ./scripts/run-with-env.sh sh -ec '
   test "$POSTGRES_PORT" = "$7"
   test "$REDIS_PORT" = "$8"
   test "$REALTIME_PORT" = "$9"
+  test "$PRELUDE_ALLOWED_DEV_ORIGINS" = "${10}"
 ' sh "$WORKTREE_ID" "$COMPOSE_PROJECT" "$CONSOLE_URL_VALUE" "$CANDIDATE_URL_VALUE" \
   "$MARKETING_DEMO_RETURN_TARGET_VALUE" "$MARKETING_DEMO_RETURN_TARGETS_VALUE" \
-  "$POSTGRES_PORT_VALUE" "$REDIS_PORT_VALUE" "$REALTIME_PORT_VALUE" >/dev/null 2>&1; then
+  "$POSTGRES_PORT_VALUE" "$REDIS_PORT_VALUE" "$REALTIME_PORT_VALUE" \
+  "$PRELUDE_ALLOWED_DEV_ORIGINS_VALUE" >/dev/null 2>&1; then
   printf 'Generated worktree secrets are missing or invalid. Rerun `make init`.\n' >&2
   exit 1
 fi

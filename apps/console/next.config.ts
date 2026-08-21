@@ -4,8 +4,13 @@ import type { NextConfig } from "next";
 
 loadRootEnv();
 
+const extraAllowedDevOrigins =
+  process.env.PRELUDE_ALLOWED_DEV_ORIGINS?.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean) ?? [];
+
 const nextConfig: NextConfig = {
-  allowedDevOrigins: ["127.0.0.1"],
+  allowedDevOrigins: ["127.0.0.1", ...extraAllowedDevOrigins],
   transpilePackages: [
     "@prelude/contracts",
     "@prelude/core",
