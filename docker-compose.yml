@@ -52,6 +52,173 @@ services:
       retries: 20
       start_period: 90s
 
+  demo-config-check:
+    profiles: ["marketing-demo"]
+    # Reuse an image the base stack already needs, so configuration validation
+    # remains available before any marketing-demo application image is built.
+    image: redis:7
+    network_mode: none
+    restart: "no"
+    environment:
+      REALTIME_API_KEY: "${REALTIME_API_KEY:-}"
+      MARKETING_DEMO_SERVICE_SECRET: "${MARKETING_DEMO_SERVICE_SECRET:-}"
+      MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY: "${MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY:-}"
+      LIVEKIT_URL: "${LIVEKIT_URL:-}"
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        test -n "$$REALTIME_API_KEY" || { echo "REALTIME_API_KEY is required" >&2; exit 1; }
+        test -n "$$MARKETING_DEMO_SERVICE_SECRET" || { echo "MARKETING_DEMO_SERVICE_SECRET is required" >&2; exit 1; }
+        test "$${#MARKETING_DEMO_SERVICE_SECRET}" -ge 32 || { echo "MARKETING_DEMO_SERVICE_SECRET must be at least 32 bytes" >&2; exit 1; }
+        test -n "$$MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY" || { echo "MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY is required" >&2; exit 1; }
+        decoded_handoff_key_bytes="$$(printf '%s' "$$MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY" | base64 -d 2>/dev/null | wc -c | tr -d ' ')"
+        test "$$decoded_handoff_key_bytes" = "32" || { echo "MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY must decode to 32 bytes" >&2; exit 1; }
+        test -n "$$LIVEKIT_URL" || { echo "LIVEKIT_URL is required" >&2; exit 1; }
+        test -n "$$LIVEKIT_API_KEY" || { echo "LIVEKIT_API_KEY is required" >&2; exit 1; }
+        test -n "$$LIVEKIT_API_SECRET" || { echo "LIVEKIT_API_SECRET is required" >&2; exit 1; }
+        test -n "$$OPENAI_API_KEY" || { echo "OPENAI_API_KEY is required" >&2; exit 1; }
+        echo "Marketing demo configuration is present."
+
+  demo-bootstrap:
+    profiles: ["marketing-demo"]
+    # candidate owns the build for this shared image. Declaring the same build
+    # twice makes BuildKit export two identical 500 MB images concurrently.
+    image: prelude-marketing-demo-candidate:local
+    restart: "no"
+    environment:
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/prelude?schema=public"
+    command:
+      - /bin/sh
+      - -ec
+      - >-
+        pnpm --filter @prelude/db exec prisma migrate deploy --schema prisma/schema.prisma
+        && pnpm marketing-demo:seed
+    depends_on:
+      demo-config-check:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  realtime:
+    profiles: ["marketing-demo"]
+    image: prelude-marketing-demo-realtime:local
+    build:
+      context: .
+      dockerfile: docker/realtime.Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: "development"
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/prelude?schema=public"
+      REDIS_URL: "redis://redis:6379/0"
+      PORT: "8080"
+      REALTIME_API_KEY: "${REALTIME_API_KEY:-}"
+      LIVE_INTERVIEW_PROVIDER: "${LIVE_INTERVIEW_PROVIDER:-openai_realtime}"
+      LIVEKIT_URL: "${LIVEKIT_URL:-}"
+      LIVEKIT_API_KEY: "${LIVEKIT_API_KEY:-}"
+      LIVEKIT_API_SECRET: "${LIVEKIT_API_SECRET:-}"
+      AGENT_JOIN_STREAM_KEY: "${AGENT_JOIN_STREAM_KEY:-prelude:agent-join:stream}"
+      RECORDING_ENABLED: "0"
+    ports:
+      - "${REALTIME_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    depends_on:
+      demo-bootstrap:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  interviewer-agent:
+    profiles: ["marketing-demo"]
+    image: prelude-marketing-demo-interviewer-agent:local
+    build:
+      context: .
+      dockerfile: docker/interviewer-agent.Dockerfile
+    restart: unless-stopped
+    environment:
+      PYTHONUNBUFFERED: "1"
+      REDIS_URL: "redis://redis:6379/0"
+      REALTIME_API_URL: "http://realtime:8080"
+      REALTIME_API_KEY: "${REALTIME_API_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      AGENT_JOIN_STREAM_KEY: "${AGENT_JOIN_STREAM_KEY:-prelude:agent-join:stream}"
+      AGENT_JOIN_CONSUMER_GROUP: "${AGENT_JOIN_CONSUMER_GROUP:-prelude-live-workers}"
+      AGENT_JOIN_PENDING_IDLE_SECONDS: "${AGENT_JOIN_PENDING_IDLE_SECONDS:-30}"
+      LIVE_WORKER_MAX_CONCURRENCY: "${LIVE_WORKER_MAX_CONCURRENCY:-2}"
+      OPENAI_REALTIME_MODEL: "${OPENAI_REALTIME_MODEL:-gpt-realtime-2.1}"
+      OPENAI_REALTIME_VOICE: "${OPENAI_REALTIME_VOICE:-marin}"
+      OPENAI_EXACT_TTS_MODEL: "${OPENAI_EXACT_TTS_MODEL:-gpt-4o-mini-tts}"
+      OPENAI_EXACT_TTS_VOICE: "${OPENAI_EXACT_TTS_VOICE:-}"
+      OPENAI_REALTIME_REASONING_EFFORT: "${OPENAI_REALTIME_REASONING_EFFORT:-low}"
+      OPENAI_ANSWER_INFERENCE_ENABLED: "${OPENAI_ANSWER_INFERENCE_ENABLED:-1}"
+      OPENAI_ANSWER_INFERENCE_MODEL: "${OPENAI_ANSWER_INFERENCE_MODEL:-gpt-5.4-nano}"
+      OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS: "${OPENAI_ANSWER_INFERENCE_TIMEOUT_SECONDS:-3.5}"
+      LIVE_WORKER_MAX_DURATION_SECONDS: "${LIVE_WORKER_MAX_DURATION_SECONDS:-}"
+      LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS: "${LIVE_WORKER_CANDIDATE_READY_TIMEOUT_SECONDS:-120}"
+      LIVE_WORKER_INACTIVITY_USER_AWAY_SECONDS: "${LIVE_WORKER_INACTIVITY_USER_AWAY_SECONDS:-15}"
+      LIVE_WORKER_INACTIVITY_WARNING_SECONDS: "${LIVE_WORKER_INACTIVITY_WARNING_SECONDS:-20}"
+      LIVE_WORKER_INACTIVITY_TERMINATE_SECONDS: "${LIVE_WORKER_INACTIVITY_TERMINATE_SECONDS:-20}"
+      LIVE_WORKER_CANDIDATE_WAIT_SECONDS: "${LIVE_WORKER_CANDIDATE_WAIT_SECONDS:-60}"
+      LIVE_WORKER_CANDIDATE_ABSENCE_GRACE_SECONDS: "${LIVE_WORKER_CANDIDATE_ABSENCE_GRACE_SECONDS:-360}"
+      LIVE_WORKER_FINAL_ANSWER_GRACE_SECONDS: "${LIVE_WORKER_FINAL_ANSWER_GRACE_SECONDS:-3}"
+      LIVEKIT_TURN_DETECTOR_VERSION: "${LIVEKIT_TURN_DETECTOR_VERSION:-v1-mini}"
+      LIVEKIT_ENDPOINTING_MIN_DELAY_SECONDS: "${LIVEKIT_ENDPOINTING_MIN_DELAY_SECONDS:-1}"
+      LIVEKIT_ENDPOINTING_MAX_DELAY_SECONDS: "${LIVEKIT_ENDPOINTING_MAX_DELAY_SECONDS:-5}"
+      LIVEKIT_STT_MODEL: "${LIVEKIT_STT_MODEL:-deepgram/nova-3}"
+      LIVEKIT_LEGACY_TURN_HANDLING: "false"
+    depends_on:
+      realtime:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  candidate:
+    profiles: ["marketing-demo"]
+    image: prelude-marketing-demo-candidate:local
+    build:
+      context: .
+      dockerfile: docker/candidate.Dockerfile
+    restart: unless-stopped
+    environment:
+      APP_ENV: "development"
+      NODE_ENV: "development"
+      DATABASE_URL: "postgresql://postgres:postgres@postgres:5432/prelude?schema=public"
+      PRELUDE_REALTIME_API_URL: "http://realtime:8080"
+      REALTIME_API_KEY: "${REALTIME_API_KEY:-}"
+      NEXT_PUBLIC_CANDIDATE_URL: "http://localhost:${CANDIDATE_PORT:-3101}"
+      MARKETING_DEMO_RETURN_TARGETS: "${MARKETING_DEMO_LOCAL_RETURN_TARGET:-http://localhost:3200/demo/result}"
+      MARKETING_DEMO_SERVICE_SECRET: "${MARKETING_DEMO_SERVICE_SECRET:-}"
+      MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY: "${MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY:-}"
+      RECORDING_ENABLED: "0"
+      ALLOW_MOCK_INTERVIEW: "0"
+    ports:
+      - "${CANDIDATE_PORT:-3101}:3001"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          const net=require('node:net');const socket=net.connect(3001,'127.0.0.1',()=>{socket.end();process.exit(0)});socket.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),3000)
+      interval: 5s
+      timeout: 4s
+      retries: 30
+      start_period: 15s
+    depends_on:
+      demo-bootstrap:
+        condition: service_completed_successfully
+      realtime:
+        condition: service_healthy
+
 volumes:
   prelude_postgres_data:
     name: prelude_postgres_data

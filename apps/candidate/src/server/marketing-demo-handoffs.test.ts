@@ -59,16 +59,14 @@ beforeEach(() => {
 });
 
 describe("marketing demo handoff relay", () => {
-  it("encrypts sensitive content, erases realtime events, and returns only an opaque code", async () => {
+  it("encrypts completion metadata, erases realtime events, and returns only an opaque code", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(transcriptResponse())
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await createMarketingDemoHandoff(
       {
-        answers: [{ questionId: "confidence", value: 4 }],
         previewToken: `pvtk_${"s".repeat(43)}`,
         sessionId: "is_demo",
       },
@@ -78,14 +76,13 @@ describe("marketing demo handoff relay", () => {
     const created =
       prismaMock.marketingDemoHandoff.create.mock.calls[0]?.[0].data;
     expect(created.codeDigest).toMatch(/^[a-f0-9]{64}$/);
-    expect(created.encryptedPayload).not.toContain("customer story");
-    expect(created.encryptedPayload).not.toContain("confidence");
+    expect(created.encryptedPayload).not.toContain("account-executive");
     expect(result.handoffUrl).toMatch(
       /^https:\/\/www\.hirecall\.test\/demo\/result\?handoff=mdho_/,
     );
-    expect(result.handoffUrl).not.toContain("customer story");
-    expect(fetchMock.mock.calls[1]?.[0]).toContain("/personal-data");
-    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: "DELETE" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toContain("/personal-data");
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: "DELETE" });
     expect(
       prismaMock.candidateExperiencePreview.updateMany,
     ).toHaveBeenCalledWith({
@@ -100,13 +97,9 @@ describe("marketing demo handoff relay", () => {
   it("consumes once and deletes relay, runtime session, and preview immediately", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(transcriptResponse())
-        .mockResolvedValueOnce(new Response(null, { status: 204 })),
+      vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 })),
     );
     await createMarketingDemoHandoff({
-      answers: [{ questionId: "confidence", value: 4 }],
       previewToken: `pvtk_${"s".repeat(43)}`,
       sessionId: "is_demo",
     });
@@ -123,11 +116,14 @@ describe("marketing demo handoff relay", () => {
       returnTarget: "https://www.hirecall.test/demo/result",
     });
 
-    expect(result).toMatchObject({
-      answers: [{ questionId: "confidence", value: 4 }],
+    expect(result).toEqual({
+      completed: true,
       roleSlug: "account-executive",
       roleTitle: "Account Executive",
+      roleVersion: 1,
     });
+    expect(result).not.toHaveProperty("answers");
+    expect(result).not.toHaveProperty("transcript");
     expect(tx.marketingDemoHandoff.deleteMany).toHaveBeenCalledWith({
       where: expect.objectContaining({
         expiresAt: { gt: expect.any(Date) },
@@ -153,15 +149,11 @@ describe("marketing demo handoff relay", () => {
   it("fails closed and removes the relay if terminal transcript cleanup is unavailable", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(transcriptResponse())
-        .mockResolvedValueOnce(new Response(null, { status: 503 })),
+      vi.fn().mockResolvedValueOnce(new Response(null, { status: 503 })),
     );
 
     await expect(
       createMarketingDemoHandoff({
-        answers: [{ questionId: "confidence", value: 4 }],
         previewToken: `pvtk_${"s".repeat(43)}`,
         sessionId: "is_demo",
       }),
@@ -174,10 +166,7 @@ describe("marketing demo handoff relay", () => {
   it("removes the relay if preview completion cannot be persisted", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValueOnce(transcriptResponse())
-        .mockResolvedValueOnce(new Response(null, { status: 204 })),
+      vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 })),
     );
     prismaMock.candidateExperiencePreview.updateMany.mockResolvedValueOnce({
       count: 0,
@@ -185,7 +174,6 @@ describe("marketing demo handoff relay", () => {
 
     await expect(
       createMarketingDemoHandoff({
-        answers: [{ questionId: "confidence", value: 4 }],
         previewToken: `pvtk_${"s".repeat(43)}`,
         sessionId: "is_demo",
       }),
@@ -193,21 +181,6 @@ describe("marketing demo handoff relay", () => {
     expect(prismaMock.marketingDemoHandoff.deleteMany).toHaveBeenCalledWith({
       where: { id: expect.stringMatching(/^mdh_/) },
     });
-  });
-
-  it("rejects invalid supplemental answers before creating or fetching a relay", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    await expect(
-      createMarketingDemoHandoff({
-        answers: [{ questionId: "confidence", value: 9 }],
-        previewToken: `pvtk_${"s".repeat(43)}`,
-        sessionId: "is_demo",
-      }),
-    ).rejects.toMatchObject({ code: "invalid_demo_answers", status: 400 });
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(prismaMock.marketingDemoHandoff.create).not.toHaveBeenCalled();
   });
 
   it("rejects exchange to a same-origin but non-allow-listed path", async () => {
@@ -276,26 +249,4 @@ function previewRow() {
       },
     },
   };
-}
-
-function transcriptResponse() {
-  return new Response(
-    JSON.stringify({
-      transcript: [
-        {
-          is_final: true,
-          speaker: "interviewer",
-          text: "Tell me about a customer story.",
-          turn_id: "turn_1",
-        },
-        {
-          is_final: true,
-          speaker: "candidate",
-          text: "My customer story changed the way our team handled discovery.",
-          turn_id: "turn_2",
-        },
-      ],
-    }),
-    { headers: { "content-type": "application/json" }, status: 200 },
-  );
 }

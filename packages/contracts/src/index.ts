@@ -4,6 +4,7 @@ export {
   candidatePreviewVariantSchema,
   candidateExperiencePreviewSnapshotSchema,
   marketingDemoHandoffExchangeSchema,
+  marketingDemoHandoffResponseSchema,
   marketingDemoHandoffSubmissionSchema,
   marketingDemoPostInterviewAnswerSchema,
   marketingDemoPostInterviewQuestionSchema,

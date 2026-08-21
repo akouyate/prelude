@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "dotenvx run -f ../../.env -- next dev --port 3000",
-    "role-intake:worker": "dotenvx run -f ../../.env -- tsx src/server/role-intakes/role-intake-worker.ts",
+    "dev": "../../scripts/run-with-env.sh next dev --port 3000",
+    "role-intake:worker": "../../scripts/run-with-env.sh tsx src/server/role-intakes/role-intake-worker.ts",
     "build": "next build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

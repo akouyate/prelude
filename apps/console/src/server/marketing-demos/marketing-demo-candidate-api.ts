@@ -1,5 +1,6 @@
 import {
   marketingDemoHandoffExchangeSchema,
+  marketingDemoHandoffResponseSchema,
   marketingDemoRolesResponseSchema,
   marketingDemoServiceAdmissionSchema,
 } from "@prelude/contracts";
@@ -87,12 +88,7 @@ export async function exchangeMarketingDemoHandoff(input: {
   if (!response.ok) {
     throw new MarketingDemoCandidateApiError(response.status);
   }
-  return (await response.json()) as {
-    answers: Array<{ questionId: string; value: number | string }>;
-    roleSlug: string;
-    roleTitle: string;
-    transcript: Array<{ speaker: "candidate" | "interviewer"; text: string }>;
-  };
+  return marketingDemoHandoffResponseSchema.parse(await response.json());
 }
 
 async function candidateFetch(path: string, init: RequestInit) {

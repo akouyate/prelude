@@ -24,12 +24,11 @@ This repository is a pnpm/Turborepo monorepo with two Next.js App Router apps an
 
 ```bash
 corepack enable
-pnpm install                          # also configures the git pre-commit hook
 brew install dotenvx                  # or: npm install -g @dotenvx/dotenvx
 # Get the private `.env.keys` from the team (e.g. 1Password) and place it at the
-# repo root — it decrypts the committed, encrypted `.env`.
+# primary repo root once — linked worktrees reuse it automatically.
+make init                             # dependencies, Prisma, local secrets
 make env-up
-make db-generate
 pnpm dev
 ```
 
@@ -50,7 +49,8 @@ The private decryption key `.env.keys` is **gitignored** and shared out of band
 (e.g. 1Password) — never commit it.
 
 - The app `dev` scripts and the `Makefile` decrypt automatically (`dotenvx run` /
-  `dotenvx get`), so `pnpm dev` and `make` just work once `.env.keys` is present.
+  `dotenvx get`). A gitignored `.env.worktree` overrides generated local-only
+  secrets consistently across Next.js, Make and Docker Compose.
 - Edit a value with `dotenvx set KEY value` (re-encrypts in place); read one with
   `dotenvx get KEY`.
 - A `.githooks/pre-commit` hook (auto-configured on `pnpm install`) runs
@@ -62,6 +62,32 @@ The private decryption key `.env.keys` is **gitignored** and shared out of band
   realtime service fails fast without it) and disables auth when empty (local
   dev); `/health` and the LiveKit egress webhook (which self-authenticates via
   its signature) are exempt.
+
+## Checkout and worktree lifecycle
+
+These commands are repository-level and work in any terminal or worktree
+manager; Codex is not required:
+
+```bash
+make init      # idempotent setup
+make doctor    # validate decryption, permissions and generated keys
+make cleanup   # remove only files that make init created in this worktree
+```
+
+`make init` copies the existing gitignored `.env.keys` from the primary
+worktree when necessary, creates `.env.worktree` with mode `0600`, generates
+independent marketing-demo and realtime secrets, installs locked dependencies,
+and regenerates Prisma Client. It never prints secret values. The first primary
+checkout still needs the team-provided `.env.keys`; third-party credentials
+such as LiveKit and OpenAI cannot be generated locally.
+
+After the repository hooks are configured by the first `pnpm install`, Git's
+`post-checkout` hook runs the same idempotent setup automatically for every new
+linked worktree. Codex and other worktree managers therefore share the exact
+same repository-owned initialization path.
+
+`make cleanup` leaves Docker volumes, databases, user-created environment files,
+and the primary worktree's `.env.keys` untouched.
 
 ## Scripts
 

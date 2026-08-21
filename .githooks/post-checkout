@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+# post-checkout also runs for ordinary branch switches. Bootstrap only a linked
+# worktree whose generated environment does not exist yet.
+git_dir="$(git rev-parse --path-format=absolute --git-dir)"
+common_dir="$(git rev-parse --path-format=absolute --git-common-dir)"
+repo_root="$(git rev-parse --show-toplevel)"
+
+if [ "$git_dir" = "$common_dir" ] || [ -f "$repo_root/.env.worktree" ]; then
+  exit 0
+fi
+
+printf 'Initializing linked HireCall worktree...\n'
+make -C "$repo_root" worktree-init

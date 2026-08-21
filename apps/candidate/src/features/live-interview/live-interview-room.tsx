@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import type { MarketingDemoPostInterviewQuestion } from "@prelude/contracts";
 import {
   candidateConsentCopyFor,
   candidateDisclosureCopyFor,
@@ -119,9 +118,6 @@ export function LiveInterviewRoom({
   );
   const [candidateName, setCandidateName] = React.useState("");
   const [candidateEmail, setCandidateEmail] = React.useState("");
-  const [postInterviewAnswers, setPostInterviewAnswers] = React.useState<
-    Record<string, number | string>
-  >({});
   const [isSubmittingDemoHandoff, setIsSubmittingDemoHandoff] =
     React.useState(false);
   const [hasAcceptedConsent, setHasAcceptedConsent] = React.useState(false);
@@ -693,25 +689,35 @@ export function LiveInterviewRoom({
     setIsSubmittingDemoHandoff(true);
     try {
       const handoffUrl = await submitMarketingDemoHandoff({
-        answers: context.marketingDemo.postInterviewQuestions.flatMap(
-          (question) => {
-            const value = postInterviewAnswers[question.id];
-            return value === undefined
-              ? []
-              : [{ questionId: question.id, value }];
-          },
-        ),
         previewToken: token,
         sessionId: currentSession.sessionId,
       });
       window.location.assign(handoffUrl);
     } catch {
       setError(
-        "We could not prepare your private result. Your answers remain temporary; please try the handoff again.",
+        "We could not return you to HireCall. Your interview data remains temporary; please try again.",
       );
       setIsSubmittingDemoHandoff(false);
     }
-  }, [context, isMarketingDemo, postInterviewAnswers, token]);
+  }, [context, isMarketingDemo, token]);
+
+  React.useEffect(() => {
+    if (
+      status !== "completed" ||
+      !isMarketingDemo ||
+      isSubmittingDemoHandoff ||
+      error
+    ) {
+      return;
+    }
+    void submitDemoHandoff();
+  }, [
+    error,
+    isMarketingDemo,
+    isSubmittingDemoHandoff,
+    status,
+    submitDemoHandoff,
+  ]);
 
   const enableAudio = React.useCallback(async () => {
     try {
@@ -1119,18 +1125,10 @@ export function LiveInterviewRoom({
     context.marketingDemo
   ) {
     return (
-      <MarketingDemoPostInterviewPanel
-        answers={postInterviewAnswers}
+      <MarketingDemoHandoffPanel
         error={error}
         isSubmitting={isSubmittingDemoHandoff}
-        onAnswerChange={(questionId, value) =>
-          setPostInterviewAnswers((current) => ({
-            ...current,
-            [questionId]: value,
-          }))
-        }
-        onSubmit={submitDemoHandoff}
-        questions={context.marketingDemo.postInterviewQuestions}
+        onRetry={submitDemoHandoff}
         roleTitle={interview.roleTitle}
       />
     );
@@ -1384,176 +1382,52 @@ function CompletionRow({
   );
 }
 
-function MarketingDemoPostInterviewPanel({
-  answers,
+function MarketingDemoHandoffPanel({
   error,
   isSubmitting,
-  onAnswerChange,
-  onSubmit,
-  questions,
+  onRetry,
   roleTitle,
 }: {
-  answers: Record<string, number | string>;
   error: string | null;
   isSubmitting: boolean;
-  onAnswerChange: (questionId: string, value: number | string) => void;
-  onSubmit: () => void;
-  questions: MarketingDemoPostInterviewQuestion[];
+  onRetry: () => void;
   roleTitle: string;
 }) {
-  const isComplete = questions.every((question) => {
-    if (!question.required) {
-      return true;
-    }
-    const value = answers[question.id];
-    return (
-      typeof value === "number" ||
-      (typeof value === "string" && value.trim().length > 0)
-    );
-  });
-
   return (
     <>
       <CandidateScreenHeader
         left={<CandidateWordmark />}
-        right={
-          <CandidateMonoPill tone="tint">Final reflection</CandidateMonoPill>
-        }
+        right={<CandidateMonoPill tone="tint">Demo complete</CandidateMonoPill>}
       />
-      <div className="flex flex-1 items-start justify-center px-[clamp(1.125rem,5vw,2.75rem)] pb-16 pt-6">
-        <div className="w-full max-w-[720px] motion-safe:animate-[cc-in_.5s_cubic-bezier(.2,.7,.2,1)_both]">
+      <div className="flex flex-1 items-center justify-center px-[clamp(1.125rem,5vw,2.75rem)] pb-20 pt-6">
+        <div className="w-full max-w-[560px] text-center motion-safe:animate-[cc-in_.5s_cubic-bezier(.2,.7,.2,1)_both]">
           <p className="font-mono text-[10.5px] uppercase tracking-[0.12em] text-spruce-700">
             Voice interview complete
           </p>
           <h1 className="mt-3 font-display text-[clamp(34px,6vw,50px)] leading-[1.05] tracking-[-0.02em] text-ink-950">
-            A few questions before your insights
+            Returning you to HireCall
           </h1>
-          <p className="mt-4 max-w-[40rem] text-[16px] leading-[1.65] text-ink-700">
-            Your {roleTitle} conversation is finished. These answers personalize
-            the result you&apos;ll see on HireCall; they stay inside the same
-            encrypted, one-use handoff as the temporary transcript.
+          <p className="mx-auto mt-4 max-w-[34rem] text-[16px] leading-[1.65] text-ink-700">
+            Your {roleTitle} conversation is finished. We&apos;re deleting the
+            temporary interview data before returning you to the website.
           </p>
-
-          <div className="mt-8 flex flex-col gap-4">
-            {questions.map((question, index) => (
-              <div
-                className="rounded-[24px] border border-ink-200 bg-white p-[clamp(1rem,3vw,1.5rem)]"
-                key={question.id}
-              >
-                <p className="font-mono text-[9.5px] uppercase tracking-[0.13em] text-ink-500">
-                  Question {index + 1}
-                  {question.required ? " · required" : " · optional"}
-                </p>
-                <p className="mt-2.5 font-display text-[23px] leading-[1.28] text-ink-950">
-                  {question.prompt}
-                </p>
-                <MarketingDemoQuestionInput
-                  onChange={(value) => onAnswerChange(question.id, value)}
-                  question={question}
-                  value={answers[question.id]}
-                />
-              </div>
-            ))}
-          </div>
-
           {error ? <InlineAlert message={error} /> : null}
-
-          <Button
-            className={`mt-6 h-[52px] w-full text-[15.5px] ${primaryActionClass}`}
-            data-cc-btn=""
-            disabled={!isComplete || isSubmitting}
-            onClick={onSubmit}
-          >
-            {isSubmitting ? (
-              <RestartIcon className="h-4 w-4 motion-safe:animate-spin" />
-            ) : (
-              <CheckIcon className="h-4 w-4" />
-            )}
-            {isSubmitting ? "Preparing private insights" : "See my insights"}
-          </Button>
-          <p className="mt-3 text-center text-[12.5px] leading-[1.55] text-ink-500">
-            No email is required. The next page offers a separate, optional
-            marketing-email choice.
-          </p>
+          {error ? (
+            <Button
+              className={`mt-6 h-[52px] w-full text-[15.5px] ${primaryActionClass}`}
+              data-cc-btn=""
+              disabled={isSubmitting}
+              onClick={onRetry}
+            >
+              <RestartIcon className="h-4 w-4" />
+              Try the return again
+            </Button>
+          ) : (
+            <RestartIcon className="mx-auto mt-8 h-6 w-6 text-spruce-700 motion-safe:animate-spin" />
+          )}
         </div>
       </div>
     </>
-  );
-}
-
-function MarketingDemoQuestionInput({
-  onChange,
-  question,
-  value,
-}: {
-  onChange: (value: number | string) => void;
-  question: MarketingDemoPostInterviewQuestion;
-  value: number | string | undefined;
-}) {
-  if (question.type === "short_text") {
-    return (
-      <textarea
-        aria-label={question.prompt}
-        className="mt-4 min-h-[110px] w-full resize-y rounded-[16px] border border-ink-300 bg-paper-sunken px-4 py-3 text-[14.5px] leading-[1.6] text-ink-950 outline-none focus:border-ink-900 focus:bg-white focus:ring-1 focus:ring-ink-900"
-        maxLength={question.maxLength}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder="Optional reflection"
-        value={typeof value === "string" ? value : ""}
-      />
-    );
-  }
-
-  if (question.type === "single_select") {
-    return (
-      <div className="mt-4 grid gap-2 sm:grid-cols-3">
-        {question.options.map((option) => (
-          <button
-            aria-pressed={value === option.value}
-            className={`rounded-[14px] border px-3 py-3 text-left font-title text-[13.5px] transition ${
-              value === option.value
-                ? "border-spruce-700 bg-spruce-50 text-spruce-900"
-                : "border-ink-200 bg-paper-sunken text-ink-700 hover:border-ink-500"
-            }`}
-            key={option.value}
-            onClick={() => onChange(option.value)}
-            type="button"
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-    );
-  }
-
-  const values = Array.from(
-    { length: question.max - question.min + 1 },
-    (_, index) => question.min + index,
-  );
-  return (
-    <div className="mt-4">
-      <div className="flex gap-2">
-        {values.map((option) => (
-          <button
-            aria-label={`${question.prompt}: ${option}`}
-            aria-pressed={value === option}
-            className={`grid h-11 flex-1 place-items-center rounded-[13px] border font-mono text-[13px] transition ${
-              value === option
-                ? "border-spruce-700 bg-spruce-800 text-white"
-                : "border-ink-200 bg-paper-sunken text-ink-700 hover:border-ink-500"
-            }`}
-            key={option}
-            onClick={() => onChange(option)}
-            type="button"
-          >
-            {option}
-          </button>
-        ))}
-      </div>
-      <div className="mt-2 flex justify-between text-[11.5px] text-ink-500">
-        <span>{question.minLabel}</span>
-        <span>{question.maxLabel}</span>
-      </div>
-    </div>
   );
 }
 

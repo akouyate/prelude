@@ -123,7 +123,6 @@ export const marketingDemoPostInterviewAnswerSchema = z
 
 export const marketingDemoHandoffSubmissionSchema = z
   .object({
-    answers: z.array(marketingDemoPostInterviewAnswerSchema).max(6),
     previewToken: z.string().trim().min(32).max(160),
     sessionId: z.string().trim().min(1).max(160),
   })
@@ -133,6 +132,15 @@ export const marketingDemoHandoffExchangeSchema = z
   .object({
     code: z.string().trim().min(32).max(160),
     returnTarget: z.string().url().max(2048),
+  })
+  .strict();
+
+export const marketingDemoHandoffResponseSchema = z
+  .object({
+    completed: z.literal(true),
+    roleSlug: z.string().trim().min(1).max(80),
+    roleTitle: z.string().trim().min(1).max(200),
+    roleVersion: z.number().int().positive(),
   })
   .strict();
 
