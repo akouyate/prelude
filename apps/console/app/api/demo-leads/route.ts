@@ -1,70 +1,37 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@prelude/db";
+
+import {
+  captureMarketingDemoLead,
+  MarketingDemoLeadError,
+} from "../../../src/server/marketing-demos/marketing-demo-leads";
 
 const maxRequestBytes = 4 * 1024;
-const consentVersion = "marketing-demo-email-v1";
 
 export async function POST(request: Request) {
+  const declaredLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(declaredLength) && declaredLength > maxRequestBytes) {
+    return response({ error: { code: "request_too_large" } }, 413);
+  }
+
   const text = await request.text();
   if (Buffer.byteLength(text, "utf8") > maxRequestBytes) {
     return response({ error: { code: "request_too_large" } }, 413);
   }
-  let value: unknown;
+  let input: unknown;
   try {
-    value = JSON.parse(text) as unknown;
+    input = JSON.parse(text) as unknown;
   } catch {
     return response({ error: { code: "invalid_json" } }, 400);
   }
-  const input = parseLead(value);
-  if (!input) {
-    return response({ error: { code: "invalid_lead" } }, 400);
-  }
 
-  const role = await prisma.marketingDemoRole.findUnique({
-    select: { enabled: true },
-    where: { slug: input.roleSlug },
-  });
-  if (!role?.enabled) {
-    return response({ error: { code: "invalid_role" } }, 400);
+  try {
+    return response(await captureMarketingDemoLead(input), 201);
+  } catch (error) {
+    if (error instanceof MarketingDemoLeadError) {
+      return response({ error: { code: error.code } }, error.status);
+    }
+    return response({ error: { code: "lead_capture_unavailable" } }, 503);
   }
-  await prisma.marketingDemoLead.create({
-    data: {
-      consentVersion,
-      consentedAt: new Date(),
-      email: input.email.toLowerCase(),
-      roleSlug: input.roleSlug,
-    },
-  });
-  return response({ accepted: true }, 201);
-}
-
-function parseLead(value: unknown) {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return null;
-  }
-  const input = value as Record<string, unknown>;
-  if (
-    Object.keys(input).some(
-      (key) =>
-        key !== "email" && key !== "marketingConsent" && key !== "roleSlug",
-    ) ||
-    input.marketingConsent !== true ||
-    typeof input.email !== "string" ||
-    typeof input.roleSlug !== "string"
-  ) {
-    return null;
-  }
-  const email = input.email.trim();
-  const roleSlug = input.roleSlug.trim();
-  if (
-    email.length > 320 ||
-    !/^[^\s@]+@[^\s@]+\.[^\s@]+$/u.test(email) ||
-    roleSlug.length < 1 ||
-    roleSlug.length > 80
-  ) {
-    return null;
-  }
-  return { email, roleSlug };
 }
 
 function response(body: unknown, status: number) {

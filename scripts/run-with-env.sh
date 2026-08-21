@@ -11,7 +11,9 @@ if ! command -v dotenvx >/dev/null 2>&1; then
 fi
 
 if [ -f "$worktree_env" ]; then
-  exec dotenvx run -f "$encrypted_env" -f "$worktree_env" -- "$@"
+  # dotenvx keeps the first value it encounters, so the generated local
+  # override must be listed before the shared encrypted environment.
+  exec dotenvx run -f "$worktree_env" -f "$encrypted_env" -- "$@"
 fi
 
 exec dotenvx run -f "$encrypted_env" -- "$@"

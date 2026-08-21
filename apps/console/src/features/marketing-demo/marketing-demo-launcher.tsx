@@ -198,7 +198,7 @@ export function MarketingDemoLauncher({
           </button>
           <p className="mt-4 text-[12.5px] leading-[1.55] text-[#6E7772]">
             Audio is never recorded. A temporary transcript is processed for the
-            demo and deleted after its one-use result handoff or automatic
+            demo and deleted before you return to the website or on automatic
             expiry. You&apos;ll review the full notice before microphone access.
           </p>
         </section>

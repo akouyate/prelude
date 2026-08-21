@@ -386,6 +386,27 @@ fails closed, so skip any you are not launching with:
   `GOOGLE_OAUTH_CLIENT_SECRET` / `GOOGLE_OAUTH_REDIRECT_URI` — first-party
   connected accounts.
 
+### 3.7 Anonymous marketing-demo lead delivery
+
+The demo result page can accept a work email only after Candidate mints a
+short-lived, single-use completion proof. Configure these Console-only values:
+
+- `MARKETING_DEMO_LEAD_WEBHOOK_URL` — the HTTPS server-to-server receiver in
+  the CRM/marketing integration layer.
+- `MARKETING_DEMO_LEAD_WEBHOOK_SECRET` — independent bearer, at least 32 bytes.
+- `MARKETING_DEMO_LEAD_OPERATIONS_SECRET` — independent bearer for the
+  scheduled outbox/retention endpoint.
+- `MARKETING_DEMO_LEAD_UNSUBSCRIBE_SECRET` — independent signing key for
+  confirmation links.
+- `MARKETING_DEMO_LEAD_RETENTION_DAYS` — 730 by default; accepted range is
+  30–3650. Non-consented and withdrawn records keep a separate 30-day ceiling.
+
+The receiver must deduplicate by `Idempotency-Key`. It receives
+`setup_requested`, `consent_granted`, and `consent_withdrawn` events containing
+only email, predefined role, consent state/timestamps, event metadata, and the
+signed unsubscribe URL. Reject any integration change that adds transcript,
+answer, generated-insight, handoff, or preview-token fields.
+
 ---
 
 ## 4. Billing configuration (console)
@@ -488,7 +509,7 @@ information, not damage. What to do:
 
 ## 6. Scheduled jobs
 
-Both are plain authenticated `POST`s against the console, so any scheduler
+All are plain authenticated `POST`s against the console, so any scheduler
 works — a platform cron, a k8s CronJob, or GitHub Actions.
 
 ### 6.1 Billing sweep — hourly
@@ -549,6 +570,20 @@ reuse one value for both.
 
 Locally: `make retention-sweep` and `make billing-sweep` (both need the console
 running, and the matching secret exported).
+
+### 6.3 Marketing-demo lead operations — at least every five minutes
+
+Schedule `POST /api/internal/marketing-demo-leads/operations` with
+`Authorization: Bearer $MARKETING_DEMO_LEAD_OPERATIONS_SECRET`. The endpoint
+leases and retries pending webhook events and enforces lead/capture-proof
+retention. It answers 503 when its secret, webhook URL, webhook bearer, or
+unsubscribe signer is unavailable, so delivery fails closed and remains in the
+outbox.
+
+Use a bounded `?limit=` value from 1 to 200, `curl --fail-with-body`, and an
+independent scheduler concurrency group. Monitor non-2xx responses and a
+growing pending outbox. Locally the equivalent is
+`make marketing-demo-lead-operations` with the Console running.
 
 ---
 

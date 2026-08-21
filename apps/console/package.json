@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "../../scripts/run-with-env.sh next dev --port 3000",
+    "dev": "../../scripts/run-with-env.sh sh -c 'exec next dev --hostname 0.0.0.0 --port \"${CONSOLE_PORT:-3000}\"'",
     "role-intake:worker": "../../scripts/run-with-env.sh tsx src/server/role-intakes/role-intake-worker.ts",
     "build": "next build",
     "lint": "eslint .",

@@ -62,6 +62,7 @@ async function main() {
       create: {
         id: "global",
         concurrentSessionCap: 2,
+        dailyLeadCap: 100,
         dailyStartedSessionCap: 25,
         enabled: true,
       },

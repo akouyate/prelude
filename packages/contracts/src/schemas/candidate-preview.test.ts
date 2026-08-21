@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   candidateExperiencePreviewSnapshotSchema,
+  marketingDemoHandoffExchangeResponseSchema,
   marketingDemoHandoffResponseSchema,
   marketingDemoHandoffSubmissionSchema,
+  marketingDemoLeadSubmissionSchema,
 } from "./candidate-preview";
 
 describe("candidate experience preview snapshot", () => {
@@ -140,6 +142,51 @@ describe("marketing demo handoff response", () => {
       marketingDemoHandoffResponseSchema.safeParse({
         ...payload,
         answers: [{ questionId: "confidence", value: 4 }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("adds only an opaque, expiring lead-capture proof after exchange", () => {
+    const response = {
+      completed: true,
+      leadCaptureToken: `mdlc_${"l".repeat(43)}`,
+      leadCaptureTokenExpiresAt: "2026-08-21T10:30:00.000Z",
+      roleSlug: "account-executive",
+      roleTitle: "Account Executive",
+      roleVersion: 1,
+    } as const;
+
+    expect(marketingDemoHandoffExchangeResponseSchema.parse(response)).toEqual(
+      response,
+    );
+    expect(
+      marketingDemoHandoffExchangeResponseSchema.safeParse({
+        ...response,
+        transcript: [{ speaker: "candidate", text: "private answer" }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("marketing demo lead submission", () => {
+  it("requires a completed-demo proof and keeps marketing consent optional", () => {
+    const input = {
+      captureToken: `mdlc_${"l".repeat(43)}`,
+      email: "buyer@example.com",
+      marketingConsent: true,
+    } as const;
+
+    expect(marketingDemoLeadSubmissionSchema.parse(input)).toEqual(input);
+    expect(
+      marketingDemoLeadSubmissionSchema.parse({
+        ...input,
+        marketingConsent: false,
+      }),
+    ).toEqual({ ...input, marketingConsent: false });
+    expect(
+      marketingDemoLeadSubmissionSchema.safeParse({
+        ...input,
+        roleSlug: "visitor-authored-role",
       }).success,
     ).toBe(false);
   });

@@ -144,6 +144,33 @@ export const marketingDemoHandoffResponseSchema = z
   })
   .strict();
 
+export const marketingDemoLeadCaptureTokenSchema = z
+  .string()
+  .trim()
+  .min(32)
+  .max(160)
+  .regex(/^mdlc_[A-Za-z0-9_-]+$/u);
+
+export const marketingDemoHandoffExchangeResponseSchema =
+  marketingDemoHandoffResponseSchema.extend({
+    leadCaptureToken: marketingDemoLeadCaptureTokenSchema,
+    leadCaptureTokenExpiresAt: z.string().datetime(),
+  });
+
+export const marketingDemoLeadSubmissionSchema = z
+  .object({
+    captureToken: marketingDemoLeadCaptureTokenSchema,
+    email: z.string().trim().email().max(320),
+    marketingConsent: z.boolean(),
+  })
+  .strict();
+
+export const marketingDemoLeadWithdrawalSchema = z
+  .object({
+    token: z.string().trim().min(32).max(512),
+  })
+  .strict();
+
 const candidatePreviewDisplaySchema = z.object({
   companyName: z.string().trim().min(1).max(200),
   jobId: z.string().trim().min(1),

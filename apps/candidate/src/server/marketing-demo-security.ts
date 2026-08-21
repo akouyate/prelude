@@ -3,6 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 export const marketingDemoPolicy = {
   accessTtlMs: 10 * 60 * 1000,
   handoffTtlMs: 5 * 60 * 1000,
+  leadCaptureTtlMs: 30 * 60 * 1000,
   launchNonceTtlMs: 10 * 60 * 1000,
   maxRequestBytes: 8 * 1024,
   runtimeTtlMs: 12 * 60 * 1000,
