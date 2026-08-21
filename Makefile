@@ -7,9 +7,10 @@ DATABASE_URL ?= postgresql://postgres:postgres@localhost:$(POSTGRES_PORT)/prelud
 REDIS_URL ?= redis://localhost:$(REDIS_PORT)/0
 PYTHON_VERSION ?= 3.14
 MIGRATION_NAME ?= init
-# .env is dotenvx-encrypted; decrypt it through dotenvx (needs .env.keys) and
-# export the values. Falls back silently if .env/dotenvx is absent.
-LOAD_ENV := set -a; [ ! -f .env ] || eval "$$(dotenvx get --format eval -f .env 2>/dev/null)"; set +a
+# .env is dotenvx-encrypted; .env.worktree is a gitignored, generated override.
+# Later files win, so every process in one worktree shares the same local keys.
+ENV_FILE_ARGS := -f .env $(if $(wildcard .env.worktree),-f .env.worktree,)
+LOAD_ENV := set -a; [ ! -f .env ] || eval "$$(dotenvx get --format eval $(ENV_FILE_ARGS) 2>/dev/null)"; set +a
 BENCHMARK_PROVIDER ?= mock_openai_realtime
 BENCHMARK_SCENARIO ?= normal
 BENCHMARK_ITERATIONS ?= 3
@@ -54,10 +55,25 @@ RETENTION_SWEEP_LIMIT ?=
 
 .DEFAULT_GOAL := help
 
-.PHONY: help env-up env-down env-reset db-logs db-shell redis-shell role-intake-env-up role-intake-worker db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke billing-packs-sync billing-sweep retention-sweep billing-admin-queue dev
+.PHONY: help init doctor cleanup worktree-init worktree-check worktree-cleanup env-up env-down env-reset db-logs db-shell redis-shell role-intake-env-up role-intake-worker db-migrate db-generate db-studio test-services test-realtime test-agent agent-benchmark agent-role-benchmark live-openai-worker live-openai-autoworker live-smoke-report live-smoke-report-strict e2e-smoke e2e-smoke-live e2e-voice-smoke billing-packs-sync billing-sweep retention-sweep billing-admin-queue dev
 
 help: ## List available local development commands.
 	@awk 'BEGIN {FS = ":.*## "; printf "HireCall local commands:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-16s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+
+init: worktree-init ## Prepare this checkout for local development.
+
+doctor: worktree-check ## Validate this checkout's generated environment.
+
+cleanup: worktree-cleanup ## Remove only files created by worktree init.
+
+worktree-init: ## Idempotently install dependencies and prepare local secrets.
+	@./scripts/worktree/init.sh
+
+worktree-check: ## Validate shared decryption and generated worktree secrets.
+	@./scripts/worktree/check.sh
+
+worktree-cleanup: ## Remove only worktree-managed secret copies and overrides.
+	@./scripts/worktree/cleanup.sh
 
 env-up: ## Start local Docker services.
 	POSTGRES_PORT="$(POSTGRES_PORT)" REDIS_PORT="$(REDIS_PORT)" $(COMPOSE) up -d

@@ -12,10 +12,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.stubEnv("MARKETING_DEMO_SERVICE_SECRET", serviceSecret);
   exchangeHandoffMock.mockResolvedValue({
-    answers: [],
+    completed: true,
     roleSlug: "account-executive",
     roleTitle: "Account Executive",
-    transcript: [],
+    roleVersion: 1,
   });
 });
 

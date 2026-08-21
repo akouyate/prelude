@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { candidateExperiencePreviewSnapshotSchema } from "./candidate-preview";
+import {
+  candidateExperiencePreviewSnapshotSchema,
+  marketingDemoHandoffResponseSchema,
+  marketingDemoHandoffSubmissionSchema,
+} from "./candidate-preview";
 
 describe("candidate experience preview snapshot", () => {
   it("accepts the canonical role plan plus candidate display context", () => {
@@ -90,5 +94,53 @@ describe("candidate experience preview snapshot", () => {
       variant: "marketing_demo",
       marketingDemo: { roleSlug: "account-executive" },
     });
+  });
+});
+
+describe("marketing demo handoff submission", () => {
+  it("accepts only the preview and completed runtime identifiers", () => {
+    const input = {
+      previewToken: `pvtk_${"s".repeat(43)}`,
+      sessionId: "is_demo",
+    };
+
+    expect(marketingDemoHandoffSubmissionSchema.parse(input)).toEqual(input);
+    expect(
+      marketingDemoHandoffSubmissionSchema.safeParse({
+        ...input,
+        answers: [{ questionId: "confidence", value: 4 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      marketingDemoHandoffSubmissionSchema.safeParse({
+        ...input,
+        transcript: [{ speaker: "candidate", text: "private answer" }],
+      }).success,
+    ).toBe(false);
+  });
+});
+
+describe("marketing demo handoff response", () => {
+  it("rejects candidate content and exposes only role metadata", () => {
+    const payload = {
+      completed: true,
+      roleSlug: "account-executive",
+      roleTitle: "Account Executive",
+      roleVersion: 1,
+    } as const;
+
+    expect(marketingDemoHandoffResponseSchema.parse(payload)).toEqual(payload);
+    expect(
+      marketingDemoHandoffResponseSchema.safeParse({
+        ...payload,
+        transcript: [{ speaker: "candidate", text: "private answer" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      marketingDemoHandoffResponseSchema.safeParse({
+        ...payload,
+        answers: [{ questionId: "confidence", value: 4 }],
+      }).success,
+    ).toBe(false);
   });
 });

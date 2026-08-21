@@ -108,7 +108,6 @@ export async function submitFormInterview(input: {
 }
 
 export async function submitMarketingDemoHandoff(input: {
-  answers: Array<{ questionId: string; value: number | string }>;
   previewToken: string;
   sessionId: string;
 }) {

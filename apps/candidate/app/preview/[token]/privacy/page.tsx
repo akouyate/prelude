@@ -53,16 +53,18 @@ export default async function MarketingDemoPrivacyPage({
               <p>
                 A text transcript is processed and stored temporarily in
                 HireCall&apos;s realtime service while the demo runs. After you
-                finish, the transcript and your follow-up answers are encrypted
-                for a single server-to-server handoff to the HireCall website.
-                The relay is usable once and expires within five minutes.
+                finish, the website relay contains only completion status and
+                the predefined role&apos;s slug, title, and version. It never
+                contains your transcript or interview answers. The relay is
+                encrypted, usable once, and expires within five minutes.
               </p>
               <p>
-                After a successful handoff, the relay, transcript events, demo
-                runtime row, and access token digest are deleted immediately.
-                The relay expires after five minutes. An abandoned interview has
-                a server-enforced twelve-minute runtime ceiling, and the
-                five-minute cleanup sweep removes its temporary runtime data.
+                Transcript events are deleted before HireCall returns your
+                browser to the website. After the website consumes the handoff,
+                the relay, demo runtime row, and access token digest are deleted
+                immediately. An abandoned interview has a server-enforced
+                twelve-minute runtime ceiling, and the five-minute cleanup sweep
+                removes its temporary runtime data.
               </p>
               <p>
                 No candidate profile, recruiter brief, customer billing charge,
@@ -74,8 +76,7 @@ export default async function MarketingDemoPrivacyPage({
                 Consent is the legal basis for this interview processing. You
                 can withdraw it at any time by using Quit; live processing then
                 stops and the temporary data follows the deletion windows above.
-                This practice result is not a hiring decision or candidate
-                evaluation.
+                The demo is not a hiring decision or candidate evaluation.
               </p>
               <p>
                 To request access or earlier erasure, or to ask a privacy

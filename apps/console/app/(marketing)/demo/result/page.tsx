@@ -3,14 +3,13 @@ import type { Metadata } from "next";
 import { MarketingDemoLeadForm } from "../../../../src/features/marketing-demo/marketing-demo-lead-form";
 import { MarketingDemoUrlCleaner } from "../../../../src/features/marketing-demo/marketing-demo-url-cleaner";
 import { exchangeMarketingDemoHandoff } from "../../../../src/server/marketing-demos/marketing-demo-candidate-api";
-import { buildMarketingDemoInsights } from "../../../../src/server/marketing-demos/marketing-demo-insights";
 
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   referrer: "no-referrer",
   robots: { follow: false, index: false },
-  title: "Your interview insights · HireCall",
+  title: "Demo complete · HireCall",
 };
 
 export default async function MarketingDemoResultPage({
@@ -33,45 +32,33 @@ export default async function MarketingDemoResultPage({
       code: handoff,
       returnTarget,
     });
-    // Only these derived strings cross the server-component boundary. Raw
-    // transcript and supplemental answers are consumed and deleted server-side.
-    const result = buildMarketingDemoInsights(payload);
     return (
       <main className="min-h-screen bg-[#F4F3EF] px-6 py-12 text-[#151A17]">
         <MarketingDemoUrlCleaner />
         <div className="mx-auto max-w-[860px]">
           <p className="font-mono text-[11px] uppercase tracking-[0.14em] text-[#0F6B57]">
-            Private demo result · {result.roleTitle}
+            Demo completed · {payload.roleTitle}
           </p>
           <h1 className="mt-5 text-balance font-display text-[clamp(46px,8vw,72px)] leading-[0.98] tracking-[-0.03em]">
-            Three ways to make your next answer stronger.
+            You tried the candidate experience. Now run it on your own role.
           </h1>
           <p className="mt-6 max-w-[620px] text-[17px] leading-[1.65] text-[#52605A]">
-            Based on {result.turnCount} answer turns from the interview you just
-            completed. This is practice feedback, not hiring evaluation.
+            Your interview data has been deleted. The next step is to create a
+            real interview for your hiring team and review structured evidence
+            from your own candidates.
           </p>
-
-          <ol className="mt-10 grid gap-4">
-            {result.insights.map((insight, index) => (
-              <li
-                className="rounded-[26px] border border-[#D7D9D5] bg-white p-6"
-                key={insight}
-              >
-                <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#0F6B57]">
-                  Insight {index + 1}
-                </span>
-                <p className="mt-3 font-display text-[25px] leading-[1.35]">
-                  {insight}
-                </p>
-              </li>
-            ))}
-          </ol>
-
-          <MarketingDemoLeadForm roleSlug={result.roleSlug} />
+          <a
+            className="mt-8 inline-flex rounded-full bg-[#0B4B3E] px-6 py-3 font-title font-medium text-white"
+            href="/sign-up"
+          >
+            Create my first interview
+          </a>
+          <MarketingDemoLeadForm roleSlug={payload.roleSlug} />
           <p className="mt-8 text-[12.5px] leading-[1.6] text-[#6E7772]">
-            The one-use handoff has now been consumed. HireCall deleted the
-            temporary interview transcript, follow-up answers, relay, runtime,
-            and demo access record before rendering this page.
+            The one-use handoff contained only demo completion and predefined
+            role metadata. HireCall deleted the temporary transcript before the
+            redirect, then consumed the relay and deleted the demo runtime
+            before rendering this page.
           </p>
         </div>
       </main>
@@ -86,11 +73,11 @@ function UnavailableResult() {
     <main className="grid min-h-screen place-items-center bg-[#F4F3EF] px-6 text-center text-[#151A17]">
       <div className="max-w-[520px]">
         <h1 className="font-display text-[48px] leading-[1.02]">
-          This private result is no longer available.
+          This demo return is no longer available.
         </h1>
         <p className="mt-5 text-[16px] leading-[1.65] text-[#52605A]">
-          Handoff codes expire quickly and can be used once. No interview data
-          is available from this link.
+          Handoff codes expire quickly and can be used once. Start a new demo to
+          try the candidate experience again.
         </p>
         <a
           className="mt-8 inline-flex rounded-full bg-[#0B4B3E] px-6 py-3 font-title font-medium text-white"

@@ -154,18 +154,18 @@ const englishCandidateCopy: CandidateExperienceCopy = {
   modeAudio: "audio",
   modeFormFallback: "form fallback",
   marketingAnswersBody:
-    "Your answers are used only for this private practice result and never enter a recruiter workspace.",
-  marketingAnswersTitle: "Practice, not an application",
+    "Your answers are used only to run this demo. They never enter a recruiter workspace or the website handoff.",
+  marketingAnswersTitle: "A demo, not an application",
   marketingConsentCopy:
-    "I agree to live microphone processing for this demo. Audio is not recorded. A transcript is processed and retained temporarily to run the interview and create my one-time result, then deleted after handoff or automatic expiry.",
+    "I agree to live microphone processing for this demo. Audio is not recorded. A transcript is processed and retained temporarily to run the interview, then deleted before I return to the website or on automatic expiry.",
   marketingControllerLine:
     "HireCall is the data controller for this public demo. Processing consent is required for the interview; any later marketing-email choice is separate and optional.",
   marketingDisclosureCopy:
-    "You are trying HireCall through a real candidate-style AI voice interview. Your audio is not recorded; a temporary transcript powers the conversation and your one-time personalized result.",
+    "You are trying HireCall through a real candidate-style AI voice interview. Your audio is not recorded; a temporary transcript powers the conversation and is deleted before you return to the website.",
   marketingEvidenceBody:
-    "A temporary transcript is processed during the demo and deleted after its one-use handoff or automatic expiry.",
+    "A temporary transcript is processed during the demo and deleted before the website return or on automatic expiry.",
   marketingEvidenceTitle: "Temporary processing",
-  marketingHeaderPill: "Practice interview",
+  marketingHeaderPill: "Product demo",
   marketingHumanReviewedPill: "No candidate profile",
   marketingIntroDescription:
     "Answer naturally, as you would in a real first interview. This demo stays outside every recruiter workspace.",
@@ -246,18 +246,18 @@ const frenchCandidateCopy: CandidateExperienceCopy = {
   modeAudio: "audio",
   modeFormFallback: "réponses écrites",
   marketingAnswersBody:
-    "Vos réponses servent uniquement à ce résultat d'entraînement privé et n'entrent jamais dans un espace recruteur.",
-  marketingAnswersTitle: "Un entraînement, pas une candidature",
+    "Vos réponses servent uniquement à mener cette démo. Elles n'entrent jamais dans un espace recruteur ni dans le transfert vers le site.",
+  marketingAnswersTitle: "Une démo, pas une candidature",
   marketingConsentCopy:
-    "J'accepte le traitement en direct de mon microphone pour cette démo. Le son n'est pas enregistré. Une transcription est traitée et conservée temporairement pour mener l'entretien et créer mon résultat à usage unique, puis supprimée après le transfert ou l'expiration automatique.",
+    "J'accepte le traitement en direct de mon microphone pour cette démo. Le son n'est pas enregistré. Une transcription est traitée et conservée temporairement pour mener l'entretien, puis supprimée avant mon retour sur le site ou lors de l'expiration automatique.",
   marketingControllerLine:
     "HireCall est responsable du traitement pour cette démo publique. Le consentement au traitement est requis pour l'entretien ; tout choix ultérieur d'e-mail marketing est distinct et facultatif.",
   marketingDisclosureCopy:
-    "Vous essayez HireCall dans un véritable entretien vocal avec IA, comme un candidat. Le son n'est pas enregistré ; une transcription temporaire alimente l'échange et votre résultat personnalisé à usage unique.",
+    "Vous essayez HireCall dans un véritable entretien vocal avec IA, comme un candidat. Le son n'est pas enregistré ; une transcription temporaire alimente l'échange puis est supprimée avant votre retour sur le site.",
   marketingEvidenceBody:
-    "Une transcription temporaire est traitée pendant la démo, puis supprimée après son transfert à usage unique ou son expiration automatique.",
+    "Une transcription temporaire est traitée pendant la démo, puis supprimée avant le retour sur le site ou lors de l'expiration automatique.",
   marketingEvidenceTitle: "Traitement temporaire",
-  marketingHeaderPill: "Entretien d'entraînement",
+  marketingHeaderPill: "Démo produit",
   marketingHumanReviewedPill: "Aucun profil candidat",
   marketingIntroDescription:
     "Répondez naturellement, comme lors d'un premier entretien. Cette démo reste en dehors de tout espace recruteur.",

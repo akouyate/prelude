@@ -140,7 +140,7 @@ describe("live interview welcome screen language", () => {
       />,
     );
 
-    expect(markup).toContain("Practice interview");
+    expect(markup).toContain("Product demo");
     expect(markup).toContain("real candidate-style AI voice interview");
     expect(markup).toContain("A few minutes");
     expect(markup).toContain('href="/preview/pvtk_marketing_secret/privacy"');
