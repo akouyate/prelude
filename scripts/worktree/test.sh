@@ -31,6 +31,7 @@ load_worktree_values "issue-168"
 assert_equal "$HIRECALL_LOCAL_DOMAIN" "hirecall-issue-168.localhost"
 assert_equal "$CONSOLE_URL_VALUE" "http://app.hirecall-issue-168.localhost:${CONSOLE_PORT_VALUE}"
 assert_equal "$CANDIDATE_URL_VALUE" "http://candidate.hirecall-issue-168.localhost:${CANDIDATE_PORT_VALUE}"
+assert_equal "$PRELUDE_ALLOWED_DEV_ORIGINS_VALUE" "app.hirecall-issue-168.localhost,candidate.hirecall-issue-168.localhost,www.hirecall-issue-168.localhost"
 assert_equal "$MARKETING_DEMO_RETURN_TARGET_VALUE" "http://www.hirecall-issue-168.localhost:${LANDING_PORT_VALUE}/demo/result"
 assert_equal "$MARKETING_DEMO_RETURN_TARGETS_VALUE" "${MARKETING_DEMO_RETURN_TARGET_VALUE},${CONSOLE_DEMO_RETURN_TARGET_VALUE}"
 
@@ -81,10 +82,12 @@ if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; 
   POSTGRES_PORT=59104 REDIS_PORT=59105 CLAMAV_PORT=59106 \
   REALTIME_PORT=59103 CANDIDATE_PORT=59101 \
   CANDIDATE_URL=http://candidate.hirecall-ops-test.localhost:59101 \
+  PRELUDE_ALLOWED_DEV_ORIGINS=app.hirecall-ops-test.localhost,candidate.hirecall-ops-test.localhost,www.hirecall-ops-test.localhost \
   MARKETING_DEMO_RETURN_TARGETS=http://www.hirecall-ops-test.localhost:59102/demo/result,http://app.hirecall-ops-test.localhost:59100/demo/result \
     docker compose --profile marketing-demo -f "$repo_root/docker-compose.yml" config > "$compose_config"
   grep -Fq 'name: prelude-ops-test_postgres_data' "$compose_config" || fail "Postgres volume is not project-scoped"
   grep -Fq 'http://candidate.hirecall-ops-test.localhost:59101' "$compose_config" || fail "Candidate public URL was not propagated"
+  grep -Fq 'app.hirecall-ops-test.localhost,candidate.hirecall-ops-test.localhost,www.hirecall-ops-test.localhost' "$compose_config" || fail "Next.js dev origins were not propagated"
   grep -Fq 'http://www.hirecall-ops-test.localhost:59102/demo/result,http://app.hirecall-ops-test.localhost:59100/demo/result' "$compose_config" || fail "exact return-target allow-list was not propagated"
 fi
 

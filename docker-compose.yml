@@ -195,6 +195,7 @@ services:
       PRELUDE_REALTIME_API_URL: "http://realtime:8080"
       REALTIME_API_KEY: "${REALTIME_API_KEY:-}"
       NEXT_PUBLIC_CANDIDATE_URL: "${CANDIDATE_URL:-http://candidate.hirecall-main.localhost:3101}"
+      PRELUDE_ALLOWED_DEV_ORIGINS: "${PRELUDE_ALLOWED_DEV_ORIGINS:-candidate.hirecall-main.localhost}"
       MARKETING_DEMO_RETURN_TARGETS: "${MARKETING_DEMO_RETURN_TARGETS:-http://www.hirecall-main.localhost:3200/demo/result,http://app.hirecall-main.localhost:3000/demo/result}"
       MARKETING_DEMO_SERVICE_SECRET: "${MARKETING_DEMO_SERVICE_SECRET:-}"
       MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY: "${MARKETING_DEMO_HANDOFF_ENCRYPTION_KEY:-}"
