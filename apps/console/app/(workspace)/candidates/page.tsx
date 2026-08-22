@@ -1,13 +1,19 @@
 import type { CandidateScreenListItem } from "../../../src/features/candidate-screens";
 import { CandidatesList } from "../../../src/features/candidates-list/candidates-list";
-import { getConsoleDashboardData } from "../../../src/server/dashboard/dashboard-data";
+import { getConsoleCandidatesData } from "../../../src/server/dashboard/dashboard-data";
+import { parseCandidateListQuery } from "../../../src/server/dashboard/list-query";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function CandidatesPage() {
-  const dashboard = await getConsoleDashboardData();
-  const candidates = dashboard.reviewQueue.map(
+export default async function CandidatesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const query = parseCandidateListQuery(await searchParams);
+  const data = await getConsoleCandidatesData(query);
+  const candidates = data.candidates.map(
     (session): CandidateScreenListItem => ({
       analysisStatus: session.analysisStatus,
       candidateLabel: session.candidateLabel,
@@ -29,7 +35,10 @@ export default async function CandidatesPage() {
   return (
     <CandidatesList
       candidates={candidates}
-      organizationName={dashboard.organization.name}
+      counts={data.counts}
+      nextCursor={data.nextCursor}
+      organizationName={data.organizationName}
+      previousCursor={data.previousCursor}
     />
   );
 }

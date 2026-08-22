@@ -2,14 +2,20 @@ import {
   RolesList,
   type RoleListItem,
 } from "../../../src/features/roles-list/roles-list";
-import { getConsoleDashboardData } from "../../../src/server/dashboard/dashboard-data";
+import { getConsoleRolesData } from "../../../src/server/dashboard/dashboard-data";
+import { parseRoleListQuery } from "../../../src/server/dashboard/list-query";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
-export default async function RolesPage() {
-  const dashboard = await getConsoleDashboardData();
-  const roles = dashboard.roles.map(
+export default async function RolesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const query = parseRoleListQuery(await searchParams);
+  const data = await getConsoleRolesData(query);
+  const roles = data.roles.map(
     (role): RoleListItem => ({
       candidateCount: role.candidateCount,
       candidatePath: role.candidatePath,
@@ -24,6 +30,12 @@ export default async function RolesPage() {
   );
 
   return (
-    <RolesList organizationName={dashboard.organization.name} roles={roles} />
+    <RolesList
+      counts={data.counts}
+      nextCursor={data.nextCursor}
+      organizationName={data.organizationName}
+      previousCursor={data.previousCursor}
+      roles={roles}
+    />
   );
 }

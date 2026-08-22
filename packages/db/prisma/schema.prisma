@@ -113,6 +113,7 @@ model Job {
   roleIntake           RoleIntake?
 
   @@index([organizationId, sourceProvider])
+  @@index([organizationId, createdAt, id])
 }
 
 // A private staging object for imported role sources. It deliberately becomes a
@@ -511,6 +512,7 @@ model CandidateSession {
   reviewNoteUpdatedBy     User?                         @relation("CandidateSessionReviewNoteAuthor", fields: [reviewNoteUpdatedById], references: [id], onDelete: SetNull)
 
   @@index([organizationId, status, updatedAt])
+  @@index([organizationId, updatedAt, id])
   @@index([organizationId, startedAt])
   @@index([organizationId, reviewStatus, updatedAt])
   @@index([jobId, status])
