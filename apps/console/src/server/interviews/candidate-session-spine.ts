@@ -31,17 +31,25 @@ export type CandidateSessionSpine = Prisma.CandidateSessionGetPayload<{
 }>;
 
 export async function listCandidateSessionSpinesForOrganization({
+  cursor,
+  orderBy,
   organizationId,
   take,
+  where,
 }: {
+  cursor?: string | null;
+  orderBy?: Prisma.CandidateSessionOrderByWithRelationInput[];
   organizationId: string;
   take?: number;
+  where?: Prisma.CandidateSessionWhereInput;
 }) {
   return prisma.candidateSession.findMany({
+    cursor: cursor ? { id: cursor } : undefined,
     include: candidateSessionSpineInclude,
-    orderBy: { updatedAt: "desc" },
+    orderBy: orderBy ?? [{ updatedAt: "desc" }, { id: "desc" }],
+    skip: cursor ? 1 : undefined,
     take,
-    where: { organizationId },
+    where: { organizationId, ...where },
   });
 }
 

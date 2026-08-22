@@ -23,6 +23,12 @@ import {
 
 import { candidateAppUrl } from "../../libs/candidate-app-url";
 import { useCopyLinkFeedback } from "../../libs/use-copy-link-feedback";
+import { CursorPagination } from "../console-list/cursor-pagination";
+import {
+  type RoleFilter,
+  type RoleSort,
+  useRoleListQueryState,
+} from "../console-list/list-query-state";
 
 export type RoleScreenState =
   | "candidate_started"
@@ -44,44 +50,49 @@ export type RoleListItem = {
   updatedAt: string;
 };
 
-type RoleFilter = "all" | "completed" | "draft" | "live" | "needs_review";
-type RoleSort = "alpha" | "candidates" | "recent";
-
 export function RolesList({
+  counts,
+  nextCursor,
   organizationName,
+  previousCursor,
   roles,
 }: {
+  counts: Record<RoleFilter, number>;
+  nextCursor: string | null;
   organizationName: string;
+  previousCursor: string | null;
   roles: RoleListItem[];
 }) {
   const { t } = useTranslation();
-  const [filter, setFilter] = React.useState<RoleFilter>("all");
-  const [query, setQuery] = React.useState("");
-  const [sort, setSort] = React.useState<RoleSort>("recent");
+  const [listQuery, setListQuery] = useRoleListQueryState();
+  const [queryDraft, setQueryDraft] = React.useState(listQuery.q);
   const { copiedKey: copiedId, copy } = useCopyLinkFeedback();
 
-  const counts = React.useMemo(() => getCounts(roles), [roles]);
-  const rows = React.useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
+  React.useEffect(() => {
+    setQueryDraft(listQuery.q);
+  }, [listQuery.q]);
 
-    return [...roles]
-      .filter((role) => matchesFilter(role, filter))
-      .filter((role) => {
-        if (!normalizedQuery) {
-          return true;
-        }
+  React.useEffect(() => {
+    if (queryDraft === listQuery.q) {
+      return;
+    }
 
-        return [
-          role.title,
-          role.location ?? "",
-          formatProvider(role.sourceProvider, t),
-        ]
-          .join(" ")
-          .toLowerCase()
-          .includes(normalizedQuery);
-      })
-      .sort((left, right) => sortRoles(left, right, sort));
-  }, [filter, query, roles, sort, t]);
+    const timeout = window.setTimeout(() => {
+      void setListQuery({ cursor: null, q: queryDraft });
+    }, 300);
+
+    return () => window.clearTimeout(timeout);
+  }, [listQuery.q, queryDraft, setListQuery]);
+
+  const setFilter = React.useCallback(
+    (filter: RoleFilter) => void setListQuery({ cursor: null, filter }),
+    [setListQuery],
+  );
+
+  const setSort = React.useCallback(
+    (sort: RoleSort) => void setListQuery({ cursor: null, sort }),
+    [setListQuery],
+  );
 
   const handleCopy = React.useCallback(
     async (role: RoleListItem) => {
@@ -123,7 +134,7 @@ export function RolesList({
 
       <section className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
-          active={filter === "needs_review"}
+          active={listQuery.filter === "needs_review"}
           icon={<CheckCircle aria-hidden={true} className="h-4 w-4" />}
           label={t("roles.summaryNeedsReviewLabel")}
           meta={t("roles.summaryNeedsReviewSub")}
@@ -131,7 +142,7 @@ export function RolesList({
           value={String(counts.needs_review)}
         />
         <MetricCard
-          active={filter === "live"}
+          active={listQuery.filter === "live"}
           icon={<Microphone aria-hidden={true} className="h-4 w-4" />}
           label={t("roles.summaryLiveLabel")}
           meta={t("roles.summaryLiveSub")}
@@ -139,7 +150,7 @@ export function RolesList({
           value={String(counts.live)}
         />
         <MetricCard
-          active={filter === "draft"}
+          active={listQuery.filter === "draft"}
           icon={<EditPencil aria-hidden={true} className="h-4 w-4" />}
           label={t("roles.summaryDraftLabel")}
           meta={t("roles.summaryDraftSub")}
@@ -147,7 +158,7 @@ export function RolesList({
           value={String(counts.draft)}
         />
         <MetricCard
-          active={filter === "completed"}
+          active={listQuery.filter === "completed"}
           icon={<CheckCircle aria-hidden={true} className="h-4 w-4" />}
           label={t("roles.summaryCompletedLabel")}
           meta={t("roles.summaryCompletedSub")}
@@ -159,7 +170,7 @@ export function RolesList({
       <section className="mt-6 flex flex-wrap items-center justify-between gap-3">
         <SegmentedTabs
           ariaLabel={t("roles.statusFilterAria")}
-          onValueChange={setFilter}
+          onValueChange={(value) => setFilter(value as RoleFilter)}
           options={[
             { label: t("roles.tabAll", { count: counts.all }), value: "all" },
             {
@@ -179,7 +190,7 @@ export function RolesList({
               value: "completed",
             },
           ]}
-          value={filter}
+          value={listQuery.filter}
         />
 
         <div className="flex flex-wrap items-center gap-2">
@@ -188,18 +199,18 @@ export function RolesList({
             <span className="sr-only">{t("roles.searchRoles")}</span>
             <input
               className="w-36 bg-transparent text-[13px] text-ink-950 outline-none placeholder:text-ink-400"
-              onChange={(event) => setQuery(event.target.value)}
+              onChange={(event) => setQueryDraft(event.target.value)}
               placeholder={t("roles.searchRoles")}
-              value={query}
+              value={queryDraft}
             />
           </label>
           <button
             className="inline-flex h-[38px] cursor-pointer items-center justify-center gap-2 rounded-full border border-ink-100 bg-white/70 px-3.5 text-[12.5px] font-semibold text-ink-700 transition hover:border-ink-300 hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-olive-300"
-            onClick={() => setSort(nextSort(sort))}
+            onClick={() => setSort(nextSort(listQuery.sort))}
             type="button"
           >
             <Sort aria-hidden={true} className="h-4 w-4" />
-            {formatSort(sort, t)}
+            {formatSort(listQuery.sort, t)}
           </button>
         </div>
       </section>
@@ -212,9 +223,9 @@ export function RolesList({
           <span className="text-right">{t("roles.columnUpdated")}</span>
         </div>
 
-        {rows.length > 0 ? (
+        {roles.length > 0 ? (
           <div className="divide-y divide-ink-100">
-            {rows.map((role) => (
+            {roles.map((role) => (
               <RoleRow
                 copied={copiedId === role.id}
                 key={role.id}
@@ -237,6 +248,10 @@ export function RolesList({
             </p>
           </div>
         )}
+        <CursorPagination
+          nextCursor={nextCursor}
+          previousCursor={previousCursor}
+        />
       </section>
     </div>
   );
@@ -340,64 +355,8 @@ function RoleRow({
   );
 }
 
-function getCounts(roles: RoleListItem[]) {
-  return {
-    all: roles.length,
-    completed: roles.filter((role) => groupFor(role) === "completed").length,
-    draft: roles.filter((role) => groupFor(role) === "draft").length,
-    live: roles.filter((role) => groupFor(role) === "live").length,
-    needs_review: roles.filter((role) => role.state === "needs_review").length,
-  };
-}
-
-function matchesFilter(role: RoleListItem, filter: RoleFilter) {
-  if (filter === "all") {
-    return true;
-  }
-
-  if (filter === "needs_review") {
-    return role.state === "needs_review";
-  }
-
-  return groupFor(role) === filter;
-}
-
-function groupFor(role: RoleListItem): Exclude<RoleFilter, "all"> {
-  if (role.state === "draft") {
-    return "draft";
-  }
-
-  if (role.state === "paused") {
-    return "draft";
-  }
-
-  if (role.state === "completed") {
-    return "completed";
-  }
-
-  return "live";
-}
-
-function sortRoles(left: RoleListItem, right: RoleListItem, sort: RoleSort) {
-  if (sort === "candidates") {
-    return right.candidateCount - left.candidateCount;
-  }
-
-  if (sort === "alpha") {
-    return left.title.localeCompare(right.title);
-  }
-
-  return (
-    new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
-  );
-}
-
 function nextSort(sort: RoleSort): RoleSort {
   if (sort === "recent") {
-    return "candidates";
-  }
-
-  if (sort === "candidates") {
     return "alpha";
   }
 
@@ -405,10 +364,6 @@ function nextSort(sort: RoleSort): RoleSort {
 }
 
 function formatSort(sort: RoleSort, t: TFunction) {
-  if (sort === "candidates") {
-    return t("roles.sortMostScreens");
-  }
-
   if (sort === "alpha") {
     return t("roles.sortAlpha");
   }
@@ -441,10 +396,6 @@ function sourceMeta(provider: string | null, t: TFunction) {
     mono: "M",
     name: t("roles.providerManual"),
   };
-}
-
-function formatProvider(provider: string | null, t: TFunction) {
-  return sourceMeta(provider, t).name;
 }
 
 function statusTone(status: RoleScreenState) {
